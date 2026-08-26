@@ -145,11 +145,56 @@ class NoteStore(context: Context) {
                 pdfPageIndex = index,
             )
         }
-        source.close()
         val document = Document(pages.toMutableList())
+        // Extract the text now, while the PDF is already open. Doing it at search
+        // time would mean re-opening every PDF the user owns on every keystroke.
+        for (page in document.pages) {
+            if (page.pdfPageIndex < 0) continue
+            runCatching {
+                File(root, "$id/pages/${page.id}.txt")
+                    .writeText(source.textOf(page.pdfPageIndex))
+            }
+        }
+        source.close()
         writeMeta(id, title, document)
         return NoteMeta(id, title, System.currentTimeMillis(), pages.size, 0)
     }
+
+    /**
+     * Notes whose title or extracted PDF text contains [query]. Handwriting is
+     * not searchable yet - that needs recognition, which is its own pass.
+     */
+    fun search(query: String): List<NoteMeta> {
+        val needle = query.trim()
+        if (needle.isEmpty()) return list()
+        return list().filter { meta ->
+            ensureTextIndex(meta.id)
+            meta.title.contains(needle, ignoreCase = true) || textContains(meta.id, needle)
+        }
+    }
+
+    /**
+     * Builds the text index for a PDF note that has not got one - a note
+     * imported before indexing existed would otherwise be quietly unsearchable
+     * forever.
+     */
+    private fun ensureTextIndex(id: String) {
+        val dir = File(root, "$id/pages")
+        if (!pdfFile(id).isFile) return
+        if (dir.listFiles { file -> file.name.endsWith(".txt") }?.isNotEmpty() == true) return
+        val source = PdfSource.open(pdfFile(id)) ?: return
+        for (page in load(id).pages) {
+            if (page.pdfPageIndex < 0) continue
+            runCatching { File(dir, "${page.id}.txt").writeText(source.textOf(page.pdfPageIndex)) }
+        }
+        source.close()
+    }
+
+    private fun textContains(id: String, needle: String): Boolean =
+        File(root, "$id/pages")
+            .listFiles { file -> file.name.endsWith(".txt") }
+            ?.any { runCatching { it.readText().contains(needle, true) }.getOrDefault(false) }
+            ?: false
 
     fun delete(id: String) {
         File(root, id).deleteRecursively()
@@ -189,7 +234,7 @@ class NoteStore(context: Context) {
             writeStrokes(File(dir, "${page.id}.bin"), page.strokes)
         }
         // A page that was deleted this session leaves its file behind otherwise.
-        val live = document.pages.map { "${it.id}.bin" }.toSet()
+        val live = document.pages.flatMap { listOf("${it.id}.bin", "${it.id}.txt") }.toSet()
         dir.listFiles()?.forEach { if (it.name !in live) it.delete() }
         writeMeta(id, title, document)
     }

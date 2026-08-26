@@ -46,7 +46,9 @@ import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.ZoomOutMap
 import androidx.compose.material.icons.outlined.Brush
@@ -86,7 +88,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -144,6 +148,20 @@ private fun NoteListScreen(store: NoteStore, onOpen: (NoteMeta) -> Unit) {
     var naming by remember { mutableStateOf(false) }
     var importing by remember { mutableStateOf(false) }
     var importFailed by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+    var results by remember { mutableStateOf<List<NoteMeta>?>(null) }
+
+    // Searching reads every note's text index off disk, so it runs off the main
+    // thread and only after typing settles.
+    LaunchedEffect(query, revision) {
+        if (query.isBlank()) {
+            results = null
+            return@LaunchedEffect
+        }
+        delay(SEARCH_DEBOUNCE_MS)
+        results = withContext(Dispatchers.IO) { store.search(query) }
+    }
+    val shown = results ?: notes
 
     val pickPdf = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
@@ -167,7 +185,22 @@ private fun NoteListScreen(store: NoteStore, onOpen: (NoteMeta) -> Unit) {
     }
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("Notesis") }) },
+        topBar = {
+            TopAppBar(
+                title = {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        singleLine = true,
+                        placeholder = { Text("노트 제목 · PDF 본문 검색") },
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(end = 16.dp, top = 4.dp, bottom = 4.dp),
+                    )
+                },
+            )
+        },
         floatingActionButton = {
             Column(horizontalAlignment = Alignment.End) {
                 FloatingActionButton(
@@ -182,14 +215,17 @@ private fun NoteListScreen(store: NoteStore, onOpen: (NoteMeta) -> Unit) {
             }
         },
     ) { padding ->
-        if (notes.isEmpty()) {
+        if (shown.isEmpty()) {
             Box(
                 Modifier
                     .fillMaxSize()
                     .padding(padding),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("아직 노트가 없습니다", color = MaterialTheme.colorScheme.outline)
+                Text(
+                    if (query.isBlank()) "아직 노트가 없습니다" else "\"$query\" 검색 결과가 없습니다",
+                    color = MaterialTheme.colorScheme.outline,
+                )
             }
         } else {
             LazyVerticalGrid(
@@ -201,7 +237,7 @@ private fun NoteListScreen(store: NoteStore, onOpen: (NoteMeta) -> Unit) {
                     .fillMaxSize()
                     .padding(padding),
             ) {
-                items(notes, key = { it.id }) { note ->
+                items(shown, key = { it.id }) { note ->
                     NoteCard(
                         note = note,
                         onOpen = { onOpen(note) },
@@ -358,8 +394,13 @@ private fun NoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> Unit) {
     var currentPage by remember { mutableIntStateOf(0) }
     var canvas by remember { mutableStateOf<InkCanvasView?>(null) }
     var latencyText by remember { mutableStateOf("") }
+    var selectedText by remember { mutableStateOf<String?>(null) }
+    val clipboard = LocalClipboardManager.current
 
-    BackHandler { onBack() }
+    // Back clears a selection first, the way dismissing anything else works.
+    BackHandler {
+        if (selectedText != null) canvas?.clearSelection() else onBack()
+    }
 
     Box(
         Modifier
@@ -376,6 +417,7 @@ private fun NoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> Unit) {
                         pageCount = document.pages.size
                     }
                     onCurrentPageChanged = { currentPage = it }
+                    onSelectionChanged = { selectedText = it?.text }
                     canvas = this
                 }
             },
@@ -450,6 +492,22 @@ private fun NoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> Unit) {
             modifier = Modifier.align(Alignment.TopCenter),
         )
 
+        selectedText?.let { text ->
+            SelectionActions(
+                text = text,
+                onCopy = {
+                    clipboard.setText(AnnotatedString(text))
+                    canvas?.clearSelection()
+                },
+                onHighlight = {
+                    canvas?.highlightSelection()
+                    edits++
+                },
+                onDismiss = { canvas?.clearSelection() },
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
+        }
+
         AnimatedVisibility(
             visible = showPages,
             enter = slideInHorizontally { it },
@@ -473,6 +531,50 @@ private fun NoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> Unit) {
                     edits++
                 },
             )
+        }
+    }
+}
+
+/** What you can do with text lifted off a PDF page. */
+@Composable
+private fun SelectionActions(
+    text: String,
+    onCopy: () -> Unit,
+    onHighlight: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier
+            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .padding(20.dp),
+        shape = RoundedCornerShape(20.dp),
+        tonalElevation = 3.dp,
+        shadowElevation = 6.dp,
+    ) {
+        Row(
+            Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                // Selected PDF text arrives with its line breaks; the chip is
+                // one line.
+                text.lineSequence().joinToString(" "),
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.width(220.dp),
+            )
+            ToolbarDivider()
+            TextButton(onClick = onHighlight) {
+                Icon(Icons.Outlined.Brush, contentDescription = null)
+                Text(" 형광펜")
+            }
+            TextButton(onClick = onCopy) {
+                Icon(Icons.Default.ContentCopy, contentDescription = null)
+                Text(" 복사")
+            }
+            TextButton(onClick = onDismiss) { Text("취소") }
         }
     }
 }
@@ -738,3 +840,4 @@ private fun ToolbarDivider() {
 }
 
 private const val AUTOSAVE_DELAY_MS = 1200L
+private const val SEARCH_DEBOUNCE_MS = 220L

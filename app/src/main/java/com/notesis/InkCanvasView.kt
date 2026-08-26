@@ -10,6 +10,8 @@ import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
+import android.view.VelocityTracker
+import android.view.ViewConfiguration
 import android.widget.FrameLayout
 import androidx.ink.authoring.ExperimentalLatencyDataApi
 import androidx.ink.authoring.InProgressStrokeId
@@ -26,8 +28,13 @@ import androidx.ink.geometry.ImmutableVec
 import androidx.ink.geometry.Intersection
 import androidx.ink.rendering.android.canvas.CanvasStrokeRenderer
 import androidx.ink.rendering.android.view.ViewStrokeRenderer
+import androidx.ink.brush.InputToolType
+import androidx.ink.strokes.MutableStrokeInputBatch
 import androidx.ink.strokes.Stroke
 import androidx.input.motionprediction.MotionEventPredictor
+import kotlin.math.abs
+import kotlin.math.exp
+import kotlin.math.hypot
 
 enum class Tool {
     PEN,
@@ -75,6 +82,9 @@ class InkCanvasView @JvmOverloads constructor(
     /** Fired when the page under the middle of the screen changes. */
     var onCurrentPageChanged: ((Int) -> Unit)? = null
 
+    /** Fired when PDF text gets selected or cleared, so the host can offer actions. */
+    var onSelectionChanged: ((PdfSelection?) -> Unit)? = null
+
     /** Kept from the P0 spike: the project's own latency instrument. */
     val latency = LatencyStats()
 
@@ -105,6 +115,21 @@ class InkCanvasView @JvmOverloads constructor(
     private var lastFocusY = 0f
     private var currentPage = 0
     private var fitted = false
+
+    private var velocityTracker: VelocityTracker? = null
+    private var flingVx = 0f
+    private var flingVy = 0f
+    private var flingLastNanos = 0L
+    private var flinging = false
+
+    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
+    private var selection: PdfSelection? = null
+    private var selectingPage = -1
+    private var selectionAnchor: RectF? = null
+    private var selectingText = false
+    private var pressX = 0f
+    private var pressY = 0f
+    private val longPress = Runnable { beginTextSelection() }
 
     private sealed interface Edit {
         val page: Page
@@ -347,6 +372,16 @@ class InkCanvasView @JvmOverloads constructor(
                         // back in page-local coordinates and stays with its page.
                         motionEventToWorldTransform = screenToPage(index),
                     )
+                    // Writing always moves the pen straight away, so a pen that
+                    // stays put is asking for the text underneath, not for ink.
+                    // The stroke starts anyway and is cancelled if the hold wins,
+                    // because waiting first would cost the latency this is about.
+                    if (document.pages[index].background == PageBackground.PDF) {
+                        pressX = event.x
+                        pressY = event.y
+                        selectingPage = index
+                        postDelayed(longPress, LONG_PRESS_MS)
+                    }
                 }
                 return true
             }
@@ -358,6 +393,13 @@ class InkCanvasView @JvmOverloads constructor(
                 if (erasing) {
                     eraseAlong(event, index)
                     return true
+                }
+                if (selectingText) {
+                    extendTextSelection(event, index)
+                    return true
+                }
+                if (hypot(event.getX(index) - pressX, event.getY(index) - pressY) > touchSlop) {
+                    removeCallbacks(longPress)
                 }
                 val strokeId = activeStrokeId ?: return false
                 latency.addSamples(1 + event.historySize)
@@ -372,6 +414,10 @@ class InkCanvasView @JvmOverloads constructor(
 
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
                 val pointerId = activeStylusPointer ?: return false
+                if (selectingText) {
+                    endStylus()
+                    return true
+                }
                 activeStrokeId?.let { wet.finishStroke(event, pointerId, it) }
                 endStylus()
                 return true
@@ -387,6 +433,8 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun endStylus() {
+        removeCallbacks(longPress)
+        selectingText = false
         activeStylusPointer = null
         activeStrokeId = null
         erasing = false
@@ -395,11 +443,13 @@ class InkCanvasView @JvmOverloads constructor(
 
     private fun onFingers(event: MotionEvent): Boolean {
         scaleDetector.onTouchEvent(event)
+        trackVelocity(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN,
             MotionEvent.ACTION_POINTER_DOWN,
             MotionEvent.ACTION_POINTER_UP,
             -> {
+                stopFling()
                 // The centroid jumps when a finger joins or leaves, so re-anchor
                 // instead of translating by that jump.
                 val focus = focusOf(event, skipPointerIndex = leavingIndex(event))
@@ -418,8 +468,86 @@ class InkCanvasView @JvmOverloads constructor(
                 lastFocusY = focus[1]
                 return true
             }
+
+            MotionEvent.ACTION_UP -> {
+                startFling()
+                releaseVelocity()
+                return true
+            }
+
+            MotionEvent.ACTION_CANCEL -> {
+                releaseVelocity()
+                return true
+            }
         }
         return true
+    }
+
+    // ---- inertia ------------------------------------------------------------
+
+    private fun trackVelocity(event: MotionEvent) {
+        val tracker = velocityTracker ?: VelocityTracker.obtain().also { velocityTracker = it }
+        tracker.addMovement(event)
+    }
+
+    private fun releaseVelocity() {
+        velocityTracker?.recycle()
+        velocityTracker = null
+    }
+
+    private fun startFling() {
+        val tracker = velocityTracker ?: return
+        // Pinching ends with the fingers moving in opposite directions, which
+        // averages into a velocity that has nothing to do with a flick.
+        if (scaleDetector.isInProgress) return
+        tracker.computeCurrentVelocity(1000, MAX_FLING_VELOCITY)
+        val vx = tracker.xVelocity
+        val vy = tracker.yVelocity
+        if (hypot(vx, vy) < MIN_FLING_VELOCITY) return
+        flingVx = vx
+        flingVy = vy
+        flingLastNanos = System.nanoTime()
+        if (!flinging) {
+            flinging = true
+            postOnAnimation(flingStep)
+        }
+    }
+
+    private fun stopFling() {
+        flinging = false
+        removeCallbacks(flingStep)
+    }
+
+    private val flingStep = object : Runnable {
+        override fun run() {
+            if (!flinging) return
+            val now = System.nanoTime()
+            val dt = ((now - flingLastNanos) / 1e9f).coerceIn(0f, 0.05f)
+            flingLastNanos = now
+
+            documentToScreen.getValues(matrixValues)
+            val beforeX = matrixValues[Matrix.MTRANS_X]
+            val beforeY = matrixValues[Matrix.MTRANS_Y]
+            documentToScreen.postTranslate(flingVx * dt, flingVy * dt)
+            onTransformChanged()
+
+            // Exponential decay rather than a fixed per-frame factor, so the
+            // glide feels the same whether the display is at 60Hz or 120Hz.
+            val decay = exp(-FLING_FRICTION * dt)
+            flingVx *= decay
+            flingVy *= decay
+
+            documentToScreen.getValues(matrixValues)
+            val movedX = abs(matrixValues[Matrix.MTRANS_X] - beforeX)
+            val movedY = abs(matrixValues[Matrix.MTRANS_Y] - beforeY)
+            // Clamping pins the document at the ends; carrying on would just
+            // burn frames going nowhere.
+            if (hypot(flingVx, flingVy) < MIN_FLING_VELOCITY || movedX + movedY < 0.05f) {
+                stopFling()
+                return
+            }
+            postOnAnimation(this)
+        }
     }
 
     private fun leavingIndex(event: MotionEvent): Int =
@@ -468,6 +596,91 @@ class InkCanvasView @JvmOverloads constructor(
             epsilon = 0.1f,
         )
     }
+
+    // ---- PDF text selection -------------------------------------------------
+
+    /**
+     * The hold won: throw away the stroke it started and select the word under
+     * the pen instead.
+     */
+    private fun beginTextSelection() {
+        val index = selectingPage
+        val source = pdf ?: return
+        if (index !in document.pages.indices) return
+        activeStrokeId?.let { wet.cancelStroke(it) }
+        activeStrokeId = null
+        selectingText = true
+
+        val point = pageLocal(pressX, pressY, index)
+        selectionAnchor = point
+        val found = source.select(document.pages[index].pdfPageIndex, point, point) ?: return
+        setSelection(found)
+        performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+    }
+
+    /** Dragging after the hold runs the selection from the anchor to the pen. */
+    private fun extendTextSelection(event: MotionEvent, pointerIndex: Int) {
+        val source = pdf ?: return
+        val index = selectingPage
+        val anchor = selectionAnchor ?: return
+        if (index !in document.pages.indices) return
+        val point = pageLocal(event.getX(pointerIndex), event.getY(pointerIndex), index)
+        val found = source.select(document.pages[index].pdfPageIndex, anchor, point) ?: return
+        setSelection(found)
+    }
+
+    private fun setSelection(found: PdfSelection?) {
+        selection = found
+        dry.invalidate()
+        onSelectionChanged?.invoke(found)
+    }
+
+    fun clearSelection() {
+        if (selection == null) return
+        selectionAnchor = null
+        setSelection(null)
+    }
+
+    /**
+     * Turns the selected text boxes into real highlighter strokes, so a
+     * highlight is ink on the page like any other and needs no new file format.
+     */
+    fun highlightSelection() {
+        val found = selection ?: return
+        val page = document.pages.getOrNull(selectingPage) ?: return
+        val brush = Brush.createWithColorIntArgb(
+            family = Tool.HIGHLIGHTER.brushFamily(),
+            colorIntArgb = (colorArgb and 0x00FFFFFF) or HIGHLIGHT_ALPHA,
+            size = 1f,
+            epsilon = 0.1f,
+        )
+        for (box in found.boxes) {
+            if (box.width() <= 0f || box.height() <= 0f) continue
+            val middle = box.centerY()
+            val inputs = MutableStrokeInputBatch()
+            // Two points is a stroke; the brush size covers the line height.
+            inputs.add(InputToolType.STYLUS, box.left, middle, 0L)
+            inputs.add(InputToolType.STYLUS, box.right, middle, 16L)
+            val sized = brush.copy(size = box.height() * HIGHLIGHT_HEIGHT)
+            val stroke = Stroke(sized, inputs.toImmutable())
+            page.strokes += stroke
+            undoStack += Edit.Drawn(page, stroke)
+        }
+        redoStack.clear()
+        clearSelection()
+        afterEdit()
+    }
+
+    fun selectedText(): String? = selection?.text
+
+    /** Screen point -> page-local world units, as a degenerate rect. */
+    private fun pageLocal(x: Float, y: Float, index: Int): RectF {
+        val point = floatArrayOf(x, y)
+        screenToPage(index).mapPoints(point)
+        return RectF(point[0], point[1], point[0], point[1])
+    }
+
+    // ---- erasing ------------------------------------------------------------
 
     /** Erases along the segment travelled since the last event, not just at a point. */
     private fun eraseAlong(event: MotionEvent, pointerIndex: Int) {
@@ -518,13 +731,23 @@ class InkCanvasView @JvmOverloads constructor(
         private val renderer = ViewStrokeRenderer(CanvasStrokeRenderer.create(), this)
         private val viewport = FloatArray(4)
         private val pageRect = RectF()
-        private val paper = Paint().apply { color = Color.WHITE }
-        private val shadow = Paint().apply { color = 0x22000000 }
-        private val rule = Paint().apply { color = 0xFFD8E2EC.toInt(); strokeWidth = 2f }
+        private val paper = Paint().apply { color = Color.WHITE; isAntiAlias = true }
+        private val shadow = Paint().apply { color = 0x22000000; isAntiAlias = true }
+        private val rule = Paint().apply {
+            color = 0xFFD8E2EC.toInt()
+            strokeWidth = 2f
+            isAntiAlias = true
+        }
         private val bitmapPaint = Paint().apply {
             isFilterBitmap = true
             isAntiAlias = true
         }
+        private val selectionPaint = Paint().apply {
+            isAntiAlias = true
+            color = 0x553B7DDD
+        }
+        private val crop = RectF()
+        private val destination = RectF()
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
@@ -537,18 +760,21 @@ class InkCanvasView @JvmOverloads constructor(
                 canvas.save()
                 canvas.concat(documentToScreen)
                 canvas.translate(document.leftOf(i), top)
-                drawPaper(canvas, page)
+                drawPaper(canvas, page, i)
                 // The draw scope caches the canvas matrix when it is obtained, so
                 // the page transform has to be in place before this call, not
                 // applied inside it.
                 renderer.drawWithStrokes(canvas) { _, scope ->
                     for (stroke in page.strokes) scope.drawStroke(stroke)
                 }
+                if (i == selectingPage) {
+                    selection?.boxes?.forEach { canvas.drawRect(it, selectionPaint) }
+                }
                 canvas.restore()
             }
         }
 
-        private fun drawPaper(canvas: Canvas, page: Page) {
+        private fun drawPaper(canvas: Canvas, page: Page, index: Int) {
             pageRect.set(0f, 0f, page.width, page.height)
             canvas.drawRect(4f, 4f, page.width + 4f, page.height + 4f, shadow)
             canvas.drawRect(pageRect, paper)
@@ -575,17 +801,49 @@ class InkCanvasView @JvmOverloads constructor(
                     }
                 }
 
-                PageBackground.PDF -> drawPdf(canvas, page)
+                PageBackground.PDF -> drawPdf(canvas, page, index)
             }
         }
 
-        private fun drawPdf(canvas: Canvas, page: Page) {
+        private fun drawPdf(canvas: Canvas, page: Page, index: Int) {
             val source = pdf ?: return
             // Ask for roughly the pixels the page occupies right now, so a page
-            // viewed small is not rendered at full size.
+            // viewed small is not rendered at full size - and, once zoomed past
+            // what a whole-page bitmap can carry, for a crop of just what is on
+            // screen at screen resolution. That last part is what stops zoomed-in
+            // text from going soft and stair-stepped.
             val wantPx = (page.width * currentScale()).toInt().coerceAtLeast(320)
+            if (wantPx > DETAIL_THRESHOLD_PX) {
+                visibleCropOf(page, index, crop)
+                val detail = source.detail(page.pdfPageIndex, crop, width)
+                if (detail != null) {
+                    // The crop the renderer actually produced is padded, so it is
+                    // asked for again here rather than assumed to match.
+                    source.detailSource(page.pdfPageIndex)?.let { region ->
+                        destination.set(region)
+                        canvas.drawBitmap(detail, null, destination, bitmapPaint)
+                        return
+                    }
+                }
+            }
             val bitmap: Bitmap = source.bitmap(page.pdfPageIndex, wantPx) ?: return
             canvas.drawBitmap(bitmap, null, pageRect, bitmapPaint)
+        }
+
+        /** The part of this page currently on screen, in page-local units. */
+        private fun visibleCropOf(page: Page, index: Int, out: RectF) {
+            val left = document.leftOf(index)
+            val top = document.topOf(index)
+            out.set(
+                viewport[0] - left,
+                viewport[1] - top,
+                viewport[2] - left,
+                viewport[3] - top,
+            )
+            if (out.left < 0f) out.left = 0f
+            if (out.top < 0f) out.top = 0f
+            if (out.right > page.width) out.right = page.width
+            if (out.bottom > page.height) out.bottom = page.height
         }
 
         /** Screen rect mapped back into document space: [xMin, yMin, xMax, yMax]. */
@@ -613,6 +871,13 @@ class InkCanvasView @JvmOverloads constructor(
         const val HIGHLIGHT_ALPHA = 0x66000000
         const val RULE_SPACING = 60f
         const val PAGE_TOP_MARGIN_PX = 24f
+        const val LONG_PRESS_MS = 350L
+        const val HIGHLIGHT_HEIGHT = 0.85f
+        const val MIN_FLING_VELOCITY = 80f
+        const val MAX_FLING_VELOCITY = 12000f
+        /** Higher is stickier; this lands close to the platform list fling. */
+        const val FLING_FRICTION = 3.2f
+        const val DETAIL_THRESHOLD_PX = 2048
         val IDENTITY = ImmutableAffineTransform(1f, 0f, 0f, 0f, 1f, 0f)
     }
 }
