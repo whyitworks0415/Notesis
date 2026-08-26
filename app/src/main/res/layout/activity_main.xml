@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FFFDFCF8">
+
+    <!-- Dry strokes: everything already committed. -->
+    <com.notesis.DryStrokesView
+        android:id="@+id/dry"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- Wet ink: draws straight to the front buffer, on top of everything. -->
+    <androidx.ink.authoring.InProgressStrokesView
+        android:id="@+id/wet"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <TextView
+        android:id="@+id/hud"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|start"
+        android:padding="12dp"
+        android:textColor="#FF444444"
+        android:textSize="13sp"
+        android:fontFamily="monospace"
+        android:text="draw to measure" />
+</FrameLayout>
