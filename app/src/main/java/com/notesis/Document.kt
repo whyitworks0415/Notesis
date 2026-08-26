@@ -37,6 +37,17 @@ class Page(
      */
     var dirty: Boolean = true
 
+    /**
+     * The zoom level this page's stroke meshes were built for, in screen pixels
+     * per page unit. Zero means "not tessellated for any particular zoom yet".
+     *
+     * Ink bakes a stroke's outline, antialiasing band and all, when the stroke is
+     * made. Magnifying that mesh magnifies the band with it, which is what makes
+     * a zoomed-in stroke look soft. The geometry is rebuilt from the stored
+     * inputs when the zoom moves far enough from this value.
+     */
+    var tessellatedFor: Float = 0f
+
     companion object {
         // A4 at 150dpi. Any consistent unit works; this one makes an imported
         // PDF and a blank page land at comparable sizes.

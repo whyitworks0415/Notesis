@@ -32,6 +32,8 @@ import androidx.ink.brush.InputToolType
 import androidx.ink.strokes.MutableStrokeInputBatch
 import androidx.ink.strokes.Stroke
 import androidx.input.motionprediction.MotionEventPredictor
+import java.util.IdentityHashMap
+import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.hypot
@@ -39,18 +41,36 @@ import kotlin.math.hypot
 /** Deepest zoom the canvas allows, in screen pixels per page unit. */
 const val MAX_CANVAS_SCALE = 8f
 
+/** Ink's recommended mesh fidelity, in physical pixels. */
+const val TESSELLATION_TARGET_PX = 0.1f
+
 /**
- * Mesh fidelity for new strokes, in page units.
+ * Mesh fidelity for a stroke about to be shown at [scale] screen pixels per page
+ * unit, expressed in page units.
  *
- * Ink tessellates a stroke once, when it is created, and epsilon is what fixes
- * how finely - so it has to be chosen for the deepest zoom the canvas allows,
- * not for the zoom the stroke happened to be drawn at. Anything coarser and a
- * zoomed-in stroke shows its facets and its antialiasing band spreads over
- * several pixels, which reads as broken and blurry at the same time.
- *
- * Ink's guidance is 0.1 physical pixels; this is that, at maximum zoom.
+ * Ink bakes a stroke's outline - antialiasing band included - when the stroke is
+ * created, so magnifying the mesh magnifies the softness with it. Pinning
+ * epsilon at the deepest zoom would keep every stroke sharp, but it also makes
+ * every stroke carry that vertex count forever, which costs memory on a long
+ * note and time on every stroke drawn. Choosing it from the zoom in use, and
+ * rebuilding when the zoom moves, gets the same picture for what the picture
+ * actually needs.
  */
-const val STROKE_EPSILON = 0.1f / MAX_CANVAS_SCALE
+fun epsilonFor(scale: Float): Float =
+    TESSELLATION_TARGET_PX / scale.coerceIn(1f, MAX_CANVAS_SCALE)
+
+/**
+ * Powers of two, so a pinch settles onto one of a handful of fidelities instead
+ * of asking for a slightly different mesh at every zoom level along the way.
+ */
+fun tessellationBucket(scale: Float): Float {
+    var bucket = 1f
+    while (bucket < scale && bucket < MAX_CANVAS_SCALE) bucket *= 2f
+    return bucket.coerceAtMost(MAX_CANVAS_SCALE)
+}
+
+/** Fidelity for a stroke that has no zoom context yet, such as one just loaded. */
+const val STROKE_EPSILON = TESSELLATION_TARGET_PX
 
 enum class Tool {
     PEN,
@@ -147,11 +167,18 @@ class InkCanvasView @JvmOverloads constructor(
     private var pressY = 0f
     private val longPress = Runnable { beginTextSelection() }
 
+    /** Mesh generation is native work; keeping it off the UI thread keeps frames. */
+    private val refiner = Executors.newSingleThreadExecutor()
+    private val refineRunnable = Runnable { refineVisiblePages() }
+
     private sealed interface Edit {
         val page: Page
 
-        class Drawn(override val page: Page, val stroke: Stroke) : Edit
-        class Erased(override val page: Page, val strokes: List<Stroke>) : Edit
+        // Rebuilding a page's geometry replaces every Stroke instance on it, so
+        // history has to be able to follow the swap rather than keep pointing at
+        // objects that are no longer in the page.
+        class Drawn(override val page: Page, var stroke: Stroke) : Edit
+        class Erased(override val page: Page, var strokes: List<Stroke>) : Edit
     }
 
     private val scaleDetector = ScaleGestureDetector(
@@ -195,6 +222,7 @@ class InkCanvasView @JvmOverloads constructor(
         this.pdf?.close()
         this.document = document
         document.invalidateLayout()
+        for (page in document.pages) page.tessellatedFor = 0f
         this.pdf = pdf
         // Has to be the layer that draws the pages: invalidating this ViewGroup
         // leaves the child's cached display list alone, so nothing repaints.
@@ -213,6 +241,8 @@ class InkCanvasView @JvmOverloads constructor(
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
+        removeCallbacks(refineRunnable)
+        refiner.shutdown()
         pdf?.close()
         pdf = null
     }
@@ -269,6 +299,9 @@ class InkCanvasView @JvmOverloads constructor(
         for (page in changed) page.dirty = true
         dry.invalidate()
         onStrokesChanged?.invoke()
+        // An undone erase puts back strokes built at whatever zoom they were
+        // erased at, so history changes need a refine too.
+        scheduleRefine()
     }
 
     fun addPage(after: Int) {
@@ -318,6 +351,9 @@ class InkCanvasView @JvmOverloads constructor(
         documentToScreen.invert(screenToDocument)
         dry.invalidate()
         updateCurrentPage()
+        // Only once the zoom settles - rebuilding on every pinch frame would
+        // cost far more than it buys.
+        scheduleRefine()
     }
 
     /** Keeps the document from being flung off into empty space. */
@@ -613,8 +649,93 @@ class InkCanvasView @JvmOverloads constructor(
             // Sizes are page units, so a stroke keeps its size on the page and
             // zooming magnifies it like everything else on the paper.
             size = if (highlighter) strokeWidth * 4f else strokeWidth,
-            epsilon = STROKE_EPSILON,
+            // Drawn at the zoom in use, so a stroke made while zoomed in is
+            // already fine enough and never needs rebuilding.
+            epsilon = epsilonFor(currentScale()),
         )
+    }
+
+    // ---- mesh refinement -----------------------------------------------------
+
+    /**
+     * Rebuilds the geometry of the pages on screen for the zoom now in use.
+     *
+     * The strokes themselves are stored as vectors - the raw pen inputs - so the
+     * outline can be generated again at any fidelity. That is the whole reason a
+     * zoomed-in stroke can be made crisp instead of magnified soft.
+     */
+    private fun refineVisiblePages() {
+        // Never while a stroke is being drawn: the page list would be swapped
+        // out from under the stroke that is about to land on it.
+        if (activeStylusPointer != null) return
+        val target = tessellationBucket(currentScale())
+        val epsilon = epsilonFor(target)
+
+        val pending = visiblePages().filter {
+            it.tessellatedFor != target && it.strokes.isNotEmpty()
+        }
+        if (pending.isEmpty()) return
+
+        // Snapshot what is being rebuilt, so a stroke drawn or erased meanwhile
+        // is detected at swap time instead of being silently thrown away.
+        val work = pending.map { page -> page to page.strokes.toList() }
+        refiner.execute {
+            val built = work.map { (page, snapshot) ->
+                Triple(
+                    page,
+                    snapshot,
+                    snapshot.map { Stroke(it.brush.copy(epsilon = epsilon), it.inputs) },
+                )
+            }
+            post {
+                if (tessellationBucket(currentScale()) != target) return@post
+                for ((page, snapshot, rebuilt) in built) {
+                    if (!sameStrokes(page.strokes, snapshot)) continue
+                    val replacements = IdentityHashMap<Stroke, Stroke>()
+                    for (i in snapshot.indices) replacements[snapshot[i]] = rebuilt[i]
+                    page.strokes.clear()
+                    page.strokes += rebuilt
+                    page.tessellatedFor = target
+                    remapHistory(replacements)
+                    // Nothing about the saved file changed: same inputs, same
+                    // brush, only the generated outline. Do not dirty the page.
+                }
+                dry.invalidate()
+            }
+        }
+    }
+
+    private fun sameStrokes(current: List<Stroke>, snapshot: List<Stroke>): Boolean {
+        if (current.size != snapshot.size) return false
+        for (i in current.indices) if (current[i] !== snapshot[i]) return false
+        return true
+    }
+
+    private fun remapHistory(replacements: IdentityHashMap<Stroke, Stroke>) {
+        for (edit in undoStack + redoStack) {
+            when (edit) {
+                is Edit.Drawn -> replacements[edit.stroke]?.let { edit.stroke = it }
+                is Edit.Erased ->
+                    edit.strokes = edit.strokes.map { replacements[it] ?: it }
+            }
+        }
+    }
+
+    private fun visiblePages(): List<Page> {
+        if (width == 0 || height == 0) return emptyList()
+        val bounds = floatArrayOf(0f, 0f, width.toFloat(), height.toFloat())
+        screenToDocument.mapPoints(bounds)
+        val top = minOf(bounds[1], bounds[3])
+        val bottom = maxOf(bounds[1], bounds[3])
+        return document.pages.filterIndexed { i, page ->
+            val pageTop = document.topOf(i)
+            pageTop <= bottom && pageTop + page.height >= top
+        }
+    }
+
+    private fun scheduleRefine() {
+        removeCallbacks(refineRunnable)
+        postDelayed(refineRunnable, REFINE_DEBOUNCE_MS)
     }
 
     // ---- PDF text selection -------------------------------------------------
@@ -672,7 +793,7 @@ class InkCanvasView @JvmOverloads constructor(
             family = Tool.HIGHLIGHTER.brushFamily(),
             colorIntArgb = (colorArgb and 0x00FFFFFF) or HIGHLIGHT_ALPHA,
             size = 1f,
-            epsilon = STROKE_EPSILON,
+            epsilon = epsilonFor(currentScale()),
         )
         for (box in found.boxes) {
             if (box.width() <= 0f || box.height() <= 0f) continue
@@ -943,6 +1064,7 @@ class InkCanvasView @JvmOverloads constructor(
         const val HIGHLIGHT_ALPHA = 0x66000000
         const val RULE_SPACING = 60f
         const val PAGE_TOP_MARGIN_PX = 24f
+        const val REFINE_DEBOUNCE_MS = 200L
         const val LONG_PRESS_MS = 350L
         const val HIGHLIGHT_HEIGHT = 0.85f
         const val MIN_FLING_VELOCITY = 80f
