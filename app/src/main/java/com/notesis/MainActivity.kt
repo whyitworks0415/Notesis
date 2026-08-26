@@ -1,13 +1,21 @@
 package com.notesis
 
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,15 +23,18 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -31,9 +42,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.ZoomOutMap
 import androidx.compose.material.icons.outlined.Brush
@@ -41,6 +54,9 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FloatingActionButton
@@ -59,8 +75,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,11 +86,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -112,18 +134,51 @@ private val palette = listOf(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun NoteListScreen(store: NoteStore, onOpen: (NoteMeta) -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     // Re-read from disk whenever something changed it, rather than keeping a
     // second copy of the truth in memory and having to hold the two in sync.
-    var revision by remember { mutableStateOf(0) }
+    var revision by remember { mutableIntStateOf(0) }
     val notes = remember(revision) { store.list() }
     var pendingDelete by remember { mutableStateOf<NoteMeta?>(null) }
     var naming by remember { mutableStateOf(false) }
+    var importing by remember { mutableStateOf(false) }
+    var importFailed by remember { mutableStateOf(false) }
+
+    val pickPdf = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        importing = true
+        scope.launch {
+            // Copying and parsing a large PDF is far too slow for the main
+            // thread, and the picker gives no size guarantee.
+            val imported = withContext(Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        store.createFromPdf(displayName(context, uri), input)
+                    }
+                }.getOrNull()
+            }
+            importing = false
+            revision++
+            if (imported == null) importFailed = true else onOpen(imported)
+        }
+    }
 
     Scaffold(
         topBar = { TopAppBar(title = { Text("Notesis") }) },
         floatingActionButton = {
-            FloatingActionButton(onClick = { naming = true }) {
-                Icon(Icons.Default.Add, contentDescription = "새 노트")
+            Column(horizontalAlignment = Alignment.End) {
+                FloatingActionButton(
+                    onClick = { pickPdf.launch(arrayOf("application/pdf")) },
+                    modifier = Modifier.padding(bottom = 12.dp),
+                ) {
+                    Icon(Icons.Default.Description, contentDescription = "PDF 가져오기")
+                }
+                FloatingActionButton(onClick = { naming = true }) {
+                    Icon(Icons.Default.Add, contentDescription = "새 노트")
+                }
             }
         },
     ) { padding ->
@@ -157,6 +212,24 @@ private fun NoteListScreen(store: NoteStore, onOpen: (NoteMeta) -> Unit) {
         }
     }
 
+    if (importing) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color(0x66000000)),
+            contentAlignment = Alignment.Center,
+        ) { CircularProgressIndicator() }
+    }
+
+    if (importFailed) {
+        AlertDialog(
+            onDismissRequest = { importFailed = false },
+            title = { Text("PDF를 열 수 없습니다") },
+            text = { Text("손상되었거나 암호가 걸린 파일일 수 있습니다.") },
+            confirmButton = { TextButton(onClick = { importFailed = false }) { Text("확인") } },
+        )
+    }
+
     if (naming) {
         NameDialog(
             onDismiss = { naming = false },
@@ -188,6 +261,17 @@ private fun NoteListScreen(store: NoteStore, onOpen: (NoteMeta) -> Unit) {
     }
 }
 
+/** The picked file's own name, so an imported PDF is not called "제목 없음". */
+private fun displayName(context: android.content.Context, uri: Uri): String {
+    val name = runCatching {
+        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            val index = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+            if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
+        }
+    }.getOrNull()
+    return (name ?: "가져온 PDF").removeSuffix(".pdf")
+}
+
 @Composable
 private fun NoteCard(note: NoteMeta, onOpen: () -> Unit, onDelete: () -> Unit) {
     Card(
@@ -195,8 +279,8 @@ private fun NoteCard(note: NoteMeta, onOpen: () -> Unit, onDelete: () -> Unit) {
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
         Column {
-            // Stands in for a real thumbnail. Rendering one means drawing the
-            // page offscreen, which is not worth it until pages exist.
+            // Stands in for a real thumbnail. Rendering one means drawing a page
+            // offscreen, which is its own pass and not what this change is about.
             Box(
                 Modifier
                     .fillMaxWidth()
@@ -225,7 +309,7 @@ private fun NoteCard(note: NoteMeta, onOpen: () -> Unit, onDelete: () -> Unit) {
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        "${dateFormat.format(Date(note.modified))} · ${note.strokeCount}획",
+                        "${dateFormat.format(Date(note.modified))} · ${note.pageCount}쪽",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.outline,
                     )
@@ -263,11 +347,15 @@ private fun NameDialog(onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
 
 @Composable
 private fun NoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> Unit) {
+    val context = LocalContext.current
     var tool by remember { mutableStateOf(Tool.PEN) }
     var color by remember { mutableStateOf(palette.first()) }
     var width by remember { mutableStateOf(5f) }
     var showLatency by remember { mutableStateOf(false) }
-    var edits by remember { mutableStateOf(0) }
+    var showPages by remember { mutableStateOf(false) }
+    var edits by remember { mutableIntStateOf(0) }
+    var pageCount by remember { mutableIntStateOf(note.pageCount) }
+    var currentPage by remember { mutableIntStateOf(0) }
     var canvas by remember { mutableStateOf<InkCanvasView?>(null) }
     var latencyText by remember { mutableStateOf("") }
 
@@ -276,14 +364,18 @@ private fun NoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> Unit) {
     Box(
         Modifier
             .fillMaxSize()
-            .background(Color(0xFFFDFCF8)),
+            .background(Color(0xFFE9E7E2)),
     ) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
-            factory = { context ->
-                InkCanvasView(context).apply {
-                    setStrokes(store.load(note.id))
-                    onStrokesChanged = { edits++ }
+            factory = { viewContext ->
+                InkCanvasView(viewContext).apply {
+                    open(store.load(note.id), PdfSource.open(store.pdfFile(note.id)))
+                    onStrokesChanged = {
+                        edits++
+                        pageCount = document.pages.size
+                    }
+                    onCurrentPageChanged = { currentPage = it }
                     canvas = this
                 }
             },
@@ -295,16 +387,20 @@ private fun NoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> Unit) {
         )
 
         // Autosave: each change restarts a short timer, so a burst of strokes
-        // writes the page once instead of once per stroke.
+        // writes the note once instead of once per stroke.
         LaunchedEffect(edits) {
             if (edits == 0) return@LaunchedEffect
             delay(AUTOSAVE_DELAY_MS)
-            canvas?.let { store.save(note.id, it.strokes()) }
+            canvas?.let { view ->
+                withContext(Dispatchers.IO) { store.save(note.id, note.title, view.document) }
+            }
         }
 
         // Anything still unsaved when the screen goes away gets written now.
         DisposableEffect(Unit) {
-            onDispose { canvas?.let { store.save(note.id, it.strokes()) } }
+            onDispose {
+                canvas?.let { store.save(note.id, note.title, it.document) }
+            }
         }
 
         if (showLatency) {
@@ -331,9 +427,10 @@ private fun NoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> Unit) {
             color = color,
             width = width,
             showLatency = showLatency,
-            // edits is read so that drawing or erasing recomposes the toolbar and
-            // the undo button can re-evaluate whether there is anything to undo.
+            // edits is read here so drawing or erasing recomposes the toolbar and
+            // undo/redo can re-evaluate whether there is anything on the stacks.
             canUndo = edits.let { canvas?.canUndo() == true },
+            canRedo = edits.let { canvas?.canRedo() == true },
             onTool = { tool = it },
             onColor = { color = it },
             onWidth = { width = it },
@@ -341,11 +438,168 @@ private fun NoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> Unit) {
                 canvas?.undo()
                 edits++
             },
-            onResetZoom = { canvas?.resetZoom() },
+            onRedo = {
+                canvas?.redo()
+                edits++
+            },
+            onFitWidth = { canvas?.fitWidth() },
             onToggleLatency = { showLatency = !showLatency },
+            onTogglePages = { showPages = !showPages },
             onBack = onBack,
+            pageLabel = "${currentPage + 1} / $pageCount",
             modifier = Modifier.align(Alignment.TopCenter),
         )
+
+        AnimatedVisibility(
+            visible = showPages,
+            enter = slideInHorizontally { it },
+            exit = slideOutHorizontally { it },
+            modifier = Modifier.align(Alignment.CenterEnd),
+        ) {
+            PageSidebar(
+                document = canvas?.document,
+                currentPage = currentPage,
+                onJump = { canvas?.scrollToPage(it) },
+                onAdd = {
+                    canvas?.addPage(currentPage)
+                    edits++
+                },
+                onDelete = {
+                    canvas?.deletePage(it)
+                    edits++
+                },
+                onBackground = { index, background ->
+                    canvas?.setBackground(index, background)
+                    edits++
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun PageSidebar(
+    document: Document?,
+    currentPage: Int,
+    onJump: (Int) -> Unit,
+    onAdd: () -> Unit,
+    onDelete: (Int) -> Unit,
+    onBackground: (Int, PageBackground) -> Unit,
+) {
+    val pages = document?.pages ?: return
+    Surface(
+        modifier = Modifier
+            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .padding(12.dp)
+            .width(132.dp)
+            .fillMaxHeight(0.8f),
+        shape = RoundedCornerShape(20.dp),
+        tonalElevation = 3.dp,
+        shadowElevation = 4.dp,
+    ) {
+        Column {
+            LazyColumn(
+                Modifier.weight(1f),
+                contentPadding = PaddingValues(10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(pages) { page ->
+                    val index = pages.indexOf(page)
+                    PageChip(
+                        index = index,
+                        page = page,
+                        selected = index == currentPage,
+                        deletable = pages.size > 1,
+                        onJump = { onJump(index) },
+                        onDelete = { onDelete(index) },
+                        onBackground = { onBackground(index, it) },
+                    )
+                }
+            }
+            TextButton(
+                onClick = onAdd,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 6.dp),
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null)
+                Text(" 페이지")
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun PageChip(
+    index: Int,
+    page: Page,
+    selected: Boolean,
+    deletable: Boolean,
+    onJump: () -> Unit,
+    onDelete: () -> Unit,
+    onBackground: (PageBackground) -> Unit,
+) {
+    var menu by remember { mutableStateOf(false) }
+    Box {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(
+                    if (selected) MaterialTheme.colorScheme.primaryContainer else Color.White,
+                )
+                .border(
+                    width = if (selected) 2.dp else 1.dp,
+                    color = if (selected) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.outlineVariant
+                    },
+                    shape = RoundedCornerShape(8.dp),
+                )
+                .combinedClickable(
+                    onClick = onJump,
+                    // Long press for the page menu. It used to be an invisible
+                    // hotspot in the corner, which nobody would ever find.
+                    onLongClick = { menu = true },
+                )
+                .padding(vertical = 14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text("${index + 1}", style = MaterialTheme.typography.titleMedium)
+            Text(
+                when (page.background) {
+                    PageBackground.BLANK -> "무지"
+                    PageBackground.LINED -> "줄"
+                    PageBackground.GRID -> "모눈"
+                    PageBackground.PDF -> "PDF"
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.outline,
+            )
+        }
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            if (page.background != PageBackground.PDF) {
+                DropdownMenuItem(
+                    text = { Text("무지") },
+                    onClick = { onBackground(PageBackground.BLANK); menu = false },
+                )
+                DropdownMenuItem(
+                    text = { Text("줄") },
+                    onClick = { onBackground(PageBackground.LINED); menu = false },
+                )
+                DropdownMenuItem(
+                    text = { Text("모눈") },
+                    onClick = { onBackground(PageBackground.GRID); menu = false },
+                )
+            }
+            DropdownMenuItem(
+                text = { Text("페이지 삭제") },
+                enabled = deletable,
+                onClick = { onDelete(); menu = false },
+            )
+        }
     }
 }
 
@@ -357,12 +611,16 @@ private fun Toolbar(
     width: Float,
     showLatency: Boolean,
     canUndo: Boolean,
+    canRedo: Boolean,
+    pageLabel: String,
     onTool: (Tool) -> Unit,
     onColor: (Color) -> Unit,
     onWidth: (Float) -> Unit,
     onUndo: () -> Unit,
-    onResetZoom: () -> Unit,
+    onRedo: () -> Unit,
+    onFitWidth: () -> Unit,
     onToggleLatency: () -> Unit,
+    onTogglePages: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -386,7 +644,7 @@ private fun Toolbar(
                 style = MaterialTheme.typography.titleSmall,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.width(110.dp),
+                modifier = Modifier.width(96.dp),
             )
             ToolbarDivider()
 
@@ -418,16 +676,22 @@ private fun Toolbar(
                 value = width,
                 onValueChange = onWidth,
                 valueRange = 1f..24f,
-                modifier = Modifier.width(110.dp),
+                modifier = Modifier.width(96.dp),
             )
             ToolbarDivider()
 
             IconButton(onClick = onUndo, enabled = canUndo) {
                 Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "실행취소")
             }
-            IconButton(onClick = onResetZoom) {
-                Icon(Icons.Default.ZoomOutMap, contentDescription = "확대 초기화")
+            IconButton(onClick = onRedo, enabled = canRedo) {
+                Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "다시실행")
             }
+            IconButton(onClick = onFitWidth) {
+                Icon(Icons.Default.ZoomOutMap, contentDescription = "화면에 맞추기")
+            }
+            ToolbarDivider()
+
+            TextButton(onClick = onTogglePages) { Text(pageLabel) }
             IconButton(onClick = onToggleLatency) {
                 Icon(
                     Icons.Default.Speed,

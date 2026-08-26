@@ -1,15 +1,19 @@
 package com.notesis
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Matrix
+import android.graphics.Paint
+import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.widget.FrameLayout
+import androidx.ink.authoring.ExperimentalLatencyDataApi
 import androidx.ink.authoring.InProgressStrokeId
 import androidx.ink.authoring.InProgressStrokesFinishedListener
-import androidx.ink.authoring.ExperimentalLatencyDataApi
 import androidx.ink.authoring.InProgressStrokesView
 import androidx.ink.authoring.latency.LatencyData
 import androidx.ink.authoring.latency.LatencyDataCallback
@@ -43,13 +47,16 @@ enum class Tool {
 }
 
 /**
- * The note surface: committed ink underneath, wet ink on a front buffer above,
- * one shared world-space transform for pan and zoom.
+ * The note surface: pages stacked down a document, committed ink drawn beneath a
+ * front-buffered wet-ink layer, one transform mapping document space to screen.
  *
  * Input rules, which are the whole point of the class:
  *  - S Pen draws. Always, and only.
- *  - Fingers pan and zoom. Never draw, which is also what rejects a palm.
+ *  - Fingers scroll and zoom. Never draw, which is also what rejects a palm.
  *  - The S Pen barrel button erases while held, whatever tool is selected.
+ *
+ * Strokes live in page-local coordinates, so reordering or deleting a page never
+ * has to touch the ink on it.
  */
 @OptIn(ExperimentalLatencyDataApi::class)
 class InkCanvasView @JvmOverloads constructor(
@@ -65,31 +72,45 @@ class InkCanvasView @JvmOverloads constructor(
     /** Fired whenever committed ink changes, so the host can autosave. */
     var onStrokesChanged: (() -> Unit)? = null
 
+    /** Fired when the page under the middle of the screen changes. */
+    var onCurrentPageChanged: ((Int) -> Unit)? = null
+
     /** Kept from the P0 spike: the project's own latency instrument. */
     val latency = LatencyStats()
+
+    var document: Document = Document(mutableListOf(Page()))
+        private set
+
+    private var pdf: PdfSource? = null
 
     private val wet = InProgressStrokesView(context)
     private val dry = DryLayer(context)
     private val predictor: MotionEventPredictor
 
-    private val strokes = mutableListOf<Stroke>()
     private val undoStack = mutableListOf<Edit>()
+    private val redoStack = mutableListOf<Edit>()
 
-    /** World (document) coordinates -> screen. Its inverse maps touches back. */
-    private val worldToScreen = Matrix()
-    private val screenToWorld = Matrix()
+    /** Document coordinates -> screen. Its inverse maps touches back. */
+    private val documentToScreen = Matrix()
+    private val screenToDocument = Matrix()
+    private val strokeTransform = Matrix()
+    private val matrixValues = FloatArray(9)
 
     private var activeStylusPointer: Int? = null
     private var activeStrokeId: InProgressStrokeId? = null
+    private var activePage: Page? = null
     private var erasing = false
     private var lastErasePoint: FloatArray? = null
-    private val matrixValues = FloatArray(9)
     private var lastFocusX = 0f
     private var lastFocusY = 0f
+    private var currentPage = 0
+    private var fitted = false
 
     private sealed interface Edit {
-        class Drawn(val stroke: Stroke) : Edit
-        class Erased(val strokes: List<Stroke>) : Edit
+        val page: Page
+
+        class Drawn(override val page: Page, val stroke: Stroke) : Edit
+        class Erased(override val page: Page, val strokes: List<Stroke>) : Edit
     }
 
     private val scaleDetector = ScaleGestureDetector(
@@ -101,7 +122,7 @@ class InkCanvasView @JvmOverloads constructor(
                 // would overshoot the limit still zooms up to it.
                 val factor = (current * detector.scaleFactor)
                     .coerceIn(MIN_SCALE, MAX_SCALE) / current
-                worldToScreen.postScale(factor, factor, detector.focusX, detector.focusY)
+                documentToScreen.postScale(factor, factor, detector.focusX, detector.focusY)
                 onTransformChanged()
                 return true
             }
@@ -129,41 +150,170 @@ class InkCanvasView @JvmOverloads constructor(
         onTransformChanged()
     }
 
-    fun setStrokes(loaded: List<Stroke>) {
-        strokes.clear()
-        strokes += loaded
+    fun open(document: Document, pdf: PdfSource?) {
+        this.pdf?.close()
+        this.document = document
+        this.pdf = pdf
+        // Has to be the layer that draws the pages: invalidating this ViewGroup
+        // leaves the child's cached display list alone, so nothing repaints.
+        pdf?.onReady = { dry.postInvalidate() }
         undoStack.clear()
+        redoStack.clear()
+        fitted = false
+        requestLayout()
         dry.invalidate()
     }
 
-    fun strokes(): List<Stroke> = strokes.toList()
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        if (!fitted && w > 0) fitWidth()
+    }
 
-    fun strokeCount(): Int = strokes.size
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        pdf?.close()
+        pdf = null
+    }
+
+    /** Scales the widest page to the view, which is where every note starts. */
+    fun fitWidth() {
+        if (width == 0) return
+        fitted = true
+        val scale = width * FIT_MARGIN / document.widestPage()
+        documentToScreen.reset()
+        documentToScreen.postScale(scale, scale)
+        documentToScreen.postTranslate((width - document.widestPage() * scale) / 2f, 0f)
+        onTransformChanged()
+    }
+
+    fun scrollToPage(index: Int) {
+        if (index !in document.pages.indices) return
+        val scale = currentScale()
+        documentToScreen.getValues(matrixValues)
+        matrixValues[Matrix.MTRANS_Y] = -document.topOf(index) * scale + PAGE_TOP_MARGIN_PX
+        documentToScreen.setValues(matrixValues)
+        onTransformChanged()
+    }
 
     fun canUndo(): Boolean = undoStack.isNotEmpty()
 
+    fun canRedo(): Boolean = redoStack.isNotEmpty()
+
     fun undo() {
-        when (val edit = undoStack.removeLastOrNull() ?: return) {
-            is Edit.Drawn -> strokes.remove(edit.stroke)
-            is Edit.Erased -> strokes += edit.strokes
+        val edit = undoStack.removeLastOrNull() ?: return
+        applyInverse(edit)
+        redoStack += edit
+        afterEdit()
+    }
+
+    fun redo() {
+        val edit = redoStack.removeLastOrNull() ?: return
+        when (edit) {
+            is Edit.Drawn -> edit.page.strokes += edit.stroke
+            is Edit.Erased -> edit.page.strokes.removeAll(edit.strokes)
         }
+        undoStack += edit
+        afterEdit()
+    }
+
+    private fun applyInverse(edit: Edit) {
+        when (edit) {
+            is Edit.Drawn -> edit.page.strokes.remove(edit.stroke)
+            is Edit.Erased -> edit.page.strokes += edit.strokes
+        }
+    }
+
+    private fun afterEdit() {
         dry.invalidate()
         onStrokesChanged?.invoke()
     }
 
-    fun resetZoom() {
-        worldToScreen.reset()
-        onTransformChanged()
+    fun addPage(after: Int) {
+        val template = document.pages.getOrNull(after)
+        val page = Page(
+            width = template?.width ?: Page.A4_WIDTH,
+            height = template?.height ?: Page.A4_HEIGHT,
+            // A new page is paper even in a PDF note; it is an insertion, not a
+            // second copy of a PDF page.
+            background = template?.background?.takeIf { it != PageBackground.PDF }
+                ?: PageBackground.BLANK,
+        )
+        document.pages.add((after + 1).coerceIn(0, document.pages.size), page)
+        afterEdit()
     }
 
+    fun deletePage(index: Int) {
+        if (document.pages.size <= 1 || index !in document.pages.indices) return
+        val removed = document.pages.removeAt(index)
+        // Undo cannot bring the page back, so drop any history that points at it
+        // rather than leaving edits that would resurrect strokes onto nothing.
+        undoStack.removeAll { it.page === removed }
+        redoStack.removeAll { it.page === removed }
+        afterEdit()
+    }
+
+    fun setBackground(index: Int, background: PageBackground) {
+        val page = document.pages.getOrNull(index) ?: return
+        if (page.background == PageBackground.PDF) return
+        page.background = background
+        afterEdit()
+    }
+
+    fun currentPageIndex(): Int = currentPage
+
+    fun strokeCount(): Int = document.pages.sumOf { it.strokes.size }
+
     fun currentScale(): Float {
-        worldToScreen.getValues(matrixValues)
+        documentToScreen.getValues(matrixValues)
         return matrixValues[Matrix.MSCALE_X]
     }
 
     private fun onTransformChanged() {
-        worldToScreen.invert(screenToWorld)
+        clampTransform()
+        documentToScreen.invert(screenToDocument)
         dry.invalidate()
+        updateCurrentPage()
+    }
+
+    /** Keeps the document from being flung off into empty space. */
+    private fun clampTransform() {
+        if (width == 0 || height == 0) return
+        val scale = currentScale()
+        val docWidth = document.widestPage() * scale
+        val docHeight = document.totalHeight() * scale
+        documentToScreen.getValues(matrixValues)
+        var x = matrixValues[Matrix.MTRANS_X]
+        var y = matrixValues[Matrix.MTRANS_Y]
+
+        x = if (docWidth <= width) {
+            (width - docWidth) / 2f
+        } else {
+            x.coerceIn(width - docWidth, 0f)
+        }
+        y = if (docHeight <= height) {
+            (height - docHeight) / 2f
+        } else {
+            // Half a screen of overscroll at each end, so the last page is
+            // reachable without fighting the edge.
+            y.coerceIn(height - docHeight - height / 2f, height / 2f)
+        }
+
+        matrixValues[Matrix.MTRANS_X] = x
+        matrixValues[Matrix.MTRANS_Y] = y
+        documentToScreen.setValues(matrixValues)
+    }
+
+    private fun updateCurrentPage() {
+        val middle = floatArrayOf(width / 2f, height / 2f)
+        screenToDocument.mapPoints(middle)
+        var index = 0
+        for (i in document.pages.indices) {
+            if (middle[1] >= document.topOf(i)) index = i
+        }
+        if (index != currentPage) {
+            currentPage = index
+            onCurrentPageChanged?.invoke(index)
+        }
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -179,8 +329,11 @@ class InkCanvasView @JvmOverloads constructor(
                 // Unbuffered dispatch is what gets the S Pen's full sample rate
                 // instead of one point per display frame.
                 requestUnbufferedDispatch(event)
+                val index = pageUnder(event, event.actionIndex)
+                if (index < 0) return true
                 val pointerId = event.getPointerId(event.actionIndex)
                 activeStylusPointer = pointerId
+                activePage = document.pages[index]
                 erasing = tool == Tool.ERASER || event.isEraserGesture()
                 if (erasing) {
                     lastErasePoint = null
@@ -190,7 +343,9 @@ class InkCanvasView @JvmOverloads constructor(
                         event = event,
                         pointerId = pointerId,
                         brush = currentBrush(),
-                        motionEventToWorldTransform = screenToWorld,
+                        // "World" here is the page, so the finished stroke comes
+                        // back in page-local coordinates and stays with its page.
+                        motionEventToWorldTransform = screenToPage(index),
                     )
                 }
                 return true
@@ -256,7 +411,7 @@ class InkCanvasView @JvmOverloads constructor(
             MotionEvent.ACTION_MOVE -> {
                 val focus = focusOf(event, skipPointerIndex = -1)
                 if (!scaleDetector.isInProgress || event.pointerCount > 1) {
-                    worldToScreen.postTranslate(focus[0] - lastFocusX, focus[1] - lastFocusY)
+                    documentToScreen.postTranslate(focus[0] - lastFocusX, focus[1] - lastFocusY)
                     onTransformChanged()
                 }
                 lastFocusX = focus[0]
@@ -271,6 +426,7 @@ class InkCanvasView @JvmOverloads constructor(
         if (event.actionMasked == MotionEvent.ACTION_POINTER_UP) event.actionIndex else -1
 
     private val focus = FloatArray(2)
+    private val scratch = FloatArray(2)
 
     private fun focusOf(event: MotionEvent, skipPointerIndex: Int): FloatArray {
         var x = 0f
@@ -287,13 +443,27 @@ class InkCanvasView @JvmOverloads constructor(
         return focus
     }
 
+    /** Index of the page under a pointer, or -1 in the gap between pages. */
+    private fun pageUnder(event: MotionEvent, pointerIndex: Int): Int {
+        scratch[0] = event.getX(pointerIndex)
+        scratch[1] = event.getY(pointerIndex)
+        screenToDocument.mapPoints(scratch)
+        return document.pageAt(scratch[0], scratch[1])
+    }
+
+    private fun screenToPage(index: Int): Matrix {
+        strokeTransform.set(screenToDocument)
+        strokeTransform.postTranslate(-document.leftOf(index), -document.topOf(index))
+        return strokeTransform
+    }
+
     private fun currentBrush(): Brush {
         val highlighter = tool == Tool.HIGHLIGHTER
         return Brush.createWithColorIntArgb(
             family = tool.brushFamily(),
             colorIntArgb = if (highlighter) (colorArgb and 0x00FFFFFF) or HIGHLIGHT_ALPHA else colorArgb,
-            // Sizes are world units, so a stroke keeps its size in the document
-            // and zooming magnifies it like everything else on the page.
+            // Sizes are page units, so a stroke keeps its size on the page and
+            // zooming magnifies it like everything else on the paper.
             size = if (highlighter) strokeWidth * 4f else strokeWidth,
             epsilon = 0.1f,
         )
@@ -301,8 +471,11 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** Erases along the segment travelled since the last event, not just at a point. */
     private fun eraseAlong(event: MotionEvent, pointerIndex: Int) {
+        val page = activePage ?: return
+        val index = document.pages.indexOf(page)
+        if (index < 0) return
         val point = floatArrayOf(event.getX(pointerIndex), event.getY(pointerIndex))
-        screenToWorld.mapPoints(point)
+        screenToPage(index).mapPoints(point)
         val previous = lastErasePoint
         lastErasePoint = point
         if (previous == null) return
@@ -314,62 +487,114 @@ class InkCanvasView @JvmOverloads constructor(
         // ponytail: whole-stroke eraser. A partial (pixel) eraser means splitting
         // the input batch and rebuilding both halves - worth it only if the
         // whole-stroke behaviour actually gets complained about.
+        //
         // intersects() is a member extension on the Intersection object, so it
         // only resolves inside its scope.
         val hit = with(Intersection) {
-            strokes.filter { segment.intersects(it.shape, IDENTITY) }
+            page.strokes.filter { segment.intersects(it.shape, IDENTITY) }
         }
         if (hit.isEmpty()) return
-        strokes.removeAll(hit)
-        undoStack += Edit.Erased(hit)
-        dry.invalidate()
-        onStrokesChanged?.invoke()
+        page.strokes.removeAll(hit)
+        undoStack += Edit.Erased(page, hit)
+        redoStack.clear()
+        afterEdit()
     }
 
     override fun onStrokesFinished(finished: Map<InProgressStrokeId, Stroke>) {
-        for (stroke in finished.values) {
-            strokes += stroke
-            undoStack += Edit.Drawn(stroke)
+        val page = activePage
+        if (page != null) {
+            for (stroke in finished.values) {
+                page.strokes += stroke
+                undoStack += Edit.Drawn(page, stroke)
+            }
+            redoStack.clear()
         }
         wet.removeFinishedStrokes(finished.keys)
-        dry.invalidate()
-        onStrokesChanged?.invoke()
+        afterEdit()
     }
 
-    /** Committed ink. Separate view so wet ink keeps its own front buffer above it. */
+    /** Committed ink and paper. Wet ink keeps its own front buffer above this. */
     private inner class DryLayer(context: Context) : android.view.View(context) {
         private val renderer = ViewStrokeRenderer(CanvasStrokeRenderer.create(), this)
         private val viewport = FloatArray(4)
+        private val pageRect = RectF()
+        private val paper = Paint().apply { color = Color.WHITE }
+        private val shadow = Paint().apply { color = 0x22000000 }
+        private val rule = Paint().apply { color = 0xFFD8E2EC.toInt(); strokeWidth = 2f }
+        private val bitmapPaint = Paint().apply {
+            isFilterBitmap = true
+            isAntiAlias = true
+        }
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
-            // The draw scope caches the canvas matrix when it is obtained, so the
-            // world transform has to be applied *before* drawWithStrokes, not
-            // inside it.
-            canvas.save()
-            canvas.concat(worldToScreen)
-            visibleWorldBounds(viewport)
-            renderer.drawWithStrokes(canvas) { _, scope ->
-                for (stroke in strokes) {
-                    val box = stroke.shape.computeBoundingBox() ?: continue
-                    if (box.xMax < viewport[0] || box.xMin > viewport[2] ||
-                        box.yMax < viewport[1] || box.yMin > viewport[3]
-                    ) {
-                        continue
-                    }
-                    scope.drawStroke(stroke)
+            visibleDocumentBounds(viewport)
+            for (i in document.pages.indices) {
+                val page = document.pages[i]
+                val top = document.topOf(i)
+                if (top > viewport[3] || top + page.height < viewport[1]) continue
+
+                canvas.save()
+                canvas.concat(documentToScreen)
+                canvas.translate(document.leftOf(i), top)
+                drawPaper(canvas, page)
+                // The draw scope caches the canvas matrix when it is obtained, so
+                // the page transform has to be in place before this call, not
+                // applied inside it.
+                renderer.drawWithStrokes(canvas) { _, scope ->
+                    for (stroke in page.strokes) scope.drawStroke(stroke)
                 }
+                canvas.restore()
             }
-            canvas.restore()
         }
 
-        /** Screen rect mapped back into world space: [xMin, yMin, xMax, yMax]. */
-        private fun visibleWorldBounds(out: FloatArray) {
+        private fun drawPaper(canvas: Canvas, page: Page) {
+            pageRect.set(0f, 0f, page.width, page.height)
+            canvas.drawRect(4f, 4f, page.width + 4f, page.height + 4f, shadow)
+            canvas.drawRect(pageRect, paper)
+            when (page.background) {
+                PageBackground.BLANK -> Unit
+                PageBackground.LINED -> {
+                    var y = RULE_SPACING
+                    while (y < page.height) {
+                        canvas.drawLine(0f, y, page.width, y, rule)
+                        y += RULE_SPACING
+                    }
+                }
+
+                PageBackground.GRID -> {
+                    var y = RULE_SPACING
+                    while (y < page.height) {
+                        canvas.drawLine(0f, y, page.width, y, rule)
+                        y += RULE_SPACING
+                    }
+                    var x = RULE_SPACING
+                    while (x < page.width) {
+                        canvas.drawLine(x, 0f, x, page.height, rule)
+                        x += RULE_SPACING
+                    }
+                }
+
+                PageBackground.PDF -> drawPdf(canvas, page)
+            }
+        }
+
+        private fun drawPdf(canvas: Canvas, page: Page) {
+            val source = pdf ?: return
+            // Ask for roughly the pixels the page occupies right now, so a page
+            // viewed small is not rendered at full size.
+            val wantPx = (page.width * currentScale()).toInt().coerceAtLeast(320)
+            val bitmap: Bitmap = source.bitmap(page.pdfPageIndex, wantPx) ?: return
+            canvas.drawBitmap(bitmap, null, pageRect, bitmapPaint)
+        }
+
+        /** Screen rect mapped back into document space: [xMin, yMin, xMax, yMax]. */
+        private fun visibleDocumentBounds(out: FloatArray) {
             out[0] = 0f
             out[1] = 0f
             out[2] = width.toFloat()
             out[3] = height.toFloat()
-            screenToWorld.mapPoints(out)
+            screenToDocument.mapPoints(out)
             val xMin = minOf(out[0], out[2])
             val xMax = maxOf(out[0], out[2])
             val yMin = minOf(out[1], out[3])
@@ -382,9 +607,12 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private companion object {
-        const val MIN_SCALE = 0.2f
+        const val MIN_SCALE = 0.1f
         const val MAX_SCALE = 8f
+        const val FIT_MARGIN = 0.94f
         const val HIGHLIGHT_ALPHA = 0x66000000
+        const val RULE_SPACING = 60f
+        const val PAGE_TOP_MARGIN_PX = 24f
         val IDENTITY = ImmutableAffineTransform(1f, 0f, 0f, 0f, 1f, 0f)
     }
 }
