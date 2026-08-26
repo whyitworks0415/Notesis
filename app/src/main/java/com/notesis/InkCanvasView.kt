@@ -44,7 +44,7 @@ enum class Tool {
     fun brushFamily(): BrushFamily = if (this == HIGHLIGHTER) highlighter else pen
 
     companion object {
-        private val pen by lazy { StockBrushes.pressurePen() }
+        private val pen by lazy { StockBrushes.marker() }
         private val highlighter by lazy { StockBrushes.highlighter() }
 
         /** Reverse lookup for reload: an erased stroke was never saved. */
@@ -178,6 +178,7 @@ class InkCanvasView @JvmOverloads constructor(
     fun open(document: Document, pdf: PdfSource?) {
         this.pdf?.close()
         this.document = document
+        document.invalidateLayout()
         this.pdf = pdf
         // Has to be the layer that draws the pages: invalidating this ViewGroup
         // leaves the child's cached display list alone, so nothing repaints.
@@ -264,6 +265,7 @@ class InkCanvasView @JvmOverloads constructor(
                 ?: PageBackground.BLANK,
         )
         document.pages.add((after + 1).coerceIn(0, document.pages.size), page)
+        document.invalidateLayout()
         afterEdit()
     }
 
@@ -274,6 +276,7 @@ class InkCanvasView @JvmOverloads constructor(
         // rather than leaving edits that would resurrect strokes onto nothing.
         undoStack.removeAll { it.page === removed }
         redoStack.removeAll { it.page === removed }
+        document.invalidateLayout()
         afterEdit()
     }
 
@@ -739,8 +742,10 @@ class InkCanvasView @JvmOverloads constructor(
             isAntiAlias = true
         }
         private val bitmapPaint = Paint().apply {
+            // Filtering matters (the bitmap is scaled); antialiasing does not,
+            // since the destination is an axis-aligned rect, and asking for it
+            // pushes the draw onto a slower path.
             isFilterBitmap = true
-            isAntiAlias = true
         }
         private val selectionPaint = Paint().apply {
             isAntiAlias = true
@@ -748,6 +753,10 @@ class InkCanvasView @JvmOverloads constructor(
         }
         private val crop = RectF()
         private val destination = RectF()
+
+        // Strokes are immutable, so a bounding box is worth computing once.
+        // Weak keys let an erased stroke's entry go with the stroke.
+        private val boxes = java.util.WeakHashMap<Stroke, RectF>()
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
@@ -764,14 +773,34 @@ class InkCanvasView @JvmOverloads constructor(
                 // The draw scope caches the canvas matrix when it is obtained, so
                 // the page transform has to be in place before this call, not
                 // applied inside it.
+                // Page-level culling alone still redraws every stroke on a page
+                // that is only half on screen. A zoomed-in page of dense notes is
+                // exactly when frames are tightest.
+                val cullLeft = viewport[0] - document.leftOf(i)
+                val cullTop = viewport[1] - top
+                val cullRight = viewport[2] - document.leftOf(i)
+                val cullBottom = viewport[3] - top
                 renderer.drawWithStrokes(canvas) { _, scope ->
-                    for (stroke in page.strokes) scope.drawStroke(stroke)
+                    for (stroke in page.strokes) {
+                        val box = boundsOf(stroke) ?: continue
+                        if (box.right < cullLeft || box.left > cullRight ||
+                            box.bottom < cullTop || box.top > cullBottom
+                        ) {
+                            continue
+                        }
+                        scope.drawStroke(stroke)
+                    }
                 }
                 if (i == selectingPage) {
                     selection?.boxes?.forEach { canvas.drawRect(it, selectionPaint) }
                 }
                 canvas.restore()
             }
+        }
+
+        private fun boundsOf(stroke: Stroke): RectF? = boxes.getOrPut(stroke) {
+            val box = stroke.shape.computeBoundingBox() ?: return null
+            RectF(box.xMin, box.yMin, box.xMax, box.yMax)
         }
 
         private fun drawPaper(canvas: Canvas, page: Page, index: Int) {
@@ -815,7 +844,13 @@ class InkCanvasView @JvmOverloads constructor(
             val wantPx = (page.width * currentScale()).toInt().coerceAtLeast(320)
             if (wantPx > DETAIL_THRESHOLD_PX) {
                 visibleCropOf(page, index, crop)
-                val detail = source.detail(page.pdfPageIndex, crop, width)
+                val detail = source.detail(
+                    page.pdfPageIndex,
+                    crop,
+                    page.width,
+                    page.height,
+                    width,
+                )
                 if (detail != null) {
                     // The crop the renderer actually produced is padded, so it is
                     // asked for again here rather than assumed to match.

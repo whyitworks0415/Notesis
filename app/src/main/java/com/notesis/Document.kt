@@ -45,16 +45,44 @@ class Page(
  */
 class Document(val pages: MutableList<Page>) {
 
-    fun topOf(index: Int): Float {
+    // Page offsets used to be summed on every call, and every frame asks for
+    // them once per visible page - quadratic in page count, which a 200-page
+    // PDF turns into real scroll lag. They are cached and rebuilt on change.
+    private var tops = FloatArray(0)
+    private var widest = Page.A4_WIDTH
+    private var laidOutFor = -1
+
+    /** Call after inserting, removing, or resizing a page. */
+    fun invalidateLayout() {
+        laidOutFor = -1
+    }
+
+    private fun layout() {
+        if (laidOutFor == pages.size) return
+        tops = FloatArray(pages.size)
         var y = 0f
-        for (i in 0 until index) y += pages[i].height + PAGE_GAP
-        return y
+        var maxWidth = 0f
+        for (i in pages.indices) {
+            tops[i] = y
+            y += pages[i].height + PAGE_GAP
+            if (pages[i].width > maxWidth) maxWidth = pages[i].width
+        }
+        widest = if (maxWidth > 0f) maxWidth else Page.A4_WIDTH
+        laidOutFor = pages.size
+    }
+
+    fun topOf(index: Int): Float {
+        layout()
+        return tops.getOrElse(index) { 0f }
     }
 
     fun totalHeight(): Float =
         if (pages.isEmpty()) 0f else topOf(pages.size - 1) + pages.last().height
 
-    fun widestPage(): Float = pages.maxOfOrNull { it.width } ?: Page.A4_WIDTH
+    fun widestPage(): Float {
+        layout()
+        return widest
+    }
 
     /** Pages are centred on the document's horizontal axis. */
     fun leftOf(index: Int): Float = (widestPage() - pages[index].width) / 2f

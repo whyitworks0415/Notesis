@@ -411,7 +411,13 @@ private fun NoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> Unit) {
             modifier = Modifier.fillMaxSize(),
             factory = { viewContext ->
                 InkCanvasView(viewContext).apply {
-                    open(store.load(note.id), PdfSource.open(store.pdfFile(note.id)))
+                    open(
+                        store.load(note.id),
+                        PdfSource.open(
+                            store.pdfFile(note.id),
+                            PdfSource.cacheBytesFor(viewContext),
+                        ),
+                    )
                     onStrokesChanged = {
                         edits++
                         pageCount = document.pages.size
