@@ -14,8 +14,8 @@ android {
         // dependable from Q onward, even though ink itself declares minSdk 23.
         minSdk = 29
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1"
+        versionCode = 2
+        versionName = "0.2"
         // Galaxy Tab is arm64. Shipping one ABI keeps the native ink lib small.
         ndk { abiFilters += "arm64-v8a" }
     }
@@ -25,9 +25,9 @@ android {
             // Debug key for now: v0.1.0 only has to sideload onto the author's
             // own Galaxy Tab. Swap in a real keystore before any store upload.
             signingConfig = signingConfigs.getByName("debug")
-            // R8 stays off until the spike has actually been run on a device -
-            // a minified build that crashes at runtime would be blamed on ink.
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
         }
     }
 

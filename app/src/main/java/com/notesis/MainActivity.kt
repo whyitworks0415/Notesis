@@ -395,6 +395,7 @@ private fun NoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> Unit) {
     var canvas by remember { mutableStateOf<InkCanvasView?>(null) }
     var latencyText by remember { mutableStateOf("") }
     var selectedText by remember { mutableStateOf<String?>(null) }
+    var opened by remember { mutableStateOf<Pair<Document, PdfSource?>?>(null) }
     val clipboard = LocalClipboardManager.current
 
     // Back clears a selection first, the way dismissing anything else works.
@@ -402,37 +403,49 @@ private fun NoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> Unit) {
         if (selectedText != null) canvas?.clearSelection() else onBack()
     }
 
+    // Opening a note decodes every stroke it holds and parses the PDF header.
+    // On the main thread that is a visible freeze, and it grows with the note.
+    LaunchedEffect(note.id) {
+        opened = withContext(Dispatchers.IO) {
+            store.load(note.id) to PdfSource.open(
+                store.pdfFile(note.id),
+                PdfSource.cacheBytesFor(context),
+            )
+        }
+    }
+
     Box(
         Modifier
             .fillMaxSize()
             .background(Color(0xFFE9E7E2)),
     ) {
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { viewContext ->
-                InkCanvasView(viewContext).apply {
-                    open(
-                        store.load(note.id),
-                        PdfSource.open(
-                            store.pdfFile(note.id),
-                            PdfSource.cacheBytesFor(viewContext),
-                        ),
-                    )
-                    onStrokesChanged = {
-                        edits++
-                        pageCount = document.pages.size
+        val ready = opened
+        if (ready == null) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+        } else {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { viewContext ->
+                    InkCanvasView(viewContext).apply {
+                        open(ready.first, ready.second)
+                        onStrokesChanged = {
+                            edits++
+                            pageCount = document.pages.size
+                        }
+                        onCurrentPageChanged = { currentPage = it }
+                        onSelectionChanged = { selectedText = it?.text }
+                        canvas = this
                     }
-                    onCurrentPageChanged = { currentPage = it }
-                    onSelectionChanged = { selectedText = it?.text }
-                    canvas = this
-                }
-            },
-            update = { view ->
-                view.tool = tool
-                view.colorArgb = color.toArgb()
-                view.strokeWidth = width
-            },
-        )
+                },
+                update = { view ->
+                    view.tool = tool
+                    view.colorArgb = color.toArgb()
+                    view.strokeWidth = width
+                },
+            )
+        }
 
         // Autosave: each change restarts a short timer, so a burst of strokes
         // writes the note once instead of once per stroke.
@@ -440,14 +453,22 @@ private fun NoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> Unit) {
             if (edits == 0) return@LaunchedEffect
             delay(AUTOSAVE_DELAY_MS)
             canvas?.let { view ->
+                // Only pages marked dirty are actually written; see NoteStore.
                 withContext(Dispatchers.IO) { store.save(note.id, note.title, view.document) }
             }
         }
 
-        // Anything still unsaved when the screen goes away gets written now.
+        // Anything still unsaved when the screen goes away gets written now. If
+        // the note was closed before it finished opening, the canvas never took
+        // ownership of the PdfSource, so close it here instead of leaking it.
         DisposableEffect(Unit) {
             onDispose {
-                canvas?.let { store.save(note.id, note.title, it.document) }
+                val view = canvas
+                if (view != null) {
+                    store.save(note.id, note.title, view.document)
+                } else {
+                    opened?.second?.close()
+                }
             }
         }
 

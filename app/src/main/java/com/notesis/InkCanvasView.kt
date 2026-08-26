@@ -229,7 +229,7 @@ class InkCanvasView @JvmOverloads constructor(
         val edit = undoStack.removeLastOrNull() ?: return
         applyInverse(edit)
         redoStack += edit
-        afterEdit()
+        afterEdit(edit.page)
     }
 
     fun redo() {
@@ -239,7 +239,7 @@ class InkCanvasView @JvmOverloads constructor(
             is Edit.Erased -> edit.page.strokes.removeAll(edit.strokes)
         }
         undoStack += edit
-        afterEdit()
+        afterEdit(edit.page)
     }
 
     private fun applyInverse(edit: Edit) {
@@ -249,7 +249,8 @@ class InkCanvasView @JvmOverloads constructor(
         }
     }
 
-    private fun afterEdit() {
+    private fun afterEdit(vararg changed: Page) {
+        for (page in changed) page.dirty = true
         dry.invalidate()
         onStrokesChanged?.invoke()
     }
@@ -266,7 +267,7 @@ class InkCanvasView @JvmOverloads constructor(
         )
         document.pages.add((after + 1).coerceIn(0, document.pages.size), page)
         document.invalidateLayout()
-        afterEdit()
+        afterEdit(page)
     }
 
     fun deletePage(index: Int) {
@@ -671,7 +672,7 @@ class InkCanvasView @JvmOverloads constructor(
         }
         redoStack.clear()
         clearSelection()
-        afterEdit()
+        afterEdit(page)
     }
 
     fun selectedText(): String? = selection?.text
@@ -713,7 +714,7 @@ class InkCanvasView @JvmOverloads constructor(
         page.strokes.removeAll(hit)
         undoStack += Edit.Erased(page, hit)
         redoStack.clear()
-        afterEdit()
+        afterEdit(page)
     }
 
     override fun onStrokesFinished(finished: Map<InProgressStrokeId, Stroke>) {
@@ -726,7 +727,7 @@ class InkCanvasView @JvmOverloads constructor(
             redoStack.clear()
         }
         wet.removeFinishedStrokes(finished.keys)
-        afterEdit()
+        if (page != null) afterEdit(page) else afterEdit()
     }
 
     /** Committed ink and paper. Wet ink keeps its own front buffer above this. */
@@ -805,7 +806,22 @@ class InkCanvasView @JvmOverloads constructor(
 
         private fun drawPaper(canvas: Canvas, page: Page, index: Int) {
             pageRect.set(0f, 0f, page.width, page.height)
-            canvas.drawRect(4f, 4f, page.width + 4f, page.height + 4f, shadow)
+            // Two slivers down the right and along the bottom, rather than a
+            // full-page rect the page then covers. That rect was a whole extra
+            // screen of fill per page per frame, for four pixels of edge.
+            canvas.drawRect(
+                page.width, SHADOW, page.width + SHADOW, page.height + SHADOW, shadow,
+            )
+            canvas.drawRect(SHADOW, page.height, page.width, page.height + SHADOW, shadow)
+
+            if (page.background == PageBackground.PDF) {
+                // The rendered page is opaque and covers the paper exactly, so
+                // filling underneath it is another wasted screen of fill. Only
+                // fall back to blank paper when the bitmap is not ready yet.
+                if (drawPdf(canvas, page, index)) return
+                canvas.drawRect(pageRect, paper)
+                return
+            }
             canvas.drawRect(pageRect, paper)
             when (page.background) {
                 PageBackground.BLANK -> Unit
@@ -830,12 +846,13 @@ class InkCanvasView @JvmOverloads constructor(
                     }
                 }
 
-                PageBackground.PDF -> drawPdf(canvas, page, index)
+                PageBackground.PDF -> Unit
             }
         }
 
-        private fun drawPdf(canvas: Canvas, page: Page, index: Int) {
-            val source = pdf ?: return
+        /** Returns true when the page was actually painted. */
+        private fun drawPdf(canvas: Canvas, page: Page, index: Int): Boolean {
+            val source = pdf ?: return false
             // Ask for roughly the pixels the page occupies right now, so a page
             // viewed small is not rendered at full size - and, once zoomed past
             // what a whole-page bitmap can carry, for a crop of just what is on
@@ -856,13 +873,17 @@ class InkCanvasView @JvmOverloads constructor(
                     // asked for again here rather than assumed to match.
                     source.detailSource(page.pdfPageIndex)?.let { region ->
                         destination.set(region)
+                        // A crop covers only part of the page, so the paper still
+                        // has to be there underneath it.
+                        canvas.drawRect(pageRect, paper)
                         canvas.drawBitmap(detail, null, destination, bitmapPaint)
-                        return
+                        return true
                     }
                 }
             }
-            val bitmap: Bitmap = source.bitmap(page.pdfPageIndex, wantPx) ?: return
+            val bitmap: Bitmap = source.bitmap(page.pdfPageIndex, wantPx) ?: return false
             canvas.drawBitmap(bitmap, null, pageRect, bitmapPaint)
+            return true
         }
 
         /** The part of this page currently on screen, in page-local units. */
@@ -913,6 +934,7 @@ class InkCanvasView @JvmOverloads constructor(
         /** Higher is stickier; this lands close to the platform list fling. */
         const val FLING_FRICTION = 3.2f
         const val DETAIL_THRESHOLD_PX = 2048
+        const val SHADOW = 4f
         val IDENTITY = ImmutableAffineTransform(1f, 0f, 0f, 0f, 1f, 0f)
     }
 }

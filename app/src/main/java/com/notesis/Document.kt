@@ -30,6 +30,13 @@ class Page(
     var pdfPageIndex: Int = -1,
     val strokes: MutableList<Stroke> = mutableListOf(),
 ) {
+    /**
+     * Whether this page's strokes differ from what is on disk. Autosave fires
+     * on a timer while writing, and rewriting every page of a long note each
+     * time is a hitch you can feel.
+     */
+    var dirty: Boolean = true
+
     companion object {
         // A4 at 150dpi. Any consistent unit works; this one makes an imported
         // PDF and a blank page land at comparable sizes.
@@ -211,9 +218,16 @@ class NoteStore(context: Context) {
         if (!pdfFile(id).isFile) return
         if (dir.listFiles { file -> file.name.endsWith(".txt") }?.isNotEmpty() == true) return
         val source = PdfSource.open(pdfFile(id)) ?: return
-        for (page in load(id).pages) {
-            if (page.pdfPageIndex < 0) continue
-            runCatching { File(dir, "${page.id}.txt").writeText(source.textOf(page.pdfPageIndex)) }
+        // Read the page list out of meta.json rather than load(), which would
+        // decode every stroke in the note just to learn the page ids.
+        val meta = runCatching { JSONObject(File(root, "$id/meta.json").readText()) }.getOrNull()
+        val array = meta?.optJSONArray("pages") ?: JSONArray()
+        for (i in 0 until array.length()) {
+            val entry = array.getJSONObject(i)
+            val pdfIndex = entry.optInt("pdf", -1)
+            if (pdfIndex < 0) continue
+            val pageId = entry.optString("id")
+            runCatching { File(dir, "$pageId.txt").writeText(source.textOf(pdfIndex)) }
         }
         source.close()
     }
@@ -249,6 +263,8 @@ class NoteStore(context: Context) {
                 pdfPageIndex = entry.optInt("pdf", -1),
             )
             page.strokes += readStrokes(File(root, "$id/pages/${page.id}.bin"))
+            // Just read from disk, so by definition it matches disk.
+            page.dirty = false
             pages += page
         }
         if (pages.isEmpty()) pages += Page()
@@ -259,7 +275,9 @@ class NoteStore(context: Context) {
         val dir = File(root, "$id/pages")
         if (!dir.isDirectory && !dir.mkdirs()) return
         for (page in document.pages) {
+            if (!page.dirty) continue
             writeStrokes(File(dir, "${page.id}.bin"), page.strokes)
+            page.dirty = false
         }
         // A page that was deleted this session leaves its file behind otherwise.
         val live = document.pages.flatMap { listOf("${it.id}.bin", "${it.id}.txt") }.toSet()
