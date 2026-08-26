@@ -89,7 +89,7 @@ class InkCanvasView @JvmOverloads constructor(
 ) : FrameLayout(context, attrs, defStyleAttr), InProgressStrokesFinishedListener {
 
     var tool: Tool = Tool.PEN
-    var colorArgb: Int = 0xFF1A1A1A.toInt()
+    var colorArgb: Int = 0xFF000000.toInt()
     var strokeWidth: Float = 5f
 
     /** Fired whenever committed ink changes, so the host can autosave. */

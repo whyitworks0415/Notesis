@@ -128,7 +128,7 @@ class MainActivity : ComponentActivity() {
 private val dateFormat = SimpleDateFormat("M월 d일 HH:mm", Locale.KOREA)
 
 private val palette = listOf(
-    Color(0xFF1A1A1A),
+    Color(0xFF000000),
     Color(0xFFD32F2F),
     Color(0xFF1976D2),
     Color(0xFF388E3C),
