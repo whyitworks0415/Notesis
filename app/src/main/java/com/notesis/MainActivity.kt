@@ -2,6 +2,7 @@ package com.notesis
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -13,6 +14,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -77,6 +81,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Android 15+ draws behind the system bars whether or not you ask, so
+        // opt in properly and let the insets be dispatched instead of guessed.
+        enableEdgeToEdge()
         val store = NoteStore(this)
         setContent {
             MaterialTheme {
@@ -313,6 +320,7 @@ private fun NoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> Unit) {
                 color = Color(0xFF555555),
                 modifier = Modifier
                     .align(Alignment.TopStart)
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
                     .padding(top = 84.dp, start = 24.dp),
             )
         }
@@ -359,7 +367,9 @@ private fun Toolbar(
     modifier: Modifier = Modifier,
 ) {
     Surface(
-        modifier = modifier.padding(12.dp),
+        modifier = modifier
+            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .padding(12.dp),
         shape = RoundedCornerShape(20.dp),
         tonalElevation = 3.dp,
         shadowElevation = 4.dp,
