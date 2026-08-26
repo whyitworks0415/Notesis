@@ -36,6 +36,22 @@ import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.hypot
 
+/** Deepest zoom the canvas allows, in screen pixels per page unit. */
+const val MAX_CANVAS_SCALE = 8f
+
+/**
+ * Mesh fidelity for new strokes, in page units.
+ *
+ * Ink tessellates a stroke once, when it is created, and epsilon is what fixes
+ * how finely - so it has to be chosen for the deepest zoom the canvas allows,
+ * not for the zoom the stroke happened to be drawn at. Anything coarser and a
+ * zoomed-in stroke shows its facets and its antialiasing band spreads over
+ * several pixels, which reads as broken and blurry at the same time.
+ *
+ * Ink's guidance is 0.1 physical pixels; this is that, at maximum zoom.
+ */
+const val STROKE_EPSILON = 0.1f / MAX_CANVAS_SCALE
+
 enum class Tool {
     PEN,
     HIGHLIGHTER,
@@ -597,7 +613,7 @@ class InkCanvasView @JvmOverloads constructor(
             // Sizes are page units, so a stroke keeps its size on the page and
             // zooming magnifies it like everything else on the paper.
             size = if (highlighter) strokeWidth * 4f else strokeWidth,
-            epsilon = 0.1f,
+            epsilon = STROKE_EPSILON,
         )
     }
 
@@ -656,7 +672,7 @@ class InkCanvasView @JvmOverloads constructor(
             family = Tool.HIGHLIGHTER.brushFamily(),
             colorIntArgb = (colorArgb and 0x00FFFFFF) or HIGHLIGHT_ALPHA,
             size = 1f,
-            epsilon = 0.1f,
+            epsilon = STROKE_EPSILON,
         )
         for (box in found.boxes) {
             if (box.width() <= 0f || box.height() <= 0f) continue
@@ -922,7 +938,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     private companion object {
         const val MIN_SCALE = 0.1f
-        const val MAX_SCALE = 8f
+        const val MAX_SCALE = MAX_CANVAS_SCALE
         const val FIT_MARGIN = 0.94f
         const val HIGHLIGHT_ALPHA = 0x66000000
         const val RULE_SPACING = 60f

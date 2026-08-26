@@ -354,13 +354,21 @@ class NoteStore(context: Context) {
                     val tool = Tool.entries[input.readInt()]
                     val color = input.readInt()
                     val size = input.readFloat()
-                    val epsilon = input.readFloat()
+                    // The stored epsilon is read but not used: geometry is rebuilt
+                    // from the raw inputs on every load, so a note written when the
+                    // app used a coarser mesh gets the current fidelity for free.
+                    input.readFloat()
                     val bytes = ByteArray(input.readInt()).also { input.readFully(it) }
                     // Only raw inputs are stored; the mesh is rebuilt here. That
                     // is what keeps saved notes readable across ink versions.
                     val inputs = StrokeInputBatchSerialization.decode(ByteArrayInputStream(bytes))
                     strokes += Stroke(
-                        Brush.createWithColorIntArgb(tool.brushFamily(), color, size, epsilon),
+                        Brush.createWithColorIntArgb(
+                            tool.brushFamily(),
+                            color,
+                            size,
+                            STROKE_EPSILON,
+                        ),
                         inputs,
                     )
                 }
