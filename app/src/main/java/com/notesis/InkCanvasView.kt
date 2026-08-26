@@ -899,26 +899,34 @@ class InkCanvasView @JvmOverloads constructor(
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
             visibleDocumentBounds(viewport)
-            for (i in document.pages.indices) {
-                val page = document.pages[i]
-                val top = document.topOf(i)
-                if (top > viewport[3] || top + page.height < viewport[1]) continue
 
-                canvas.save()
-                canvas.concat(documentToScreen)
-                canvas.translate(document.leftOf(i), top)
-                drawPaper(canvas, page, i)
-                // The draw scope caches the canvas matrix when it is obtained, so
-                // the page transform has to be in place before this call, not
-                // applied inside it.
-                // Page-level culling alone still redraws every stroke on a page
-                // that is only half on screen. A zoomed-in page of dense notes is
-                // exactly when frames are tightest.
-                val cullLeft = viewport[0] - document.leftOf(i)
-                val cullTop = viewport[1] - top
-                val cullRight = viewport[2] - document.leftOf(i)
-                val cullBottom = viewport[3] - top
-                renderer.drawWithStrokes(canvas) { _, scope ->
+            // The scope has to be obtained while the canvas is still untransformed.
+            // drawStroke reads the canvas matrix at draw time and composes it with
+            // the one captured here, which is how the renderer learns the real
+            // stroke-to-screen scale and picks a fidelity to match. Concatenating
+            // the zoom before this call puts it into both halves, where it cancels
+            // out - the renderer then draws a stroke magnified 8x as though it
+            // were at 1:1, which is exactly what made zoomed-in ink look soft and
+            // bend its corners.
+            renderer.drawWithStrokes(canvas) { scoped, scope ->
+                for (i in document.pages.indices) {
+                    val page = document.pages[i]
+                    val top = document.topOf(i)
+                    if (top > viewport[3] || top + page.height < viewport[1]) continue
+                    val left = document.leftOf(i)
+
+                    scoped.save()
+                    scoped.concat(documentToScreen)
+                    scoped.translate(left, top)
+                    drawPaper(scoped, page, i)
+
+                    // Page-level culling alone still redraws every stroke on a page
+                    // that is only half on screen. A zoomed-in page of dense notes
+                    // is exactly when frames are tightest.
+                    val cullLeft = viewport[0] - left
+                    val cullTop = viewport[1] - top
+                    val cullRight = viewport[2] - left
+                    val cullBottom = viewport[3] - top
                     for (stroke in page.strokes) {
                         val box = boundsOf(stroke) ?: continue
                         if (box.right < cullLeft || box.left > cullRight ||
@@ -928,11 +936,11 @@ class InkCanvasView @JvmOverloads constructor(
                         }
                         scope.drawStroke(stroke)
                     }
+                    if (i == selectingPage) {
+                        selection?.boxes?.forEach { scoped.drawRect(it, selectionPaint) }
+                    }
+                    scoped.restore()
                 }
-                if (i == selectingPage) {
-                    selection?.boxes?.forEach { canvas.drawRect(it, selectionPaint) }
-                }
-                canvas.restore()
             }
         }
 
@@ -1003,7 +1011,7 @@ class InkCanvasView @JvmOverloads constructor(
                     crop,
                     page.width,
                     page.height,
-                    width,
+                    currentScale(),
                 )
                 if (detail != null) {
                     // The crop the renderer actually produced is padded, so it is

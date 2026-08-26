@@ -102,7 +102,7 @@ class PdfSource private constructor(
         source: RectF,
         pageWidth: Float,
         pageHeight: Float,
-        widthPx: Int,
+        pixelsPerUnit: Float,
     ): Bitmap? {
         val current = detail
         if (current != null &&
@@ -123,9 +123,21 @@ class PdfSource private constructor(
             bottom = bottom.coerceAtMost(pageHeight)
         }
         if (padded.width() <= 0f || padded.height() <= 0f) return current?.bitmap
+        // Ask for the pixels the crop actually occupies on screen. Fixing this at
+        // the view width instead meant the padding ate into the resolution, so a
+        // zoomed-in page was rendered below screen density and looked soft.
+        var widthPx = (padded.width() * pixelsPerUnit).toInt().coerceAtLeast(64)
+        var heightPx = (padded.height() * pixelsPerUnit).toInt().coerceAtLeast(64)
+        if (widthPx > MAX_CROP_PX || heightPx > MAX_CROP_PX) {
+            // Shrink both by the same factor: clamping one alone would change the
+            // aspect ratio and the crop would be drawn stretched.
+            val factor = MAX_CROP_PX.toFloat() / maxOf(widthPx, heightPx)
+            widthPx = (widthPx * factor).toInt().coerceAtLeast(64)
+            heightPx = (heightPx * factor).toInt().coerceAtLeast(64)
+        }
         val key = keyOf(index, -widthPx)
         request(key) {
-            val bitmap = renderCrop(index, padded, widthPx)
+            val bitmap = renderCrop(index, padded, widthPx, heightPx)
             if (bitmap != null) {
                 // Deliberately not recycling the one being replaced: the UI
                 // thread can still hold it in the last frame's display list, and
@@ -232,7 +244,7 @@ class PdfSource private constructor(
     }
 
     /** [source] is in page-local world units. */
-    private fun renderCrop(index: Int, source: RectF, widthPx: Int): Bitmap? =
+    private fun renderCrop(index: Int, source: RectF, widthPx: Int, heightPx: Int): Bitmap? =
         synchronized(renderLock) {
             if (closed) return null
             runCatching {
@@ -241,13 +253,11 @@ class PdfSource private constructor(
                     val top = source.top / POINTS_TO_WORLD
                     val cropWidth = (source.width() / POINTS_TO_WORLD).coerceAtLeast(1f)
                     val cropHeight = (source.height() / POINTS_TO_WORLD).coerceAtLeast(1f)
-                    val scale = widthPx / cropWidth
-                    val height = (cropHeight * scale).toInt().coerceIn(1, MAX_CROP_HEIGHT)
                     val transform = Matrix().apply {
-                        setScale(scale, scale)
+                        setScale(widthPx / cropWidth, heightPx / cropHeight)
                         preTranslate(-left, -top)
                     }
-                    newBitmap(widthPx, height).also {
+                    newBitmap(widthPx, heightPx).also {
                         page.render(
                             it,
                             null,
@@ -289,7 +299,7 @@ class PdfSource private constructor(
         private const val MIN_PAGE_WIDTH = 1024
         /** 2048 x ~2900 x 4B is about 24MB - past this, crops are cheaper. */
         private const val MAX_PAGE_WIDTH = 2048
-        private const val MAX_CROP_HEIGHT = 4096
+        private const val MAX_CROP_PX = 4096
         private const val DETAIL_MARGIN = 0.25f
         private const val MIN_CACHE_BYTES = 64 * 1024 * 1024
         private const val MAX_CACHE_BYTES = 256 * 1024 * 1024
