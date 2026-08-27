@@ -63,6 +63,7 @@ import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Gesture
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Palette
@@ -77,6 +78,8 @@ import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloseFullscreen
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.Create
+import androidx.compose.material.icons.filled.Highlight
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Computer
@@ -516,21 +519,15 @@ private fun NoteCard(
     }
 }
 
-/** Replaces one entry, leaving the rest of the list alone. */
-private fun List<PenPreset>.replaceAt(index: Int, pen: PenPreset): List<PenPreset> =
-    if (index !in indices) this else toMutableList().also { it[index] = pen }
-
 /**
  * A pen in the tray. Round for a pen, rounded-square for a highlighter, so the
  * two are told apart by shape and not only by how see-through the colour is.
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun PenChip(
     pen: PenPreset,
     selected: Boolean,
     onClick: () -> Unit,
-    onLongClick: () -> Unit,
 ) {
     val shape = if (pen.tool == Tool.HIGHLIGHTER) RoundedCornerShape(6.dp) else CircleShape
     Box(
@@ -550,28 +547,50 @@ private fun PenChip(
                 },
                 shape = shape,
             )
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+            .clickable(onClick = onClick),
     )
 }
 
 /**
- * Edits one saved pen, or creates one when [pen] is null. Colour is picked in
+ * One tool in the row, wearing its own colour so the row shows at a glance what
+ * each will draw with. Tapping the one already in hand opens its settings.
+ */
+@Composable
+private fun ToolChip(
+    icon: ImageVector,
+    label: String,
+    tool: EditMode,
+    mode: EditMode,
+    pen: PenPreset,
+    onMode: (EditMode) -> Unit,
+) {
+    val selected = mode == tool
+    ToolButton(
+        icon = icon,
+        label = label,
+        selected = selected,
+        // Only the tool in hand knows its colour here; the rest wear the
+        // ordinary icon tint rather than a colour this composable cannot see.
+        tint = if (selected && tool.tints) Color(pen.colorArgb.or(0xFF000000.toInt())) else null,
+    ) { onMode(tool) }
+}
+
+/**
+ * Sets the colour and thickness of the tool in hand. Colour is picked in
  * HSV - which is how people actually describe a colour - with alpha on its own
  * strip, because a highlighter is exactly a pen whose alpha is not 255.
  */
 @Composable
 private fun PenDialog(
-    pen: PenPreset?,
-    canDelete: Boolean,
+    mode: EditMode,
+    pen: PenPreset,
     onDismiss: () -> Unit,
     onConfirm: (PenPreset) -> Unit,
-    onDelete: () -> Unit,
 ) {
-    val start = pen ?: PenPreset(Tool.PEN, 0xFF000000.toInt(), 5f)
+    val start = pen
     val hsv = remember(pen) {
         FloatArray(3).also { android.graphics.Color.colorToHSV(start.colorArgb, it) }
     }
-    var tool by remember(pen) { mutableStateOf(start.tool) }
     var hue by remember(pen) { mutableFloatStateOf(hsv[0]) }
     var saturation by remember(pen) { mutableFloatStateOf(hsv[1]) }
     var value by remember(pen) { mutableFloatStateOf(hsv[2]) }
@@ -585,34 +604,9 @@ private fun PenDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (pen == null) "펜 추가" else "펜 편집") },
+        title = { Text(toolLabel(mode)) },
         text = {
             Column {
-                Row {
-                    FilterChip(
-                        selected = tool == Tool.PEN,
-                        onClick = {
-                            tool = Tool.PEN
-                            // A pen at a highlighter's alpha reads as a mistake,
-                            // so changing kind brings a sensible alpha with it.
-                            if (alpha < 1f) alpha = 1f
-                            if (width > 24f) width = 5f
-                        },
-                        label = { Text("펜") },
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    FilterChip(
-                        selected = tool == Tool.HIGHLIGHTER,
-                        onClick = {
-                            tool = Tool.HIGHLIGHTER
-                            if (alpha > 0.8f) alpha = 0.4f
-                            if (width < 8f) width = 20f
-                        },
-                        label = { Text("형광펜") },
-                    )
-                }
-                Spacer(Modifier.height(12.dp))
-
                 SaturationValueField(hue, saturation, value) { s, v ->
                     saturation = s
                     value = v
@@ -644,9 +638,9 @@ private fun PenDialog(
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Slider(
-                    value = width,
+                    value = width.coerceIn(PenStore.widthRange(mode)),
                     onValueChange = { width = it },
-                    valueRange = if (tool == Tool.HIGHLIGHTER) 4f..60f else 1f..24f,
+                    valueRange = PenStore.widthRange(mode),
                 )
                 // The pen as it will draw: real thickness, real transparency.
                 Box(
@@ -668,19 +662,21 @@ private fun PenDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(PenPreset(tool, argb, width)) }) {
+            TextButton(onClick = { onConfirm(PenPreset(pen.tool, argb, width)) }) {
                 Text("저장")
             }
         },
-        dismissButton = {
-            Row {
-                if (canDelete) {
-                    TextButton(onClick = onDelete) { Text("삭제") }
-                }
-                TextButton(onClick = onDismiss) { Text("취소") }
-            }
-        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
     )
+}
+
+private fun toolLabel(mode: EditMode): String = when (mode) {
+    EditMode.PEN -> "펜"
+    EditMode.HIGHLIGHTER -> "형광펜"
+    EditMode.MASK -> "마스킹테이프"
+    EditMode.SHAPE -> "도형"
+    EditMode.ERASE -> "지우개"
+    else -> "도구"
 }
 
 /** Saturation across, brightness down, at the given [hue]. */
@@ -1160,8 +1156,16 @@ private fun NameDialog(onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
 private val ChromeInsets: WindowInsets
     @Composable get() = WindowInsets.systemBars.union(WindowInsets.displayCutout)
 
-/** What the pen does when it lands. One thing at a time, by construction. */
-private enum class EditMode { DRAW, ERASE, READ, SHAPE, IMAGE, CAPTURE, MASK }
+/**
+ * What the pen does when it lands. One thing at a time, by construction, and
+ * each one remembers its own colour and thickness rather than sharing a tray.
+ */
+enum class EditMode { PEN, HIGHLIGHTER, MASK, LASSO, SHAPE, IMAGE, ERASE, READ, CAPTURE }
+
+/** Whether this mode puts something on the page in the tool's own colour. */
+private val EditMode.tints: Boolean
+    get() = this == EditMode.PEN || this == EditMode.HIGHLIGHTER ||
+        this == EditMode.MASK || this == EditMode.SHAPE
 
 @Composable
 private fun NoteScreen(
@@ -1173,24 +1177,23 @@ private fun NoteScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val penStore = remember { PenStore(context) }
-    var pens by remember { mutableStateOf(penStore.load()) }
-    var penIndex by remember { mutableIntStateOf(0) }
-    // One mode at a time: the eraser, reading and the rest are held over
-    // whichever pen is selected, so putting one down gives that pen back
-    // instead of dropping the user on a default.
-    var mode by remember { mutableStateOf(EditMode.DRAW) }
+    var settings by remember { mutableStateOf(penStore.load()) }
+    // One mode at a time, and every mode carries its own colour and thickness,
+    // so putting the eraser down gives back the pen exactly as it was left.
+    var mode by remember { mutableStateOf(EditMode.PEN) }
     var shapeKind by remember { mutableStateOf(ShapeKind.LINE) }
-    /** Index being edited, or -1 for a pen that does not exist yet. */
-    var editingPen by remember { mutableStateOf<Int?>(null) }
-    var eraserWidth by remember { mutableStateOf(24f) }
-    val pen = pens.getOrElse(penIndex) { pens.first() }
+    /** True while the colour and thickness of the tool in hand is being set. */
+    var editingPen by remember { mutableStateOf(false) }
+    var lassoCount by remember { mutableIntStateOf(0) }
+    val pen = settings[mode] ?: PenStore.DEFAULTS.getValue(EditMode.PEN)
+    val eraserWidth = (settings[EditMode.ERASE] ?: PenStore.DEFAULTS.getValue(EditMode.ERASE)).width
     val tool = if (mode == EditMode.ERASE) Tool.ERASER else pen.tool
 
-    // Dragging the width slider changes the pen on every frame; the tray is
+    // Dragging the width slider changes the tool on every frame; settings are
     // written once the dragging stops rather than once per frame.
-    LaunchedEffect(pens) {
+    LaunchedEffect(settings) {
         delay(PEN_SAVE_DELAY_MS)
-        withContext(Dispatchers.IO) { penStore.save(pens) }
+        withContext(Dispatchers.IO) { penStore.save(settings) }
     }
     var fullscreen by remember { mutableStateOf(false) }
     var imageSelected by remember { mutableStateOf(false) }
@@ -1380,6 +1383,7 @@ private fun NoteScreen(
                         onCurrentPageChanged = { currentPage = it }
                         onSelectionChanged = { selectedText = it?.text }
                         onImageSelected = { imageSelected = it }
+                        onLassoSelected = { lassoCount = it }
                         imageLoader = { imageId ->
                             imageCache.get(imageId) ?: runCatching {
                                 android.graphics.BitmapFactory
@@ -1398,6 +1402,7 @@ private fun NoteScreen(
                     view.imageMode = mode == EditMode.IMAGE
                     view.captureMode = mode == EditMode.CAPTURE
                     view.maskMode = mode == EditMode.MASK
+                    view.lassoMode = mode == EditMode.LASSO
                     view.colorArgb = pen.colorArgb
                     view.strokeWidth = pen.width
                     view.eraserWidth = eraserWidth
@@ -1469,29 +1474,26 @@ private fun NoteScreen(
         Toolbar(
             note = note,
             otherNotes = otherNotes,
-            pens = pens,
-            penIndex = penIndex,
+            pen = pen,
             mode = mode,
             shapeKind = shapeKind,
-            eraserWidth = eraserWidth,
             fullscreen = fullscreen,
             showLatency = showLatency,
             // edits is read here so drawing or erasing recomposes the toolbar and
             // undo/redo can re-evaluate whether there is anything on the stacks.
             canUndo = edits.let { canvas?.canUndo() == true },
             canRedo = edits.let { canvas?.canRedo() == true },
-            onSelectPen = {
-                penIndex = it
-                if (mode == EditMode.ERASE || mode == EditMode.READ) mode = EditMode.DRAW
-            },
-            onEditPen = { editingPen = it },
-            onAddPen = { editingPen = -1 },
+            onEditPen = { editingPen = true },
             onMode = { picked ->
                 // Leaving a mode takes its leftovers with it: a selection that
-                // cannot be extended any more, a picture with handles on it.
+                // cannot be extended any more, a picture with handles on it,
+                // strokes held in a lasso that is no longer in hand.
                 canvas?.clearSelection()
                 canvas?.clearImageSelection()
-                mode = if (mode == picked) EditMode.DRAW else picked
+                canvas?.clearLassoSelection()
+                // Tapping the tool already in hand opens its settings rather
+                // than dropping it: there is no unset mode to fall back to.
+                if (mode == picked) editingPen = picked.tints else mode = picked
             },
             onShape = {
                 shapeKind = it
@@ -1501,8 +1503,7 @@ private fun NoteScreen(
             },
             onPickImage = { pickImage.launch("image/*") },
             onWeb = { webUrl = it },
-            onWidth = { pens = pens.replaceAt(penIndex, pen.copy(width = it)) },
-            onEraserWidth = { eraserWidth = it },
+            onWidth = { settings = settings + (mode to pen.copy(width = it)) },
             onUndo = {
                 canvas?.undo()
                 edits++
@@ -1532,24 +1533,14 @@ private fun NoteScreen(
         )
         }
 
-        editingPen?.let { index ->
-            val editing = pens.getOrNull(index)
+        if (editingPen) {
             PenDialog(
-                pen = editing,
-                // The tray must never empty out: an empty tray leaves nothing
-                // to draw with and no button to get a pen back.
-                canDelete = editing != null && pens.size > 1,
-                onDismiss = { editingPen = null },
+                mode = mode,
+                pen = pen,
+                onDismiss = { editingPen = false },
                 onConfirm = { saved ->
-                    pens = if (editing == null) pens + saved else pens.replaceAt(index, saved)
-                    penIndex = if (editing == null) pens.size - 1 else index
-                    mode = EditMode.DRAW
-                    editingPen = null
-                },
-                onDelete = {
-                    pens = pens.filterIndexed { i, _ -> i != index }
-                    penIndex = penIndex.coerceAtMost(pens.size - 1)
-                    editingPen = null
+                    settings = settings + (mode to saved)
+                    editingPen = false
                 },
             )
         }
@@ -1561,10 +1552,8 @@ private fun NoteScreen(
                     // Alpha belongs to the pen, not to the template: recolouring
                     // a highlighter must not turn it opaque.
                     val alpha = pen.colorArgb.toLong() and 0xFF000000L
-                    pens = pens.replaceAt(
-                        penIndex,
-                        pen.copy(colorArgb = ((rgb.toLong() and 0xFFFFFFL) or alpha).toInt()),
-                    )
+                    val recoloured = ((rgb.toLong() and 0xFFFFFFL) or alpha).toInt()
+                    settings = settings + (mode to pen.copy(colorArgb = recoloured))
                     showPalette = false
                 },
             )
@@ -1598,6 +1587,18 @@ private fun NoteScreen(
                     captured = null
                 },
                 onDismiss = { captured = null },
+            )
+        }
+
+        if (lassoCount > 0) {
+            LassoActions(
+                count = lassoCount,
+                onDelete = {
+                    canvas?.deleteLassoSelection()
+                    edits++
+                },
+                onDone = { canvas?.clearLassoSelection() },
+                modifier = Modifier.align(Alignment.BottomCenter),
             )
         }
 
@@ -1691,6 +1692,37 @@ private fun NoteScreen(
             properties = DialogProperties(usePlatformDefaultWidth = false),
         ) {
             panel(Modifier.fillMaxSize(0.85f))
+        }
+    }
+}
+
+/** What the loop caught, and the two things worth doing with it. */
+@Composable
+private fun LassoActions(
+    count: Int,
+    onDelete: () -> Unit,
+    onDone: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier
+            .windowInsetsPadding(ChromeInsets)
+            .padding(16.dp),
+        shape = RoundedCornerShape(16.dp),
+        tonalElevation = 3.dp,
+        shadowElevation = 4.dp,
+    ) {
+        Row(
+            Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("${'$'}count 획 · 끌어서 이동", style = MaterialTheme.typography.bodyMedium)
+            ToolbarDivider()
+            TextButton(onClick = onDelete) {
+                Icon(Icons.Default.Delete, contentDescription = null)
+                Text(" 삭제")
+            }
+            TextButton(onClick = onDone) { Text("완료") }
         }
     }
 }
@@ -2042,25 +2074,20 @@ private fun PageChip(
 private fun Toolbar(
     note: NoteMeta,
     otherNotes: List<NoteMeta>,
-    pens: List<PenPreset>,
-    penIndex: Int,
+    pen: PenPreset,
     mode: EditMode,
     shapeKind: ShapeKind,
-    eraserWidth: Float,
     fullscreen: Boolean,
     showLatency: Boolean,
     canUndo: Boolean,
     canRedo: Boolean,
     pageLabel: String,
-    onSelectPen: (Int) -> Unit,
-    onEditPen: (Int) -> Unit,
-    onAddPen: () -> Unit,
+    onEditPen: () -> Unit,
     onMode: (EditMode) -> Unit,
     onShape: (ShapeKind) -> Unit,
     onPickImage: () -> Unit,
     onWeb: (String) -> Unit,
     onWidth: (Float) -> Unit,
-    onEraserWidth: (Float) -> Unit,
     onUndo: () -> Unit,
     onRedo: () -> Unit,
     onFitWidth: () -> Unit,
@@ -2145,67 +2172,68 @@ private fun Toolbar(
                 ) { onMode(EditMode.READ) }
                 ToolbarDivider()
 
-                for ((index, saved) in pens.withIndex()) {
-                    PenChip(
-                        pen = saved,
-                        selected = mode == EditMode.DRAW && index == penIndex,
-                        onClick = { onSelectPen(index) },
-                        onLongClick = { onEditPen(index) },
-                    )
-                }
-                IconButton(onClick = onAddPen) {
-                    Icon(
-                        Icons.Default.Add,
-                        contentDescription = "펜 추가",
-                        tint = MaterialTheme.colorScheme.outline,
-                    )
-                }
-                IconButton(onClick = onPalette) {
-                    Icon(
-                        Icons.Default.Palette,
-                        contentDescription = "색상 템플릿",
-                        tint = MaterialTheme.colorScheme.outline,
-                    )
-                }
-                ToolbarDivider()
-
-                ToolButton(
-                    Icons.Default.Delete,
-                    "지우개",
-                    mode == EditMode.ERASE,
-                ) { onMode(EditMode.ERASE) }
+                // The tools, in a fixed row. Each keeps its own colour and
+                // thickness, so picking one up is the whole of choosing what to
+                // write with - there is no tray of pens to curate.
+                ToolChip(Icons.Default.Create, "펜", EditMode.PEN, mode, pen, onMode)
+                ToolChip(
+                    Icons.Default.Highlight,
+                    "형광펜",
+                    EditMode.HIGHLIGHTER,
+                    mode,
+                    pen,
+                    onMode,
+                )
+                ToolChip(
+                    Icons.Default.VisibilityOff,
+                    "마스킹테이프",
+                    EditMode.MASK,
+                    mode,
+                    pen,
+                    onMode,
+                )
+                ToolChip(Icons.Default.Gesture, "올가미", EditMode.LASSO, mode, pen, onMode)
                 ShapeButton(mode == EditMode.SHAPE, shapeKind, onShape)
                 ToolButton(
                     Icons.Default.AddPhotoAlternate,
                     "사진",
                     mode == EditMode.IMAGE,
-                    onPickImage,
+                    onClick = onPickImage,
                 )
                 ToolButton(
-                    Icons.Default.VisibilityOff,
-                    "마스킹테이프",
-                    mode == EditMode.MASK,
-                ) { onMode(EditMode.MASK) }
+                    Icons.Default.Delete,
+                    "지우개",
+                    mode == EditMode.ERASE,
+                ) { onMode(EditMode.ERASE) }
                 ToolbarDivider()
 
-                // One slider, whichever tool is in hand: it sets the eraser's
-                // size while the eraser is out and the selected pen's
-                // otherwise, and the pen keeps that thickness. Two sliders
-                // would mean one of them is always the wrong one to reach for.
-                val pen = pens.getOrElse(penIndex) { pens.first() }
-                val range = when {
-                    mode == EditMode.ERASE -> 8f..96f
-                    pen.tool == Tool.HIGHLIGHTER -> 4f..60f
-                    else -> 1f..24f
+                // The colour of whatever is in hand. Tapping it opens the
+                // picker; the templates sit next to it.
+                if (mode.tints) {
+                    PenChip(pen = pen, selected = true, onClick = onEditPen)
+                    IconButton(onClick = onPalette) {
+                        Icon(
+                            Icons.Default.Palette,
+                            contentDescription = "색상 템플릿",
+                            tint = MaterialTheme.colorScheme.outline,
+                        )
+                    }
+                    ToolbarDivider()
                 }
-                val erasing = mode == EditMode.ERASE
-                Slider(
-                    value = (if (erasing) eraserWidth else pen.width).coerceIn(range),
-                    onValueChange = if (erasing) onEraserWidth else onWidth,
-                    valueRange = range,
-                    modifier = Modifier.width(110.dp),
-                )
-                ToolbarDivider()
+
+                // One slider, whichever tool is in hand, because it sets the
+                // thickness of that tool and no other. Two sliders would mean
+                // one of them is always the wrong one to reach for.
+                if (mode != EditMode.LASSO && mode != EditMode.IMAGE) {
+                    val range = PenStore.widthRange(mode)
+                    Slider(
+                        value = pen.width.coerceIn(range),
+                        onValueChange = onWidth,
+                        valueRange = range,
+                        modifier = Modifier.width(110.dp),
+                    )
+                    ToolbarDivider()
+                }
 
                 IconButton(onClick = { onWeb(SEARCH_HOME) }) {
                     Icon(Icons.Default.Language, contentDescription = "인터넷")
@@ -2287,10 +2315,19 @@ private fun ToolButton(
     icon: ImageVector,
     label: String,
     selected: Boolean,
+    /** Overrides the selected tint, so a tool can wear the colour it draws in. */
+    tint: Color? = null,
     onClick: () -> Unit,
 ) {
     if (selected) {
-        FilledIconButton(onClick = onClick) { Icon(icon, contentDescription = label) }
+        FilledIconButton(
+            onClick = onClick,
+            colors = if (tint == null) {
+                IconButtonDefaults.filledIconButtonColors()
+            } else {
+                IconButtonDefaults.filledIconButtonColors(containerColor = tint)
+            },
+        ) { Icon(icon, contentDescription = label) }
     } else {
         IconButton(
             onClick = onClick,

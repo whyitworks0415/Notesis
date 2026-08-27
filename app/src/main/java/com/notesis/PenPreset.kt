@@ -1,13 +1,12 @@
 package com.notesis
 
 import android.content.Context
-import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * One saved pen: what it draws with, in what colour, how thick. Colour keeps its
- * alpha, which is what makes a highlighter a highlighter rather than a pen with
- * a special case attached to it.
+ * How one tool is set: what it draws with, in what colour, how thick. Colour
+ * keeps its alpha, which is what makes a highlighter a highlighter rather than a
+ * pen with a special case attached to it.
  */
 data class PenPreset(
     val tool: Tool,
@@ -16,53 +15,64 @@ data class PenPreset(
 )
 
 /**
- * The pen tray, kept in preferences rather than in a note - a pen belongs to the
- * person, not to the page they happen to have open.
+ * Each tool's own settings, kept in preferences rather than in a note - how a
+ * pen is set belongs to the person, not to the page they happen to have open.
+ * Picking up a tool picks up the colour and thickness it was left at, so there
+ * is no tray to curate and nothing to lose track of.
  */
 class PenStore(context: Context) {
 
     private val prefs = context.getSharedPreferences("pens", Context.MODE_PRIVATE)
 
-    fun load(): List<PenPreset> {
+    fun load(): Map<EditMode, PenPreset> {
         val raw = prefs.getString(KEY, null) ?: return DEFAULTS
-        val list = runCatching {
-            val array = JSONArray(raw)
-            (0 until array.length()).map { i ->
-                val item = array.getJSONObject(i)
-                PenPreset(
-                    tool = Tool.entries[item.optInt("tool").coerceIn(0, Tool.entries.size - 1)],
-                    colorArgb = item.optInt("color"),
-                    width = item.optDouble("width", 5.0).toFloat(),
+        val saved = runCatching {
+            val json = JSONObject(raw)
+            DEFAULTS.keys.mapNotNull { mode ->
+                val item = json.optJSONObject(mode.name) ?: return@mapNotNull null
+                val fallback = DEFAULTS.getValue(mode)
+                mode to PenPreset(
+                    tool = fallback.tool,
+                    colorArgb = item.optInt("color", fallback.colorArgb),
+                    width = item.optDouble("width", fallback.width.toDouble()).toFloat(),
                 )
-            }
+            }.toMap()
         }.getOrNull().orEmpty()
-        // An empty tray leaves nothing to draw with and no way back.
-        return list.ifEmpty { DEFAULTS }
+        // Defaults underneath, so a tool added in a later version arrives set up
+        // rather than missing.
+        return DEFAULTS + saved
     }
 
-    fun save(pens: List<PenPreset>) {
-        val array = JSONArray()
-        for (pen in pens) {
-            array.put(
+    fun save(settings: Map<EditMode, PenPreset>) {
+        val json = JSONObject()
+        for ((mode, pen) in settings) {
+            json.put(
+                mode.name,
                 JSONObject()
-                    .put("tool", pen.tool.ordinal)
                     .put("color", pen.colorArgb)
                     .put("width", pen.width.toDouble()),
             )
         }
-        prefs.edit().putString(KEY, array.toString()).apply()
+        prefs.edit().putString(KEY, json.toString()).apply()
     }
 
-    private companion object {
-        const val KEY = "presets"
+    companion object {
+        private const val KEY = "tools"
 
-        /** Highlighters come pre-faded; that alpha is now the pen's own, not a rule. */
-        val DEFAULTS = listOf(
-            PenPreset(Tool.PEN, 0xFF000000.toInt(), 5f),
-            PenPreset(Tool.PEN, 0xFFD32F2F.toInt(), 5f),
-            PenPreset(Tool.PEN, 0xFF1976D2.toInt(), 5f),
-            PenPreset(Tool.HIGHLIGHTER, 0x66F9A825, 20f),
-            PenPreset(Tool.HIGHLIGHTER, 0x6600C853, 20f),
+        /** The thickness slider's range depends on what is being made thick. */
+        fun widthRange(mode: EditMode): ClosedFloatingPointRange<Float> = when (mode) {
+            EditMode.ERASE -> 8f..96f
+            EditMode.HIGHLIGHTER -> 4f..60f
+            else -> 1f..24f
+        }
+
+        /** Highlighters come pre-faded; that alpha is the tool's own, not a rule. */
+        val DEFAULTS: Map<EditMode, PenPreset> = mapOf(
+            EditMode.PEN to PenPreset(Tool.PEN, 0xFF000000.toInt(), 5f),
+            EditMode.HIGHLIGHTER to PenPreset(Tool.HIGHLIGHTER, 0x66F9A825, 20f),
+            EditMode.MASK to PenPreset(Tool.PEN, PageMask.DEFAULT_MASK_COLOR, 20f),
+            EditMode.SHAPE to PenPreset(Tool.PEN, 0xFF1976D2.toInt(), 5f),
+            EditMode.ERASE to PenPreset(Tool.ERASER, 0xFF000000.toInt(), 24f),
         )
     }
 }
