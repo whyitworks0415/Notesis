@@ -1,5 +1,6 @@
 package com.notesis
 
+import android.os.Build
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -8,6 +9,7 @@ import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.RectF
 import android.util.AttributeSet
+import android.view.Choreographer
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.VelocityTracker
@@ -200,6 +202,29 @@ class InkCanvasView @JvmOverloads constructor(
     private var pressY = 0f
     private val longPress = Runnable { beginTextSelection() }
 
+    /**
+     * Ticks once per display frame while a stroke is being drawn, so the HUD
+     * reports the refresh rate the panel is actually running at rather than the
+     * one it is capable of. The two differ, and that difference is the whole
+     * reason prediction misjudges its distance on a 60Hz frame.
+     */
+    private var lastFrameNanos = 0L
+    private var frameClockRunning = false
+    private val frameCallback = object : Choreographer.FrameCallback {
+        override fun doFrame(frameTimeNanos: Long) {
+            if (activeStylusPointer == null) {
+                // A pen down within a frame of the last pen up would otherwise
+                // start a second loop and halve every delta it measures.
+                frameClockRunning = false
+                lastFrameNanos = 0L
+                return
+            }
+            if (lastFrameNanos != 0L) latency.addFrame(frameTimeNanos - lastFrameNanos)
+            lastFrameNanos = frameTimeNanos
+            Choreographer.getInstance().postFrameCallback(this)
+        }
+    }
+
     /** Mesh generation is native work; keeping it off the UI thread keeps frames. */
     private val refiner = Executors.newSingleThreadExecutor()
     private val refineRunnable = Runnable { refineVisiblePages() }
@@ -248,6 +273,14 @@ class InkCanvasView @JvmOverloads constructor(
             }
         })
         predictor = MotionEventPredictor.newInstance(this)
+        // On an adaptive panel the system picks a refresh rate per window from
+        // what the content looks like, and a note that is mostly still reads as
+        // content that does not need 120Hz. Say otherwise: this view is only
+        // still until a pen touches it. Costs nothing while nothing is drawn -
+        // the hint applies to frames actually produced.
+        if (Build.VERSION.SDK_INT >= 35) {
+            requestedFrameRate = REQUESTED_FRAME_RATE_CATEGORY_HIGH
+        }
         onTransformChanged()
     }
 
@@ -448,6 +481,11 @@ class InkCanvasView @JvmOverloads constructor(
                 if (index < 0) return true
                 val pointerId = event.getPointerId(event.actionIndex)
                 activeStylusPointer = pointerId
+                if (!frameClockRunning) {
+                    frameClockRunning = true
+                    lastFrameNanos = 0L
+                    Choreographer.getInstance().postFrameCallback(frameCallback)
+                }
                 activePage = document.pages[index]
                 erasing = tool == Tool.ERASER || event.isEraserGesture()
                 if (erasing) {
@@ -495,6 +533,13 @@ class InkCanvasView @JvmOverloads constructor(
                 latency.addSamples(1 + event.historySize)
                 val predicted = predictor.predict()
                 try {
+                    if (predicted != null) {
+                        // Ground truth for the tip's steadiness: the distance
+                        // the prediction reaches past the newest real sample.
+                        latency.addPredictionLead(
+                            (predicted.eventTimeNanos - event.eventTimeNanos) / 1e6,
+                        )
+                    }
                     wet.addToStroke(event, pointerId, strokeId, predicted)
                 } finally {
                     predicted?.recycle()
