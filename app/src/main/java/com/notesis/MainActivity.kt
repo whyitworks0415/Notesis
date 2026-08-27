@@ -76,6 +76,9 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloseFullscreen
+import androidx.compose.material.icons.filled.Computer
+import androidx.compose.material.icons.filled.Launch
+import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.CropSquare
 import androidx.compose.material.icons.filled.Remove
@@ -883,6 +886,8 @@ private fun WebPanel(
     holder: MutableState<android.webkit.WebView?>,
     popup: Boolean,
     onTogglePopup: () -> Unit,
+    desktop: Boolean,
+    onToggleDesktop: () -> Unit,
     onClose: () -> Unit,
     onFile: (android.webkit.ValueCallback<Array<Uri>>) -> Unit,
     modifier: Modifier = Modifier,
@@ -922,6 +927,15 @@ private fun WebPanel(
                         .weight(1f)
                         .padding(vertical = 4.dp),
                 )
+                IconButton(onClick = onToggleDesktop) {
+                    Icon(
+                        if (desktop) Icons.Default.Computer else Icons.Default.PhoneAndroid,
+                        contentDescription = if (desktop) "PC 화면" else "모바일 화면",
+                    )
+                }
+                IconButton(onClick = { openExternally(web?.context, web?.url ?: url) }) {
+                    Icon(Icons.Default.Launch, contentDescription = "브라우저로 열기")
+                }
                 IconButton(onClick = onTogglePopup) {
                     Icon(
                         if (popup) Icons.Default.CloseFullscreen else Icons.Default.OpenInFull,
@@ -940,9 +954,19 @@ private fun WebPanel(
                 // The tag remembers which site was asked for, so picking another
                 // one loads it while a stroke on the note next door does not.
                 update = { view ->
+                    val wanted = uaFor(
+                        android.webkit.WebSettings.getDefaultUserAgent(view.context),
+                        desktop,
+                    )
+                    val swapped = view.settings.userAgentString != wanted
+                    if (swapped) view.settings.userAgentString = wanted
                     if (view.tag != url) {
                         view.tag = url
                         view.loadUrl(url)
+                    } else if (swapped) {
+                        // A site decides what to serve from the user agent it
+                        // saw, so changing it is only worth anything on a fetch.
+                        view.reload()
                     }
                 },
             )
@@ -951,15 +975,41 @@ private fun WebPanel(
 }
 
 /**
- * Google refuses to sign in from anything whose user agent says WebView, which
- * is why Gemini came up against a "secure browser" wall. Dropping the "; wv"
- * token and taking third-party cookies is what the sign-in flow needs.
+ * What the panel claims to be. Every AI site refuses to sign in to an embedded
+ * WebView, and Android gives itself away twice: the "wv" token and the stale
+ * "Version/4.0". Stripping both leaves a plain Chrome for Android. Desktop
+ * borrows the same Chrome build number and drops the mobile platform, which is
+ * what the sites that only ship a desktop layout want to see.
  */
+internal fun uaFor(base: String, desktop: Boolean): String {
+    if (!desktop) {
+        return base
+            .replace("; wv", "")
+            .replace(Regex("Version/[\\d.]+ "), "")
+    }
+    val chrome = Regex("Chrome/[\\d.]+").find(base)?.value ?: "Chrome/140.0.0.0"
+    return "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 " +
+        "(KHTML, like Gecko) $chrome Safari/537.36"
+}
+
+/** The escape hatch: hand the page to a real browser, which can always log in. */
+private fun openExternally(context: android.content.Context?, url: String) {
+    context ?: return
+    runCatching {
+        context.startActivity(
+            android.content.Intent(android.content.Intent.ACTION_VIEW, Uri.parse(url)),
+        )
+    }
+}
+
 private fun newBrowser(
     context: android.content.Context,
     onFile: (android.webkit.ValueCallback<Array<Uri>>) -> Unit,
-): android.webkit.WebView =
-    android.webkit.WebView(context).apply {
+): android.webkit.WebView {
+    val view = android.webkit.WebView(context)
+    android.webkit.CookieManager.getInstance().setAcceptCookie(true)
+    android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(view, true)
+    return view.apply {
         // Without a client the framework hands links to the system browser,
         // which is the opposite of the point.
         webViewClient = android.webkit.WebViewClient()
@@ -977,11 +1027,17 @@ private fun newBrowser(
         }
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
+        settings.databaseEnabled = true
         settings.useWideViewPort = true
         settings.loadWithOverviewMode = true
-        settings.userAgentString = settings.userAgentString.replace("; wv", "")
-        android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+        // A sign-in popup with nowhere to go is a dead button; loading it in
+        // place is what a single-window browser does.
+        settings.setSupportMultipleWindows(false)
+        settings.javaScriptCanOpenWindowsAutomatically = true
+        settings.userAgentString =
+            uaFor(android.webkit.WebSettings.getDefaultUserAgent(context), false)
     }
+}
 
 /** A typed address if it looks like one, a search if it does not. */
 private fun asUrl(text: String): String {
@@ -1061,6 +1117,9 @@ private fun NoteScreen(
     val browser = remember { mutableStateOf<android.webkit.WebView?>(null) }
     var webWidth by remember { mutableStateOf(WEB_PANEL_WIDTH) }
     var webPopup by remember { mutableStateOf(false) }
+    // Every AI site refuses to sign in to something that looks like a
+    // WebView, so the panel can claim to be desktop Chrome instead.
+    var webDesktop by remember { mutableStateOf(false) }
     // A capture waiting to be handed to the next upload button a site shows.
     val pendingAttachment = remember { mutableStateOf<Uri?>(null) }
     val webChooser = remember { mutableStateOf<android.webkit.ValueCallback<Array<Uri>>?>(null) }
@@ -1180,6 +1239,8 @@ private fun NoteScreen(
             holder = browser,
             popup = webPopup,
             onTogglePopup = { webPopup = !webPopup },
+            desktop = webDesktop,
+            onToggleDesktop = { webDesktop = !webDesktop },
             onClose = {
                 webUrl = null
                 webPopup = false
