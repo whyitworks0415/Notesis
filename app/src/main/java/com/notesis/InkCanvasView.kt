@@ -676,13 +676,14 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun currentBrush(): Brush {
-        val highlighter = tool == Tool.HIGHLIGHTER
         return Brush.createWithColorIntArgb(
             family = tool.brushFamily(),
-            colorIntArgb = if (highlighter) (colorArgb and 0x00FFFFFF) or HIGHLIGHT_ALPHA else colorArgb,
+            // Alpha included: a highlighter is a saved pen that happens to be
+            // translucent and wide, not a tool with its own hidden rules.
+            colorIntArgb = colorArgb,
             // Sizes are page units, so a stroke keeps its size on the page and
             // zooming magnifies it like everything else on the paper.
-            size = if (highlighter) strokeWidth * 4f else strokeWidth,
+            size = strokeWidth,
             // Drawn at the zoom in use, so a stroke made while zoomed in is
             // already fine enough and never needs rebuilding.
             epsilon = epsilonFor(currentScale()),

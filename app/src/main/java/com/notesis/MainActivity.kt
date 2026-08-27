@@ -11,6 +11,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -30,6 +31,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -52,9 +55,9 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.outlined.Brush
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.ZoomOutMap
-import androidx.compose.material.icons.outlined.Brush
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -64,6 +67,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -81,16 +85,21 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -132,13 +141,6 @@ class MainActivity : ComponentActivity() {
 
 private val dateFormat = SimpleDateFormat("M월 d일 HH:mm", Locale.KOREA)
 
-private val palette = listOf(
-    Color(0xFF000000),
-    Color(0xFFD32F2F),
-    Color(0xFF1976D2),
-    Color(0xFF388E3C),
-    Color(0xFFF9A825),
-)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -450,6 +452,245 @@ private fun NoteCard(
     }
 }
 
+/** Replaces one entry, leaving the rest of the list alone. */
+private fun List<PenPreset>.replaceAt(index: Int, pen: PenPreset): List<PenPreset> =
+    if (index !in indices) this else toMutableList().also { it[index] = pen }
+
+/**
+ * A pen in the tray. Round for a pen, rounded-square for a highlighter, so the
+ * two are told apart by shape and not only by how see-through the colour is.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun PenChip(
+    pen: PenPreset,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
+    val shape = if (pen.tool == Tool.HIGHLIGHTER) RoundedCornerShape(6.dp) else CircleShape
+    Box(
+        Modifier
+            .padding(horizontal = 3.dp)
+            .size(if (selected) 28.dp else 24.dp)
+            .clip(shape)
+            // White underneath, so a translucent pen shows how see-through it is.
+            .background(Color.White)
+            .background(Color(pen.colorArgb))
+            .border(
+                width = if (selected) 2.dp else 1.dp,
+                color = if (selected) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.outlineVariant
+                },
+                shape = shape,
+            )
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+    )
+}
+
+/**
+ * Edits one saved pen, or creates one when [pen] is null. Colour is picked in
+ * HSV - which is how people actually describe a colour - with alpha on its own
+ * strip, because a highlighter is exactly a pen whose alpha is not 255.
+ */
+@Composable
+private fun PenDialog(
+    pen: PenPreset?,
+    canDelete: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: (PenPreset) -> Unit,
+    onDelete: () -> Unit,
+) {
+    val start = pen ?: PenPreset(Tool.PEN, 0xFF000000.toInt(), 5f)
+    val hsv = remember(pen) {
+        FloatArray(3).also { android.graphics.Color.colorToHSV(start.colorArgb, it) }
+    }
+    var tool by remember(pen) { mutableStateOf(start.tool) }
+    var hue by remember(pen) { mutableFloatStateOf(hsv[0]) }
+    var saturation by remember(pen) { mutableFloatStateOf(hsv[1]) }
+    var value by remember(pen) { mutableFloatStateOf(hsv[2]) }
+    var alpha by remember(pen) {
+        mutableFloatStateOf(android.graphics.Color.alpha(start.colorArgb) / 255f)
+    }
+    var width by remember(pen) { mutableFloatStateOf(start.width) }
+
+    val picked = Color.hsv(hue, saturation, value, alpha)
+    val argb = picked.toArgb()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (pen == null) "\ud38c \ucd94\uac00" else "\ud38c \ud3b8\uc9d1") },
+        text = {
+            Column {
+                Row {
+                    FilterChip(
+                        selected = tool == Tool.PEN,
+                        onClick = {
+                            tool = Tool.PEN
+                            // A pen at a highlighter's alpha reads as a mistake,
+                            // so changing kind brings a sensible alpha with it.
+                            if (alpha < 1f) alpha = 1f
+                            if (width > 24f) width = 5f
+                        },
+                        label = { Text("\ud38c") },
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    FilterChip(
+                        selected = tool == Tool.HIGHLIGHTER,
+                        onClick = {
+                            tool = Tool.HIGHLIGHTER
+                            if (alpha > 0.8f) alpha = 0.4f
+                            if (width < 8f) width = 20f
+                        },
+                        label = { Text("\ud615\uad11\ud38c") },
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+
+                SaturationValueField(hue, saturation, value) { s, v ->
+                    saturation = s
+                    value = v
+                }
+                Spacer(Modifier.height(10.dp))
+                GradientStrip(
+                    colors = (0..6).map { Color.hsv(it * 60f % 360f, 1f, 1f) },
+                    position = hue / 360f,
+                ) { hue = it * 360f }
+                Spacer(Modifier.height(10.dp))
+                GradientStrip(
+                    colors = listOf(
+                        Color.hsv(hue, saturation, value, 0f),
+                        Color.hsv(hue, saturation, value),
+                    ),
+                    position = alpha,
+                ) { alpha = it }
+
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "#%08X".format(argb),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline,
+                )
+
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "\uad75\uae30 " + "%.1f".format(width),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Slider(
+                    value = width,
+                    onValueChange = { width = it },
+                    valueRange = if (tool == Tool.HIGHLIGHTER) 4f..60f else 1f..24f,
+                )
+                // The pen as it will draw: real thickness, real transparency.
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(44.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color.White),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth(0.9f)
+                            .height(width.dp.coerceAtMost(36.dp))
+                            .clip(CircleShape)
+                            .background(picked),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(PenPreset(tool, argb, width)) }) {
+                Text("\uc800\uc7a5")
+            }
+        },
+        dismissButton = {
+            Row {
+                if (canDelete) {
+                    TextButton(onClick = onDelete) { Text("\uc0ad\uc81c") }
+                }
+                TextButton(onClick = onDismiss) { Text("\ucde8\uc18c") }
+            }
+        },
+    )
+}
+
+/** Saturation across, brightness down, at the given [hue]. */
+@Composable
+private fun SaturationValueField(
+    hue: Float,
+    saturation: Float,
+    value: Float,
+    onChange: (Float, Float) -> Unit,
+) {
+    Canvas(
+        Modifier
+            .fillMaxWidth()
+            .height(150.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .pointerInput(Unit) {
+                detectTapGestures { emitSv(it, size.width, size.height, onChange) }
+            }
+            .pointerInput(Unit) {
+                detectDragGestures { change, _ ->
+                    emitSv(change.position, size.width, size.height, onChange)
+                }
+            },
+    ) {
+        drawRect(Brush.horizontalGradient(listOf(Color.White, Color.hsv(hue, 1f, 1f))))
+        drawRect(Brush.verticalGradient(listOf(Color.Transparent, Color.Black)))
+        drawCircle(
+            color = Color.White,
+            radius = 7.dp.toPx(),
+            center = Offset(saturation * size.width, (1f - value) * size.height),
+            style = Stroke(width = 2.dp.toPx()),
+        )
+    }
+}
+
+private fun emitSv(at: Offset, width: Int, height: Int, onChange: (Float, Float) -> Unit) {
+    if (width == 0 || height == 0) return
+    onChange((at.x / width).coerceIn(0f, 1f), 1f - (at.y / height).coerceIn(0f, 1f))
+}
+
+/** A horizontal ramp with a handle: used for hue, and again for alpha. */
+@Composable
+private fun GradientStrip(
+    colors: List<Color>,
+    position: Float,
+    onChange: (Float) -> Unit,
+) {
+    Canvas(
+        Modifier
+            .fillMaxWidth()
+            .height(26.dp)
+            .clip(RoundedCornerShape(13.dp))
+            .pointerInput(Unit) {
+                detectTapGestures { onChange((it.x / size.width).coerceIn(0f, 1f)) }
+            }
+            .pointerInput(Unit) {
+                detectDragGestures { change, _ ->
+                    onChange((change.position.x / size.width).coerceIn(0f, 1f))
+                }
+            },
+    ) {
+        // White underneath, so the clear end of the alpha ramp reads as clear
+        // rather than as whatever happens to be behind the dialog.
+        drawRect(Color.White)
+        drawRect(Brush.horizontalGradient(colors))
+        drawCircle(
+            color = Color.White,
+            radius = size.height / 2f - 3.dp.toPx(),
+            center = Offset(position * size.width, size.height / 2f),
+            style = Stroke(width = 3.dp.toPx()),
+        )
+    }
+}
+
 @Composable
 private fun NameDialog(onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
     var title by remember { mutableStateOf("") }
@@ -472,10 +713,24 @@ private fun NameDialog(onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
 @Composable
 private fun NoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> Unit) {
     val context = LocalContext.current
-    var tool by remember { mutableStateOf(Tool.PEN) }
-    var color by remember { mutableStateOf(palette.first()) }
-    var width by remember { mutableStateOf(5f) }
+    val penStore = remember { PenStore(context) }
+    var pens by remember { mutableStateOf(penStore.load()) }
+    var penIndex by remember { mutableIntStateOf(0) }
+    // The eraser is held over whichever pen is selected, so putting it down
+    // gives that pen back instead of dropping the user on a default.
+    var erasing by remember { mutableStateOf(false) }
+    /** Index being edited, or -1 for a pen that does not exist yet. */
+    var editingPen by remember { mutableStateOf<Int?>(null) }
     var eraserWidth by remember { mutableStateOf(24f) }
+    val pen = pens.getOrElse(penIndex) { pens.first() }
+    val tool = if (erasing) Tool.ERASER else pen.tool
+
+    // Dragging the width slider changes the pen on every frame; the tray is
+    // written once the dragging stops rather than once per frame.
+    LaunchedEffect(pens) {
+        delay(PEN_SAVE_DELAY_MS)
+        withContext(Dispatchers.IO) { penStore.save(pens) }
+    }
     var showLatency by remember { mutableStateOf(false) }
     var showPages by remember { mutableStateOf(false) }
     var edits by remember { mutableIntStateOf(0) }
@@ -533,8 +788,8 @@ private fun NoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> Unit) {
                 },
                 update = { view ->
                     view.tool = tool
-                    view.colorArgb = color.toArgb()
-                    view.strokeWidth = width
+                    view.colorArgb = pen.colorArgb
+                    view.strokeWidth = pen.width
                     view.eraserWidth = eraserWidth
                 },
             )
@@ -585,18 +840,23 @@ private fun NoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> Unit) {
 
         Toolbar(
             note = note,
-            tool = tool,
-            color = color,
-            width = width,
+            pens = pens,
+            penIndex = penIndex,
+            erasing = erasing,
             eraserWidth = eraserWidth,
             showLatency = showLatency,
             // edits is read here so drawing or erasing recomposes the toolbar and
             // undo/redo can re-evaluate whether there is anything on the stacks.
             canUndo = edits.let { canvas?.canUndo() == true },
             canRedo = edits.let { canvas?.canRedo() == true },
-            onTool = { tool = it },
-            onColor = { color = it },
-            onWidth = { width = it },
+            onSelectPen = {
+                penIndex = it
+                erasing = false
+            },
+            onEditPen = { editingPen = it },
+            onAddPen = { editingPen = -1 },
+            onToggleEraser = { erasing = !erasing },
+            onWidth = { pens = pens.replaceAt(penIndex, pen.copy(width = it)) },
             onEraserWidth = { eraserWidth = it },
             onUndo = {
                 canvas?.undo()
@@ -613,6 +873,28 @@ private fun NoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> Unit) {
             pageLabel = "${currentPage + 1} / $pageCount",
             modifier = Modifier.align(Alignment.TopCenter),
         )
+
+        editingPen?.let { index ->
+            val editing = pens.getOrNull(index)
+            PenDialog(
+                pen = editing,
+                // The tray must never empty out: an empty tray leaves nothing
+                // to draw with and no button to get a pen back.
+                canDelete = editing != null && pens.size > 1,
+                onDismiss = { editingPen = null },
+                onConfirm = { saved ->
+                    pens = if (editing == null) pens + saved else pens.replaceAt(index, saved)
+                    penIndex = if (editing == null) pens.size - 1 else index
+                    erasing = false
+                    editingPen = null
+                },
+                onDelete = {
+                    pens = pens.filterIndexed { i, _ -> i != index }
+                    penIndex = penIndex.coerceAtMost(pens.size - 1)
+                    editingPen = null
+                },
+            )
+        }
 
         selectedText?.let { text ->
             SelectionActions(
@@ -830,16 +1112,18 @@ private fun PageChip(
 @Composable
 private fun Toolbar(
     note: NoteMeta,
-    tool: Tool,
-    color: Color,
-    width: Float,
+    pens: List<PenPreset>,
+    penIndex: Int,
+    erasing: Boolean,
     eraserWidth: Float,
     showLatency: Boolean,
     canUndo: Boolean,
     canRedo: Boolean,
     pageLabel: String,
-    onTool: (Tool) -> Unit,
-    onColor: (Color) -> Unit,
+    onSelectPen: (Int) -> Unit,
+    onEditPen: (Int) -> Unit,
+    onAddPen: () -> Unit,
+    onToggleEraser: () -> Unit,
     onWidth: (Float) -> Unit,
     onEraserWidth: (Float) -> Unit,
     onUndo: () -> Unit,
@@ -874,38 +1158,40 @@ private fun Toolbar(
             )
             ToolbarDivider()
 
-            ToolButton(Icons.Outlined.Edit, "펜", tool == Tool.PEN) { onTool(Tool.PEN) }
-            ToolButton(Icons.Outlined.Brush, "형광펜", tool == Tool.HIGHLIGHTER) {
-                onTool(Tool.HIGHLIGHTER)
+            for ((index, saved) in pens.withIndex()) {
+                PenChip(
+                    pen = saved,
+                    selected = !erasing && index == penIndex,
+                    onClick = { onSelectPen(index) },
+                    onLongClick = { onEditPen(index) },
+                )
             }
-            ToolButton(Icons.Default.Delete, "지우개", tool == Tool.ERASER) { onTool(Tool.ERASER) }
-            ToolbarDivider()
-
-            for (swatch in palette) {
-                Box(
-                    Modifier
-                        .padding(horizontal = 3.dp)
-                        .size(if (swatch == color) 26.dp else 22.dp)
-                        .clip(CircleShape)
-                        .background(swatch)
-                        .border(
-                            width = if (swatch == color) 2.dp else 0.dp,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            shape = CircleShape,
-                        )
-                        .clickable { onColor(swatch) },
+            IconButton(onClick = onAddPen) {
+                Icon(
+                    Icons.Default.Add,
+                    contentDescription = "펜 추가",
+                    tint = MaterialTheme.colorScheme.outline,
                 )
             }
             ToolbarDivider()
 
+            ToolButton(Icons.Default.Delete, "지우개", erasing) { onToggleEraser() }
+            ToolbarDivider()
+
             // One slider, whichever tool is in hand: it sets the eraser's size
-            // while the eraser is selected and the pen's otherwise. Two sliders
-            // would mean one of them is always the wrong one to reach for.
-            val erasing = tool == Tool.ERASER
+            // while the eraser is out and the selected pen's otherwise, and the
+            // pen keeps that thickness. Two sliders would mean one of them is
+            // always the wrong one to reach for.
+            val pen = pens.getOrElse(penIndex) { pens.first() }
+            val range = when {
+                erasing -> 8f..96f
+                pen.tool == Tool.HIGHLIGHTER -> 4f..60f
+                else -> 1f..24f
+            }
             Slider(
-                value = if (erasing) eraserWidth else width,
+                value = (if (erasing) eraserWidth else pen.width).coerceIn(range),
                 onValueChange = if (erasing) onEraserWidth else onWidth,
-                valueRange = if (erasing) 8f..96f else 1f..24f,
+                valueRange = range,
                 modifier = Modifier.width(96.dp),
             )
             ToolbarDivider()
@@ -969,3 +1255,5 @@ private fun ToolbarDivider() {
 
 private const val AUTOSAVE_DELAY_MS = 1200L
 private const val SEARCH_DEBOUNCE_MS = 220L
+
+private const val PEN_SAVE_DELAY_MS = 400L
