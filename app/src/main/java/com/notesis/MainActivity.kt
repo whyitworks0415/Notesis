@@ -429,6 +429,9 @@ private fun NoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> Unit) {
                 modifier = Modifier.fillMaxSize(),
                 factory = { viewContext ->
                     InkCanvasView(viewContext).apply {
+                        pageLoader = { page, epsilon ->
+                            store.loadPage(note.id, page, epsilon)
+                        }
                         open(ready.first, ready.second)
                         onStrokesChanged = {
                             edits++

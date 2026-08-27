@@ -48,6 +48,16 @@ class Page(
      */
     var tessellatedFor: Float = 0f
 
+    /**
+     * Whether this page's strokes have been read off disk yet. Opening a note
+     * used to decode every page before anything could be drawn, which makes the
+     * wait grow with the note rather than with what is on screen.
+     */
+    var loaded: Boolean = true
+
+    /** Stroke count from the last save, for pages not loaded this session. */
+    var savedStrokeCount: Int = 0
+
     companion object {
         // A4 at 150dpi. Any consistent unit works; this one makes an imported
         // PDF and a blank page land at comparable sizes.
@@ -273,8 +283,9 @@ class NoteStore(context: Context) {
                 }.getOrDefault(PageBackground.BLANK),
                 pdfPageIndex = entry.optInt("pdf", -1),
             )
-            page.strokes += readStrokes(File(root, "$id/pages/${page.id}.bin"))
-            // Just read from disk, so by definition it matches disk.
+            // Strokes are left on disk until the page is actually needed.
+            page.loaded = false
+            page.savedStrokeCount = entry.optInt("strokes", 0)
             page.dirty = false
             pages += page
         }
@@ -282,11 +293,20 @@ class NoteStore(context: Context) {
         return Document(pages)
     }
 
+    /**
+     * Reads one page's strokes, generating their geometry at [epsilon] - the
+     * fidelity the zoom in use calls for, so the meshes are built once instead
+     * of built coarse and immediately rebuilt.
+     */
+    fun loadPage(id: String, page: Page, epsilon: Float): List<Stroke> =
+        readStrokes(File(root, "$id/pages/${page.id}.bin"), epsilon)
+
     fun save(id: String, title: String, document: Document) {
         val dir = File(root, "$id/pages")
         if (!dir.isDirectory && !dir.mkdirs()) return
         for (page in document.pages) {
-            if (!page.dirty) continue
+            // A page never loaded cannot have changed, and its file must stay.
+            if (!page.loaded || !page.dirty) continue
             writeStrokes(File(dir, "${page.id}.bin"), page.strokes)
             page.dirty = false
         }
@@ -305,13 +325,17 @@ class NoteStore(context: Context) {
                     .put("w", page.width)
                     .put("h", page.height)
                     .put("bg", page.background.name)
-                    .put("pdf", page.pdfPageIndex),
+                    .put("pdf", page.pdfPageIndex)
+                    .put("strokes", if (page.loaded) page.strokes.size else page.savedStrokeCount),
             )
         }
         val json = JSONObject()
             .put("title", title)
             .put("modified", System.currentTimeMillis())
-            .put("strokeCount", document.pages.sumOf { it.strokes.size })
+            .put(
+                "strokeCount",
+                document.pages.sumOf { if (it.loaded) it.strokes.size else it.savedStrokeCount },
+            )
             .put("pages", pages)
         File(root, "$id/meta.json").writeText(json.toString())
     }
@@ -355,7 +379,7 @@ class NoteStore(context: Context) {
         tmp.renameTo(file)
     }
 
-    private fun readStrokes(file: File): List<Stroke> {
+    private fun readStrokes(file: File, epsilon: Float = STROKE_EPSILON): List<Stroke> {
         if (!file.isFile) return emptyList()
         val strokes = mutableListOf<Stroke>()
         runCatching {
@@ -378,7 +402,7 @@ class NoteStore(context: Context) {
                             tool.brushFamily(),
                             color,
                             size,
-                            STROKE_EPSILON,
+                            epsilon,
                         ),
                         inputs,
                     )

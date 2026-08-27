@@ -11,6 +11,10 @@ import android.os.ParcelFileDescriptor
 import android.util.LruCache
 import java.io.File
 import java.util.concurrent.Executors
+import kotlin.math.floor
+
+/** One rendered piece of a PDF page, with the page-local region it covers. */
+class PdfTile(val source: RectF, val bitmap: Bitmap)
 
 /** Text picked out of a PDF page, with its boxes in page-local world units. */
 data class PdfSelection(
@@ -57,11 +61,18 @@ class PdfSource private constructor(
         override fun sizeOf(key: Long, value: Bitmap) = value.byteCount
     }
 
-    /** A single high-resolution crop, for when the page is zoomed past the cache. */
-    @Volatile
-    private var detail: Detail? = null
+    private data class TileKey(
+        val pageIndex: Int,
+        val density: Float,
+        val tileX: Int,
+        val tileY: Int,
+    )
 
-    private class Detail(val pageIndex: Int, val source: RectF, val bitmap: Bitmap)
+    private val pendingTiles = mutableSetOf<TileKey>()
+
+    private val tileCache = object : LruCache<TileKey, Bitmap>(cacheBytes) {
+        override fun sizeOf(key: TileKey, value: Bitmap) = value.byteCount
+    }
 
     /** Called on the worker thread once a requested render has landed. */
     var onReady: ((Int) -> Unit)? = null
@@ -93,66 +104,111 @@ class PdfSource private constructor(
     }
 
     /**
-     * A crop of one page rendered at screen resolution. Used past the point
-     * where a whole-page bitmap would have to be bigger than [MAX_PAGE_WIDTH],
-     * which is where zooming starts to look soft.
+     * The sharp tiles covering [visible] on this page, at the density in use.
+     *
+     * Tiles are what lets a zoomed-in page stay crisp the way a browser's PDF
+     * viewer does: panning reuses the tiles already rendered and only pays for
+     * the ones that just came on screen, instead of re-rendering the whole
+     * visible area every time it moves. Missing tiles are rendered in the
+     * background; the caller keeps the low-resolution whole page underneath, so
+     * there is never a hole to look at.
      */
-    fun detail(
+    fun tiles(
         index: Int,
-        source: RectF,
+        visible: RectF,
         pageWidth: Float,
         pageHeight: Float,
         pixelsPerUnit: Float,
-    ): Bitmap? {
-        val current = detail
-        if (current != null &&
-            current.pageIndex == index &&
-            current.source.contains(source)
-        ) {
-            return current.bitmap
-        }
-        // Render a margin around what is asked for, so small pans reuse the crop
-        // instead of re-rendering on every frame - but never past the page edge.
-        // The caller draws this bitmap into exactly the rect named here, so a
-        // crop that overhangs would paint over the gap between pages.
-        val padded = RectF(source).apply {
-            inset(-width() * DETAIL_MARGIN, -height() * DETAIL_MARGIN)
-            left = left.coerceAtLeast(0f)
-            top = top.coerceAtLeast(0f)
-            right = right.coerceAtMost(pageWidth)
-            bottom = bottom.coerceAtMost(pageHeight)
-        }
-        if (padded.width() <= 0f || padded.height() <= 0f) return current?.bitmap
-        // Ask for the pixels the crop actually occupies on screen. Fixing this at
-        // the view width instead meant the padding ate into the resolution, so a
-        // zoomed-in page was rendered below screen density and looked soft.
-        var widthPx = (padded.width() * pixelsPerUnit).toInt().coerceAtLeast(64)
-        var heightPx = (padded.height() * pixelsPerUnit).toInt().coerceAtLeast(64)
-        if (widthPx > MAX_CROP_PX || heightPx > MAX_CROP_PX) {
-            // Shrink both by the same factor: clamping one alone would change the
-            // aspect ratio and the crop would be drawn stretched.
-            val factor = MAX_CROP_PX.toFloat() / maxOf(widthPx, heightPx)
-            widthPx = (widthPx * factor).toInt().coerceAtLeast(64)
-            heightPx = (heightPx * factor).toInt().coerceAtLeast(64)
-        }
-        val key = keyOf(index, -widthPx)
-        request(key) {
-            val bitmap = renderCrop(index, padded, widthPx, heightPx)
-            if (bitmap != null) {
-                // Deliberately not recycling the one being replaced: the UI
-                // thread can still hold it in the last frame's display list, and
-                // recycling under it is a native crash. Bitmap memory is native
-                // and freed on collection anyway.
-                detail = Detail(index, padded, bitmap)
+    ): List<PdfTile> {
+        if (closed || index !in 0 until pageCount) return emptyList()
+        val density = densityFor(pixelsPerUnit)
+        val tileUnits = TILE_PX / density
+        val firstX = floor(visible.left / tileUnits).toInt().coerceAtLeast(0)
+        val lastX = floor((visible.right - 1e-3f) / tileUnits).toInt()
+        val firstY = floor(visible.top / tileUnits).toInt().coerceAtLeast(0)
+        val lastY = floor((visible.bottom - 1e-3f) / tileUnits).toInt()
+
+        val ready = ArrayList<PdfTile>()
+        val missing = ArrayList<TileKey>()
+        for (ty in firstY..lastY) {
+            for (tx in firstX..lastX) {
+                val source = RectF(
+                    tx * tileUnits,
+                    ty * tileUnits,
+                    minOf((tx + 1) * tileUnits, pageWidth),
+                    minOf((ty + 1) * tileUnits, pageHeight),
+                )
+                if (source.width() <= 0f || source.height() <= 0f) continue
+                val key = TileKey(index, density, tx, ty)
+                val bitmap = tileCache.get(key)
+                if (bitmap != null) ready += PdfTile(source, bitmap) else missing += key
             }
-            bitmap
         }
-        return current?.takeIf { it.pageIndex == index }?.bitmap
+        if (missing.isNotEmpty()) {
+            requestTiles(index, missing, tileUnits, density, pageWidth, pageHeight)
+        }
+        return ready
     }
 
-    /** The region the current detail crop covers, in page-local world units. */
-    fun detailSource(index: Int): RectF? =
-        detail?.takeIf { it.pageIndex == index }?.let { RectF(it.source) }
+    /** All the missing tiles of one page in a single job, so the page opens once. */
+    private fun requestTiles(
+        index: Int,
+        keys: List<TileKey>,
+        tileUnits: Float,
+        density: Float,
+        pageWidth: Float,
+        pageHeight: Float,
+    ) {
+        val fresh = synchronized(stateLock) {
+            if (closed) return
+            keys.filter { pendingTiles.add(it) }
+        }
+        if (fresh.isEmpty()) return
+        worker.execute {
+            runCatching {
+                synchronized(renderLock) {
+                    if (closed) return@synchronized
+                    renderer.openPage(index).use { page ->
+                        for (key in fresh) {
+                            val source = RectF(
+                                key.tileX * tileUnits,
+                                key.tileY * tileUnits,
+                                minOf((key.tileX + 1) * tileUnits, pageWidth),
+                                minOf((key.tileY + 1) * tileUnits, pageHeight),
+                            )
+                            val widthPx = (source.width() * density).toInt()
+                            val heightPx = (source.height() * density).toInt()
+                            if (widthPx < 1 || heightPx < 1) continue
+                            val transform = Matrix().apply {
+                                setScale(density * POINTS_TO_WORLD, density * POINTS_TO_WORLD)
+                                preTranslate(
+                                    -source.left / POINTS_TO_WORLD,
+                                    -source.top / POINTS_TO_WORLD,
+                                )
+                            }
+                            val bitmap = newBitmap(widthPx, heightPx)
+                            page.render(
+                                bitmap,
+                                null,
+                                transform,
+                                PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY,
+                            )
+                            tileCache.put(key, bitmap)
+                        }
+                    }
+                }
+            }
+            synchronized(stateLock) { pendingTiles.removeAll(fresh.toSet()) }
+            onReady?.invoke(index)
+        }
+    }
+
+    /** Powers of two, so panning at one zoom keeps hitting the same tiles. */
+    private fun densityFor(pixelsPerUnit: Float): Float {
+        var density = 1f
+        while (density < pixelsPerUnit && density < MAX_TILE_DENSITY) density *= 2f
+        return density
+    }
 
     /** Every text run on a page, joined - used to build the search index. */
     fun textOf(index: Int): String = synchronized(renderLock) {
@@ -244,6 +300,7 @@ class PdfSource private constructor(
     }
 
     /** [source] is in page-local world units. */
+    @Suppress("unused")
     private fun renderCrop(index: Int, source: RectF, widthPx: Int, heightPx: Int): Bitmap? =
         synchronized(renderLock) {
             if (closed) return null
@@ -289,7 +346,7 @@ class PdfSource private constructor(
             runCatching { descriptor.close() }
         }
         cache.evictAll()
-        detail = null
+        tileCache.evictAll()
     }
 
     companion object {
@@ -300,6 +357,9 @@ class PdfSource private constructor(
         /** 2048 x ~2900 x 4B is about 24MB - past this, crops are cheaper. */
         private const val MAX_PAGE_WIDTH = 2048
         private const val MAX_CROP_PX = 4096
+        /** Tile edge in pixels. Big enough that a screen needs only a handful. */
+        private const val TILE_PX = 1024f
+        private const val MAX_TILE_DENSITY = 8f
         private const val DETAIL_MARGIN = 0.25f
         private const val MIN_CACHE_BYTES = 64 * 1024 * 1024
         private const val MAX_CACHE_BYTES = 256 * 1024 * 1024
@@ -310,6 +370,9 @@ class PdfSource private constructor(
          * re-upload the same pages over and over. Size it off what the device
          * actually has instead of a flat number.
          */
+        /** Beyond this many pixels across, a page needs tiles to stay sharp. */
+        fun baseWidthLimit(): Int = MAX_PAGE_WIDTH
+
         fun cacheBytesFor(context: android.content.Context): Int {
             val manager = context.getSystemService(android.app.ActivityManager::class.java)
             val bytes = (manager?.largeMemoryClass ?: 128).toLong() * 1024 * 1024 / 2

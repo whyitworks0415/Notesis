@@ -121,6 +121,12 @@ class InkCanvasView @JvmOverloads constructor(
     /** Fired when PDF text gets selected or cleared, so the host can offer actions. */
     var onSelectionChanged: ((PdfSelection?) -> Unit)? = null
 
+    /**
+     * Reads one page's strokes off disk at the given mesh fidelity. Called on a
+     * background thread, only for pages that have come on screen.
+     */
+    var pageLoader: ((Page, Float) -> List<Stroke>)? = null
+
     /** Kept from the P0 spike: the project's own latency instrument. */
     val latency = LatencyStats()
 
@@ -223,6 +229,7 @@ class InkCanvasView @JvmOverloads constructor(
         this.document = document
         document.invalidateLayout()
         for (page in document.pages) page.tessellatedFor = 0f
+        scheduleRefine()
         this.pdf = pdf
         // Has to be the layer that draws the pages: invalidating this ViewGroup
         // leaves the child's cached display list alone, so nothing repaints.
@@ -671,15 +678,20 @@ class InkCanvasView @JvmOverloads constructor(
         val target = tessellationBucket(currentScale())
         val epsilon = epsilonFor(target)
 
-        val pending = visiblePages().filter {
-            it.tessellatedFor != target && it.strokes.isNotEmpty()
+        val toLoad = visiblePages().filter { !it.loaded }
+        val toRebuild = visiblePages().filter {
+            it.loaded && it.tessellatedFor != target && it.strokes.isNotEmpty()
         }
-        if (pending.isEmpty()) return
+        if (toLoad.isEmpty() && toRebuild.isEmpty()) return
 
         // Snapshot what is being rebuilt, so a stroke drawn or erased meanwhile
         // is detected at swap time instead of being silently thrown away.
-        val work = pending.map { page -> page to page.strokes.toList() }
+        val work = toRebuild.map { page -> page to page.strokes.toList() }
+        val loader = pageLoader
         refiner.execute {
+            val loaded = toLoad.mapNotNull { page ->
+                loader?.let { page to it(page, epsilon) }
+            }
             val built = work.map { (page, snapshot) ->
                 Triple(
                     page,
@@ -689,6 +701,17 @@ class InkCanvasView @JvmOverloads constructor(
             }
             post {
                 if (tessellationBucket(currentScale()) != target) return@post
+                for ((page, strokes) in loaded) {
+                    if (page.loaded) continue
+                    // A stroke can be drawn on a page while its own strokes are
+                    // still being read. The ones from disk are older, so they go
+                    // underneath - and the dirty flag is left alone, because
+                    // clearing it here would throw that new stroke away at the
+                    // next save.
+                    page.strokes.addAll(0, strokes)
+                    page.loaded = true
+                    page.tessellatedFor = target
+                }
                 for ((page, snapshot, rebuilt) in built) {
                     if (!sameStrokes(page.strokes, snapshot)) continue
                     val replacements = IdentityHashMap<Stroke, Stroke>()
@@ -700,6 +723,7 @@ class InkCanvasView @JvmOverloads constructor(
                     // Nothing about the saved file changed: same inputs, same
                     // brush, only the generated outline. Do not dirty the page.
                 }
+                if (loaded.isNotEmpty()) onStrokesChanged?.invoke()
                 dry.invalidate()
             }
         }
@@ -735,7 +759,11 @@ class InkCanvasView @JvmOverloads constructor(
 
     private fun scheduleRefine() {
         removeCallbacks(refineRunnable)
-        postDelayed(refineRunnable, REFINE_DEBOUNCE_MS)
+        // A page with nothing on it yet should not wait out the settle delay -
+        // that delay exists to avoid rebuilding mid-pinch, not to hold up the
+        // first paint of a note.
+        val delay = if (visiblePages().any { !it.loaded }) 0L else REFINE_DEBOUNCE_MS
+        postDelayed(refineRunnable, delay)
     }
 
     // ---- PDF text selection -------------------------------------------------
@@ -998,36 +1026,34 @@ class InkCanvasView @JvmOverloads constructor(
         /** Returns true when the page was actually painted. */
         private fun drawPdf(canvas: Canvas, page: Page, index: Int): Boolean {
             val source = pdf ?: return false
-            // Ask for roughly the pixels the page occupies right now, so a page
-            // viewed small is not rendered at full size - and, once zoomed past
-            // what a whole-page bitmap can carry, for a crop of just what is on
-            // screen at screen resolution. That last part is what stops zoomed-in
-            // text from going soft and stair-stepped.
-            val wantPx = (page.width * currentScale()).toInt().coerceAtLeast(320)
-            if (wantPx > DETAIL_THRESHOLD_PX) {
+            val scale = currentScale()
+
+            // The whole page at modest resolution is the floor: it is cheap, it
+            // is always there, and it means a tile that has not arrived yet
+            // shows slightly soft rather than blank.
+            val base = source.bitmap(page.pdfPageIndex, (page.width * scale).toInt())
+            if (base != null) {
+                canvas.drawBitmap(base, null, pageRect, bitmapPaint)
+            } else {
+                canvas.drawRect(pageRect, paper)
+            }
+
+            // Past the point where the whole-page bitmap can hold the detail,
+            // lay sharp tiles of the visible region over it.
+            if (page.width * scale > PdfSource.baseWidthLimit()) {
                 visibleCropOf(page, index, crop)
-                val detail = source.detail(
-                    page.pdfPageIndex,
-                    crop,
-                    page.width,
-                    page.height,
-                    currentScale(),
-                )
-                if (detail != null) {
-                    // The crop the renderer actually produced is padded, so it is
-                    // asked for again here rather than assumed to match.
-                    source.detailSource(page.pdfPageIndex)?.let { region ->
-                        destination.set(region)
-                        // A crop covers only part of the page, so the paper still
-                        // has to be there underneath it.
-                        canvas.drawRect(pageRect, paper)
-                        canvas.drawBitmap(detail, null, destination, bitmapPaint)
-                        return true
+                if (crop.width() > 0f && crop.height() > 0f) {
+                    for (tile in source.tiles(
+                        page.pdfPageIndex,
+                        crop,
+                        page.width,
+                        page.height,
+                        scale,
+                    )) {
+                        canvas.drawBitmap(tile.bitmap, null, tile.source, bitmapPaint)
                     }
                 }
             }
-            val bitmap: Bitmap = source.bitmap(page.pdfPageIndex, wantPx) ?: return false
-            canvas.drawBitmap(bitmap, null, pageRect, bitmapPaint)
             return true
         }
 
