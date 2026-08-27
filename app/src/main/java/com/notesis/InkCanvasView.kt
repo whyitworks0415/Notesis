@@ -21,8 +21,10 @@ import androidx.ink.authoring.latency.LatencyData
 import androidx.ink.authoring.latency.LatencyDataCallback
 import androidx.ink.brush.Brush
 import androidx.ink.brush.BrushFamily
+import androidx.ink.brush.ExperimentalInkCustomBrushApi
 import androidx.ink.brush.StockBrushes
 import androidx.ink.geometry.ImmutableAffineTransform
+import androidx.ink.geometry.ImmutableBox
 import androidx.ink.geometry.ImmutableSegment
 import androidx.ink.geometry.ImmutableVec
 import androidx.ink.geometry.Intersection
@@ -81,7 +83,29 @@ enum class Tool {
 
     companion object {
         private val pen by lazy { StockBrushes.marker() }
-        private val highlighter by lazy { StockBrushes.highlighter() }
+
+        /**
+         * The stock highlighter has a chisel tip, which draws a slanted flat end.
+         * Only the tip is replaced with a circle - the rest of the family is what
+         * keeps overlapping passes from stacking up into a darker blob.
+         */
+        @OptIn(ExperimentalInkCustomBrushApi::class)
+        private val highlighter by lazy {
+            val stock = StockBrushes.highlighter()
+            val coat = stock.coats.first()
+            stock.copy(
+                coat = coat.copy(
+                    tip = coat.tip.copy(
+                        scaleX = 1f,
+                        scaleY = 1f,
+                        cornerRounding = 1f,
+                        slantDegrees = 0f,
+                        pinch = 0f,
+                        rotationDegrees = 0f,
+                    ),
+                ),
+            )
+        }
 
         /** Reverse lookup for reload: an erased stroke was never saved. */
         fun ofBrushFamily(family: BrushFamily): Tool =
@@ -111,6 +135,9 @@ class InkCanvasView @JvmOverloads constructor(
     var tool: Tool = Tool.PEN
     var colorArgb: Int = 0xFF000000.toInt()
     var strokeWidth: Float = 5f
+
+    /** Diameter of the eraser tip, in page units, like [strokeWidth]. */
+    var eraserWidth: Float = 24f
 
     /** Fired whenever committed ink changes, so the host can autosave. */
     var onStrokesChanged: (() -> Unit)? = null
@@ -866,6 +893,14 @@ class InkCanvasView @JvmOverloads constructor(
             ImmutableVec(previous[0], previous[1]),
             ImmutableVec(point[0], point[1]),
         )
+        // The tip is a square of eraserWidth around where the pen is now; the
+        // segment covers the gap to the previous sample, so a fast swipe still
+        // erases along its whole path instead of leaving holes between samples.
+        val tip = ImmutableBox.fromCenterAndDimensions(
+            ImmutableVec(point[0], point[1]),
+            eraserWidth,
+            eraserWidth,
+        )
         // ponytail: whole-stroke eraser. A partial (pixel) eraser means splitting
         // the input batch and rebuilding both halves - worth it only if the
         // whole-stroke behaviour actually gets complained about.
@@ -873,7 +908,9 @@ class InkCanvasView @JvmOverloads constructor(
         // intersects() is a member extension on the Intersection object, so it
         // only resolves inside its scope.
         val hit = with(Intersection) {
-            page.strokes.filter { segment.intersects(it.shape, IDENTITY) }
+            page.strokes.filter {
+                segment.intersects(it.shape, IDENTITY) || tip.intersects(it.shape, IDENTITY)
+            }
         }
         if (hit.isEmpty()) return
         page.strokes.removeAll(hit)

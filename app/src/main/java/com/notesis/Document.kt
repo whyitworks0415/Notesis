@@ -1,7 +1,13 @@
 package com.notesis
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Matrix
 import androidx.ink.brush.Brush
+import androidx.ink.rendering.android.canvas.CanvasStrokeRenderer
 import androidx.ink.storage.StrokeInputBatchSerialization
 import androidx.ink.strokes.Stroke
 import org.json.JSONArray
@@ -142,6 +148,8 @@ data class NoteMeta(
     val modified: Long,
     val pageCount: Int,
     val strokeCount: Int,
+    /** The note's own image if it has one, else the rendered first page. */
+    val thumbnail: File? = null,
 )
 
 /**
@@ -213,6 +221,8 @@ class NoteStore(context: Context) {
         }
         source.close()
         writeMeta(id, title, document)
+        // Drawn now, so the card in the list is not blank until the first save.
+        writeAutoThumbnail(id, document)
         return NoteMeta(id, title, System.currentTimeMillis(), pages.size, 0)
     }
 
@@ -304,16 +314,94 @@ class NoteStore(context: Context) {
     fun save(id: String, title: String, document: Document) {
         val dir = File(root, "$id/pages")
         if (!dir.isDirectory && !dir.mkdirs()) return
-        for (page in document.pages) {
+        var firstPageChanged = false
+        for ((index, page) in document.pages.withIndex()) {
             // A page never loaded cannot have changed, and its file must stay.
             if (!page.loaded || !page.dirty) continue
             writeStrokes(File(dir, "${page.id}.bin"), page.strokes)
             page.dirty = false
+            if (index == 0) firstPageChanged = true
         }
         // A page that was deleted this session leaves its file behind otherwise.
         val live = document.pages.flatMap { listOf("${it.id}.bin", "${it.id}.txt") }.toSet()
         dir.listFiles()?.forEach { if (it.name !in live) it.delete() }
         writeMeta(id, title, document)
+
+        // ponytail: rendering the first page costs a PDF decode, and autosave
+        // runs every second or so while writing. The picture only has to be
+        // roughly current, so it is refreshed at most once a THUMB_INTERVAL_MS.
+        val auto = File(root, "$id/$AUTO_THUMB")
+        val stale = System.currentTimeMillis() - auto.lastModified() > THUMB_INTERVAL_MS
+        if (!auto.isFile || (firstPageChanged && stale)) writeAutoThumbnail(id, document)
+    }
+
+    /** The custom image if the note has one, else the rendered first page. */
+    private fun thumbnailOf(dir: File): File? =
+        File(dir, CUSTOM_THUMB).takeIf { it.isFile } ?: File(dir, AUTO_THUMB).takeIf { it.isFile }
+
+    /**
+     * Stores the user's own picture as the note's thumbnail. Downscaled on the
+     * way in, because a phone photo is many megabytes and this is a card.
+     */
+    fun setThumbnail(id: String, input: java.io.InputStream): Boolean = runCatching {
+        val source = BitmapFactory.decodeStream(input) ?: return false
+        val scale = (THUMB_WIDTH.toFloat() / source.width).coerceAtMost(1f)
+        val scaled = if (scale < 1f) {
+            Bitmap.createScaledBitmap(
+                source,
+                (source.width * scale).toInt().coerceAtLeast(1),
+                (source.height * scale).toInt().coerceAtLeast(1),
+                true,
+            )
+        } else {
+            source
+        }
+        File(root, "$id/$CUSTOM_THUMB").outputStream().use {
+            scaled.compress(Bitmap.CompressFormat.PNG, 90, it)
+        }
+        true
+    }.getOrDefault(false)
+
+    /** Drops the custom picture, so the note falls back to its first page. */
+    fun clearThumbnail(id: String) {
+        File(root, "$id/$CUSTOM_THUMB").delete()
+    }
+
+    /**
+     * Draws the first page - its PDF background and its ink - into a small PNG.
+     * Runs off the UI thread: it opens the PDF and builds stroke geometry.
+     */
+    private fun writeAutoThumbnail(id: String, document: Document) {
+        val page = document.pages.firstOrNull() ?: return
+        if (page.width <= 0f || page.height <= 0f) return
+        runCatching {
+            val width = THUMB_WIDTH
+            val height = (width * page.height / page.width).toInt().coerceAtLeast(1)
+            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+            canvas.drawColor(Color.WHITE)
+            if (page.background == PageBackground.PDF && page.pdfPageIndex >= 0) {
+                val source = PdfSource.open(pdfFile(id))
+                source?.renderNow(page.pdfPageIndex, width)?.let {
+                    canvas.drawBitmap(it, null, android.graphics.Rect(0, 0, width, height), null)
+                }
+                source?.close()
+            }
+            // A page not loaded this session still has its strokes on disk, and
+            // an unopened note is exactly the case this picture is drawn for.
+            val strokes = if (page.loaded) {
+                page.strokes
+            } else {
+                readStrokes(File(root, "$id/pages/${page.id}.bin"))
+            }
+            val scale = width / page.width
+            val transform = Matrix().apply { setScale(scale, scale) }
+            val renderer = CanvasStrokeRenderer.create()
+            for (stroke in strokes) renderer.draw(canvas, stroke, transform)
+            val tmp = File(root, "$id/$AUTO_THUMB.tmp")
+            tmp.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 90, it) }
+            tmp.renameTo(File(root, "$id/$AUTO_THUMB"))
+        }
     }
 
     private fun writeMeta(id: String, title: String, document: Document) {
@@ -351,6 +439,7 @@ class NoteStore(context: Context) {
                 modified = json.optLong("modified"),
                 pageCount = json.optJSONArray("pages")?.length() ?: 1,
                 strokeCount = json.optInt("strokeCount"),
+                thumbnail = thumbnailOf(dir),
             )
         }.getOrNull()
     }
@@ -412,8 +501,12 @@ class NoteStore(context: Context) {
         return strokes
     }
 
-    private companion object {
+    companion object {
         const val MAGIC = 0x4E545353 // "NTSS"
+        const val CUSTOM_THUMB = "thumb.png"
+        const val AUTO_THUMB = "auto.png"
+        const val THUMB_WIDTH = 480
+        const val THUMB_INTERVAL_MS = 20_000L
         const val VERSION = 1
     }
 }

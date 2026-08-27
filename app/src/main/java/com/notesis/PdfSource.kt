@@ -286,6 +286,9 @@ class PdfSource private constructor(
         }
     }
 
+    /** Blocking render, for callers off the UI thread that need the page now. */
+    fun renderNow(index: Int, widthPx: Int): Bitmap? = renderWholePage(index, widthPx)
+
     private fun renderWholePage(index: Int, widthPx: Int): Bitmap? = synchronized(renderLock) {
         if (closed) return null
         runCatching {

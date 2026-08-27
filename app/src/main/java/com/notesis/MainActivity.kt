@@ -11,6 +11,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -48,6 +49,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.ZoomOutMap
@@ -84,8 +87,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -150,6 +155,26 @@ private fun NoteListScreen(store: NoteStore, onOpen: (NoteMeta) -> Unit) {
     var importFailed by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<NoteMeta>?>(null) }
+    // Which note the image picker, once it comes back, belongs to.
+    var thumbnailFor by remember { mutableStateOf<NoteMeta?>(null) }
+
+    val pickThumbnail = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent(),
+    ) { uri: Uri? ->
+        val target = thumbnailFor ?: return@rememberLauncherForActivityResult
+        thumbnailFor = null
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openInputStream(uri)?.use {
+                        store.setThumbnail(target.id, it)
+                    }
+                }
+            }
+            revision++
+        }
+    }
 
     // Searching reads every note's text index off disk, so it runs off the main
     // thread and only after typing settles.
@@ -240,8 +265,17 @@ private fun NoteListScreen(store: NoteStore, onOpen: (NoteMeta) -> Unit) {
                 items(shown, key = { it.id }) { note ->
                     NoteCard(
                         note = note,
+                        hasCustomThumbnail = note.thumbnail?.name == NoteStore.CUSTOM_THUMB,
                         onOpen = { onOpen(note) },
                         onDelete = { pendingDelete = note },
+                        onPickThumbnail = {
+                            thumbnailFor = note
+                            pickThumbnail.launch("image/*")
+                        },
+                        onClearThumbnail = {
+                            store.clearThumbnail(note.id)
+                            revision++
+                        },
                     )
                 }
             }
@@ -309,14 +343,27 @@ private fun displayName(context: android.content.Context, uri: Uri): String {
 }
 
 @Composable
-private fun NoteCard(note: NoteMeta, onOpen: () -> Unit, onDelete: () -> Unit) {
+private fun NoteCard(
+    note: NoteMeta,
+    hasCustomThumbnail: Boolean,
+    onOpen: () -> Unit,
+    onDelete: () -> Unit,
+    onPickThumbnail: () -> Unit,
+    onClearThumbnail: () -> Unit,
+) {
+    var menuOpen by remember { mutableStateOf(false) }
+    // Keyed on the file's timestamp, so replacing the picture redraws the card
+    // instead of showing the decoded copy of the old one.
+    val preview = remember(note.thumbnail?.path, note.thumbnail?.lastModified()) {
+        note.thumbnail?.let { file ->
+            runCatching { android.graphics.BitmapFactory.decodeFile(file.path) }.getOrNull()
+        }
+    }
     Card(
         onClick = onOpen,
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
         Column {
-            // Stands in for a real thumbnail. Rendering one means drawing a page
-            // offscreen, which is its own pass and not what this change is about.
             Box(
                 Modifier
                     .fillMaxWidth()
@@ -324,12 +371,24 @@ private fun NoteCard(note: NoteMeta, onOpen: () -> Unit, onDelete: () -> Unit) {
                     .background(Color(0xFFFDFCF8)),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(
-                    Icons.Outlined.Edit,
-                    contentDescription = null,
-                    tint = Color(0x22000000),
-                    modifier = Modifier.size(40.dp),
-                )
+                if (preview != null) {
+                    Image(
+                        bitmap = preview.asImageBitmap(),
+                        contentDescription = null,
+                        // Crop, so a page taller than the card fills it from the
+                        // top rather than sitting in a letterbox.
+                        contentScale = ContentScale.Crop,
+                        alignment = Alignment.TopCenter,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    Icon(
+                        Icons.Outlined.Edit,
+                        contentDescription = null,
+                        tint = Color(0x22000000),
+                        modifier = Modifier.size(40.dp),
+                    )
+                }
             }
             Row(
                 Modifier
@@ -350,12 +409,41 @@ private fun NoteCard(note: NoteMeta, onOpen: () -> Unit, onDelete: () -> Unit) {
                         color = MaterialTheme.colorScheme.outline,
                     )
                 }
-                IconButton(onClick = onDelete) {
-                    Icon(
-                        Icons.Default.Delete,
-                        contentDescription = "삭제",
-                        tint = MaterialTheme.colorScheme.outline,
-                    )
+                Box {
+                    IconButton(onClick = { menuOpen = true }) {
+                        Icon(
+                            Icons.Default.MoreVert,
+                            contentDescription = "더보기",
+                            tint = MaterialTheme.colorScheme.outline,
+                        )
+                    }
+                    DropdownMenu(menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(
+                            text = { Text("썸네일 설정") },
+                            leadingIcon = { Icon(Icons.Default.Image, contentDescription = null) },
+                            onClick = {
+                                menuOpen = false
+                                onPickThumbnail()
+                            },
+                        )
+                        if (hasCustomThumbnail) {
+                            DropdownMenuItem(
+                                text = { Text("첫 페이지로 되돌리기") },
+                                onClick = {
+                                    menuOpen = false
+                                    onClearThumbnail()
+                                },
+                            )
+                        }
+                        DropdownMenuItem(
+                            text = { Text("삭제") },
+                            leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) },
+                            onClick = {
+                                menuOpen = false
+                                onDelete()
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -387,6 +475,7 @@ private fun NoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> Unit) {
     var tool by remember { mutableStateOf(Tool.PEN) }
     var color by remember { mutableStateOf(palette.first()) }
     var width by remember { mutableStateOf(5f) }
+    var eraserWidth by remember { mutableStateOf(24f) }
     var showLatency by remember { mutableStateOf(false) }
     var showPages by remember { mutableStateOf(false) }
     var edits by remember { mutableIntStateOf(0) }
@@ -446,6 +535,7 @@ private fun NoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> Unit) {
                     view.tool = tool
                     view.colorArgb = color.toArgb()
                     view.strokeWidth = width
+                    view.eraserWidth = eraserWidth
                 },
             )
         }
@@ -498,6 +588,7 @@ private fun NoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> Unit) {
             tool = tool,
             color = color,
             width = width,
+            eraserWidth = eraserWidth,
             showLatency = showLatency,
             // edits is read here so drawing or erasing recomposes the toolbar and
             // undo/redo can re-evaluate whether there is anything on the stacks.
@@ -506,6 +597,7 @@ private fun NoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> Unit) {
             onTool = { tool = it },
             onColor = { color = it },
             onWidth = { width = it },
+            onEraserWidth = { eraserWidth = it },
             onUndo = {
                 canvas?.undo()
                 edits++
@@ -741,6 +833,7 @@ private fun Toolbar(
     tool: Tool,
     color: Color,
     width: Float,
+    eraserWidth: Float,
     showLatency: Boolean,
     canUndo: Boolean,
     canRedo: Boolean,
@@ -748,6 +841,7 @@ private fun Toolbar(
     onTool: (Tool) -> Unit,
     onColor: (Color) -> Unit,
     onWidth: (Float) -> Unit,
+    onEraserWidth: (Float) -> Unit,
     onUndo: () -> Unit,
     onRedo: () -> Unit,
     onFitWidth: () -> Unit,
@@ -804,10 +898,14 @@ private fun Toolbar(
             }
             ToolbarDivider()
 
+            // One slider, whichever tool is in hand: it sets the eraser's size
+            // while the eraser is selected and the pen's otherwise. Two sliders
+            // would mean one of them is always the wrong one to reach for.
+            val erasing = tool == Tool.ERASER
             Slider(
-                value = width,
-                onValueChange = onWidth,
-                valueRange = 1f..24f,
+                value = if (erasing) eraserWidth else width,
+                onValueChange = if (erasing) onEraserWidth else onWidth,
+                valueRange = if (erasing) 8f..96f else 1f..24f,
                 modifier = Modifier.width(96.dp),
             )
             ToolbarDivider()
