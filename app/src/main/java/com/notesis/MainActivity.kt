@@ -76,6 +76,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloseFullscreen
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Launch
 import androidx.compose.material.icons.filled.PhoneAndroid
@@ -121,6 +122,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -146,6 +148,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -888,6 +893,9 @@ private fun WebPanel(
     onTogglePopup: () -> Unit,
     desktop: Boolean,
     onToggleDesktop: () -> Unit,
+    log: MutableList<String>,
+    showLog: Boolean,
+    onToggleLog: () -> Unit,
     onClose: () -> Unit,
     onFile: (android.webkit.ValueCallback<Array<Uri>>) -> Unit,
     modifier: Modifier = Modifier,
@@ -927,6 +935,17 @@ private fun WebPanel(
                         .weight(1f)
                         .padding(vertical = 4.dp),
                 )
+                IconButton(onClick = onToggleLog) {
+                    Icon(
+                        Icons.Default.BugReport,
+                        contentDescription = "오류 기록",
+                        tint = if (log.isEmpty()) {
+                            MaterialTheme.colorScheme.outlineVariant
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        },
+                    )
+                }
                 IconButton(onClick = onToggleDesktop) {
                     Icon(
                         if (desktop) Icons.Default.Computer else Icons.Default.PhoneAndroid,
@@ -949,7 +968,7 @@ private fun WebPanel(
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { viewContext ->
-                    holder.value ?: newBrowser(viewContext, onFile).also { holder.value = it }
+                    holder.value ?: newBrowser(viewContext, onFile, log).also { holder.value = it }
                 },
                 // The tag remembers which site was asked for, so picking another
                 // one loads it while a stroke on the note next door does not.
@@ -970,6 +989,28 @@ private fun WebPanel(
                     }
                 },
             )
+            if (showLog) {
+                HorizontalDivider()
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 200.dp)
+                        .verticalScroll(rememberScrollState())
+                        .padding(8.dp),
+                ) {
+                    if (log.isEmpty()) {
+                        Text("기록된 오류 없음", style = MaterialTheme.typography.bodySmall)
+                    }
+                    for (line in log) {
+                        Text(
+                            line,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                        )
+                    }
+                    TextButton(onClick = { log.clear() }) { Text("지우기") }
+                }
+            }
         }
     }
 }
@@ -1005,16 +1046,51 @@ private fun openExternally(context: android.content.Context?, url: String) {
 private fun newBrowser(
     context: android.content.Context,
     onFile: (android.webkit.ValueCallback<Array<Uri>>) -> Unit,
+    log: MutableList<String>,
 ): android.webkit.WebView {
     val view = android.webkit.WebView(context)
     android.webkit.CookieManager.getInstance().setAcceptCookie(true)
     android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(view, true)
+    // With this on, a tablet plugged in over USB can be opened from
+    // chrome://inspect on a desktop, which is the only way to see a stack
+    // trace from a page that renders its shell and then stops.
+    android.webkit.WebView.setWebContentsDebuggingEnabled(true)
+
+    fun note(line: String) {
+        // Newest last, and bounded: a page in a failure loop can log forever.
+        if (log.size >= WEB_LOG_MAX) log.removeAt(0)
+        log.add(line)
+    }
+
     return view.apply {
-        // Without a client the framework hands links to the system browser,
-        // which is the opposite of the point.
-        webViewClient = android.webkit.WebViewClient()
-        // And without a chrome client a page gets no upload button, no
-        // window.open and no JS dialogs, which is most of a chat app.
+        webViewClient = object : android.webkit.WebViewClient() {
+            override fun onReceivedError(
+                view: android.webkit.WebView,
+                request: android.webkit.WebResourceRequest,
+                error: android.webkit.WebResourceError,
+            ) {
+                // Only the page itself: a failed tracking pixel is noise.
+                if (request.isForMainFrame) note("net ${error.errorCode} ${error.description}")
+            }
+
+            override fun onReceivedHttpError(
+                view: android.webkit.WebView,
+                request: android.webkit.WebResourceRequest,
+                response: android.webkit.WebResourceResponse,
+            ) {
+                if (request.isForMainFrame) note("http ${response.statusCode} ${request.url}")
+            }
+
+            override fun onRenderProcessGone(
+                view: android.webkit.WebView,
+                detail: android.webkit.RenderProcessGoneDetail,
+            ): Boolean {
+                note("renderer gone, crashed=${detail.didCrash()}")
+                return true
+            }
+        }
+        // Without a chrome client a page gets no upload button, no window.open
+        // and no JS dialogs, which is most of a chat app.
         webChromeClient = object : android.webkit.WebChromeClient() {
             override fun onShowFileChooser(
                 view: android.webkit.WebView,
@@ -1024,12 +1100,17 @@ private fun newBrowser(
                 onFile(callback)
                 return true
             }
+
+            override fun onConsoleMessage(message: android.webkit.ConsoleMessage): Boolean {
+                if (message.messageLevel() == android.webkit.ConsoleMessage.MessageLevel.ERROR) {
+                    note("js ${message.message().take(WEB_LOG_LINE)}")
+                }
+                return true
+            }
         }
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
         settings.databaseEnabled = true
-        settings.useWideViewPort = true
-        settings.loadWithOverviewMode = true
         // A sign-in popup with nowhere to go is a dead button; loading it in
         // place is what a single-window browser does.
         settings.setSupportMultipleWindows(false)
@@ -1120,6 +1201,10 @@ private fun NoteScreen(
     // Every AI site refuses to sign in to something that looks like a
     // WebView, so the panel can claim to be desktop Chrome instead.
     var webDesktop by remember { mutableStateOf(false) }
+    // What the page says went wrong. The panel renders a shell and then
+    // nothing, and without this there is no way to see why from here.
+    val webLog = remember { mutableStateListOf<String>() }
+    var showWebLog by remember { mutableStateOf(false) }
     // A capture waiting to be handed to the next upload button a site shows.
     val pendingAttachment = remember { mutableStateOf<Uri?>(null) }
     val webChooser = remember { mutableStateOf<android.webkit.ValueCallback<Array<Uri>>?>(null) }
@@ -1241,6 +1326,9 @@ private fun NoteScreen(
             onTogglePopup = { webPopup = !webPopup },
             desktop = webDesktop,
             onToggleDesktop = { webDesktop = !webDesktop },
+            log = webLog,
+            showLog = showWebLog,
+            onToggleLog = { showWebLog = !showWebLog },
             onClose = {
                 webUrl = null
                 webPopup = false
@@ -2115,6 +2203,8 @@ private const val PEN_SAVE_DELAY_MS = 400L
 private const val IMAGE_CACHE_BYTES = 48 * 1024 * 1024
 
 private val WEB_PANEL_WIDTH = 460.dp
+private const val WEB_LOG_MAX = 40
+private const val WEB_LOG_LINE = 300
 private val WEB_PANEL_MIN = 280.dp
 private val WEB_PANEL_MAX = 1100.dp
 
