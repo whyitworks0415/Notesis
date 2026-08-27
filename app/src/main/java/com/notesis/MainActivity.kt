@@ -75,6 +75,8 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloseFullscreen
+import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.CropSquare
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
@@ -142,6 +144,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
@@ -841,6 +845,7 @@ private fun PaletteDialog(onDismiss: () -> Unit, onPick: (Int) -> Unit) {
 private fun CaptureDialog(
     bitmap: Bitmap,
     onPaste: () -> Unit,
+    onAttach: () -> Unit,
     onShare: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -860,6 +865,7 @@ private fun CaptureDialog(
         confirmButton = { TextButton(onClick = onPaste) { Text("이 페이지에 붙이기") } },
         dismissButton = {
             Row {
+                TextButton(onClick = onAttach) { Text("AI에 첨부") }
                 TextButton(onClick = onShare) { Text("공유") }
                 TextButton(onClick = onDismiss) { Text("닫기") }
             }
@@ -875,18 +881,27 @@ private fun CaptureDialog(
 private fun WebPanel(
     url: String,
     holder: MutableState<android.webkit.WebView?>,
+    popup: Boolean,
+    onTogglePopup: () -> Unit,
     onClose: () -> Unit,
+    onFile: (android.webkit.ValueCallback<Array<Uri>>) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val web = holder.value
     var address by remember(url) { mutableStateOf(url) }
 
     Surface(modifier = modifier, tonalElevation = 2.dp) {
-        Column(Modifier.fillMaxHeight()) {
+        // The whole panel keeps clear of the system bars, not just its header: a
+        // chat composer pinned to the bottom of the page was sitting under the
+        // navigation bar with nothing holding it up.
+        Column(
+            Modifier
+                .fillMaxHeight()
+                .windowInsetsPadding(ChromeInsets),
+        ) {
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .windowInsetsPadding(ChromeInsets)
                     .padding(horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -907,6 +922,12 @@ private fun WebPanel(
                         .weight(1f)
                         .padding(vertical = 4.dp),
                 )
+                IconButton(onClick = onTogglePopup) {
+                    Icon(
+                        if (popup) Icons.Default.CloseFullscreen else Icons.Default.OpenInFull,
+                        contentDescription = if (popup) "붙이기" else "팝업",
+                    )
+                }
                 IconButton(onClick = onClose) {
                     Icon(Icons.Default.Close, contentDescription = "닫기")
                 }
@@ -914,7 +935,7 @@ private fun WebPanel(
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { viewContext ->
-                    holder.value ?: newBrowser(viewContext).also { holder.value = it }
+                    holder.value ?: newBrowser(viewContext, onFile).also { holder.value = it }
                 },
                 // The tag remembers which site was asked for, so picking another
                 // one loads it while a stroke on the note next door does not.
@@ -934,13 +955,30 @@ private fun WebPanel(
  * is why Gemini came up against a "secure browser" wall. Dropping the "; wv"
  * token and taking third-party cookies is what the sign-in flow needs.
  */
-private fun newBrowser(context: android.content.Context): android.webkit.WebView =
+private fun newBrowser(
+    context: android.content.Context,
+    onFile: (android.webkit.ValueCallback<Array<Uri>>) -> Unit,
+): android.webkit.WebView =
     android.webkit.WebView(context).apply {
         // Without a client the framework hands links to the system browser,
         // which is the opposite of the point.
         webViewClient = android.webkit.WebViewClient()
+        // And without a chrome client a page gets no upload button, no
+        // window.open and no JS dialogs, which is most of a chat app.
+        webChromeClient = object : android.webkit.WebChromeClient() {
+            override fun onShowFileChooser(
+                view: android.webkit.WebView,
+                callback: android.webkit.ValueCallback<Array<Uri>>,
+                params: FileChooserParams,
+            ): Boolean {
+                onFile(callback)
+                return true
+            }
+        }
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
+        settings.useWideViewPort = true
+        settings.loadWithOverviewMode = true
         settings.userAgentString = settings.userAgentString.replace("; wv", "")
         android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
     }
@@ -1021,6 +1059,11 @@ private fun NoteScreen(
     // One WebView for the whole note. Closing the panel used to destroy it, so
     // reopening paid the cold start and the login handshake all over again.
     val browser = remember { mutableStateOf<android.webkit.WebView?>(null) }
+    var webWidth by remember { mutableStateOf(WEB_PANEL_WIDTH) }
+    var webPopup by remember { mutableStateOf(false) }
+    // A capture waiting to be handed to the next upload button a site shows.
+    val pendingAttachment = remember { mutableStateOf<Uri?>(null) }
+    val webChooser = remember { mutableStateOf<android.webkit.ValueCallback<Array<Uri>>?>(null) }
     DisposableEffect(Unit) {
         onDispose { browser.value?.destroy() }
     }
@@ -1053,6 +1096,16 @@ private fun NoteScreen(
     var opened by remember { mutableStateOf<Pair<Document, PdfSource?>?>(null) }
     val clipboard = LocalClipboardManager.current
     var showPalette by remember { mutableStateOf(false) }
+
+    // The page asked for a file and no capture was waiting, so the user picks
+    // one. The callback must always be answered, or the page's upload button
+    // stays dead until it is reloaded.
+    val pickForWeb = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent(),
+    ) { uri: Uri? ->
+        webChooser.value?.onReceiveValue(if (uri == null) emptyArray() else arrayOf(uri))
+        webChooser.value = null
+    }
 
     val pickImage = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent(),
@@ -1117,6 +1170,32 @@ private fun NoteScreen(
                 PdfSource.cacheBytesFor(context),
             )
         }
+    }
+
+    // One panel, shown either docked beside the note or floating over it. The
+    // WebView is the same instance in both, so switching keeps the page.
+    val panel: @Composable (Modifier) -> Unit = { panelModifier ->
+        WebPanel(
+            url = webUrl.orEmpty(),
+            holder = browser,
+            popup = webPopup,
+            onTogglePopup = { webPopup = !webPopup },
+            onClose = {
+                webUrl = null
+                webPopup = false
+            },
+            onFile = { callback ->
+                val ready = pendingAttachment.value
+                if (ready != null) {
+                    pendingAttachment.value = null
+                    callback.onReceiveValue(arrayOf(ready))
+                } else {
+                    webChooser.value = callback
+                    pickForWeb.launch("*/*")
+                }
+            },
+            modifier = panelModifier,
+        )
     }
 
     Row(Modifier.fillMaxSize()) {
@@ -1349,6 +1428,17 @@ private fun NoteScreen(
                     }
                     captured = null
                 },
+                onAttach = {
+                    val uri = captureUri(context, bitmap)
+                    if (uri == null) {
+                        Toast.makeText(context, "캡쳐를 저장하지 못했습니다", Toast.LENGTH_SHORT).show()
+                    } else {
+                        pendingAttachment.value = uri
+                        if (webUrl == null) webUrl = AI_SITES.first().second
+                        Toast.makeText(context, "대화창의 첨부 버튼을 누르세요", Toast.LENGTH_LONG).show()
+                    }
+                    captured = null
+                },
                 onShare = {
                     shareBitmap(context, bitmap)
                     captured = null
@@ -1412,15 +1502,32 @@ private fun NoteScreen(
         }
     }
 
-        webUrl?.let { url ->
-            WebPanel(
-                url = url,
-                holder = browser,
-                onClose = { webUrl = null },
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .width(WEB_PANEL_WIDTH),
-            )
+        if (!webPopup) {
+            webUrl?.let {
+                // Drag the seam to give the browser more room, or less.
+                Box(
+                    Modifier
+                        .fillMaxHeight()
+                        .width(10.dp)
+                        .background(MaterialTheme.colorScheme.outlineVariant)
+                        .pointerInput(Unit) {
+                            detectDragGestures { _, drag ->
+                                webWidth = (webWidth - drag.x.toDp())
+                                    .coerceIn(WEB_PANEL_MIN, WEB_PANEL_MAX)
+                            }
+                        },
+                )
+                panel(Modifier.fillMaxHeight().width(webWidth))
+            }
+        }
+    }
+
+    if (webPopup && webUrl != null) {
+        Dialog(
+            onDismissRequest = { webPopup = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            panel(Modifier.fillMaxSize(0.85f))
         }
     }
 }
@@ -1474,19 +1581,24 @@ private fun barPlacement(offset: Offset?, bar: IntSize, container: IntSize): Int
     return barPlacement(start, bar, container)
 }
 
-/** Hands the captured region to whatever the user picks in the share sheet. */
-private fun shareBitmap(context: android.content.Context, bitmap: Bitmap) {
+/** A capture written where another app is allowed to read it. */
+private fun captureUri(context: android.content.Context, bitmap: Bitmap): Uri? {
     val shared = java.io.File(context.cacheDir, "shared").apply { mkdirs() }
     val file = java.io.File(shared, "capture.png")
     val written = runCatching {
         file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 95, it) }
     }.isSuccess
-    if (!written) return
-    val uri = androidx.core.content.FileProvider.getUriForFile(
+    if (!written) return null
+    return androidx.core.content.FileProvider.getUriForFile(
         context,
         context.packageName + ".files",
         file,
     )
+}
+
+/** Hands the captured region to whatever the user picks in the share sheet. */
+private fun shareBitmap(context: android.content.Context, bitmap: Bitmap) {
+    val uri = captureUri(context, bitmap) ?: return
     val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
         type = "image/png"
         putExtra(android.content.Intent.EXTRA_STREAM, uri)
@@ -1942,6 +2054,8 @@ private const val PEN_SAVE_DELAY_MS = 400L
 private const val IMAGE_CACHE_BYTES = 48 * 1024 * 1024
 
 private val WEB_PANEL_WIDTH = 460.dp
+private val WEB_PANEL_MIN = 280.dp
+private val WEB_PANEL_MAX = 1100.dp
 
 private const val SEARCH_HOME = "https://www.google.com/"
 
