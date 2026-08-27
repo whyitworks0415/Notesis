@@ -39,7 +39,9 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -113,6 +115,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -869,8 +872,13 @@ private fun CaptureDialog(
  * up without leaving the page being written on, not building a browser.
  */
 @Composable
-private fun WebPanel(url: String, onClose: () -> Unit, modifier: Modifier = Modifier) {
-    var web by remember { mutableStateOf<android.webkit.WebView?>(null) }
+private fun WebPanel(
+    url: String,
+    holder: MutableState<android.webkit.WebView?>,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val web = holder.value
     var address by remember(url) { mutableStateOf(url) }
 
     Surface(modifier = modifier, tonalElevation = 2.dp) {
@@ -878,7 +886,7 @@ private fun WebPanel(url: String, onClose: () -> Unit, modifier: Modifier = Modi
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .windowInsetsPadding(ChromeInsets)
                     .padding(horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -906,21 +914,36 @@ private fun WebPanel(url: String, onClose: () -> Unit, modifier: Modifier = Modi
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { viewContext ->
-                    android.webkit.WebView(viewContext).apply {
-                        // Without a client the frameworks hands links to the
-                        // system browser, which is the opposite of the point.
-                        webViewClient = android.webkit.WebViewClient()
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        loadUrl(url)
-                        web = this
+                    holder.value ?: newBrowser(viewContext).also { holder.value = it }
+                },
+                // The tag remembers which site was asked for, so picking another
+                // one loads it while a stroke on the note next door does not.
+                update = { view ->
+                    if (view.tag != url) {
+                        view.tag = url
+                        view.loadUrl(url)
                     }
                 },
-                update = { it.takeIf { _ -> it.url == null }?.loadUrl(url) },
             )
         }
     }
 }
+
+/**
+ * Google refuses to sign in from anything whose user agent says WebView, which
+ * is why Gemini came up against a "secure browser" wall. Dropping the "; wv"
+ * token and taking third-party cookies is what the sign-in flow needs.
+ */
+private fun newBrowser(context: android.content.Context): android.webkit.WebView =
+    android.webkit.WebView(context).apply {
+        // Without a client the framework hands links to the system browser,
+        // which is the opposite of the point.
+        webViewClient = android.webkit.WebViewClient()
+        settings.javaScriptEnabled = true
+        settings.domStorageEnabled = true
+        settings.userAgentString = settings.userAgentString.replace("; wv", "")
+        android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+    }
 
 /** A typed address if it looks like one, a search if it does not. */
 private fun asUrl(text: String): String {
@@ -950,6 +973,13 @@ private fun NameDialog(onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
         dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
     )
 }
+
+/**
+ * safeDrawing minus the keyboard. safeDrawing counts the IME, so every bar and
+ * the canvas itself jumped whenever a text field took focus.
+ */
+private val ChromeInsets: WindowInsets
+    @Composable get() = WindowInsets.systemBars.union(WindowInsets.displayCutout)
 
 /** What the pen does when it lands. One thing at a time, by construction. */
 private enum class EditMode { DRAW, ERASE, READ, SHAPE, IMAGE, CAPTURE }
@@ -988,6 +1018,12 @@ private fun NoteScreen(
     var captured by remember { mutableStateOf<Bitmap?>(null) }
     /** The site the side panel is showing, or null while it is closed. */
     var webUrl by remember { mutableStateOf<String?>(null) }
+    // One WebView for the whole note. Closing the panel used to destroy it, so
+    // reopening paid the cold start and the login handshake all over again.
+    val browser = remember { mutableStateOf<android.webkit.WebView?>(null) }
+    DisposableEffect(Unit) {
+        onDispose { browser.value?.destroy() }
+    }
     // Every page redraw asks for the pictures on it, so decoding has to happen
     // once rather than once a frame.
     val imageCache = remember(note.id) {
@@ -1174,7 +1210,7 @@ private fun NoteScreen(
                 color = Color(0xFF555555),
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .windowInsetsPadding(ChromeInsets)
                     .padding(top = 84.dp, start = 24.dp),
             )
         }
@@ -1185,7 +1221,7 @@ private fun NoteScreen(
                     .align(Alignment.TopStart)
                     .offset { barPlacement(barOffset, barSize, containerSize) }
                     .onSizeChanged { barSize = it }
-                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .windowInsetsPadding(ChromeInsets)
                     .padding(12.dp),
             ) {
                 CollapsedToolbar(
@@ -1258,7 +1294,7 @@ private fun NoteScreen(
                 // back inside rather than letting half of it hang off screen.
                 .offset { barPlacement(barOffset, barSize, containerSize) }
                 .onSizeChanged { barSize = it }
-                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .windowInsetsPadding(ChromeInsets)
                 .padding(12.dp),
         )
         }
@@ -1379,6 +1415,7 @@ private fun NoteScreen(
         webUrl?.let { url ->
             WebPanel(
                 url = url,
+                holder = browser,
                 onClose = { webUrl = null },
                 modifier = Modifier
                     .fillMaxHeight()
@@ -1397,7 +1434,7 @@ private fun ImageActions(
 ) {
     Surface(
         modifier = modifier
-            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .windowInsetsPadding(ChromeInsets)
             .padding(16.dp),
         shape = RoundedCornerShape(16.dp),
         tonalElevation = 3.dp,
@@ -1469,7 +1506,7 @@ private fun SelectionActions(
 ) {
     Surface(
         modifier = modifier
-            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .windowInsetsPadding(ChromeInsets)
             .padding(20.dp),
         shape = RoundedCornerShape(20.dp),
         tonalElevation = 3.dp,
@@ -1514,7 +1551,7 @@ private fun PageSidebar(
     val pages = document?.pages ?: return
     Surface(
         modifier = Modifier
-            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .windowInsetsPadding(ChromeInsets)
             .padding(12.dp)
             .width(132.dp)
             .fillMaxHeight(0.8f),
