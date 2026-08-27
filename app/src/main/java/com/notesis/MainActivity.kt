@@ -20,6 +20,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -49,6 +50,17 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.Category
+import androidx.compose.material.icons.filled.CropFree
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.FullscreenExit
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Description
@@ -69,6 +81,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -84,6 +97,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -105,10 +119,15 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -132,7 +151,17 @@ class MainActivity : ComponentActivity() {
                 if (note == null) {
                     NoteListScreen(store) { openNote = it }
                 } else {
-                    NoteScreen(store, note) { openNote = null }
+                    // Keyed, so jumping straight to another note builds a
+                    // fresh screen instead of showing the old document until
+                    // the new one finishes loading into state that was kept.
+                    key(note.id) {
+                    NoteScreen(
+                        store = store,
+                        note = note,
+                        onOpenNote = { openNote = it },
+                        onBack = { openNote = null },
+                    )
+                    }
                 }
             }
         }
@@ -521,7 +550,7 @@ private fun PenDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (pen == null) "\ud38c \ucd94\uac00" else "\ud38c \ud3b8\uc9d1") },
+        title = { Text(if (pen == null) "펜 추가" else "펜 편집") },
         text = {
             Column {
                 Row {
@@ -534,7 +563,7 @@ private fun PenDialog(
                             if (alpha < 1f) alpha = 1f
                             if (width > 24f) width = 5f
                         },
-                        label = { Text("\ud38c") },
+                        label = { Text("펜") },
                     )
                     Spacer(Modifier.width(8.dp))
                     FilterChip(
@@ -544,7 +573,7 @@ private fun PenDialog(
                             if (alpha > 0.8f) alpha = 0.4f
                             if (width < 8f) width = 20f
                         },
-                        label = { Text("\ud615\uad11\ud38c") },
+                        label = { Text("형광펜") },
                     )
                 }
                 Spacer(Modifier.height(12.dp))
@@ -576,7 +605,7 @@ private fun PenDialog(
 
                 Spacer(Modifier.height(10.dp))
                 Text(
-                    "\uad75\uae30 " + "%.1f".format(width),
+                    "굵기 " + "%.1f".format(width),
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Slider(
@@ -605,15 +634,15 @@ private fun PenDialog(
         },
         confirmButton = {
             TextButton(onClick = { onConfirm(PenPreset(tool, argb, width)) }) {
-                Text("\uc800\uc7a5")
+                Text("저장")
             }
         },
         dismissButton = {
             Row {
                 if (canDelete) {
-                    TextButton(onClick = onDelete) { Text("\uc0ad\uc81c") }
+                    TextButton(onClick = onDelete) { Text("삭제") }
                 }
-                TextButton(onClick = onDismiss) { Text("\ucde8\uc18c") }
+                TextButton(onClick = onDismiss) { Text("취소") }
             }
         },
     )
@@ -711,7 +740,12 @@ private fun NameDialog(onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
 }
 
 @Composable
-private fun NoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> Unit) {
+private fun NoteScreen(
+    store: NoteStore,
+    note: NoteMeta,
+    onOpenNote: (NoteMeta) -> Unit,
+    onBack: () -> Unit,
+) {
     val context = LocalContext.current
     val penStore = remember { PenStore(context) }
     var pens by remember { mutableStateOf(penStore.load()) }
@@ -731,6 +765,13 @@ private fun NoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> Unit) {
         delay(PEN_SAVE_DELAY_MS)
         withContext(Dispatchers.IO) { penStore.save(pens) }
     }
+    var reading by remember { mutableStateOf(false) }
+    var fullscreen by remember { mutableStateOf(false) }
+    // Folded away, the bar becomes a handle that can be dragged; unfolding puts
+    // it back wherever that handle was left, which is the point of moving it.
+    var collapsed by remember { mutableStateOf(false) }
+    var barOffset by remember { mutableStateOf(Offset.Zero) }
+    val otherNotes = remember(note.id) { store.list().filter { it.id != note.id } }
     var showLatency by remember { mutableStateOf(false) }
     var showPages by remember { mutableStateOf(false) }
     var edits by remember { mutableIntStateOf(0) }
@@ -742,9 +783,35 @@ private fun NoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> Unit) {
     var opened by remember { mutableStateOf<Pair<Document, PdfSource?>?>(null) }
     val clipboard = LocalClipboardManager.current
 
-    // Back clears a selection first, the way dismissing anything else works.
+    // Back clears a selection first, then leaves fullscreen, the way dismissing
+    // anything else works - one step out per press.
     BackHandler {
-        if (selectedText != null) canvas?.clearSelection() else onBack()
+        when {
+            selectedText != null -> canvas?.clearSelection()
+            fullscreen -> fullscreen = false
+            else -> onBack()
+        }
+    }
+
+    val window = (context as? ComponentActivity)?.window
+    LaunchedEffect(fullscreen, window) {
+        val view = window?.decorView ?: return@LaunchedEffect
+        val controller = WindowCompat.getInsetsController(window, view)
+        controller.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        if (fullscreen) {
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+        } else {
+            controller.show(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+    // Leaving the note with the bars still hidden would hide them on the list.
+    DisposableEffect(window) {
+        onDispose {
+            val view = window?.decorView ?: return@onDispose
+            WindowCompat.getInsetsController(window, view)
+                .show(WindowInsetsCompat.Type.systemBars())
+        }
     }
 
     // Opening a note decodes every stroke it holds and parses the PDF header.
@@ -788,6 +855,7 @@ private fun NoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> Unit) {
                 },
                 update = { view ->
                     view.tool = tool
+                    view.readMode = reading
                     view.colorArgb = pen.colorArgb
                     view.strokeWidth = pen.width
                     view.eraserWidth = eraserWidth
@@ -838,12 +906,29 @@ private fun NoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> Unit) {
             )
         }
 
+        if (collapsed) {
+            Box(
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .padding(12.dp)
+                    .offset { IntOffset(barOffset.x.toInt(), barOffset.y.toInt()) },
+            ) {
+                CollapsedToolbar(
+                    onExpand = { collapsed = false },
+                    onDrag = { barOffset += it },
+                )
+            }
+        } else {
         Toolbar(
             note = note,
+            otherNotes = otherNotes,
             pens = pens,
             penIndex = penIndex,
             erasing = erasing,
+            reading = reading,
             eraserWidth = eraserWidth,
+            fullscreen = fullscreen,
             showLatency = showLatency,
             // edits is read here so drawing or erasing recomposes the toolbar and
             // undo/redo can re-evaluate whether there is anything on the stacks.
@@ -852,10 +937,22 @@ private fun NoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> Unit) {
             onSelectPen = {
                 penIndex = it
                 erasing = false
+                reading = false
             },
             onEditPen = { editingPen = it },
             onAddPen = { editingPen = -1 },
-            onToggleEraser = { erasing = !erasing },
+            onToggleEraser = {
+                erasing = !erasing
+                if (erasing) reading = false
+            },
+            onToggleReading = {
+                reading = !reading
+                if (reading) {
+                    erasing = false
+                } else {
+                    canvas?.clearSelection()
+                }
+            },
             onWidth = { pens = pens.replaceAt(penIndex, pen.copy(width = it)) },
             onEraserWidth = { eraserWidth = it },
             onUndo = {
@@ -867,12 +964,25 @@ private fun NoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> Unit) {
                 edits++
             },
             onFitWidth = { canvas?.fitWidth() },
+            onToggleFullscreen = { fullscreen = !fullscreen },
             onToggleLatency = { showLatency = !showLatency },
             onTogglePages = { showPages = !showPages },
+            onCollapse = { collapsed = true },
+            onOpenNote = onOpenNote,
             onBack = onBack,
+            onSoon = {
+                android.widget.Toast
+                    .makeText(context, "$it 기능은 준비 중입니다", android.widget.Toast.LENGTH_SHORT)
+                    .show()
+            },
             pageLabel = "${currentPage + 1} / $pageCount",
-            modifier = Modifier.align(Alignment.TopCenter),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(12.dp)
+                .offset { IntOffset(barOffset.x.toInt(), barOffset.y.toInt()) },
         )
+        }
 
         editingPen?.let { index ->
             val editing = pens.getOrNull(index)
@@ -1112,10 +1222,13 @@ private fun PageChip(
 @Composable
 private fun Toolbar(
     note: NoteMeta,
+    otherNotes: List<NoteMeta>,
     pens: List<PenPreset>,
     penIndex: Int,
     erasing: Boolean,
+    reading: Boolean,
     eraserWidth: Float,
+    fullscreen: Boolean,
     showLatency: Boolean,
     canUndo: Boolean,
     canRedo: Boolean,
@@ -1124,101 +1237,231 @@ private fun Toolbar(
     onEditPen: (Int) -> Unit,
     onAddPen: () -> Unit,
     onToggleEraser: () -> Unit,
+    onToggleReading: () -> Unit,
     onWidth: (Float) -> Unit,
     onEraserWidth: (Float) -> Unit,
     onUndo: () -> Unit,
     onRedo: () -> Unit,
     onFitWidth: () -> Unit,
+    onToggleFullscreen: () -> Unit,
     onToggleLatency: () -> Unit,
     onTogglePages: () -> Unit,
+    onCollapse: () -> Unit,
+    onOpenNote: (NoteMeta) -> Unit,
     onBack: () -> Unit,
+    onSoon: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Surface(
-        modifier = modifier
-            .windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(12.dp),
+        modifier = modifier,
         shape = RoundedCornerShape(20.dp),
         tonalElevation = 3.dp,
         shadowElevation = 4.dp,
     ) {
-        Row(
-            Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "노트 목록")
-            }
-            Text(
-                note.title,
-                style = MaterialTheme.typography.titleSmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.width(96.dp),
-            )
-            ToolbarDivider()
+        Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+            // ---- top row: the note, and what is done to the whole of it
+            Row(
+                Modifier.padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로가기")
+                }
+                IconButton(onClick = onTogglePages) {
+                    Icon(Icons.Default.Search, contentDescription = "페이지 · 검색")
+                }
+                IconButton(onClick = { onSoon("캡쳐") }) {
+                    Icon(
+                        Icons.Default.CropFree,
+                        contentDescription = "영역 캡쳐",
+                        tint = MaterialTheme.colorScheme.outlineVariant,
+                    )
+                }
 
-            for ((index, saved) in pens.withIndex()) {
-                PenChip(
-                    pen = saved,
-                    selected = !erasing && index == penIndex,
-                    onClick = { onSelectPen(index) },
-                    onLongClick = { onEditPen(index) },
+                Text(
+                    note.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                    // Takes the slack, so the title sits in the middle and the
+                    // two clusters stay pinned to their own ends.
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 16.dp),
+                )
+
+                IconButton(onClick = onUndo, enabled = canUndo) {
+                    Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "실행취소")
+                }
+                IconButton(onClick = onRedo, enabled = canRedo) {
+                    Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "다시실행")
+                }
+                IconButton(onClick = onFitWidth) {
+                    Icon(Icons.Default.ZoomOutMap, contentDescription = "화면에 맞추기")
+                }
+                IconButton(onClick = onToggleFullscreen) {
+                    Icon(
+                        if (fullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                        contentDescription = "전체화면",
+                    )
+                }
+                OtherNotesButton(otherNotes, onOpenNote)
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+            // ---- bottom row: what the pen is doing right now
+            Row(
+                Modifier.padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = onCollapse) {
+                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "도구 숨기기")
+                }
+                ToolButton(Icons.Default.TouchApp, "읽기 모드", reading, onToggleReading)
+                ToolbarDivider()
+
+                for ((index, saved) in pens.withIndex()) {
+                    PenChip(
+                        pen = saved,
+                        selected = !erasing && !reading && index == penIndex,
+                        onClick = { onSelectPen(index) },
+                        onLongClick = { onEditPen(index) },
+                    )
+                }
+                IconButton(onClick = onAddPen) {
+                    Icon(
+                        Icons.Default.Add,
+                        contentDescription = "펜 추가",
+                        tint = MaterialTheme.colorScheme.outline,
+                    )
+                }
+                IconButton(onClick = { onSoon("색상 템플릿") }) {
+                    Icon(
+                        Icons.Default.Palette,
+                        contentDescription = "색상 템플릿",
+                        tint = MaterialTheme.colorScheme.outlineVariant,
+                    )
+                }
+                ToolbarDivider()
+
+                ToolButton(Icons.Default.Delete, "지우개", erasing, onToggleEraser)
+                IconButton(onClick = { onSoon("도형") }) {
+                    Icon(
+                        Icons.Default.Category,
+                        contentDescription = "도형",
+                        tint = MaterialTheme.colorScheme.outlineVariant,
+                    )
+                }
+                IconButton(onClick = { onSoon("사진") }) {
+                    Icon(
+                        Icons.Default.AddPhotoAlternate,
+                        contentDescription = "사진",
+                        tint = MaterialTheme.colorScheme.outlineVariant,
+                    )
+                }
+                ToolbarDivider()
+
+                // One slider, whichever tool is in hand: it sets the eraser's
+                // size while the eraser is out and the selected pen's
+                // otherwise, and the pen keeps that thickness. Two sliders
+                // would mean one of them is always the wrong one to reach for.
+                val pen = pens.getOrElse(penIndex) { pens.first() }
+                val range = when {
+                    erasing -> 8f..96f
+                    pen.tool == Tool.HIGHLIGHTER -> 4f..60f
+                    else -> 1f..24f
+                }
+                Slider(
+                    value = (if (erasing) eraserWidth else pen.width).coerceIn(range),
+                    onValueChange = if (erasing) onEraserWidth else onWidth,
+                    valueRange = range,
+                    modifier = Modifier.width(110.dp),
+                )
+                ToolbarDivider()
+
+                IconButton(onClick = { onSoon("인터넷") }) {
+                    Icon(
+                        Icons.Default.Language,
+                        contentDescription = "인터넷",
+                        tint = MaterialTheme.colorScheme.outlineVariant,
+                    )
+                }
+                IconButton(onClick = { onSoon("AI") }) {
+                    Icon(
+                        Icons.Default.AutoAwesome,
+                        contentDescription = "AI",
+                        tint = MaterialTheme.colorScheme.outlineVariant,
+                    )
+                }
+                ToolbarDivider()
+
+                TextButton(onClick = onTogglePages) { Text(pageLabel) }
+                IconButton(onClick = onToggleLatency) {
+                    Icon(
+                        Icons.Default.Speed,
+                        contentDescription = "지연 측정",
+                        tint = if (showLatency) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.outline
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Jumps straight to another note without going back through the list. */
+@Composable
+private fun OtherNotesButton(notes: List<NoteMeta>, onOpenNote: (NoteMeta) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) {
+            Icon(Icons.Default.Menu, contentDescription = "다른 노트")
+        }
+        DropdownMenu(open, onDismissRequest = { open = false }) {
+            if (notes.isEmpty()) {
+                DropdownMenuItem(
+                    text = { Text("다른 노트가 없습니다") },
+                    enabled = false,
+                    onClick = {},
                 )
             }
-            IconButton(onClick = onAddPen) {
-                Icon(
-                    Icons.Default.Add,
-                    contentDescription = "펜 추가",
-                    tint = MaterialTheme.colorScheme.outline,
-                )
-            }
-            ToolbarDivider()
-
-            ToolButton(Icons.Default.Delete, "지우개", erasing) { onToggleEraser() }
-            ToolbarDivider()
-
-            // One slider, whichever tool is in hand: it sets the eraser's size
-            // while the eraser is out and the selected pen's otherwise, and the
-            // pen keeps that thickness. Two sliders would mean one of them is
-            // always the wrong one to reach for.
-            val pen = pens.getOrElse(penIndex) { pens.first() }
-            val range = when {
-                erasing -> 8f..96f
-                pen.tool == Tool.HIGHLIGHTER -> 4f..60f
-                else -> 1f..24f
-            }
-            Slider(
-                value = (if (erasing) eraserWidth else pen.width).coerceIn(range),
-                onValueChange = if (erasing) onEraserWidth else onWidth,
-                valueRange = range,
-                modifier = Modifier.width(96.dp),
-            )
-            ToolbarDivider()
-
-            IconButton(onClick = onUndo, enabled = canUndo) {
-                Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "실행취소")
-            }
-            IconButton(onClick = onRedo, enabled = canRedo) {
-                Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "다시실행")
-            }
-            IconButton(onClick = onFitWidth) {
-                Icon(Icons.Default.ZoomOutMap, contentDescription = "화면에 맞추기")
-            }
-            ToolbarDivider()
-
-            TextButton(onClick = onTogglePages) { Text(pageLabel) }
-            IconButton(onClick = onToggleLatency) {
-                Icon(
-                    Icons.Default.Speed,
-                    contentDescription = "지연 측정",
-                    tint = if (showLatency) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.outline
+            for (other in notes) {
+                DropdownMenuItem(
+                    text = { Text(other.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    onClick = {
+                        open = false
+                        onOpenNote(other)
                     },
                 )
             }
+        }
+    }
+}
+
+/**
+ * What is left of the toolbar once it is folded away: a handle that can be
+ * dragged anywhere and puts the bar back where it was dropped.
+ */
+@Composable
+private fun CollapsedToolbar(onExpand: () -> Unit, onDrag: (Offset) -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        tonalElevation = 3.dp,
+        shadowElevation = 4.dp,
+        modifier = Modifier.pointerInput(Unit) {
+            detectDragGestures { change, delta ->
+                change.consume()
+                onDrag(delta)
+            }
+        },
+    ) {
+        IconButton(onClick = onExpand) {
+            Icon(Icons.Default.Menu, contentDescription = "도구 보이기")
         }
     }
 }

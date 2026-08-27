@@ -141,6 +141,14 @@ class InkCanvasView @JvmOverloads constructor(
     /** Diameter of the eraser tip, in page units, like [strokeWidth]. */
     var eraserWidth: Float = 24f
 
+    /**
+     * Reading rather than writing: the pen selects PDF text by dragging, the
+     * way a mouse does, instead of waiting out a hold first. The hold exists so
+     * that writing stays the default; when reading is the declared intent there
+     * is nothing to disambiguate and nothing to wait for.
+     */
+    var readMode: Boolean = false
+
     /** Fired whenever committed ink changes, so the host can autosave. */
     var onStrokesChanged: (() -> Unit)? = null
 
@@ -487,6 +495,15 @@ class InkCanvasView @JvmOverloads constructor(
                     Choreographer.getInstance().postFrameCallback(frameCallback)
                 }
                 activePage = document.pages[index]
+                if (readMode && !event.isEraserGesture()) {
+                    pressX = event.x
+                    pressY = event.y
+                    selectingPage = index
+                    if (document.pages[index].background == PageBackground.PDF) {
+                        beginTextSelection()
+                    }
+                    return true
+                }
                 erasing = tool == Tool.ERASER || event.isEraserGesture()
                 if (erasing) {
                     lastErasePoint = null
