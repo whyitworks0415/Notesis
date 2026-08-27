@@ -1,7 +1,10 @@
 package com.notesis
 
+import android.graphics.Bitmap
 import android.net.Uri
+import android.util.LruCache
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -21,6 +24,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -31,6 +35,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -66,6 +71,12 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Circle
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CropSquare
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.Brush
 import androidx.compose.material.icons.filled.Speed
@@ -82,6 +93,8 @@ import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -109,6 +122,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -122,6 +136,8 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -720,6 +736,202 @@ private fun GradientStrip(
     }
 }
 
+
+/** The shape tool: tapping it offers the four, and picking one arms the pen. */
+@Composable
+private fun ShapeButton(
+    selected: Boolean,
+    kind: ShapeKind,
+    onShape: (ShapeKind) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        ToolButton(shapeIcon(kind), "도형", selected) { open = true }
+        DropdownMenu(open, onDismissRequest = { open = false }) {
+            for (option in ShapeKind.entries) {
+                DropdownMenuItem(
+                    text = { Text(shapeLabel(option)) },
+                    leadingIcon = { Icon(shapeIcon(option), contentDescription = null) },
+                    onClick = {
+                        open = false
+                        onShape(option)
+                    },
+                )
+            }
+        }
+    }
+}
+
+private fun shapeIcon(kind: ShapeKind): ImageVector = when (kind) {
+    ShapeKind.LINE -> Icons.Default.Remove
+    ShapeKind.ARROW -> Icons.AutoMirrored.Filled.TrendingUp
+    ShapeKind.RECT -> Icons.Default.CropSquare
+    ShapeKind.OVAL -> Icons.Default.Circle
+}
+
+private fun shapeLabel(kind: ShapeKind): String = when (kind) {
+    ShapeKind.LINE -> "직선"
+    ShapeKind.ARROW -> "화살표"
+    ShapeKind.RECT -> "사각형"
+    ShapeKind.OVAL -> "원"
+}
+
+/** Opens one of the AI sites in the side panel. */
+@Composable
+private fun AiButton(onWeb: (String) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) {
+            Icon(Icons.Default.AutoAwesome, contentDescription = "AI")
+        }
+        DropdownMenu(open, onDismissRequest = { open = false }) {
+            for ((name, url) in AI_SITES) {
+                DropdownMenuItem(
+                    text = { Text(name) },
+                    onClick = {
+                        open = false
+                        onWeb(url)
+                    },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Ready-made colour sets. Picking one recolours the pen in hand and leaves its
+ * alpha alone, so a highlighter stays a highlighter and a pen stays opaque.
+ */
+@Composable
+private fun PaletteDialog(onDismiss: () -> Unit, onPick: (Int) -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("색상 템플릿") },
+        text = {
+            Column {
+                for ((name, colors) in COLOR_TEMPLATES) {
+                    Text(name, style = MaterialTheme.typography.labelMedium)
+                    Spacer(Modifier.height(6.dp))
+                    Row {
+                        for (rgb in colors) {
+                            Box(
+                                Modifier
+                                    .padding(end = 8.dp)
+                                    .size(34.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(rgb))
+                                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                                    .clickable { onPick(rgb) },
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(14.dp))
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("닫기") } },
+    )
+}
+
+/** What came back from a capture, and the two things worth doing with it. */
+@Composable
+private fun CaptureDialog(
+    bitmap: Bitmap,
+    onPaste: () -> Unit,
+    onShare: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("캡쳐") },
+        text = {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 320.dp),
+            )
+        },
+        confirmButton = { TextButton(onClick = onPaste) { Text("이 페이지에 붙이기") } },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onShare) { Text("공유") }
+                TextButton(onClick = onDismiss) { Text("닫기") }
+            }
+        },
+    )
+}
+
+/**
+ * A browser beside the note. It is a plain WebView: the point is looking things
+ * up without leaving the page being written on, not building a browser.
+ */
+@Composable
+private fun WebPanel(url: String, onClose: () -> Unit, modifier: Modifier = Modifier) {
+    var web by remember { mutableStateOf<android.webkit.WebView?>(null) }
+    var address by remember(url) { mutableStateOf(url) }
+
+    Surface(modifier = modifier, tonalElevation = 2.dp) {
+        Column(Modifier.fillMaxHeight()) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .padding(horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = { web?.let { if (it.canGoBack()) it.goBack() } }) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로")
+                }
+                IconButton(onClick = { web?.reload() }) {
+                    Icon(Icons.Default.Refresh, contentDescription = "새로고침")
+                }
+                OutlinedTextField(
+                    value = address,
+                    onValueChange = { address = it },
+                    singleLine = true,
+                    placeholder = { Text("주소 또는 검색어") },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+                    keyboardActions = KeyboardActions(onGo = { web?.loadUrl(asUrl(address)) }),
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(vertical = 4.dp),
+                )
+                IconButton(onClick = onClose) {
+                    Icon(Icons.Default.Close, contentDescription = "닫기")
+                }
+            }
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { viewContext ->
+                    android.webkit.WebView(viewContext).apply {
+                        // Without a client the frameworks hands links to the
+                        // system browser, which is the opposite of the point.
+                        webViewClient = android.webkit.WebViewClient()
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        loadUrl(url)
+                        web = this
+                    }
+                },
+                update = { it.takeIf { _ -> it.url == null }?.loadUrl(url) },
+            )
+        }
+    }
+}
+
+/** A typed address if it looks like one, a search if it does not. */
+private fun asUrl(text: String): String {
+    val trimmed = text.trim()
+    if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed
+    if (trimmed.contains(' ') || !trimmed.contains('.')) {
+        return SEARCH_HOME + "search?q=" + Uri.encode(trimmed)
+    }
+    return "https://$trimmed"
+}
+
 @Composable
 private fun NameDialog(onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
     var title by remember { mutableStateOf("") }
@@ -739,6 +951,9 @@ private fun NameDialog(onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
     )
 }
 
+/** What the pen does when it lands. One thing at a time, by construction. */
+private enum class EditMode { DRAW, ERASE, READ, SHAPE, IMAGE, CAPTURE }
+
 @Composable
 private fun NoteScreen(
     store: NoteStore,
@@ -747,17 +962,20 @@ private fun NoteScreen(
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val penStore = remember { PenStore(context) }
     var pens by remember { mutableStateOf(penStore.load()) }
     var penIndex by remember { mutableIntStateOf(0) }
-    // The eraser is held over whichever pen is selected, so putting it down
-    // gives that pen back instead of dropping the user on a default.
-    var erasing by remember { mutableStateOf(false) }
+    // One mode at a time: the eraser, reading and the rest are held over
+    // whichever pen is selected, so putting one down gives that pen back
+    // instead of dropping the user on a default.
+    var mode by remember { mutableStateOf(EditMode.DRAW) }
+    var shapeKind by remember { mutableStateOf(ShapeKind.LINE) }
     /** Index being edited, or -1 for a pen that does not exist yet. */
     var editingPen by remember { mutableStateOf<Int?>(null) }
     var eraserWidth by remember { mutableStateOf(24f) }
     val pen = pens.getOrElse(penIndex) { pens.first() }
-    val tool = if (erasing) Tool.ERASER else pen.tool
+    val tool = if (mode == EditMode.ERASE) Tool.ERASER else pen.tool
 
     // Dragging the width slider changes the pen on every frame; the tray is
     // written once the dragging stops rather than once per frame.
@@ -765,12 +983,28 @@ private fun NoteScreen(
         delay(PEN_SAVE_DELAY_MS)
         withContext(Dispatchers.IO) { penStore.save(pens) }
     }
-    var reading by remember { mutableStateOf(false) }
     var fullscreen by remember { mutableStateOf(false) }
+    var imageSelected by remember { mutableStateOf(false) }
+    var captured by remember { mutableStateOf<Bitmap?>(null) }
+    /** The site the side panel is showing, or null while it is closed. */
+    var webUrl by remember { mutableStateOf<String?>(null) }
+    // Every page redraw asks for the pictures on it, so decoding has to happen
+    // once rather than once a frame.
+    val imageCache = remember(note.id) {
+        // Bounded by bytes, not by count: a handful of large pictures is what
+        // would run the heap out, and counting entries cannot see that.
+        object : LruCache<String, Bitmap>(IMAGE_CACHE_BYTES) {
+            override fun sizeOf(key: String, value: Bitmap) = value.byteCount
+        }
+    }
     // Folded away, the bar becomes a handle that can be dragged; unfolding puts
     // it back wherever that handle was left, which is the point of moving it.
     var collapsed by remember { mutableStateOf(false) }
-    var barOffset by remember { mutableStateOf(Offset.Zero) }
+    // Null until it is dragged: the bar sits centred at the top by default, and
+    // there is no sensible centre to store before anything has been measured.
+    var barOffset by remember { mutableStateOf<Offset?>(null) }
+    var containerSize by remember { mutableStateOf(IntSize.Zero) }
+    var barSize by remember { mutableStateOf(IntSize.Zero) }
     val otherNotes = remember(note.id) { store.list().filter { it.id != note.id } }
     var showLatency by remember { mutableStateOf(false) }
     var showPages by remember { mutableStateOf(false) }
@@ -782,6 +1016,30 @@ private fun NoteScreen(
     var selectedText by remember { mutableStateOf<String?>(null) }
     var opened by remember { mutableStateOf<Pair<Document, PdfSource?>?>(null) }
     val clipboard = LocalClipboardManager.current
+    var showPalette by remember { mutableStateOf(false) }
+
+    val pickImage = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent(),
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            // Decoding and copying a camera-sized photo is not main-thread work.
+            val added = withContext(Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openInputStream(uri)?.use {
+                        store.addImage(note.id, it)
+                    }
+                }.getOrNull()
+            }
+            if (added == null) {
+                Toast.makeText(context, "이미지를 읽지 못했습니다", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            canvas?.insertImage(added.first, added.second)
+            mode = EditMode.IMAGE
+            edits++
+        }
+    }
 
     // Back clears a selection first, then leaves fullscreen, the way dismissing
     // anything else works - one step out per press.
@@ -825,10 +1083,13 @@ private fun NoteScreen(
         }
     }
 
+    Row(Modifier.fillMaxSize()) {
     Box(
         Modifier
-            .fillMaxSize()
-            .background(Color(0xFFE9E7E2)),
+            .weight(1f)
+            .fillMaxHeight()
+            .background(Color(0xFFE9E7E2))
+            .onSizeChanged { containerSize = it },
     ) {
         val ready = opened
         if (ready == null) {
@@ -850,12 +1111,24 @@ private fun NoteScreen(
                         }
                         onCurrentPageChanged = { currentPage = it }
                         onSelectionChanged = { selectedText = it?.text }
+                        onImageSelected = { imageSelected = it }
+                        imageLoader = { imageId ->
+                            imageCache.get(imageId) ?: runCatching {
+                                android.graphics.BitmapFactory
+                                    .decodeFile(store.imageFile(note.id, imageId).path)
+                            }.getOrNull()?.also { imageCache.put(imageId, it) }
+                        }
+                        // Rendered on a worker; the dialog is a UI thing.
+                        onCaptured = { bitmap -> post { captured = bitmap } }
                         canvas = this
                     }
                 },
                 update = { view ->
                     view.tool = tool
-                    view.readMode = reading
+                    view.readMode = mode == EditMode.READ
+                    view.shapeKind = if (mode == EditMode.SHAPE) shapeKind else null
+                    view.imageMode = mode == EditMode.IMAGE
+                    view.captureMode = mode == EditMode.CAPTURE
                     view.colorArgb = pen.colorArgb
                     view.strokeWidth = pen.width
                     view.eraserWidth = eraserWidth
@@ -909,14 +1182,18 @@ private fun NoteScreen(
         if (collapsed) {
             Box(
                 Modifier
-                    .align(Alignment.TopCenter)
+                    .align(Alignment.TopStart)
+                    .offset { barPlacement(barOffset, barSize, containerSize) }
+                    .onSizeChanged { barSize = it }
                     .windowInsetsPadding(WindowInsets.safeDrawing)
-                    .padding(12.dp)
-                    .offset { IntOffset(barOffset.x.toInt(), barOffset.y.toInt()) },
+                    .padding(12.dp),
             ) {
                 CollapsedToolbar(
                     onExpand = { collapsed = false },
-                    onDrag = { barOffset += it },
+                    onDrag = { delta ->
+                        val at = barPlacement(barOffset, barSize, containerSize)
+                        barOffset = Offset(at.x + delta.x, at.y + delta.y)
+                    },
                 )
             }
         } else {
@@ -925,8 +1202,8 @@ private fun NoteScreen(
             otherNotes = otherNotes,
             pens = pens,
             penIndex = penIndex,
-            erasing = erasing,
-            reading = reading,
+            mode = mode,
+            shapeKind = shapeKind,
             eraserWidth = eraserWidth,
             fullscreen = fullscreen,
             showLatency = showLatency,
@@ -936,23 +1213,25 @@ private fun NoteScreen(
             canRedo = edits.let { canvas?.canRedo() == true },
             onSelectPen = {
                 penIndex = it
-                erasing = false
-                reading = false
+                if (mode == EditMode.ERASE || mode == EditMode.READ) mode = EditMode.DRAW
             },
             onEditPen = { editingPen = it },
             onAddPen = { editingPen = -1 },
-            onToggleEraser = {
-                erasing = !erasing
-                if (erasing) reading = false
+            onMode = { picked ->
+                // Leaving a mode takes its leftovers with it: a selection that
+                // cannot be extended any more, a picture with handles on it.
+                canvas?.clearSelection()
+                canvas?.clearImageSelection()
+                mode = if (mode == picked) EditMode.DRAW else picked
             },
-            onToggleReading = {
-                reading = !reading
-                if (reading) {
-                    erasing = false
-                } else {
-                    canvas?.clearSelection()
-                }
+            onShape = {
+                shapeKind = it
+                canvas?.clearSelection()
+                canvas?.clearImageSelection()
+                mode = EditMode.SHAPE
             },
+            onPickImage = { pickImage.launch("image/*") },
+            onWeb = { webUrl = it },
             onWidth = { pens = pens.replaceAt(penIndex, pen.copy(width = it)) },
             onEraserWidth = { eraserWidth = it },
             onUndo = {
@@ -970,17 +1249,17 @@ private fun NoteScreen(
             onCollapse = { collapsed = true },
             onOpenNote = onOpenNote,
             onBack = onBack,
-            onSoon = {
-                android.widget.Toast
-                    .makeText(context, "$it 기능은 준비 중입니다", android.widget.Toast.LENGTH_SHORT)
-                    .show()
-            },
             pageLabel = "${currentPage + 1} / $pageCount",
+            onPalette = { showPalette = true },
             modifier = Modifier
-                .align(Alignment.TopCenter)
+                .align(Alignment.TopStart)
+                // Placed and clamped together: the folded handle can be dragged
+                // anywhere, and unfolding measures the wide bar and pulls it
+                // back inside rather than letting half of it hang off screen.
+                .offset { barPlacement(barOffset, barSize, containerSize) }
+                .onSizeChanged { barSize = it }
                 .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(12.dp)
-                .offset { IntOffset(barOffset.x.toInt(), barOffset.y.toInt()) },
+                .padding(12.dp),
         )
         }
 
@@ -995,7 +1274,7 @@ private fun NoteScreen(
                 onConfirm = { saved ->
                     pens = if (editing == null) pens + saved else pens.replaceAt(index, saved)
                     penIndex = if (editing == null) pens.size - 1 else index
-                    erasing = false
+                    mode = EditMode.DRAW
                     editingPen = null
                 },
                 onDelete = {
@@ -1003,6 +1282,53 @@ private fun NoteScreen(
                     penIndex = penIndex.coerceAtMost(pens.size - 1)
                     editingPen = null
                 },
+            )
+        }
+
+        if (showPalette) {
+            PaletteDialog(
+                onDismiss = { showPalette = false },
+                onPick = { rgb ->
+                    // Alpha belongs to the pen, not to the template: recolouring
+                    // a highlighter must not turn it opaque.
+                    val alpha = pen.colorArgb.toLong() and 0xFF000000L
+                    pens = pens.replaceAt(
+                        penIndex,
+                        pen.copy(colorArgb = ((rgb.toLong() and 0xFFFFFFL) or alpha).toInt()),
+                    )
+                    showPalette = false
+                },
+            )
+        }
+
+        captured?.let { bitmap ->
+            CaptureDialog(
+                bitmap = bitmap,
+                onPaste = {
+                    val added = store.addImage(note.id, bitmap)
+                    if (added != null) {
+                        canvas?.insertImage(added.first, added.second)
+                        mode = EditMode.IMAGE
+                        edits++
+                    }
+                    captured = null
+                },
+                onShare = {
+                    shareBitmap(context, bitmap)
+                    captured = null
+                },
+                onDismiss = { captured = null },
+            )
+        }
+
+        if (imageSelected) {
+            ImageActions(
+                onDelete = {
+                    canvas?.deleteSelectedImage()
+                    edits++
+                },
+                onDone = { canvas?.clearImageSelection() },
+                modifier = Modifier.align(Alignment.BottomCenter),
             )
         }
 
@@ -1022,7 +1348,9 @@ private fun NoteScreen(
             )
         }
 
-        AnimatedVisibility(
+        // Qualified: the enclosing Row puts RowScope.AnimatedVisibility in scope
+        // too, and it wins the overload without a receiver to call it on.
+        androidx.compose.animation.AnimatedVisibility(
             visible = showPages,
             enter = slideInHorizontally { it },
             exit = slideOutHorizontally { it },
@@ -1047,6 +1375,87 @@ private fun NoteScreen(
             )
         }
     }
+
+        webUrl?.let { url ->
+            WebPanel(
+                url = url,
+                onClose = { webUrl = null },
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .width(WEB_PANEL_WIDTH),
+            )
+        }
+    }
+}
+
+/** Delete or let go of the picture in hand. */
+@Composable
+private fun ImageActions(
+    onDelete: () -> Unit,
+    onDone: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier
+            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .padding(16.dp),
+        shape = RoundedCornerShape(16.dp),
+        tonalElevation = 3.dp,
+        shadowElevation = 4.dp,
+    ) {
+        Row(
+            Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("사진", style = MaterialTheme.typography.bodyMedium)
+            ToolbarDivider()
+            TextButton(onClick = onDelete) {
+                Icon(Icons.Default.Delete, contentDescription = null)
+                Text(" 삭제")
+            }
+            TextButton(onClick = onDone) { Text("완료") }
+        }
+    }
+}
+
+/**
+ * Where the toolbar actually sits: the drag offset, clamped so the thing being
+ * placed stays entirely inside the canvas. A null offset means it has never
+ * been moved, which is the middle of the top edge.
+ */
+private fun barPlacement(offset: Offset, bar: IntSize, container: IntSize): IntOffset {
+    if (bar.width == 0 || container.width == 0) {
+        return IntOffset(offset.x.toInt(), offset.y.toInt())
+    }
+    val maxX = (container.width - bar.width).toFloat().coerceAtLeast(0f)
+    val maxY = (container.height - bar.height).toFloat().coerceAtLeast(0f)
+    return IntOffset(offset.x.coerceIn(0f, maxX).toInt(), offset.y.coerceIn(0f, maxY).toInt())
+}
+
+private fun barPlacement(offset: Offset?, bar: IntSize, container: IntSize): IntOffset {
+    val start = offset ?: Offset((container.width - bar.width) / 2f, 0f)
+    return barPlacement(start, bar, container)
+}
+
+/** Hands the captured region to whatever the user picks in the share sheet. */
+private fun shareBitmap(context: android.content.Context, bitmap: Bitmap) {
+    val shared = java.io.File(context.cacheDir, "shared").apply { mkdirs() }
+    val file = java.io.File(shared, "capture.png")
+    val written = runCatching {
+        file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 95, it) }
+    }.isSuccess
+    if (!written) return
+    val uri = androidx.core.content.FileProvider.getUriForFile(
+        context,
+        context.packageName + ".files",
+        file,
+    )
+    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+        type = "image/png"
+        putExtra(android.content.Intent.EXTRA_STREAM, uri)
+        addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(android.content.Intent.createChooser(intent, "캡쳐 공유"))
 }
 
 /** What you can do with text lifted off a PDF page. */
@@ -1225,8 +1634,8 @@ private fun Toolbar(
     otherNotes: List<NoteMeta>,
     pens: List<PenPreset>,
     penIndex: Int,
-    erasing: Boolean,
-    reading: Boolean,
+    mode: EditMode,
+    shapeKind: ShapeKind,
     eraserWidth: Float,
     fullscreen: Boolean,
     showLatency: Boolean,
@@ -1236,8 +1645,10 @@ private fun Toolbar(
     onSelectPen: (Int) -> Unit,
     onEditPen: (Int) -> Unit,
     onAddPen: () -> Unit,
-    onToggleEraser: () -> Unit,
-    onToggleReading: () -> Unit,
+    onMode: (EditMode) -> Unit,
+    onShape: (ShapeKind) -> Unit,
+    onPickImage: () -> Unit,
+    onWeb: (String) -> Unit,
     onWidth: (Float) -> Unit,
     onEraserWidth: (Float) -> Unit,
     onUndo: () -> Unit,
@@ -1249,7 +1660,7 @@ private fun Toolbar(
     onCollapse: () -> Unit,
     onOpenNote: (NoteMeta) -> Unit,
     onBack: () -> Unit,
-    onSoon: (String) -> Unit,
+    onPalette: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -1270,13 +1681,11 @@ private fun Toolbar(
                 IconButton(onClick = onTogglePages) {
                     Icon(Icons.Default.Search, contentDescription = "페이지 · 검색")
                 }
-                IconButton(onClick = { onSoon("캡쳐") }) {
-                    Icon(
-                        Icons.Default.CropFree,
-                        contentDescription = "영역 캡쳐",
-                        tint = MaterialTheme.colorScheme.outlineVariant,
-                    )
-                }
+                ToolButton(
+                    Icons.Default.CropFree,
+                    "영역 캡쳐",
+                    mode == EditMode.CAPTURE,
+                ) { onMode(EditMode.CAPTURE) }
 
                 Text(
                     note.title,
@@ -1319,13 +1728,17 @@ private fun Toolbar(
                 IconButton(onClick = onCollapse) {
                     Icon(Icons.Default.KeyboardArrowDown, contentDescription = "도구 숨기기")
                 }
-                ToolButton(Icons.Default.TouchApp, "읽기 모드", reading, onToggleReading)
+                ToolButton(
+                    Icons.Default.TouchApp,
+                    "읽기 모드",
+                    mode == EditMode.READ,
+                ) { onMode(EditMode.READ) }
                 ToolbarDivider()
 
                 for ((index, saved) in pens.withIndex()) {
                     PenChip(
                         pen = saved,
-                        selected = !erasing && !reading && index == penIndex,
+                        selected = mode == EditMode.DRAW && index == penIndex,
                         onClick = { onSelectPen(index) },
                         onLongClick = { onEditPen(index) },
                     )
@@ -1337,30 +1750,27 @@ private fun Toolbar(
                         tint = MaterialTheme.colorScheme.outline,
                     )
                 }
-                IconButton(onClick = { onSoon("색상 템플릿") }) {
+                IconButton(onClick = onPalette) {
                     Icon(
                         Icons.Default.Palette,
                         contentDescription = "색상 템플릿",
-                        tint = MaterialTheme.colorScheme.outlineVariant,
+                        tint = MaterialTheme.colorScheme.outline,
                     )
                 }
                 ToolbarDivider()
 
-                ToolButton(Icons.Default.Delete, "지우개", erasing, onToggleEraser)
-                IconButton(onClick = { onSoon("도형") }) {
-                    Icon(
-                        Icons.Default.Category,
-                        contentDescription = "도형",
-                        tint = MaterialTheme.colorScheme.outlineVariant,
-                    )
-                }
-                IconButton(onClick = { onSoon("사진") }) {
-                    Icon(
-                        Icons.Default.AddPhotoAlternate,
-                        contentDescription = "사진",
-                        tint = MaterialTheme.colorScheme.outlineVariant,
-                    )
-                }
+                ToolButton(
+                    Icons.Default.Delete,
+                    "지우개",
+                    mode == EditMode.ERASE,
+                ) { onMode(EditMode.ERASE) }
+                ShapeButton(mode == EditMode.SHAPE, shapeKind, onShape)
+                ToolButton(
+                    Icons.Default.AddPhotoAlternate,
+                    "사진",
+                    mode == EditMode.IMAGE,
+                    onPickImage,
+                )
                 ToolbarDivider()
 
                 // One slider, whichever tool is in hand: it sets the eraser's
@@ -1369,10 +1779,11 @@ private fun Toolbar(
                 // would mean one of them is always the wrong one to reach for.
                 val pen = pens.getOrElse(penIndex) { pens.first() }
                 val range = when {
-                    erasing -> 8f..96f
+                    mode == EditMode.ERASE -> 8f..96f
                     pen.tool == Tool.HIGHLIGHTER -> 4f..60f
                     else -> 1f..24f
                 }
+                val erasing = mode == EditMode.ERASE
                 Slider(
                     value = (if (erasing) eraserWidth else pen.width).coerceIn(range),
                     onValueChange = if (erasing) onEraserWidth else onWidth,
@@ -1381,20 +1792,10 @@ private fun Toolbar(
                 )
                 ToolbarDivider()
 
-                IconButton(onClick = { onSoon("인터넷") }) {
-                    Icon(
-                        Icons.Default.Language,
-                        contentDescription = "인터넷",
-                        tint = MaterialTheme.colorScheme.outlineVariant,
-                    )
+                IconButton(onClick = { onWeb(SEARCH_HOME) }) {
+                    Icon(Icons.Default.Language, contentDescription = "인터넷")
                 }
-                IconButton(onClick = { onSoon("AI") }) {
-                    Icon(
-                        Icons.Default.AutoAwesome,
-                        contentDescription = "AI",
-                        tint = MaterialTheme.colorScheme.outlineVariant,
-                    )
-                }
+                AiButton(onWeb)
                 ToolbarDivider()
 
                 TextButton(onClick = onTogglePages) { Text(pageLabel) }
@@ -1500,3 +1901,25 @@ private const val AUTOSAVE_DELAY_MS = 1200L
 private const val SEARCH_DEBOUNCE_MS = 220L
 
 private const val PEN_SAVE_DELAY_MS = 400L
+
+private const val IMAGE_CACHE_BYTES = 48 * 1024 * 1024
+
+private val WEB_PANEL_WIDTH = 460.dp
+
+private const val SEARCH_HOME = "https://www.google.com/"
+
+private val AI_SITES = listOf(
+    "Gemini" to "https://gemini.google.com/",
+    "Claude" to "https://claude.ai/",
+    "ChatGPT" to "https://chatgpt.com/",
+    "Grok" to "https://grok.com/",
+    "Perplexity" to "https://www.perplexity.ai/",
+    "Cerebras" to "https://inference.cerebras.ai/",
+)
+
+private val COLOR_TEMPLATES = listOf(
+    "기본" to listOf(0xFF000000, 0xFFD32F2F, 0xFF1976D2, 0xFF388E3C, 0xFFF9A825),
+    "파스텔" to listOf(0xFF6D6875, 0xFFE5989B, 0xFF9AC1D9, 0xFFA8D5BA, 0xFFF6D186),
+    "형광" to listOf(0xFFFFEB3B, 0xFF76FF03, 0xFF00E5FF, 0xFFFF4081, 0xFFFF9100),
+    "먹" to listOf(0xFF000000, 0xFF3A3A3A, 0xFF6B6B6B, 0xFF9E9E9E, 0xFFCFCFCF),
+).map { (name, colors) -> name to colors.map { it.toInt() } }

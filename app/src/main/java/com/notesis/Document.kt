@@ -19,6 +19,18 @@ import java.io.DataOutputStream
 import java.io.File
 import java.util.UUID
 
+/**
+ * A picture placed on a page, in page-local units like everything else on it.
+ * The bytes live in the note's own directory; this is only where it sits.
+ */
+class PageImage(
+    val id: String = UUID.randomUUID().toString(),
+    var x: Float = 0f,
+    var y: Float = 0f,
+    var width: Float = 0f,
+    var height: Float = 0f,
+)
+
 /** What is printed under the ink. */
 enum class PageBackground { BLANK, LINED, GRID, PDF }
 
@@ -34,6 +46,8 @@ class Page(
     var background: PageBackground = PageBackground.BLANK,
     /** Index into the note's imported PDF, or -1 when this page has no PDF. */
     var pdfPageIndex: Int = -1,
+    /** Pictures, drawn over the background and under the ink. */
+    val images: MutableList<PageImage> = mutableListOf(),
     val strokes: MutableList<Stroke> = mutableListOf(),
 ) {
     /**
@@ -293,6 +307,7 @@ class NoteStore(context: Context) {
                 }.getOrDefault(PageBackground.BLANK),
                 pdfPageIndex = entry.optInt("pdf", -1),
             )
+            page.images.addAll(imagesFrom(entry))
             // Strokes are left on disk until the page is actually needed.
             page.loaded = false
             page.savedStrokeCount = entry.optInt("strokes", 0)
@@ -322,6 +337,13 @@ class NoteStore(context: Context) {
             page.dirty = false
             if (index == 0) firstPageChanged = true
         }
+        // A picture left behind by an undo, or by a deleted page, is dead weight
+        // in the note directory - only what a page still points at survives.
+        val liveImages = document.pages.flatMap { page -> page.images.map { "${it.id}.png" } }
+            .toSet()
+        File(root, "$id/images").listFiles()?.forEach {
+            if (it.name !in liveImages) it.delete()
+        }
         // A page that was deleted this session leaves its file behind otherwise.
         val live = document.pages.flatMap { listOf("${it.id}.bin", "${it.id}.txt") }.toSet()
         dir.listFiles()?.forEach { if (it.name !in live) it.delete() }
@@ -333,6 +355,75 @@ class NoteStore(context: Context) {
         val auto = File(root, "$id/$AUTO_THUMB")
         val stale = System.currentTimeMillis() - auto.lastModified() > THUMB_INTERVAL_MS
         if (!auto.isFile || (firstPageChanged && stale)) writeAutoThumbnail(id, document)
+    }
+
+    private fun imagesToJson(page: Page): JSONArray {
+        val array = JSONArray()
+        for (image in page.images) {
+            array.put(
+                JSONObject()
+                    .put("id", image.id)
+                    .put("x", image.x.toDouble())
+                    .put("y", image.y.toDouble())
+                    .put("w", image.width.toDouble())
+                    .put("h", image.height.toDouble()),
+            )
+        }
+        return array
+    }
+
+    private fun imagesFrom(entry: JSONObject): MutableList<PageImage> {
+        val array = entry.optJSONArray("images") ?: return mutableListOf()
+        val images = mutableListOf<PageImage>()
+        for (i in 0 until array.length()) {
+            val item = array.optJSONObject(i) ?: continue
+            images += PageImage(
+                id = item.optString("id"),
+                x = item.optDouble("x").toFloat(),
+                y = item.optDouble("y").toFloat(),
+                width = item.optDouble("w").toFloat(),
+                height = item.optDouble("h").toFloat(),
+            )
+        }
+        return images
+    }
+
+    fun imageFile(id: String, imageId: String): File =
+        File(root, "$id/images/$imageId.png")
+
+    /**
+     * Copies a picture into the note and returns its id with the aspect ratio
+     * the caller needs to place it, or null if it could not be read.
+     */
+    fun addImage(id: String, input: java.io.InputStream): Pair<String, Float>? {
+        val bitmap = runCatching { BitmapFactory.decodeStream(input) }.getOrNull() ?: return null
+        return addImage(id, bitmap)
+    }
+
+    fun addImage(id: String, source: Bitmap): Pair<String, Float>? {
+        if (source.width <= 0 || source.height <= 0) return null
+        // A phone photo is far more pixels than a page can show, and every one
+        // of them would be decoded again on every redraw.
+        val longest = maxOf(source.width, source.height)
+        val bitmap = if (longest > MAX_IMAGE_PX) {
+            val scale = MAX_IMAGE_PX.toFloat() / longest
+            Bitmap.createScaledBitmap(
+                source,
+                (source.width * scale).toInt().coerceAtLeast(1),
+                (source.height * scale).toInt().coerceAtLeast(1),
+                true,
+            )
+        } else {
+            source
+        }
+        val imageId = UUID.randomUUID().toString()
+        val file = imageFile(id, imageId)
+        file.parentFile?.mkdirs()
+        val written = runCatching {
+            file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 90, it) }
+        }.isSuccess
+        if (!written) return null
+        return imageId to bitmap.width.toFloat() / bitmap.height
     }
 
     /** The custom image if the note has one, else the rendered first page. */
@@ -414,7 +505,8 @@ class NoteStore(context: Context) {
                     .put("h", page.height)
                     .put("bg", page.background.name)
                     .put("pdf", page.pdfPageIndex)
-                    .put("strokes", if (page.loaded) page.strokes.size else page.savedStrokeCount),
+                    .put("strokes", if (page.loaded) page.strokes.size else page.savedStrokeCount)
+                    .put("images", imagesToJson(page)),
             )
         }
         val json = JSONObject()
@@ -506,6 +598,7 @@ class NoteStore(context: Context) {
         const val CUSTOM_THUMB = "thumb.png"
         const val AUTO_THUMB = "auto.png"
         const val THUMB_WIDTH = 480
+        const val MAX_IMAGE_PX = 2048
         const val THUMB_INTERVAL_MS = 20_000L
         const val VERSION = 1
     }

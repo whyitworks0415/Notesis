@@ -39,8 +39,13 @@ import androidx.input.motionprediction.MotionEventPredictor
 import java.util.IdentityHashMap
 import java.util.concurrent.Executors
 import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.hypot
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.sin
+import kotlin.math.atan2
 
 /** Deepest zoom the canvas allows, in screen pixels per page unit. */
 const val MAX_CANVAS_SCALE = 8f
@@ -75,6 +80,9 @@ fun tessellationBucket(scale: Float): Float {
 
 /** Fidelity for a stroke that has no zoom context yet, such as one just loaded. */
 const val STROKE_EPSILON = TESSELLATION_TARGET_PX
+
+/** The shapes the pen can be made to draw instead of following the hand. */
+enum class ShapeKind { LINE, ARROW, RECT, OVAL }
 
 enum class Tool {
     PEN,
@@ -149,6 +157,24 @@ class InkCanvasView @JvmOverloads constructor(
      */
     var readMode: Boolean = false
 
+    /** Non-null while the pen draws shapes rather than following the hand. */
+    var shapeKind: ShapeKind? = null
+
+    /** Pictures can be picked up, moved and resized while this is on. */
+    var imageMode: Boolean = false
+
+    /** The pen drags out a rectangle and what is inside it comes back rendered. */
+    var captureMode: Boolean = false
+
+    /** Reads a picture's bytes. Called on the UI thread, so it should cache. */
+    var imageLoader: ((String) -> Bitmap?)? = null
+
+    /** Handed a rendering of the captured region, on a background thread. */
+    var onCaptured: ((Bitmap) -> Unit)? = null
+
+    /** Fired when a picture is picked up or let go, so the host can offer actions. */
+    var onImageSelected: ((Boolean) -> Unit)? = null
+
     /** Fired whenever committed ink changes, so the host can autosave. */
     var onStrokesChanged: (() -> Unit)? = null
 
@@ -206,6 +232,23 @@ class InkCanvasView @JvmOverloads constructor(
     private var selectingPage = -1
     private var selectionAnchor: RectF? = null
     private var selectingText = false
+
+    // Shape, capture and picture gestures. Each is a start and an end in the
+    // coordinates of one page, held only while the pen is down.
+    private var shapePage = -1
+    private val shapeStart = floatArrayOf(0f, 0f)
+    private val shapeEnd = floatArrayOf(0f, 0f)
+    private var drawingShape = false
+
+    private var capturePage = -1
+    private val captureRect = RectF()
+    private var capturing = false
+
+    private var selectedImage: PageImage? = null
+    private var selectedImagePage: Page? = null
+    private var movingImage = false
+    private var resizingImage = false
+    private val imageGrab = floatArrayOf(0f, 0f)
     private var pressX = 0f
     private var pressY = 0f
     private val longPress = Runnable { beginTextSelection() }
@@ -245,6 +288,11 @@ class InkCanvasView @JvmOverloads constructor(
         // objects that are no longer in the page.
         class Drawn(override val page: Page, var stroke: Stroke) : Edit
         class Erased(override val page: Page, var strokes: List<Stroke>) : Edit
+
+        // Pictures are mutable and moving one is not undoable; adding and
+        // removing are, because those are the ones that lose work.
+        class ImageAdded(override val page: Page, val image: PageImage) : Edit
+        class ImageRemoved(override val page: Page, val image: PageImage, val at: Int) : Edit
     }
 
     private val scaleDetector = ScaleGestureDetector(
@@ -358,6 +406,8 @@ class InkCanvasView @JvmOverloads constructor(
         when (edit) {
             is Edit.Drawn -> edit.page.strokes += edit.stroke
             is Edit.Erased -> edit.page.strokes.removeAll(edit.strokes)
+            is Edit.ImageAdded -> edit.page.images += edit.image
+            is Edit.ImageRemoved -> edit.page.images.remove(edit.image)
         }
         undoStack += edit
         afterEdit(edit.page)
@@ -367,6 +417,9 @@ class InkCanvasView @JvmOverloads constructor(
         when (edit) {
             is Edit.Drawn -> edit.page.strokes.remove(edit.stroke)
             is Edit.Erased -> edit.page.strokes += edit.strokes
+            is Edit.ImageAdded -> edit.page.images.remove(edit.image)
+            is Edit.ImageRemoved ->
+                edit.page.images.add(edit.at.coerceIn(0, edit.page.images.size), edit.image)
         }
     }
 
@@ -495,6 +548,30 @@ class InkCanvasView @JvmOverloads constructor(
                     Choreographer.getInstance().postFrameCallback(frameCallback)
                 }
                 activePage = document.pages[index]
+                if (captureMode && !event.isEraserGesture()) {
+                    capturePage = index
+                    capturing = true
+                    pageLocalInto(event.x, event.y, index, shapeStart)
+                    captureRect.set(shapeStart[0], shapeStart[1], shapeStart[0], shapeStart[1])
+                    dry.invalidate()
+                    return true
+                }
+                if (imageMode && !event.isEraserGesture()) {
+                    beginImageGesture(event, index)
+                    return true
+                }
+                val shape = shapeKind
+                if (shape != null && !readMode && !event.isEraserGesture() &&
+                    tool != Tool.ERASER
+                ) {
+                    shapePage = index
+                    drawingShape = true
+                    pageLocalInto(event.x, event.y, index, shapeStart)
+                    shapeEnd[0] = shapeStart[0]
+                    shapeEnd[1] = shapeStart[1]
+                    dry.invalidate()
+                    return true
+                }
                 if (readMode && !event.isEraserGesture()) {
                     pressX = event.x
                     pressY = event.y
@@ -535,6 +612,26 @@ class InkCanvasView @JvmOverloads constructor(
                 val pointerId = activeStylusPointer ?: return false
                 val index = event.findPointerIndex(pointerId)
                 if (index < 0) return false
+                if (capturing) {
+                    pageLocalInto(event.getX(index), event.getY(index), capturePage, shapeEnd)
+                    captureRect.set(
+                        min(shapeStart[0], shapeEnd[0]),
+                        min(shapeStart[1], shapeEnd[1]),
+                        max(shapeStart[0], shapeEnd[0]),
+                        max(shapeStart[1], shapeEnd[1]),
+                    )
+                    dry.invalidate()
+                    return true
+                }
+                if (drawingShape) {
+                    pageLocalInto(event.getX(index), event.getY(index), shapePage, shapeEnd)
+                    dry.invalidate()
+                    return true
+                }
+                if (movingImage || resizingImage) {
+                    dragImage(event, index)
+                    return true
+                }
                 if (erasing) {
                     eraseAlong(event, index)
                     return true
@@ -566,6 +663,23 @@ class InkCanvasView @JvmOverloads constructor(
 
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
                 val pointerId = activeStylusPointer ?: return false
+                if (capturing) {
+                    finishCapture()
+                    endStylus()
+                    return true
+                }
+                if (drawingShape) {
+                    finishShape()
+                    endStylus()
+                    return true
+                }
+                if (movingImage || resizingImage) {
+                    movingImage = false
+                    resizingImage = false
+                    selectedImagePage?.let { afterEdit(it) }
+                    endStylus()
+                    return true
+                }
                 if (selectingText) {
                     endStylus()
                     return true
@@ -831,6 +945,8 @@ class InkCanvasView @JvmOverloads constructor(
                 is Edit.Drawn -> replacements[edit.stroke]?.let { edit.stroke = it }
                 is Edit.Erased ->
                     edit.strokes = edit.strokes.map { replacements[it] ?: it }
+                // Pictures are not rebuilt when a page is re-tessellated.
+                is Edit.ImageAdded, is Edit.ImageRemoved -> Unit
             }
         }
     }
@@ -942,6 +1058,245 @@ class InkCanvasView @JvmOverloads constructor(
     // ---- erasing ------------------------------------------------------------
 
     /** Erases along the segment travelled since the last event, not just at a point. */
+
+    // ---- shapes, pictures and capture ---------------------------------------
+
+    /** A screen point in the coordinates of one page. */
+    private fun pageLocalInto(x: Float, y: Float, index: Int, out: FloatArray) {
+        out[0] = x
+        out[1] = y
+        screenToPage(index).mapPoints(out)
+    }
+
+    /**
+     * Turns the dragged-out shape into a real stroke with the current brush, so
+     * a drawn rectangle is ink like any other and erases, saves and zooms the
+     * same way. Nothing new has to know what a shape is.
+     */
+    private fun finishShape() {
+        val kind = shapeKind
+        val page = document.pages.getOrNull(shapePage)
+        drawingShape = false
+        if (kind == null || page == null) {
+            dry.invalidate()
+            return
+        }
+        val points = shapePoints(kind, shapeStart, shapeEnd)
+        if (points.size < 2) {
+            dry.invalidate()
+            return
+        }
+        val inputs = MutableStrokeInputBatch()
+        for ((i, point) in points.withIndex()) {
+            inputs.add(InputToolType.STYLUS, point[0], point[1], i * SHAPE_STEP_MS)
+        }
+        val stroke = Stroke(currentBrush(), inputs.toImmutable())
+        page.strokes += stroke
+        undoStack += Edit.Drawn(page, stroke)
+        redoStack.clear()
+        afterEdit(page)
+    }
+
+    /** The outline of [kind], sampled densely enough that the brush follows it. */
+    private fun shapePoints(
+        kind: ShapeKind,
+        from: FloatArray,
+        to: FloatArray,
+    ): List<FloatArray> {
+        val x0 = from[0]
+        val y0 = from[1]
+        val x1 = to[0]
+        val y1 = to[1]
+        return when (kind) {
+            ShapeKind.LINE -> listOf(floatArrayOf(x0, y0), floatArrayOf(x1, y1))
+
+            ShapeKind.ARROW -> {
+                val angle = atan2(y1 - y0, x1 - x0)
+                // Barbs sized off the shaft, so a short arrow is not all head.
+                val barb = (hypot(x1 - x0, y1 - y0) * 0.22f).coerceIn(12f, 90f)
+                val left = angle + ARROW_SPREAD
+                val right = angle - ARROW_SPREAD
+                listOf(
+                    floatArrayOf(x0, y0),
+                    floatArrayOf(x1, y1),
+                    floatArrayOf(x1 - barb * cos(left), y1 - barb * sin(left)),
+                    floatArrayOf(x1, y1),
+                    floatArrayOf(x1 - barb * cos(right), y1 - barb * sin(right)),
+                )
+            }
+
+            ShapeKind.RECT -> listOf(
+                floatArrayOf(x0, y0),
+                floatArrayOf(x1, y0),
+                floatArrayOf(x1, y1),
+                floatArrayOf(x0, y1),
+                floatArrayOf(x0, y0),
+            )
+
+            ShapeKind.OVAL -> {
+                val cx = (x0 + x1) / 2f
+                val cy = (y0 + y1) / 2f
+                val rx = abs(x1 - x0) / 2f
+                val ry = abs(y1 - y0) / 2f
+                (0..OVAL_STEPS).map {
+                    val t = it * 2.0 * Math.PI / OVAL_STEPS
+                    floatArrayOf(cx + rx * cos(t).toFloat(), cy + ry * sin(t).toFloat())
+                }
+            }
+        }
+    }
+
+    /** Places a picture in the middle of the page now on screen. */
+    fun insertImage(imageId: String, aspect: Float) {
+        val index = currentPage.coerceIn(0, document.pages.size - 1)
+        val page = document.pages[index]
+        val width = page.width * IMAGE_INSERT_FRACTION
+        val height = if (aspect > 0f) width / aspect else width
+        val image = PageImage(
+            id = imageId,
+            x = (page.width - width) / 2f,
+            y = (page.height - height) / 2f,
+            width = width,
+            height = height,
+        )
+        page.images += image
+        undoStack += Edit.ImageAdded(page, image)
+        redoStack.clear()
+        select(image, page)
+        afterEdit(page)
+    }
+
+    fun deleteSelectedImage() {
+        val image = selectedImage ?: return
+        val page = selectedImagePage ?: return
+        val at = page.images.indexOf(image)
+        if (at < 0) return
+        page.images.removeAt(at)
+        undoStack += Edit.ImageRemoved(page, image, at)
+        redoStack.clear()
+        select(null, null)
+        afterEdit(page)
+    }
+
+    fun clearImageSelection() = select(null, null)
+
+    private fun select(image: PageImage?, page: Page?) {
+        val had = selectedImage != null
+        selectedImage = image
+        selectedImagePage = page
+        dry.invalidate()
+        if (had != (image != null)) onImageSelected?.invoke(image != null)
+    }
+
+    private fun beginImageGesture(event: MotionEvent, index: Int) {
+        val page = document.pages[index]
+        pageLocalInto(event.x, event.y, index, imageGrab)
+        val x = imageGrab[0]
+        val y = imageGrab[1]
+        // The handle is a fixed size on screen, so it stays grabbable however
+        // far the page is zoomed out.
+        val grab = IMAGE_HANDLE_PX / currentScale()
+        val hit = page.images.lastOrNull {
+            x >= it.x - grab && x <= it.x + it.width + grab &&
+                y >= it.y - grab && y <= it.y + it.height + grab
+        }
+        if (hit == null) {
+            select(null, null)
+            return
+        }
+        select(hit, page)
+        resizingImage = hypot(x - (hit.x + hit.width), y - (hit.y + hit.height)) <= grab
+        movingImage = !resizingImage
+    }
+
+    private fun dragImage(event: MotionEvent, pointerIndex: Int) {
+        val image = selectedImage ?: return
+        val page = selectedImagePage ?: return
+        val index = document.pages.indexOf(page)
+        if (index < 0) return
+        val point = floatArrayOf(event.getX(pointerIndex), event.getY(pointerIndex))
+        screenToPage(index).mapPoints(point)
+        if (resizingImage) {
+            val aspect = if (image.height > 0f) image.width / image.height else 1f
+            // Width leads and height follows, so a picture never gets squashed.
+            val width = (point[0] - image.x).coerceAtLeast(IMAGE_MIN_SIZE)
+            image.width = width
+            image.height = if (aspect > 0f) width / aspect else width
+        } else {
+            image.x += point[0] - imageGrab[0]
+            image.y += point[1] - imageGrab[1]
+            imageGrab[0] = point[0]
+            imageGrab[1] = point[1]
+        }
+        dry.invalidate()
+    }
+
+    private fun finishCapture() {
+        capturing = false
+        val page = document.pages.getOrNull(capturePage)
+        val rect = RectF(captureRect)
+        captureRect.setEmpty()
+        dry.invalidate()
+        if (page == null || rect.width() < 8f || rect.height() < 8f) return
+
+        // Snapshot on the UI thread: the render runs on a worker, and a stroke
+        // arriving on the page mid-render would otherwise be a concurrent
+        // modification of the list being walked.
+        val strokes = page.strokes.toList()
+        val images = page.images.map { it to imageLoader?.invoke(it.id) }
+        val pdfIndex = if (page.background == PageBackground.PDF) page.pdfPageIndex else -1
+        val pageWidth = page.width
+        val pageHeight = page.height
+        refiner.execute {
+            val bitmap = renderRegion(rect, pageWidth, pageHeight, pdfIndex, strokes, images)
+            if (bitmap != null) onCaptured?.invoke(bitmap)
+        }
+    }
+
+    /** Draws one page's [rect] into a bitmap: background, pictures, then ink. */
+    private fun renderRegion(
+        rect: RectF,
+        pageWidth: Float,
+        pageHeight: Float,
+        pdfIndex: Int,
+        strokes: List<Stroke>,
+        images: List<Pair<PageImage, Bitmap?>>,
+    ): Bitmap? = runCatching {
+        val scale = (CAPTURE_TARGET_PX / max(rect.width(), rect.height()))
+            .coerceIn(1f, CAPTURE_MAX_SCALE)
+        val width = (rect.width() * scale).toInt().coerceAtLeast(1)
+        val height = (rect.height() * scale).toInt().coerceAtLeast(1)
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.WHITE)
+        canvas.scale(scale, scale)
+        canvas.translate(-rect.left, -rect.top)
+
+        if (pdfIndex >= 0) {
+            pdf?.renderNow(pdfIndex, (pageWidth * scale).toInt().coerceAtLeast(1))?.let {
+                canvas.drawBitmap(it, null, RectF(0f, 0f, pageWidth, pageHeight), null)
+            }
+        }
+        for ((placement, picture) in images) {
+            if (picture == null) continue
+            canvas.drawBitmap(
+                picture,
+                null,
+                RectF(
+                    placement.x,
+                    placement.y,
+                    placement.x + placement.width,
+                    placement.y + placement.height,
+                ),
+                null,
+            )
+        }
+        val renderer = CanvasStrokeRenderer.create()
+        val transform = Matrix()
+        for (stroke in strokes) renderer.draw(canvas, stroke, transform)
+        bitmap
+    }.getOrNull()
+
     private fun eraseAlong(event: MotionEvent, pointerIndex: Int) {
         val page = activePage ?: return
         val index = document.pages.indexOf(page)
@@ -1019,6 +1374,19 @@ class InkCanvasView @JvmOverloads constructor(
         }
         private val crop = RectF()
         private val destination = RectF()
+        private val imageRect = RectF()
+        private val overlay = Paint().apply {
+            isAntiAlias = true
+            style = Paint.Style.STROKE
+        }
+        private val marquee = Paint().apply {
+            isAntiAlias = true
+            style = Paint.Style.STROKE
+            color = 0xFF3B7DDD.toInt()
+            pathEffect = android.graphics.DashPathEffect(floatArrayOf(12f, 10f), 0f)
+        }
+        private val marqueeFill = Paint().apply { color = 0x223B7DDD }
+        private val handle = Paint().apply { isAntiAlias = true; color = 0xFF3B7DDD.toInt() }
 
         // Strokes are immutable, so a bounding box is worth computing once.
         // Weak keys let an erased stroke's entry go with the stroke.
@@ -1047,6 +1415,7 @@ class InkCanvasView @JvmOverloads constructor(
                     scoped.concat(documentToScreen)
                     scoped.translate(left, top)
                     drawPaper(scoped, page, i)
+                    drawImages(scoped, page)
 
                     // Page-level culling alone still redraws every stroke on a page
                     // that is only half on screen. A zoomed-in page of dense notes
@@ -1067,6 +1436,13 @@ class InkCanvasView @JvmOverloads constructor(
                     if (i == selectingPage) {
                         selection?.boxes?.forEach { scoped.drawRect(it, selectionPaint) }
                     }
+                    if (i == shapePage && drawingShape) drawShapePreview(scoped)
+                    if (i == capturePage && capturing) {
+                        scoped.drawRect(captureRect, marqueeFill)
+                        marquee.strokeWidth = 2f / currentScale()
+                        scoped.drawRect(captureRect, marquee)
+                    }
+                    if (page === selectedImagePage) drawImageHandles(scoped)
                     scoped.restore()
                 }
             }
@@ -1075,6 +1451,54 @@ class InkCanvasView @JvmOverloads constructor(
         private fun boundsOf(stroke: Stroke): RectF? = boxes.getOrPut(stroke) {
             val box = stroke.shape.computeBoundingBox() ?: return null
             RectF(box.xMin, box.yMin, box.xMax, box.yMax)
+        }
+
+        private fun drawImages(canvas: Canvas, page: Page) {
+            if (page.images.isEmpty()) return
+            val loader = imageLoader ?: return
+            for (image in page.images) {
+                val bitmap = loader(image.id) ?: continue
+                imageRect.set(
+                    image.x,
+                    image.y,
+                    image.x + image.width,
+                    image.y + image.height,
+                )
+                canvas.drawBitmap(bitmap, null, imageRect, bitmapPaint)
+            }
+        }
+
+        /** Border and corner grip for the picture currently picked up. */
+        private fun drawImageHandles(canvas: Canvas) {
+            val image = selectedImage ?: return
+            imageRect.set(image.x, image.y, image.x + image.width, image.y + image.height)
+            // Sized in screen pixels and divided back out, so the border stays
+            // the same weight however far the page is zoomed.
+            val scale = currentScale()
+            overlay.color = 0xFF3B7DDD.toInt()
+            overlay.strokeWidth = 2f / scale
+            canvas.drawRect(imageRect, overlay)
+            canvas.drawCircle(imageRect.right, imageRect.bottom, IMAGE_HANDLE_PX / scale, handle)
+        }
+
+        /** The shape as it is being dragged out, before it becomes a stroke. */
+        private fun drawShapePreview(canvas: Canvas) {
+            val kind = shapeKind ?: return
+            val points = shapePoints(kind, shapeStart, shapeEnd)
+            if (points.size < 2) return
+            overlay.color = colorArgb
+            overlay.strokeWidth = strokeWidth
+            overlay.strokeCap = Paint.Cap.ROUND
+            overlay.strokeJoin = Paint.Join.ROUND
+            for (i in 0 until points.size - 1) {
+                canvas.drawLine(
+                    points[i][0],
+                    points[i][1],
+                    points[i + 1][0],
+                    points[i + 1][1],
+                    overlay,
+                )
+            }
         }
 
         private fun drawPaper(canvas: Canvas, page: Page, index: Int) {
@@ -1207,6 +1631,14 @@ class InkCanvasView @JvmOverloads constructor(
         const val FLING_FRICTION = 3.2f
         const val DETAIL_THRESHOLD_PX = 2048
         const val SHADOW = 4f
+        const val SHAPE_STEP_MS = 8L
+        const val OVAL_STEPS = 64
+        const val ARROW_SPREAD = 0.5f
+        const val IMAGE_INSERT_FRACTION = 0.5f
+        const val IMAGE_HANDLE_PX = 22f
+        const val IMAGE_MIN_SIZE = 32f
+        const val CAPTURE_TARGET_PX = 2048f
+        const val CAPTURE_MAX_SCALE = 4f
         val IDENTITY = ImmutableAffineTransform(1f, 0f, 0f, 0f, 1f, 0f)
     }
 }
