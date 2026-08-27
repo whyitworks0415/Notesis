@@ -77,6 +77,8 @@ import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloseFullscreen
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Launch
 import androidx.compose.material.icons.filled.PhoneAndroid
@@ -111,6 +113,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -1157,7 +1161,7 @@ private val ChromeInsets: WindowInsets
     @Composable get() = WindowInsets.systemBars.union(WindowInsets.displayCutout)
 
 /** What the pen does when it lands. One thing at a time, by construction. */
-private enum class EditMode { DRAW, ERASE, READ, SHAPE, IMAGE, CAPTURE }
+private enum class EditMode { DRAW, ERASE, READ, SHAPE, IMAGE, CAPTURE, MASK }
 
 @Composable
 private fun NoteScreen(
@@ -1393,6 +1397,7 @@ private fun NoteScreen(
                     view.shapeKind = if (mode == EditMode.SHAPE) shapeKind else null
                     view.imageMode = mode == EditMode.IMAGE
                     view.captureMode = mode == EditMode.CAPTURE
+                    view.maskMode = mode == EditMode.MASK
                     view.colorArgb = pen.colorArgb
                     view.strokeWidth = pen.width
                     view.eraserWidth = eraserWidth
@@ -1634,7 +1639,16 @@ private fun NoteScreen(
             PageSidebar(
                 document = canvas?.document,
                 currentPage = currentPage,
+                edits = edits,
                 onJump = { canvas?.scrollToPage(it) },
+                onReveal = { index, revealed ->
+                    canvas?.setMasksRevealed(index, revealed)
+                    edits++
+                },
+                onClearMasks = {
+                    canvas?.clearMasks(it)
+                    edits++
+                },
                 onAdd = {
                     canvas?.addPage(currentPage)
                     edits++
@@ -1804,23 +1818,41 @@ private fun SelectionActions(
 private fun PageSidebar(
     document: Document?,
     currentPage: Int,
+    // Read so that laying tape down or peeling it off redraws the list; the
+    // canvas owns the pages and Compose cannot see into them.
+    edits: Int,
     onJump: (Int) -> Unit,
+    onReveal: (Int, Boolean) -> Unit,
+    onClearMasks: (Int) -> Unit,
     onAdd: () -> Unit,
     onDelete: (Int) -> Unit,
     onBackground: (Int, PageBackground) -> Unit,
 ) {
     val pages = document?.pages ?: return
+    var tab by remember { mutableIntStateOf(0) }
     Surface(
         modifier = Modifier
             .windowInsetsPadding(ChromeInsets)
             .padding(12.dp)
-            .width(132.dp)
+            .width(if (tab == 0) 132.dp else 190.dp)
             .fillMaxHeight(0.8f),
         shape = RoundedCornerShape(20.dp),
         tonalElevation = 3.dp,
         shadowElevation = 4.dp,
     ) {
         Column {
+            TabRow(selectedTabIndex = tab) {
+                Tab(
+                    selected = tab == 0,
+                    onClick = { tab = 0 },
+                    text = { Text("페이지") },
+                )
+                Tab(
+                    selected = tab == 1,
+                    onClick = { tab = 1 },
+                    text = { Text("마스킹") },
+                )
+            }
             LazyColumn(
                 Modifier.weight(1f),
                 contentPadding = PaddingValues(10.dp),
@@ -1828,25 +1860,105 @@ private fun PageSidebar(
             ) {
                 items(pages) { page ->
                     val index = pages.indexOf(page)
-                    PageChip(
-                        index = index,
-                        page = page,
-                        selected = index == currentPage,
-                        deletable = pages.size > 1,
-                        onJump = { onJump(index) },
-                        onDelete = { onDelete(index) },
-                        onBackground = { onBackground(index, it) },
-                    )
+                    if (tab == 0) {
+                        PageChip(
+                            index = index,
+                            page = page,
+                            selected = index == currentPage,
+                            deletable = pages.size > 1,
+                            onJump = { onJump(index) },
+                            onDelete = { onDelete(index) },
+                            onBackground = { onBackground(index, it) },
+                        )
+                    } else {
+                        MaskChip(
+                            index = index,
+                            page = page,
+                            selected = index == currentPage,
+                            onJump = { onJump(index) },
+                            onReveal = { onReveal(index, it) },
+                            onClear = { onClearMasks(index) },
+                        )
+                    }
                 }
             }
-            TextButton(
-                onClick = onAdd,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 6.dp),
-            ) {
-                Icon(Icons.Default.Add, contentDescription = null)
-                Text(" 페이지")
+            if (tab == 0) {
+                TextButton(
+                    onClick = onAdd,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 6.dp),
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null)
+                    Text(" 페이지")
+                }
+            } else {
+                // Whole-note switches, which is how a page of covered answers
+                // actually gets used: cover everything, then go looking.
+                Row(Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+                    TextButton(
+                        onClick = { pages.indices.forEach { onReveal(it, false) } },
+                        modifier = Modifier.weight(1f),
+                    ) { Text("모두 가림") }
+                    TextButton(
+                        onClick = { pages.indices.forEach { onReveal(it, true) } },
+                        modifier = Modifier.weight(1f),
+                    ) { Text("모두 보임") }
+                }
+            }
+        }
+    }
+}
+
+/** One page's worth of tape: how much of it there is, and whether it is down. */
+@Composable
+private fun MaskChip(
+    index: Int,
+    page: Page,
+    selected: Boolean,
+    onJump: () -> Unit,
+    onReveal: (Boolean) -> Unit,
+    onClear: () -> Unit,
+) {
+    val masks = page.masks
+    val hidden = masks.count { !it.revealed }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(
+                if (selected) MaterialTheme.colorScheme.primaryContainer else Color.White,
+            )
+            .border(
+                width = if (selected) 2.dp else 1.dp,
+                color = if (selected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.outlineVariant
+                },
+                shape = RoundedCornerShape(8.dp),
+            )
+            .clickable(onClick = onJump)
+            .padding(start = 10.dp, top = 4.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("${index + 1}", style = MaterialTheme.typography.titleSmall)
+            Text(
+                if (masks.isEmpty()) "없음" else "$hidden / ${masks.size} 가림",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.outline,
+            )
+        }
+        if (masks.isNotEmpty()) {
+            IconButton(onClick = { onReveal(hidden > 0) }) {
+                Icon(
+                    if (hidden > 0) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                    contentDescription = if (hidden > 0) "이 페이지 보이기" else "이 페이지 가리기",
+                )
+            }
+            IconButton(onClick = onClear) {
+                Icon(Icons.Default.Delete, contentDescription = "이 페이지 마스킹 삭제")
             }
         }
     }
@@ -2069,6 +2181,11 @@ private fun Toolbar(
                     mode == EditMode.IMAGE,
                     onPickImage,
                 )
+                ToolButton(
+                    Icons.Default.VisibilityOff,
+                    "마스킹테이프",
+                    mode == EditMode.MASK,
+                ) { onMode(EditMode.MASK) }
                 ToolbarDivider()
 
                 // One slider, whichever tool is in hand: it sets the eraser's

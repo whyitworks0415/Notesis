@@ -166,6 +166,13 @@ class InkCanvasView @JvmOverloads constructor(
     /** The pen drags out a rectangle and what is inside it comes back rendered. */
     var captureMode: Boolean = false
 
+    /**
+     * Masking tape: the pen drags out a strip that covers what is under it, and
+     * a tap on one already down takes it back off. Lifting a strip to look is a
+     * tap in reading mode, so writing over tape stays possible.
+     */
+    var maskMode: Boolean = false
+
     /** Reads a picture's bytes. Called on the UI thread, so it should cache. */
     var imageLoader: ((String) -> Bitmap?)? = null
 
@@ -244,11 +251,16 @@ class InkCanvasView @JvmOverloads constructor(
     private val captureRect = RectF()
     private var capturing = false
 
+    private var maskPage = -1
+    private val maskRect = RectF()
+    private var masking = false
+
     private var selectedImage: PageImage? = null
     private var selectedImagePage: Page? = null
     private var movingImage = false
     private var resizingImage = false
     private val imageGrab = floatArrayOf(0f, 0f)
+    private val maskProbe = floatArrayOf(0f, 0f)
     private var pressX = 0f
     private var pressY = 0f
     private val longPress = Runnable { beginTextSelection() }
@@ -293,6 +305,9 @@ class InkCanvasView @JvmOverloads constructor(
         // removing are, because those are the ones that lose work.
         class ImageAdded(override val page: Page, val image: PageImage) : Edit
         class ImageRemoved(override val page: Page, val image: PageImage, val at: Int) : Edit
+
+        class MaskAdded(override val page: Page, val mask: PageMask) : Edit
+        class MaskRemoved(override val page: Page, val mask: PageMask, val at: Int) : Edit
     }
 
     private val scaleDetector = ScaleGestureDetector(
@@ -408,6 +423,8 @@ class InkCanvasView @JvmOverloads constructor(
             is Edit.Erased -> edit.page.strokes.removeAll(edit.strokes)
             is Edit.ImageAdded -> edit.page.images += edit.image
             is Edit.ImageRemoved -> edit.page.images.remove(edit.image)
+            is Edit.MaskAdded -> edit.page.masks += edit.mask
+            is Edit.MaskRemoved -> edit.page.masks.remove(edit.mask)
         }
         undoStack += edit
         afterEdit(edit.page)
@@ -417,6 +434,9 @@ class InkCanvasView @JvmOverloads constructor(
         when (edit) {
             is Edit.Drawn -> edit.page.strokes.remove(edit.stroke)
             is Edit.Erased -> edit.page.strokes += edit.strokes
+            is Edit.MaskAdded -> edit.page.masks.remove(edit.mask)
+            is Edit.MaskRemoved ->
+                edit.page.masks.add(edit.at.coerceIn(0, edit.page.masks.size), edit.mask)
             is Edit.ImageAdded -> edit.page.images.remove(edit.image)
             is Edit.ImageRemoved ->
                 edit.page.images.add(edit.at.coerceIn(0, edit.page.images.size), edit.image)
@@ -556,6 +576,16 @@ class InkCanvasView @JvmOverloads constructor(
                     dry.invalidate()
                     return true
                 }
+                if (maskMode && !event.isEraserGesture()) {
+                    // A tap on tape already down peels it off; anything longer
+                    // lays a new strip.
+                    maskPage = index
+                    masking = true
+                    pageLocalInto(event.x, event.y, index, shapeStart)
+                    maskRect.set(shapeStart[0], shapeStart[1], shapeStart[0], shapeStart[1])
+                    dry.invalidate()
+                    return true
+                }
                 if (imageMode && !event.isEraserGesture()) {
                     beginImageGesture(event, index)
                     return true
@@ -573,6 +603,8 @@ class InkCanvasView @JvmOverloads constructor(
                     return true
                 }
                 if (readMode && !event.isEraserGesture()) {
+                    // Reading is where a covered answer gets looked at.
+                    if (toggleMaskAt(event.x, event.y, index)) return true
                     pressX = event.x
                     pressY = event.y
                     selectingPage = index
@@ -623,6 +655,17 @@ class InkCanvasView @JvmOverloads constructor(
                     dry.invalidate()
                     return true
                 }
+                if (masking) {
+                    pageLocalInto(event.getX(index), event.getY(index), maskPage, shapeEnd)
+                    maskRect.set(
+                        min(shapeStart[0], shapeEnd[0]),
+                        min(shapeStart[1], shapeEnd[1]),
+                        max(shapeStart[0], shapeEnd[0]),
+                        max(shapeStart[1], shapeEnd[1]),
+                    )
+                    dry.invalidate()
+                    return true
+                }
                 if (drawingShape) {
                     pageLocalInto(event.getX(index), event.getY(index), shapePage, shapeEnd)
                     dry.invalidate()
@@ -665,6 +708,11 @@ class InkCanvasView @JvmOverloads constructor(
                 val pointerId = activeStylusPointer ?: return false
                 if (capturing) {
                     finishCapture()
+                    endStylus()
+                    return true
+                }
+                if (masking) {
+                    finishMask()
                     endStylus()
                     return true
                 }
@@ -947,6 +995,7 @@ class InkCanvasView @JvmOverloads constructor(
                     edit.strokes = edit.strokes.map { replacements[it] ?: it }
                 // Pictures are not rebuilt when a page is re-tessellated.
                 is Edit.ImageAdded, is Edit.ImageRemoved -> Unit
+                is Edit.MaskAdded, is Edit.MaskRemoved -> Unit
             }
         }
     }
@@ -1144,6 +1193,80 @@ class InkCanvasView @JvmOverloads constructor(
                 }
             }
         }
+    }
+
+    /**
+     * Lays the dragged strip down, or, when the drag never went anywhere, takes
+     * off the strip that was tapped. A strip too small to see is neither, and is
+     * dropped rather than left as an invisible thing to trip over later.
+     */
+    private fun finishMask() {
+        masking = false
+        val index = maskPage
+        maskPage = -1
+        val rect = RectF(maskRect)
+        maskRect.setEmpty()
+        dry.invalidate()
+        if (index < 0 || index >= document.pages.size) return
+        val page = document.pages[index]
+        if (rect.width() < MASK_MIN_SIZE && rect.height() < MASK_MIN_SIZE) {
+            removeMaskAt(page, rect.centerX(), rect.centerY())
+            return
+        }
+        val mask = PageMask(
+            x = rect.left,
+            y = rect.top,
+            width = rect.width().coerceAtLeast(MASK_MIN_SIZE),
+            height = rect.height().coerceAtLeast(MASK_MIN_SIZE),
+            // Opaque by construction: tape that lets the answer through is not
+            // tape. The colour is the pen's, so the palette is already there.
+            colorArgb = colorArgb or MASK_OPAQUE,
+        )
+        page.masks += mask
+        undoStack += Edit.MaskAdded(page, mask)
+        redoStack.clear()
+        afterEdit(page)
+    }
+
+    private fun removeMaskAt(page: Page, x: Float, y: Float) {
+        val at = page.masks.indexOfLast { it.contains(x, y) }
+        if (at < 0) return
+        val mask = page.masks.removeAt(at)
+        undoStack += Edit.MaskRemoved(page, mask, at)
+        redoStack.clear()
+        afterEdit(page)
+    }
+
+    /** Lifts or lowers the strip under the finger. True when there was one. */
+    private fun toggleMaskAt(screenX: Float, screenY: Float, index: Int): Boolean {
+        val page = document.pages[index]
+        if (page.masks.isEmpty()) return false
+        pageLocalInto(screenX, screenY, index, maskProbe)
+        val mask = page.masks.lastOrNull { it.contains(maskProbe[0], maskProbe[1]) }
+            ?: return false
+        mask.revealed = !mask.revealed
+        dry.invalidate()
+        return true
+    }
+
+    /** Puts every strip on one page up or down at once, for the page list. */
+    fun setMasksRevealed(pageIndex: Int, revealed: Boolean) {
+        val page = document.pages.getOrNull(pageIndex) ?: return
+        for (mask in page.masks) mask.revealed = revealed
+        dry.invalidate()
+    }
+
+    /** Peels every strip off one page. Undoable, one strip at a time. */
+    fun clearMasks(pageIndex: Int) {
+        val page = document.pages.getOrNull(pageIndex) ?: return
+        if (page.masks.isEmpty()) return
+        // Backwards, so each recorded index is still the one to put it back at.
+        for (at in page.masks.indices.reversed()) {
+            undoStack += Edit.MaskRemoved(page, page.masks[at], at)
+        }
+        page.masks.clear()
+        redoStack.clear()
+        afterEdit(page)
     }
 
     /** Places a picture in the middle of the page now on screen. */
@@ -1386,6 +1509,7 @@ class InkCanvasView @JvmOverloads constructor(
             pathEffect = android.graphics.DashPathEffect(floatArrayOf(12f, 10f), 0f)
         }
         private val marqueeFill = Paint().apply { color = 0x223B7DDD }
+        private val maskPaint = Paint().apply { style = Paint.Style.FILL }
         private val handle = Paint().apply { isAntiAlias = true; color = 0xFF3B7DDD.toInt() }
 
         // Strokes are immutable, so a bounding box is worth computing once.
@@ -1442,6 +1566,12 @@ class InkCanvasView @JvmOverloads constructor(
                         marquee.strokeWidth = 2f / currentScale()
                         scoped.drawRect(captureRect, marquee)
                     }
+                    // Over the ink, because covering it is the entire job.
+                    drawMasks(scoped, page)
+                    if (i == maskPage && masking) {
+                        maskPaint.color = colorArgb or MASK_OPAQUE
+                        scoped.drawRect(maskRect, maskPaint)
+                    }
                     if (page === selectedImagePage) drawImageHandles(scoped)
                     scoped.restore()
                 }
@@ -1465,6 +1595,29 @@ class InkCanvasView @JvmOverloads constructor(
                     image.y + image.height,
                 )
                 canvas.drawBitmap(bitmap, null, imageRect, bitmapPaint)
+            }
+        }
+
+        private fun drawMasks(canvas: Canvas, page: Page) {
+            if (page.masks.isEmpty()) return
+            val scale = currentScale()
+            for (mask in page.masks) {
+                imageRect.set(
+                    mask.x,
+                    mask.y,
+                    mask.x + mask.width,
+                    mask.y + mask.height,
+                )
+                if (mask.revealed) {
+                    // Lifted, but still shown as an outline: otherwise there is
+                    // nothing left to tap to put it back down.
+                    overlay.color = mask.colorArgb
+                    overlay.strokeWidth = 2f / scale
+                    canvas.drawRect(imageRect, overlay)
+                } else {
+                    maskPaint.color = mask.colorArgb
+                    canvas.drawRect(imageRect, maskPaint)
+                }
             }
         }
 
@@ -1639,6 +1792,8 @@ class InkCanvasView @JvmOverloads constructor(
         const val IMAGE_MIN_SIZE = 32f
         const val CAPTURE_TARGET_PX = 2048f
         const val CAPTURE_MAX_SCALE = 4f
+        const val MASK_MIN_SIZE = 8f
+        const val MASK_OPAQUE = 0xFF000000.toInt()
         val IDENTITY = ImmutableAffineTransform(1f, 0f, 0f, 0f, 1f, 0f)
     }
 }
