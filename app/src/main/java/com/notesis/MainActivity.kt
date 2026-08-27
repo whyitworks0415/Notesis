@@ -1375,6 +1375,9 @@ private fun NoteScreen(
                         pageLoader = { page, epsilon ->
                             store.loadPage(note.id, page, epsilon)
                         }
+                        maskLoader = { page, epsilon ->
+                            store.loadMasks(note.id, page, epsilon)
+                        }
                         open(ready.first, ready.second)
                         onStrokesChanged = {
                             edits++
@@ -1403,7 +1406,10 @@ private fun NoteScreen(
                     view.captureMode = mode == EditMode.CAPTURE
                     view.maskMode = mode == EditMode.MASK
                     view.lassoMode = mode == EditMode.LASSO
-                    view.colorArgb = pen.colorArgb
+                    // Tape that lets the answer through is not tape, so the
+                    // mask tool draws its colour opaque whatever alpha it holds.
+                    view.colorArgb =
+                        if (mode == EditMode.MASK) pen.colorArgb or 0xFF000000.toInt() else pen.colorArgb
                     view.strokeWidth = pen.width
                     view.eraserWidth = eraserWidth
                 },

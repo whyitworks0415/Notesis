@@ -32,26 +32,17 @@ class PageImage(
 )
 
 /**
- * A strip of masking tape: an opaque rectangle laid over the page to cover what
- * is written under it, in page-local units like everything else.
+ * Masking tape: a stroke drawn like any other, in an opaque colour, whose job is
+ * to cover what is under it. Tapping one turns it into its own outline, so what
+ * it covers can be read without taking the tape off.
  */
-class PageMask(
-    val id: String = UUID.randomUUID().toString(),
-    var x: Float = 0f,
-    var y: Float = 0f,
-    var width: Float = 0f,
-    var height: Float = 0f,
-    var colorArgb: Int = DEFAULT_MASK_COLOR,
-) {
+class PageMask(val stroke: Stroke) {
     /**
-     * Lifted to peek at what is underneath. Deliberately not saved: reopening a
+     * Lifted to look at what is underneath. Deliberately not saved: reopening a
      * note should put every strip back down, which is the point of covering
      * something up in the first place.
      */
     var revealed: Boolean = false
-
-    fun contains(px: Float, py: Float): Boolean =
-        px >= x && px <= x + width && py >= y && py <= y + height
 
     companion object {
         const val DEFAULT_MASK_COLOR = 0xFFB8A6E8.toInt()
@@ -337,7 +328,6 @@ class NoteStore(context: Context) {
                 pdfPageIndex = entry.optInt("pdf", -1),
             )
             page.images.addAll(imagesFrom(entry))
-            page.masks.addAll(masksFrom(entry))
             // Strokes are left on disk until the page is actually needed.
             page.loaded = false
             page.savedStrokeCount = entry.optInt("strokes", 0)
@@ -356,6 +346,13 @@ class NoteStore(context: Context) {
     fun loadPage(id: String, page: Page, epsilon: Float): List<Stroke> =
         readStrokes(File(root, "$id/pages/${page.id}.bin"), epsilon)
 
+    /**
+     * Masking tape is strokes too, kept in its own file so that a page's ink and
+     * what covers it stay separable - erasing tape must not touch the note.
+     */
+    fun loadMasks(id: String, page: Page, epsilon: Float): List<PageMask> =
+        readStrokes(File(root, "$id/pages/${page.id}.mask"), epsilon).map { PageMask(it) }
+
     fun save(id: String, title: String, document: Document) {
         val dir = File(root, "$id/pages")
         if (!dir.isDirectory && !dir.mkdirs()) return
@@ -364,6 +361,7 @@ class NoteStore(context: Context) {
             // A page never loaded cannot have changed, and its file must stay.
             if (!page.loaded || !page.dirty) continue
             writeStrokes(File(dir, "${page.id}.bin"), page.strokes)
+            writeStrokes(File(dir, "${page.id}.mask"), page.masks.map { it.stroke })
             page.dirty = false
             if (index == 0) firstPageChanged = true
         }
@@ -375,7 +373,9 @@ class NoteStore(context: Context) {
             if (it.name !in liveImages) it.delete()
         }
         // A page that was deleted this session leaves its file behind otherwise.
-        val live = document.pages.flatMap { listOf("${it.id}.bin", "${it.id}.txt") }.toSet()
+        val live = document.pages
+            .flatMap { listOf("${it.id}.bin", "${it.id}.mask", "${it.id}.txt") }
+            .toSet()
         dir.listFiles()?.forEach { if (it.name !in live) it.delete() }
         writeMeta(id, title, document)
 
@@ -400,39 +400,6 @@ class NoteStore(context: Context) {
             )
         }
         return array
-    }
-
-    private fun masksToJson(page: Page): JSONArray {
-        val array = JSONArray()
-        for (mask in page.masks) {
-            array.put(
-                JSONObject()
-                    .put("id", mask.id)
-                    .put("x", mask.x.toDouble())
-                    .put("y", mask.y.toDouble())
-                    .put("w", mask.width.toDouble())
-                    .put("h", mask.height.toDouble())
-                    .put("c", mask.colorArgb),
-            )
-        }
-        return array
-    }
-
-    private fun masksFrom(entry: JSONObject): MutableList<PageMask> {
-        val array = entry.optJSONArray("masks") ?: return mutableListOf()
-        val masks = mutableListOf<PageMask>()
-        for (i in 0 until array.length()) {
-            val item = array.optJSONObject(i) ?: continue
-            masks += PageMask(
-                id = item.optString("id"),
-                x = item.optDouble("x").toFloat(),
-                y = item.optDouble("y").toFloat(),
-                width = item.optDouble("w").toFloat(),
-                height = item.optDouble("h").toFloat(),
-                colorArgb = item.optInt("c", PageMask.DEFAULT_MASK_COLOR),
-            )
-        }
-        return masks
     }
 
     private fun imagesFrom(entry: JSONObject): MutableList<PageImage> {
@@ -569,8 +536,7 @@ class NoteStore(context: Context) {
                     .put("bg", page.background.name)
                     .put("pdf", page.pdfPageIndex)
                     .put("strokes", if (page.loaded) page.strokes.size else page.savedStrokeCount)
-                    .put("images", imagesToJson(page))
-                    .put("masks", masksToJson(page)),
+                    .put("images", imagesToJson(page)),
             )
         }
         val json = JSONObject()

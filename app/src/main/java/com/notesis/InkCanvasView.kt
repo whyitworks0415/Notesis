@@ -29,7 +29,9 @@ import androidx.ink.geometry.ImmutableAffineTransform
 import androidx.ink.geometry.ImmutableBox
 import androidx.ink.geometry.ImmutableSegment
 import androidx.ink.geometry.ImmutableVec
+import androidx.ink.geometry.MutableVec
 import androidx.ink.geometry.Intersection
+import androidx.ink.geometry.PartitionedMesh
 import androidx.ink.rendering.android.canvas.CanvasStrokeRenderer
 import androidx.ink.rendering.android.view.ViewStrokeRenderer
 import androidx.ink.brush.InputToolType
@@ -169,11 +171,15 @@ class InkCanvasView @JvmOverloads constructor(
     var captureMode: Boolean = false
 
     /**
-     * Masking tape: the pen drags out a strip that covers what is under it, and
-     * a tap on one already down takes it back off. Lifting a strip to look is a
-     * tap in reading mode, so writing over tape stays possible.
+     * Masking tape. The pen writes exactly as it always does; the stroke it
+     * leaves is opaque and goes over the ink instead of into it. Lifting a strip
+     * to look under it is a tap in reading mode, which leaves writing over tape
+     * possible and makes the study gesture the one already used for reading.
      */
     var maskMode: Boolean = false
+
+    /** Reads one page's tape. Same contract as [pageLoader]. */
+    var maskLoader: ((Page, Float) -> List<PageMask>)? = null
 
     /**
      * The lasso: draw a loop and what is inside it comes up as a selection that
@@ -263,9 +269,8 @@ class InkCanvasView @JvmOverloads constructor(
     private val captureRect = RectF()
     private var capturing = false
 
-    private var maskPage = -1
-    private val maskRect = RectF()
-    private var masking = false
+    /** Whether the stroke now being drawn is tape rather than ink. */
+    private var strokeIsMask = false
 
     private var lassoPage = -1
     private val lassoPath = mutableListOf<Float>()
@@ -613,16 +618,6 @@ class InkCanvasView @JvmOverloads constructor(
                     beginLasso(event, index)
                     return true
                 }
-                if (maskMode && !event.isEraserGesture()) {
-                    // A tap on tape already down peels it off; anything longer
-                    // lays a new strip.
-                    maskPage = index
-                    masking = true
-                    pageLocalInto(event.x, event.y, index, shapeStart)
-                    maskRect.set(shapeStart[0], shapeStart[1], shapeStart[0], shapeStart[1])
-                    dry.invalidate()
-                    return true
-                }
                 if (imageMode && !event.isEraserGesture()) {
                     beginImageGesture(event, index)
                     return true
@@ -650,6 +645,7 @@ class InkCanvasView @JvmOverloads constructor(
                     }
                     return true
                 }
+                strokeIsMask = maskMode
                 erasing = tool == Tool.ERASER || event.isEraserGesture()
                 if (erasing) {
                     lastErasePoint = null
@@ -706,17 +702,6 @@ class InkCanvasView @JvmOverloads constructor(
                     dry.invalidate()
                     return true
                 }
-                if (masking) {
-                    pageLocalInto(event.getX(index), event.getY(index), maskPage, shapeEnd)
-                    maskRect.set(
-                        min(shapeStart[0], shapeEnd[0]),
-                        min(shapeStart[1], shapeEnd[1]),
-                        max(shapeStart[0], shapeEnd[0]),
-                        max(shapeStart[1], shapeEnd[1]),
-                    )
-                    dry.invalidate()
-                    return true
-                }
                 if (drawingShape) {
                     pageLocalInto(event.getX(index), event.getY(index), shapePage, shapeEnd)
                     dry.invalidate()
@@ -769,11 +754,6 @@ class InkCanvasView @JvmOverloads constructor(
                 }
                 if (drawingLasso) {
                     finishLasso()
-                    endStylus()
-                    return true
-                }
-                if (masking) {
-                    finishMask()
                     endStylus()
                     return true
                 }
@@ -1002,8 +982,12 @@ class InkCanvasView @JvmOverloads constructor(
         val work = toRebuild.map { page -> page to page.strokes.toList() }
         val loader = pageLoader
         refiner.execute {
+            val masksLoader = maskLoader
             val loaded = toLoad.mapNotNull { page ->
                 loader?.let { page to it(page, epsilon) }
+            }
+            val loadedMasks = toLoad.mapNotNull { page ->
+                masksLoader?.let { page to it(page, epsilon) }
             }
             val built = work.map { (page, snapshot) ->
                 Triple(
@@ -1022,6 +1006,9 @@ class InkCanvasView @JvmOverloads constructor(
                     // clearing it here would throw that new stroke away at the
                     // next save.
                     page.strokes.addAll(0, strokes)
+                    loadedMasks.firstOrNull { it.first === page }?.let { (_, masks) ->
+                        page.masks.addAll(0, masks)
+                    }
                     page.loaded = true
                     page.tessellatedFor = target
                 }
@@ -1385,55 +1372,21 @@ class InkCanvasView @JvmOverloads constructor(
         if (had) onLassoSelected?.invoke(0)
     }
 
-    /**
-     * Lays the dragged strip down, or, when the drag never went anywhere, takes
-     * off the strip that was tapped. A strip too small to see is neither, and is
-     * dropped rather than left as an invisible thing to trip over later.
-     */
-    private fun finishMask() {
-        masking = false
-        val index = maskPage
-        maskPage = -1
-        val rect = RectF(maskRect)
-        maskRect.setEmpty()
-        dry.invalidate()
-        if (index < 0 || index >= document.pages.size) return
-        val page = document.pages[index]
-        if (rect.width() < MASK_MIN_SIZE && rect.height() < MASK_MIN_SIZE) {
-            removeMaskAt(page, rect.centerX(), rect.centerY())
-            return
-        }
-        val mask = PageMask(
-            x = rect.left,
-            y = rect.top,
-            width = rect.width().coerceAtLeast(MASK_MIN_SIZE),
-            height = rect.height().coerceAtLeast(MASK_MIN_SIZE),
-            // Opaque by construction: tape that lets the answer through is not
-            // tape. The colour is the pen's, so the palette is already there.
-            colorArgb = colorArgb or MASK_OPAQUE,
-        )
-        page.masks += mask
-        undoStack += Edit.MaskAdded(page, mask)
-        redoStack.clear()
-        afterEdit(page)
-    }
-
-    private fun removeMaskAt(page: Page, x: Float, y: Float) {
-        val at = page.masks.indexOfLast { it.contains(x, y) }
-        if (at < 0) return
-        val mask = page.masks.removeAt(at)
-        undoStack += Edit.MaskRemoved(page, mask, at)
-        redoStack.clear()
-        afterEdit(page)
-    }
-
     /** Lifts or lowers the strip under the finger. True when there was one. */
     private fun toggleMaskAt(screenX: Float, screenY: Float, index: Int): Boolean {
         val page = document.pages[index]
         if (page.masks.isEmpty()) return false
         pageLocalInto(screenX, screenY, index, maskProbe)
-        val mask = page.masks.lastOrNull { it.contains(maskProbe[0], maskProbe[1]) }
-            ?: return false
+        // The tape is a stroke, so what counts as a hit is the same question the
+        // eraser asks: does this little box touch the shape.
+        val tip = ImmutableBox.fromCenterAndDimensions(
+            ImmutableVec(maskProbe[0], maskProbe[1]),
+            MASK_TAP_PX / currentScale(),
+            MASK_TAP_PX / currentScale(),
+        )
+        val mask = with(Intersection) {
+            page.masks.lastOrNull { tip.intersects(it.stroke.shape, IDENTITY) }
+        } ?: return false
         mask.revealed = !mask.revealed
         dry.invalidate()
         return true
@@ -1643,9 +1596,24 @@ class InkCanvasView @JvmOverloads constructor(
                 segment.intersects(it.shape, IDENTITY) || tip.intersects(it.shape, IDENTITY)
             }
         }
-        if (hit.isEmpty()) return
-        page.strokes.removeAll(hit)
-        undoStack += Edit.Erased(page, hit)
+        val maskHits = with(Intersection) {
+            page.masks.filter {
+                segment.intersects(it.stroke.shape, IDENTITY) ||
+                    tip.intersects(it.stroke.shape, IDENTITY)
+            }
+        }
+        if (hit.isEmpty() && maskHits.isEmpty()) return
+        // Backwards, so each recorded index is still where it goes back.
+        for (mask in maskHits.reversed()) {
+            val at = page.masks.indexOfFirst { it === mask }
+            if (at < 0) continue
+            page.masks.removeAt(at)
+            undoStack += Edit.MaskRemoved(page, mask, at)
+        }
+        if (hit.isNotEmpty()) {
+            page.strokes.removeAll(hit)
+            undoStack += Edit.Erased(page, hit)
+        }
         redoStack.clear()
         afterEdit(page)
     }
@@ -1654,8 +1622,14 @@ class InkCanvasView @JvmOverloads constructor(
         val page = activePage
         if (page != null) {
             for (stroke in finished.values) {
-                page.strokes += stroke
-                undoStack += Edit.Drawn(page, stroke)
+                if (strokeIsMask) {
+                    val mask = PageMask(stroke)
+                    page.masks += mask
+                    undoStack += Edit.MaskAdded(page, mask)
+                } else {
+                    page.strokes += stroke
+                    undoStack += Edit.Drawn(page, stroke)
+                }
             }
             redoStack.clear()
         }
@@ -1699,7 +1673,8 @@ class InkCanvasView @JvmOverloads constructor(
             pathEffect = android.graphics.DashPathEffect(floatArrayOf(12f, 10f), 0f)
         }
         private val marqueeFill = Paint().apply { color = 0x223B7DDD }
-        private val maskPaint = Paint().apply { style = Paint.Style.FILL }
+        private val outline = android.graphics.Path()
+        private val outlinePoint = MutableVec()
         private val selectionBox = RectF()
         private val handle = Paint().apply { isAntiAlias = true; color = 0xFF3B7DDD.toInt() }
 
@@ -1768,11 +1743,7 @@ class InkCanvasView @JvmOverloads constructor(
                         scoped.drawRect(captureRect, marquee)
                     }
                     // Over the ink, because covering it is the entire job.
-                    drawMasks(scoped, page)
-                    if (i == maskPage && masking) {
-                        maskPaint.color = colorArgb or MASK_OPAQUE
-                        scoped.drawRect(maskRect, maskPaint)
-                    }
+                    drawMasks(scoped, scope, page)
                     if (page === selectedImagePage) drawImageHandles(scoped)
                     scoped.restore()
                 }
@@ -1835,25 +1806,44 @@ class InkCanvasView @JvmOverloads constructor(
         private fun lassoDashes(scale: Float) =
             android.graphics.DashPathEffect(floatArrayOf(8f / scale, 6f / scale), 0f)
 
-        private fun drawMasks(canvas: Canvas, page: Page) {
+        private fun drawMasks(
+            canvas: Canvas,
+            scope: androidx.ink.rendering.android.canvas.StrokeDrawScope,
+            page: Page,
+        ) {
             if (page.masks.isEmpty()) return
             val scale = currentScale()
             for (mask in page.masks) {
-                imageRect.set(
-                    mask.x,
-                    mask.y,
-                    mask.x + mask.width,
-                    mask.y + mask.height,
-                )
-                if (mask.revealed) {
-                    // Lifted, but still shown as an outline: otherwise there is
-                    // nothing left to tap to put it back down.
-                    overlay.color = mask.colorArgb
-                    overlay.strokeWidth = 2f / scale
-                    canvas.drawRect(imageRect, overlay)
-                } else {
-                    maskPaint.color = mask.colorArgb
-                    canvas.drawRect(imageRect, maskPaint)
+                if (!mask.revealed) {
+                    scope.drawStroke(mask.stroke)
+                    continue
+                }
+                // Lifted: only the edge of the shape is drawn, so what it covers
+                // can be read and there is still something there to tap again.
+                outline.reset()
+                appendOutline(mask.stroke.shape, outline)
+                if (outline.isEmpty) continue
+                overlay.color = mask.stroke.brush.colorIntArgb
+                overlay.strokeWidth = MASK_OUTLINE_PX / scale
+                canvas.drawPath(outline, overlay)
+            }
+        }
+
+        /** Every closed loop the stroke's mesh is made of, as one path. */
+        private fun appendOutline(shape: PartitionedMesh, path: android.graphics.Path) {
+            for (group in 0 until shape.getRenderGroupCount()) {
+                for (index in 0 until shape.getOutlineCount(group)) {
+                    val vertices = shape.getOutlineVertexCount(group, index)
+                    if (vertices < 2) continue
+                    for (v in 0 until vertices) {
+                        shape.populateOutlinePosition(group, index, v, outlinePoint)
+                        if (v == 0) {
+                            path.moveTo(outlinePoint.x, outlinePoint.y)
+                        } else {
+                            path.lineTo(outlinePoint.x, outlinePoint.y)
+                        }
+                    }
+                    path.close()
                 }
             }
         }
@@ -2031,7 +2021,8 @@ class InkCanvasView @JvmOverloads constructor(
         const val CAPTURE_MAX_SCALE = 4f
         const val LASSO_MIN_POINTS = 6
         const val LASSO_PADDING = 10f
-        const val MASK_MIN_SIZE = 8f
+        const val MASK_TAP_PX = 6f
+        const val MASK_OUTLINE_PX = 2f
         const val MASK_OPAQUE = 0xFF000000.toInt()
         val IDENTITY = ImmutableAffineTransform(1f, 0f, 0f, 0f, 1f, 0f)
     }
