@@ -1670,7 +1670,14 @@ private fun NoteScreen(
                     } else {
                         pendingAttachment.value = uri
                         if (webUrl == null) webUrl = AI_SITES.first().second
-                        Toast.makeText(context, "대화창의 첨부 버튼을 누르세요", Toast.LENGTH_LONG).show()
+                        // Naming the two taps: the sheet behind "+" offers a
+                        // camera and a photo picker too, and neither of those
+                        // is the file chooser this capture is waiting for.
+                        Toast.makeText(
+                            context,
+                            "대화창의 + 를 누르고 \"파일\"을 고르세요",
+                            Toast.LENGTH_LONG,
+                        ).show()
                     }
                     captured = null
                 },
