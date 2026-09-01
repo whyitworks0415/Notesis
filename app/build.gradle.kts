@@ -14,8 +14,8 @@ android {
         // dependable from Q onward, even though ink itself declares minSdk 23.
         minSdk = 29
         targetSdk = 36
-        versionCode = 27
-        versionName = "0.15.2"
+        versionCode = 28
+        versionName = "0.16.0"
         // Galaxy Tab is arm64. Shipping one ABI keeps the native ink lib small.
         ndk { abiFilters += "arm64-v8a" }
     }
@@ -50,6 +50,9 @@ dependencies {
     implementation("androidx.ink:ink-rendering:1.0.0")
     implementation("androidx.ink:ink-strokes:1.0.0")
     implementation("androidx.input:input-motionprediction:1.0.0")
+    // Handwriting search: the models are downloaded on demand and the
+    // recognition runs on the device.
+    implementation("com.google.mlkit:digital-ink-recognition:18.1.0")
     implementation("androidx.ink:ink-storage:1.0.0")
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation(platform("androidx.compose:compose-bom:2026.06.01"))

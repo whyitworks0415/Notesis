@@ -387,6 +387,9 @@ private fun NoteListScreen(store: NoteStore, onOpen: (NoteMeta) -> Unit) {
         }
     }
 
+    val indexer = remember { InkIndexer(context) }
+    DisposableEffect(Unit) { onDispose { indexer.close() } }
+
     val pickPdf = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri: Uri? ->
@@ -487,6 +490,20 @@ private fun NoteListScreen(store: NoteStore, onOpen: (NoteMeta) -> Unit) {
                             exporting = note.id to true
                             savePdf.launch(safeFileName(note.title) + ".pdf")
                         },
+                        onIndex = {
+                            busy = "필기를 읽는 중"
+                            scope.launch {
+                                val pages = withContext(Dispatchers.IO) {
+                                    indexNote(store, indexer, note.id)
+                                }
+                                busy = null
+                                report = if (pages < 0) {
+                                    "인식 모델을 받지 못했습니다. 인터넷을 확인해주세요"
+                                } else {
+                                    "페이지 " + pages + "장을 색인했습니다"
+                                }
+                            }
+                        },
                     )
                 }
             }
@@ -586,6 +603,7 @@ private fun NoteCard(
     onClearThumbnail: () -> Unit,
     onExport: () -> Unit,
     onExportPdf: () -> Unit,
+    onIndex: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     // Keyed on the file's timestamp, so replacing the picture redraws the card
@@ -673,6 +691,17 @@ private fun NoteCard(
                         }
                         HorizontalDivider()
                         DropdownMenuItem(
+                            text = { Text("필기 검색 색인") },
+                            leadingIcon = {
+                                Icon(Icons.Default.Search, contentDescription = null)
+                            },
+                            onClick = {
+                                menuOpen = false
+                                onIndex()
+                            },
+                        )
+                        HorizontalDivider()
+                        DropdownMenuItem(
                             text = { Text("백업 파일로 내보내기") },
                             leadingIcon = {
                                 Icon(Icons.Default.Archive, contentDescription = null)
@@ -749,6 +778,28 @@ private fun SkinButton(skin: Skin, onSkin: (Skin) -> Unit) {
             }
         }
     }
+}
+
+/**
+ * Reads every page of a note. Pages are loaded one at a time and let go again,
+ * because a 120 page book indexed all at once is a 120 page book in memory.
+ * Returns how many pages were read, or -1 when the models are not available.
+ */
+private fun indexNote(store: NoteStore, indexer: InkIndexer, id: String): Int {
+    if (!indexer.prepare()) return -1
+    val document = store.load(id)
+    var done = 0
+    for (page in document.pages) {
+        val strokes = store.loadPage(id, page, STROKE_EPSILON)
+        if (strokes.isEmpty()) {
+            store.writeInkIndex(id, page.id, "")
+            done++
+            continue
+        }
+        indexer.textOf(strokes)?.let { store.writeInkIndex(id, page.id, it) }
+        done++
+    }
+    return done
 }
 
 /** Whole-library backup and restore, kept together because they are one job. */
@@ -1484,6 +1535,8 @@ private fun NoteScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val penStore = remember { PenStore(context) }
+    val indexer = remember { InkIndexer(context) }
+    DisposableEffect(Unit) { onDispose { indexer.close() } }
     var settings by remember { mutableStateOf(penStore.load()) }
     // One mode at a time, and every mode carries its own colour and thickness,
     // so putting the eraser down gives back the pen exactly as it was left.
@@ -1802,9 +1855,18 @@ private fun NoteScreen(
         LaunchedEffect(edits) {
             if (edits == 0) return@LaunchedEffect
             delay(AUTOSAVE_DELAY_MS)
-            canvas?.let { view ->
-                // Only pages marked dirty are actually written; see NoteStore.
-                withContext(Dispatchers.IO) { store.save(note.id, note.title, view.document) }
+            val view = canvas ?: return@LaunchedEffect
+            // Only pages marked dirty are actually written; see NoteStore.
+            withContext(Dispatchers.IO) { store.save(note.id, note.title, view.document) }
+            // Then read back what was just written, so the page can be found by
+            // what it says. Only the page being worked on: recognising the
+            // whole note on every autosave would cost more than it is worth,
+            // and the rest is caught by the note's own index action.
+            val page = view.document.pages.getOrNull(view.currentPageIndex()) ?: return@LaunchedEffect
+            if (!page.loaded) return@LaunchedEffect
+            val strokes = page.strokes.toList()
+            withContext(Dispatchers.IO) {
+                indexer.textOf(strokes)?.let { store.writeInkIndex(note.id, page.id, it) }
             }
         }
 

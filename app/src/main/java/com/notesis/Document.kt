@@ -267,8 +267,8 @@ class NoteStore(context: Context) {
     }
 
     /**
-     * Notes whose title or extracted PDF text contains [query]. Handwriting is
-     * not searchable yet - that needs recognition, which is its own pass.
+     * Notes whose title, extracted PDF text, or recognised handwriting contains
+     * [query].
      */
     fun search(query: String): List<NoteMeta> {
         val needle = query.trim()
@@ -305,9 +305,23 @@ class NoteStore(context: Context) {
 
     private fun textContains(id: String, needle: String): Boolean =
         File(root, "$id/pages")
-            .listFiles { file -> file.name.endsWith(".txt") }
+            .listFiles { file -> file.name.endsWith(".txt") || file.name.endsWith(INK_INDEX) }
             ?.any { runCatching { it.readText().contains(needle, true) }.getOrDefault(false) }
             ?: false
+
+    /** Where a page's recognised handwriting is kept, beside its strokes. */
+    fun inkIndexFile(id: String, pageId: String): File =
+        File(root, "$id/pages/$pageId$INK_INDEX")
+
+    /**
+     * Records what a page's handwriting says. Blank text still gets written -
+     * an erased page has to stop matching what it used to say.
+     */
+    fun writeInkIndex(id: String, pageId: String, text: String) {
+        val file = inkIndexFile(id, pageId)
+        file.parentFile?.mkdirs()
+        runCatching { file.writeText(text) }
+    }
 
     fun delete(id: String) {
         File(root, id).deleteRecursively()
@@ -381,7 +395,9 @@ class NoteStore(context: Context) {
         }
         // A page that was deleted this session leaves its file behind otherwise.
         val live = document.pages
-            .flatMap { listOf("${it.id}.bin", "${it.id}.mask", "${it.id}.txt") }
+            .flatMap {
+                listOf("${it.id}.bin", "${it.id}.mask", "${it.id}.txt", "${it.id}$INK_INDEX")
+            }
             .toSet()
         dir.listFiles()?.forEach { if (it.name !in live) it.delete() }
         writeMeta(id, title, document)
@@ -835,6 +851,7 @@ class NoteStore(context: Context) {
         const val AUTO_THUMB = "auto.png"
         const val THUMB_WIDTH = 480
         const val MAX_IMAGE_PX = 2048
+        const val INK_INDEX = ".ink"
         const val ARCHIVE_MARK = "notesis.json"
         const val ARCHIVE_VERSION = 1
         const val THUMB_INTERVAL_MS = 20_000L
