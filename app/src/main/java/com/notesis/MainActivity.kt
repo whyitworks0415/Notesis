@@ -80,6 +80,7 @@ import androidx.compose.material.icons.filled.CloseFullscreen
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Create
 import androidx.compose.material.icons.filled.Highlight
+import androidx.compose.material.icons.filled.VerticalAlignTop
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Computer
@@ -89,6 +90,7 @@ import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.CropSquare
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
+import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.Brush
@@ -111,6 +113,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -131,6 +134,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -162,6 +166,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -182,6 +188,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        recordCrashes()
         // Android 15+ draws behind the system bars whether or not you ask, so
         // opt in properly and let the insets be dispatched instead of guessed.
         enableEdgeToEdge()
@@ -212,6 +219,30 @@ class MainActivity : ComponentActivity() {
 
 private val dateFormat = SimpleDateFormat("M월 d일 HH:mm", Locale.KOREA)
 
+
+/**
+ * Keeps a crash where it can be read later. The system drop box holds a handful
+ * of records for the whole device and rolls them off within the hour, which is
+ * how a report of "it closes sometimes" arrives with nothing behind it. This
+ * file survives, and the real handler still runs after it.
+ */
+private fun android.content.Context.recordCrashes() {
+    val previous = Thread.getDefaultUncaughtExceptionHandler()
+    Thread.setDefaultUncaughtExceptionHandler { thread, error ->
+        runCatching {
+            // The app is not debuggable, so run-as cannot reach its private
+            // directory; the external one is where adb can actually pull it.
+            val log = java.io.File(getExternalFilesDir(null) ?: filesDir, CRASH_LOG)
+            // Bounded: a crash loop must not fill the disk with its own story.
+            if (log.length() > CRASH_LOG_MAX) log.delete()
+            java.io.PrintWriter(java.io.FileWriter(log, true)).use { out ->
+                out.println("---- " + java.util.Date() + " on " + thread.name)
+                error.printStackTrace(out)
+            }
+        }
+        previous?.uncaughtException(thread, error)
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -977,7 +1008,16 @@ private fun WebPanel(
                 // - Gemini, claude.ai - collapsed to its top bar because of it.
                 modifier = Modifier.fillMaxWidth().weight(1f),
                 factory = { viewContext ->
-                    holder.value ?: newBrowser(viewContext, onFile, log).also { holder.value = it }
+                    // The same WebView is reused across close, reopen and the
+                    // move between docked and popup. Adding a view that still
+                    // has a parent is a hard crash, so let go of the old one.
+                    val existing = holder.value
+                    if (existing != null) {
+                        (existing.parent as? android.view.ViewGroup)?.removeView(existing)
+                        existing
+                    } else {
+                        newBrowser(viewContext, onFile, log).also { holder.value = it }
+                    }
                 },
                 // The tag remembers which site was asked for, so picking another
                 // one loads it while a stroke on the note next door does not.
@@ -1247,6 +1287,9 @@ private fun NoteScreen(
     // Folded away, the bar becomes a handle that can be dragged; unfolding puts
     // it back wherever that handle was left, which is the point of moving it.
     var collapsed by remember { mutableStateOf(false) }
+    // Flush against the top edge, or floating over the page. Kept in
+    // preferences: where the toolbar sits is a habit, not a per-note choice.
+    var docked by remember { mutableStateOf(penStore.docked) }
     // Null until it is dragged: the bar sits centred at the top by default, and
     // there is no sensible centre to store before anything has been measured.
     var barOffset by remember { mutableStateOf<Offset?>(null) }
@@ -1375,11 +1418,76 @@ private fun NoteScreen(
         )
     }
 
+    // One toolbar, placed two ways: flush along the top edge, or floating
+    // over the page where it can be dragged and folded away.
+    val toolbar: @Composable (Modifier) -> Unit = { barModifier ->
+        Toolbar(
+            note = note,
+            otherNotes = otherNotes,
+            pen = pen,
+            mode = mode,
+            shapeKind = shapeKind,
+            fullscreen = fullscreen,
+            showLatency = showLatency,
+            // edits is read here so drawing or erasing recomposes the toolbar and
+            // undo/redo can re-evaluate whether there is anything on the stacks.
+            canUndo = edits.let { canvas?.canUndo() == true },
+            canRedo = edits.let { canvas?.canRedo() == true },
+            onEditPen = { editingPen = true },
+            onMode = { picked ->
+                // Leaving a mode takes its leftovers with it: a selection that
+                // cannot be extended any more, a picture with handles on it,
+                // strokes held in a lasso that is no longer in hand.
+                canvas?.clearSelection()
+                canvas?.clearImageSelection()
+                canvas?.clearLassoSelection()
+                // Tapping the tool already in hand opens its settings rather
+                // than dropping it: there is no unset mode to fall back to.
+                if (mode == picked) editingPen = picked.tints else mode = picked
+            },
+            onShape = {
+                shapeKind = it
+                canvas?.clearSelection()
+                canvas?.clearImageSelection()
+                mode = EditMode.SHAPE
+            },
+            onPickImage = { pickImage.launch("image/*") },
+            onWeb = { webUrl = it },
+            onWidth = { settings = settings + (mode to pen.copy(width = it)) },
+            onUndo = {
+                canvas?.undo()
+                edits++
+            },
+            onRedo = {
+                canvas?.redo()
+                edits++
+            },
+            onFitWidth = { canvas?.fitWidth() },
+            onToggleFullscreen = { fullscreen = !fullscreen },
+            onToggleLatency = { showLatency = !showLatency },
+            onTogglePages = { showPages = !showPages },
+            onCollapse = { collapsed = true },
+            onOpenNote = onOpenNote,
+            onBack = onBack,
+            pageLabel = "${currentPage + 1} / $pageCount",
+            onPalette = { showPalette = true },
+            docked = docked,
+            onToggleDock = {
+                docked = !docked
+                penStore.docked = docked
+            },
+            modifier = barModifier,
+        )
+    }
+
     Row(Modifier.fillMaxSize()) {
+    Column(Modifier.weight(1f).fillMaxHeight()) {
+    // Docked, the bar takes its own room rather than covering the page.
+    if (docked && !collapsed) toolbar(Modifier.fillMaxWidth())
     Box(
         Modifier
             .weight(1f)
-            .fillMaxHeight()
+            .fillMaxWidth()
             .background(Color(0xFFE9E7E2))
             .onSizeChanged { containerSize = it },
     ) {
@@ -1480,6 +1588,23 @@ private fun NoteScreen(
             )
         }
 
+        if (!docked && !collapsed) {
+            toolbar(
+                Modifier
+                    .align(Alignment.TopStart)
+                    // Never wider than what it is placed in, or the clamping
+                    // that keeps it on screen has nothing left to work with.
+                    .widthIn(max = maxBarWidth)
+                    // Placed and clamped together: the folded handle can be
+                    // dragged anywhere, and unfolding measures the wide bar and
+                    // pulls it back inside rather than letting it hang off.
+                    .offset { barPlacement(barOffset, barSize, containerSize) }
+                    .onSizeChanged { barSize = it }
+                    .windowInsetsPadding(ChromeInsets)
+                    .padding(12.dp),
+            )
+        }
+
         if (collapsed) {
             Box(
                 Modifier
@@ -1497,71 +1622,8 @@ private fun NoteScreen(
                     },
                 )
             }
-        } else {
-        Toolbar(
-            note = note,
-            otherNotes = otherNotes,
-            pen = pen,
-            mode = mode,
-            shapeKind = shapeKind,
-            fullscreen = fullscreen,
-            showLatency = showLatency,
-            // edits is read here so drawing or erasing recomposes the toolbar and
-            // undo/redo can re-evaluate whether there is anything on the stacks.
-            canUndo = edits.let { canvas?.canUndo() == true },
-            canRedo = edits.let { canvas?.canRedo() == true },
-            onEditPen = { editingPen = true },
-            onMode = { picked ->
-                // Leaving a mode takes its leftovers with it: a selection that
-                // cannot be extended any more, a picture with handles on it,
-                // strokes held in a lasso that is no longer in hand.
-                canvas?.clearSelection()
-                canvas?.clearImageSelection()
-                canvas?.clearLassoSelection()
-                // Tapping the tool already in hand opens its settings rather
-                // than dropping it: there is no unset mode to fall back to.
-                if (mode == picked) editingPen = picked.tints else mode = picked
-            },
-            onShape = {
-                shapeKind = it
-                canvas?.clearSelection()
-                canvas?.clearImageSelection()
-                mode = EditMode.SHAPE
-            },
-            onPickImage = { pickImage.launch("image/*") },
-            onWeb = { webUrl = it },
-            onWidth = { settings = settings + (mode to pen.copy(width = it)) },
-            onUndo = {
-                canvas?.undo()
-                edits++
-            },
-            onRedo = {
-                canvas?.redo()
-                edits++
-            },
-            onFitWidth = { canvas?.fitWidth() },
-            onToggleFullscreen = { fullscreen = !fullscreen },
-            onToggleLatency = { showLatency = !showLatency },
-            onTogglePages = { showPages = !showPages },
-            onCollapse = { collapsed = true },
-            onOpenNote = onOpenNote,
-            onBack = onBack,
-            pageLabel = "${currentPage + 1} / $pageCount",
-            onPalette = { showPalette = true },
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                // Never wider than what it is placed in, or the clamping that
-                // keeps it on screen has nothing left to work with.
-                .widthIn(max = maxBarWidth)
-                // Placed and clamped together: the folded handle can be dragged
-                // anywhere, and unfolding measures the wide bar and pulls it
-                // back inside rather than letting half of it hang off screen.
-                .offset { barPlacement(barOffset, barSize, containerSize) }
-                .onSizeChanged { barSize = it }
-                .windowInsetsPadding(ChromeInsets)
-                .padding(12.dp),
-        )
         }
+
 
         if (editingPen) {
             PenDialog(
@@ -1694,6 +1756,7 @@ private fun NoteScreen(
                 },
             )
         }
+    }
     }
 
         if (!webPopup) {
@@ -2109,6 +2172,7 @@ private fun Toolbar(
     pen: PenPreset,
     mode: EditMode,
     shapeKind: ShapeKind,
+    docked: Boolean,
     fullscreen: Boolean,
     showLatency: Boolean,
     canUndo: Boolean,
@@ -2130,20 +2194,29 @@ private fun Toolbar(
     onOpenNote: (NoteMeta) -> Unit,
     onBack: () -> Unit,
     onPalette: () -> Unit,
+    onToggleDock: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(20.dp),
+        // Docked, it is part of the window edge: square, and no shadow to cast
+        // onto a page it is no longer floating over.
+        shape = if (docked) RectangleShape else RoundedCornerShape(20.dp),
         tonalElevation = 3.dp,
-        shadowElevation = 4.dp,
+        shadowElevation = if (docked) 0.dp else 4.dp,
     ) {
-        Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+        // Every control one step smaller than the touch-target minimum. The bar
+        // is reached with a pen, and its height is page it is not showing.
+        CompositionLocalProvider(
+            LocalMinimumInteractiveComponentSize provides Dp.Unspecified,
+        ) {
+        Column(
+            Modifier
+                .then(if (docked) Modifier.windowInsetsPadding(ChromeInsets) else Modifier)
+                .padding(horizontal = 8.dp, vertical = 1.dp),
+        ) {
             // ---- top row: the note, and what is done to the whole of it
-            Row(
-                Modifier.padding(vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로가기")
                 }
@@ -2178,6 +2251,16 @@ private fun Toolbar(
                 IconButton(onClick = onFitWidth) {
                     Icon(Icons.Default.ZoomOutMap, contentDescription = "화면에 맞추기")
                 }
+                IconButton(onClick = onToggleDock) {
+                    Icon(
+                        if (docked) {
+                            Icons.Default.PictureInPictureAlt
+                        } else {
+                            Icons.Default.VerticalAlignTop
+                        },
+                        contentDescription = if (docked) "떼어내기" else "상단 고정",
+                    )
+                }
                 IconButton(onClick = onToggleFullscreen) {
                     Icon(
                         if (fullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
@@ -2194,8 +2277,7 @@ private fun Toolbar(
                 Modifier
                     // More tools than fit beside an open browser panel. Scrolling
                     // beats hiding: every tool stays reachable at any width.
-                    .horizontalScroll(rememberScrollState())
-                    .padding(vertical = 2.dp),
+                    .horizontalScroll(rememberScrollState()),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onCollapse) {
@@ -2290,6 +2372,7 @@ private fun Toolbar(
                     )
                 }
             }
+        }
         }
     }
 }
@@ -2393,6 +2476,9 @@ private const val AUTOSAVE_DELAY_MS = 1200L
 private const val SEARCH_DEBOUNCE_MS = 220L
 
 private const val PEN_SAVE_DELAY_MS = 400L
+
+private const val CRASH_LOG = "crash.log"
+private const val CRASH_LOG_MAX = 256L * 1024
 
 private const val IMAGE_CACHE_BYTES = 48 * 1024 * 1024
 

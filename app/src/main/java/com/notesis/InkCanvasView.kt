@@ -23,7 +23,9 @@ import androidx.ink.authoring.latency.LatencyData
 import androidx.ink.authoring.latency.LatencyDataCallback
 import androidx.ink.brush.Brush
 import androidx.ink.brush.BrushFamily
+import androidx.ink.brush.BrushPaint
 import androidx.ink.brush.ExperimentalInkCustomBrushApi
+import androidx.ink.brush.SelfOverlap
 import androidx.ink.brush.StockBrushes
 import androidx.ink.geometry.ImmutableAffineTransform
 import androidx.ink.geometry.ImmutableBox
@@ -91,39 +93,72 @@ enum class ShapeKind { LINE, ARROW, RECT, OVAL }
 enum class Tool {
     PEN,
     HIGHLIGHTER,
-    ERASER;
+    ERASER,
 
-    fun brushFamily(): BrushFamily = if (this == HIGHLIGHTER) highlighter else pen
+    /**
+     * Masking tape. A marker in everything but one respect: where a stroke
+     * crosses itself the crossing is not drawn twice. Appended rather than
+     * inserted, because a tool's ordinal is what is written into saved notes.
+     */
+    MASK;
+
+    fun brushFamily(): BrushFamily = when (this) {
+        HIGHLIGHTER -> highlighter
+        MASK -> masking
+        else -> pen
+    }
 
     companion object {
         private val pen by lazy { StockBrushes.marker() }
 
         /**
          * The stock highlighter has a chisel tip, which draws a slanted flat end.
-         * Only the tip is replaced with a circle - the rest of the family is what
-         * keeps overlapping passes from stacking up into a darker blob.
+         * Only the tip is replaced with a circle.
          */
         @OptIn(ExperimentalInkCustomBrushApi::class)
         private val highlighter by lazy {
             val stock = StockBrushes.highlighter()
             val coat = stock.coats.first()
-            stock.copy(
-                coat = coat.copy(
-                    tip = coat.tip.copy(
-                        scaleX = 1f,
-                        scaleY = 1f,
-                        cornerRounding = 1f,
-                        slantDegrees = 0f,
-                        pinch = 0f,
-                        rotationDegrees = 0f,
+            merged(
+                stock.copy(
+                    coat = coat.copy(
+                        tip = coat.tip.copy(
+                            scaleX = 1f,
+                            scaleY = 1f,
+                            cornerRounding = 1f,
+                            slantDegrees = 0f,
+                            pinch = 0f,
+                            rotationDegrees = 0f,
+                        ),
                     ),
                 ),
             )
         }
 
+        private val masking by lazy { merged(StockBrushes.marker()) }
+
+        /**
+         * One stroke that doubles back over itself is still one stroke, so the
+         * overlap is drawn once. Without this a highlighter darkens wherever the
+         * hand crossed its own line, and tape shows every seam - the ink library
+         * calls it self overlap, and DISCARD is the "merge" of the two options.
+         */
+        @OptIn(ExperimentalInkCustomBrushApi::class)
+        private fun merged(family: BrushFamily): BrushFamily {
+            val coat = family.coats.firstOrNull() ?: return family
+            val paints = coat.paintPreferences.map { paint ->
+                BrushPaint(paint.textureLayers, paint.colorFunctions, SelfOverlap.DISCARD)
+            }
+            if (paints.isEmpty()) return family
+            return family.copy(coat = coat.copy(paintPreferences = paints))
+        }
+
         /** Reverse lookup for reload: an erased stroke was never saved. */
-        fun ofBrushFamily(family: BrushFamily): Tool =
-            if (family == highlighter) HIGHLIGHTER else PEN
+        fun ofBrushFamily(family: BrushFamily): Tool = when (family) {
+            highlighter -> HIGHLIGHTER
+            masking -> MASK
+            else -> PEN
+        }
     }
 }
 
@@ -1677,7 +1712,7 @@ class InkCanvasView @JvmOverloads constructor(
             pathEffect = android.graphics.DashPathEffect(floatArrayOf(12f, 10f), 0f)
         }
         private val marqueeFill = Paint().apply { color = 0x223B7DDD }
-        private val outline = android.graphics.Path()
+        private val outlines = java.util.WeakHashMap<Stroke, android.graphics.Path>()
         private val outlinePoint = MutableVec()
         private val selectionBox = RectF()
         private val handle = Paint().apply { isAntiAlias = true; color = 0xFF3B7DDD.toInt() }
@@ -1824,33 +1859,44 @@ class InkCanvasView @JvmOverloads constructor(
                 }
                 // Lifted: only the edge of the shape is drawn, so what it covers
                 // can be read and there is still something there to tap again.
-                outline.reset()
-                appendOutline(mask.stroke.shape, outline)
-                if (outline.isEmpty) continue
+                val path = outlineOf(mask.stroke)
+                if (path.isEmpty) continue
                 overlay.color = mask.stroke.brush.colorIntArgb
                 overlay.strokeWidth = MASK_OUTLINE_PX / scale
-                canvas.drawPath(outline, overlay)
+                canvas.drawPath(path, overlay)
             }
         }
 
-        /** Every closed loop the stroke's mesh is made of, as one path. */
-        private fun appendOutline(shape: PartitionedMesh, path: android.graphics.Path) {
-            for (group in 0 until shape.getRenderGroupCount()) {
-                for (index in 0 until shape.getOutlineCount(group)) {
-                    val vertices = shape.getOutlineVertexCount(group, index)
-                    if (vertices < 2) continue
-                    for (v in 0 until vertices) {
-                        shape.populateOutlinePosition(group, index, v, outlinePoint)
-                        if (v == 0) {
-                            path.moveTo(outlinePoint.x, outlinePoint.y)
-                        } else {
-                            path.lineTo(outlinePoint.x, outlinePoint.y)
+        /**
+         * The silhouette of a stroke: its mesh loops unioned into one region, so
+         * a strip that doubled back over itself is outlined once around the
+         * outside rather than showing the seam where it crossed. Kept per
+         * stroke, because this is geometry that only changes when the mesh does.
+         */
+        private fun outlineOf(stroke: Stroke): android.graphics.Path =
+            outlines.getOrPut(stroke) {
+                val union = android.graphics.Path()
+                val loop = android.graphics.Path()
+                val shape = stroke.shape
+                for (group in 0 until shape.getRenderGroupCount()) {
+                    for (index in 0 until shape.getOutlineCount(group)) {
+                        val vertices = shape.getOutlineVertexCount(group, index)
+                        if (vertices < 3) continue
+                        loop.reset()
+                        for (v in 0 until vertices) {
+                            shape.populateOutlinePosition(group, index, v, outlinePoint)
+                            if (v == 0) {
+                                loop.moveTo(outlinePoint.x, outlinePoint.y)
+                            } else {
+                                loop.lineTo(outlinePoint.x, outlinePoint.y)
+                            }
                         }
+                        loop.close()
+                        union.op(loop, android.graphics.Path.Op.UNION)
                     }
-                    path.close()
                 }
+                union
             }
-        }
 
         /** Border and corner grip for the picture currently picked up. */
         private fun drawImageHandles(canvas: Canvas) {

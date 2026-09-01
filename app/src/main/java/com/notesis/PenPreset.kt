@@ -24,6 +24,11 @@ class PenStore(context: Context) {
 
     private val prefs = context.getSharedPreferences("pens", Context.MODE_PRIVATE)
 
+    /** Whether the toolbar sits flush along the top edge rather than floating. */
+    var docked: Boolean
+        get() = prefs.getBoolean(DOCKED, false)
+        set(value) = prefs.edit().putBoolean(DOCKED, value).apply()
+
     fun load(): Map<EditMode, PenPreset> {
         val raw = prefs.getString(KEY, null) ?: return DEFAULTS
         val saved = runCatching {
@@ -58,6 +63,7 @@ class PenStore(context: Context) {
 
     companion object {
         private const val KEY = "tools"
+        private const val DOCKED = "docked"
 
         /** The thickness slider's range depends on what is being made thick. */
         fun widthRange(mode: EditMode): ClosedFloatingPointRange<Float> = when (mode) {
@@ -70,7 +76,7 @@ class PenStore(context: Context) {
         val DEFAULTS: Map<EditMode, PenPreset> = mapOf(
             EditMode.PEN to PenPreset(Tool.PEN, 0xFF000000.toInt(), 5f),
             EditMode.HIGHLIGHTER to PenPreset(Tool.HIGHLIGHTER, 0x66F9A825, 20f),
-            EditMode.MASK to PenPreset(Tool.PEN, PageMask.DEFAULT_MASK_COLOR, 20f),
+            EditMode.MASK to PenPreset(Tool.MASK, PageMask.DEFAULT_MASK_COLOR, 20f),
             EditMode.SHAPE to PenPreset(Tool.PEN, 0xFF1976D2.toInt(), 5f),
             EditMode.ERASE to PenPreset(Tool.ERASER, 0xFF000000.toInt(), 24f),
         )
