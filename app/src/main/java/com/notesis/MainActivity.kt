@@ -47,6 +47,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -63,6 +64,8 @@ import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Gesture
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Menu
@@ -130,6 +133,7 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -312,7 +316,12 @@ private fun NoteListScreen(store: NoteStore, onOpen: (NoteMeta) -> Unit) {
         delay(SEARCH_DEBOUNCE_MS)
         results = withContext(Dispatchers.IO) { store.search(query) }
     }
-    val shown = results ?: notes
+    // Blank is the top level. Searching reaches across every folder, because
+    // the point of searching is not knowing where a thing is.
+    var folder by remember { mutableStateOf("") }
+    var filing by remember { mutableStateOf<NoteMeta?>(null) }
+    val folders = remember(revision) { store.folders() }
+    val shown = results ?: notes.filter { it.folder == folder }
 
     // The user picks where it goes, so a backup survives the app being removed.
     val saveArchive = rememberLauncherForActivityResult(
@@ -414,18 +423,49 @@ private fun NoteListScreen(store: NoteStore, onOpen: (NoteMeta) -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = {
-                    OutlinedTextField(
-                        value = query,
-                        onValueChange = { query = it },
-                        singleLine = true,
-                        placeholder = { Text("노트 제목 · PDF 본문 검색") },
-                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(end = 16.dp, top = 4.dp, bottom = 4.dp),
-                    )
+                navigationIcon = {
+                    // Only inside a folder: at the top level there is nowhere
+                    // to go back to, and an arrow that does nothing is a lie.
+                    if (folder.isNotBlank()) {
+                        IconButton(onClick = { folder = "" }) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "전체 노트",
+                            )
+                        }
+                    }
                 },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (folder.isNotBlank()) {
+                            Icon(Icons.Default.Folder, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(folder, style = MaterialTheme.typography.titleMedium)
+                            Spacer(Modifier.width(16.dp))
+                        }
+                        OutlinedTextField(
+                            value = query,
+                            onValueChange = { query = it },
+                            singleLine = true,
+                            placeholder = { Text("모든 노트에서 찾기 · 제목 · PDF · 필기") },
+                            leadingIcon = {
+                                Icon(Icons.Default.Search, contentDescription = null)
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 16.dp, top = 4.dp, bottom = 4.dp),
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    // The glass skins let the page show through every other bar;
+                    // an opaque one here would be the odd surface out.
+                    containerColor = if (LocalSkin.current == Skin.MATERIAL) {
+                        MaterialTheme.colorScheme.surface
+                    } else {
+                        MaterialTheme.colorScheme.surface.copy(alpha = 0.55f)
+                    },
+                ),
             )
         },
         floatingActionButton = {
@@ -454,7 +494,11 @@ private fun NoteListScreen(store: NoteStore, onOpen: (NoteMeta) -> Unit) {
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    if (query.isBlank()) "아직 노트가 없습니다" else "\"$query\" 검색 결과가 없습니다",
+                    when {
+                        query.isNotBlank() -> "\"$query\" 검색 결과가 없습니다"
+                        folder.isNotBlank() -> "이 폴더가 비었습니다"
+                        else -> "아직 노트가 없습니다"
+                    },
                     color = MaterialTheme.colorScheme.outline,
                 )
             }
@@ -468,6 +512,13 @@ private fun NoteListScreen(store: NoteStore, onOpen: (NoteMeta) -> Unit) {
                     .fillMaxSize()
                     .padding(padding),
             ) {
+                // Folders sit above the notes rather than beside them: they
+                // are a place, not another note.
+                if (results == null && folder.isBlank() && folders.isNotEmpty()) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        FolderRow(folders) { folder = it }
+                    }
+                }
                 items(shown, key = { it.id }) { note ->
                     NoteCard(
                         note = note,
@@ -490,6 +541,7 @@ private fun NoteListScreen(store: NoteStore, onOpen: (NoteMeta) -> Unit) {
                             exporting = note.id to true
                             savePdf.launch(safeFileName(note.title) + ".pdf")
                         },
+                        onFile = { filing = note },
                         onIndex = {
                             busy = "필기를 읽는 중"
                             scope.launch {
@@ -530,6 +582,19 @@ private fun NoteListScreen(store: NoteStore, onOpen: (NoteMeta) -> Unit) {
             onDismissRequest = { report = null },
             title = { Text(message) },
             confirmButton = { TextButton(onClick = { report = null }) { Text("확인") } },
+        )
+    }
+
+    filing?.let { target ->
+        FolderDialog(
+            current = target.folder,
+            folders = folders,
+            onDismiss = { filing = null },
+            onPick = { picked ->
+                store.setFolder(target.id, picked)
+                filing = null
+                revision++
+            },
         )
     }
 
@@ -604,6 +669,7 @@ private fun NoteCard(
     onExport: () -> Unit,
     onExportPdf: () -> Unit,
     onIndex: () -> Unit,
+    onFile: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     // Keyed on the file's timestamp, so replacing the picture redraws the card
@@ -613,9 +679,20 @@ private fun NoteCard(
             runCatching { android.graphics.BitmapFactory.decodeFile(file.path) }.getOrNull()
         }
     }
+    val skin = LocalSkin.current
     Card(
         onClick = onOpen,
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        colors = if (skin == Skin.MATERIAL) {
+            CardDefaults.cardColors()
+        } else {
+            // The card is mostly its own picture, so it goes only slightly
+            // translucent - enough to belong with the glass, not so much that
+            // the thumbnail has to compete with the wallpaper behind it.
+            CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+            )
+        },
     ) {
         Column {
             Box(
@@ -690,6 +767,16 @@ private fun NoteCard(
                             )
                         }
                         HorizontalDivider()
+                        DropdownMenuItem(
+                            text = { Text("폴더로 이동") },
+                            leadingIcon = {
+                                Icon(Icons.Default.FolderOpen, contentDescription = null)
+                            },
+                            onClick = {
+                                menuOpen = false
+                                onFile()
+                            },
+                        )
                         DropdownMenuItem(
                             text = { Text("필기 검색 색인") },
                             leadingIcon = {
@@ -800,6 +887,76 @@ private fun indexNote(store: NoteStore, indexer: InkIndexer, id: String): Int {
         done++
     }
     return done
+}
+
+/** The folders that exist, as somewhere to go. */
+@Composable
+private fun FolderRow(folders: List<String>, onOpen: (String) -> Unit) {
+    Row(
+        Modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        for (name in folders) {
+            SkinSurface(corner = 14.dp) {
+                Row(
+                    Modifier
+                        .clickable { onOpen(name) }
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Default.Folder, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(name, style = MaterialTheme.typography.bodyLarge)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Picks a folder for one note. Typing a name that does not exist makes it -
+ * there is nothing to create first, because a folder is only the name its notes
+ * agree on.
+ */
+@Composable
+private fun FolderDialog(
+    current: String,
+    folders: List<String>,
+    onDismiss: () -> Unit,
+    onPick: (String) -> Unit,
+) {
+    var name by remember { mutableStateOf(current) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("폴더로 이동") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    singleLine = true,
+                    label = { Text("폴더 이름") },
+                    placeholder = { Text("비우면 맨 위로") },
+                )
+                if (folders.isNotEmpty()) {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "이미 있는 폴더",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.outline,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Row(Modifier.horizontalScroll(rememberScrollState())) {
+                        for (option in folders) {
+                            TextButton(onClick = { name = option }) { Text(option) }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { onPick(name.trim()) }) { Text("이동") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+    )
 }
 
 /** Whole-library backup and restore, kept together because they are one job. */

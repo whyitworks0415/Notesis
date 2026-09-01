@@ -190,6 +190,9 @@ data class NoteMeta(
     val strokeCount: Int,
     /** The note's own image if it has one, else the rendered first page. */
     val thumbnail: File? = null,
+    /** Which folder it sits in. Blank is the top level, which is where notes
+     *  start and where they go back to if their folder is emptied out. */
+    val folder: String = "",
 )
 
 /**
@@ -209,6 +212,29 @@ data class NoteMeta(
 class NoteStore(context: Context) {
 
     private val root = File(context.filesDir, "notes").apply { mkdirs() }
+
+    /**
+     * Every folder that has a note in it. Folders are not objects with their own
+     * files - a folder is the name its notes agree on - so an empty one simply
+     * stops existing, which is the behaviour worth having for something created
+     * by typing a name.
+     */
+    fun folders(): List<String> =
+        list().map { it.folder }.filter { it.isNotBlank() }.distinct().sorted()
+
+    fun folderOf(id: String): String = runCatching {
+        JSONObject(File(root, "$id/meta.json").readText()).optString("folder", "")
+    }.getOrDefault("")
+
+    /** Files a note. A blank name puts it back at the top level. */
+    fun setFolder(id: String, folder: String) {
+        val file = File(root, "$id/meta.json")
+        runCatching {
+            val json = JSONObject(file.readText())
+            json.put("folder", folder.trim())
+            file.writeText(json.toString())
+        }
+    }
 
     fun list(): List<NoteMeta> =
         root.listFiles { f -> f.isDirectory }
@@ -724,6 +750,9 @@ class NoteStore(context: Context) {
         }
         val json = JSONObject()
             .put("title", title)
+            // Read back rather than passed in: saving a note happens on a timer
+            // and knows nothing about where the note was filed.
+            .put("folder", folderOf(id))
             .put("modified", System.currentTimeMillis())
             .put(
                 "strokeCount",
@@ -745,6 +774,7 @@ class NoteStore(context: Context) {
                 pageCount = json.optJSONArray("pages")?.length() ?: 1,
                 strokeCount = json.optInt("strokeCount"),
                 thumbnail = thumbnailOf(dir),
+                folder = json.optString("folder", ""),
             )
         }.getOrNull()
     }
