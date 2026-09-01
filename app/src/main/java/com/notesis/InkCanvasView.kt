@@ -447,6 +447,9 @@ class InkCanvasView @JvmOverloads constructor(
 
     fun undo() {
         val edit = undoStack.removeLastOrNull() ?: return
+        // A lasso selection describes where strokes are now. Stepping history
+        // moves them, so the box would sit over nothing and drag ghosts.
+        clearLassoSelection()
         applyInverse(edit)
         redoStack += edit
         afterEdit(edit.page)
@@ -454,6 +457,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     fun redo() {
         val edit = redoStack.removeLastOrNull() ?: return
+        clearLassoSelection()
         when (edit) {
             is Edit.Drawn -> edit.page.strokes += edit.stroke
             is Edit.Erased -> edit.page.strokes.removeAll(edit.strokes)

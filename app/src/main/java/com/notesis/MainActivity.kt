@@ -158,6 +158,10 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -966,7 +970,12 @@ private fun WebPanel(
                 }
             }
             AndroidView(
-                modifier = Modifier.fillMaxSize(),
+                // weight, not fillMaxSize: a Column measures an unweighted child
+                // with an unbounded height, AndroidView passes that on as an
+                // UNSPECIFIED MeasureSpec, and Chromium then resolves vh units
+                // against a viewport of zero. Every site built on a height chain
+                // - Gemini, claude.ai - collapsed to its top bar because of it.
+                modifier = Modifier.fillMaxWidth().weight(1f),
                 factory = { viewContext ->
                     holder.value ?: newBrowser(viewContext, onFile, log).also { holder.value = it }
                 },
@@ -1049,6 +1058,14 @@ private fun newBrowser(
     log: MutableList<String>,
 ): android.webkit.WebView {
     val view = android.webkit.WebView(context)
+    // The host adds a factory view as WRAP_CONTENT, which reaches Chromium as an
+    // unbounded height, and it then resolves vh units against a viewport of
+    // zero. Sites built on a height chain - Gemini, claude.ai - collapse to
+    // their top bar because of it.
+    view.layoutParams = android.view.ViewGroup.LayoutParams(
+        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+    )
     android.webkit.CookieManager.getInstance().setAcceptCookie(true)
     android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(view, true)
     // With this on, a tablet plugged in over USB can be opened from
@@ -1235,6 +1252,10 @@ private fun NoteScreen(
     var barOffset by remember { mutableStateOf<Offset?>(null) }
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
     var barSize by remember { mutableStateOf(IntSize.Zero) }
+    val density = LocalDensity.current
+    val maxBarWidth = with(density) {
+        (containerSize.width.takeIf { it > 0 } ?: Int.MAX_VALUE).toDp()
+    }
     val otherNotes = remember(note.id) { store.list().filter { it.id != note.id } }
     var showLatency by remember { mutableStateOf(false) }
     var showPages by remember { mutableStateOf(false) }
@@ -1529,6 +1550,9 @@ private fun NoteScreen(
             onPalette = { showPalette = true },
             modifier = Modifier
                 .align(Alignment.TopStart)
+                // Never wider than what it is placed in, or the clamping that
+                // keeps it on screen has nothing left to work with.
+                .widthIn(max = maxBarWidth)
                 // Placed and clamped together: the folded handle can be dragged
                 // anywhere, and unfolding measures the wide bar and pulls it
                 // back inside rather than letting half of it hang off screen.
@@ -1722,7 +1746,7 @@ private fun LassoActions(
             Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("${'$'}count 획 · 끌어서 이동", style = MaterialTheme.typography.bodyMedium)
+            Text("$count 획 · 끌어서 이동", style = MaterialTheme.typography.bodyMedium)
             ToolbarDivider()
             TextButton(onClick = onDelete) {
                 Icon(Icons.Default.Delete, contentDescription = null)
@@ -1872,7 +1896,9 @@ private fun PageSidebar(
         modifier = Modifier
             .windowInsetsPadding(ChromeInsets)
             .padding(12.dp)
-            .width(if (tab == 0) 132.dp else 190.dp)
+            // Wide enough for both tab labels on one line; the page column
+            // was sized before there were tabs over it.
+            .width(190.dp)
             .fillMaxHeight(0.8f),
         shape = RoundedCornerShape(20.dp),
         tonalElevation = 3.dp,
@@ -2165,7 +2191,11 @@ private fun Toolbar(
 
             // ---- bottom row: what the pen is doing right now
             Row(
-                Modifier.padding(vertical = 2.dp),
+                Modifier
+                    // More tools than fit beside an open browser panel. Scrolling
+                    // beats hiding: every tool stays reachable at any width.
+                    .horizontalScroll(rememberScrollState())
+                    .padding(vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onCollapse) {
@@ -2331,7 +2361,11 @@ private fun ToolButton(
             colors = if (tint == null) {
                 IconButtonDefaults.filledIconButtonColors()
             } else {
-                IconButtonDefaults.filledIconButtonColors(containerColor = tint)
+                IconButtonDefaults.filledIconButtonColors(
+                    containerColor = tint,
+                    // A black icon on a black pen is no icon at all.
+                    contentColor = if (tint.luminance() < 0.5f) Color.White else Color.Black,
+                )
             },
         ) { Icon(icon, contentDescription = label) }
     } else {

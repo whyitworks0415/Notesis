@@ -517,8 +517,17 @@ class NoteStore(context: Context) {
             }
             val scale = width / page.width
             val transform = Matrix().apply { setScale(scale, scale) }
+            // Masking tape covers the page for a reader, so it covers the
+            // thumbnail too - a picture of what is under the tape is a picture
+            // of a page that does not exist.
+            val masks = if (page.loaded) {
+                page.masks.map { it.stroke }
+            } else {
+                readStrokes(File(root, "$id/pages/${page.id}.mask"))
+            }
             val renderer = CanvasStrokeRenderer.create()
             for (stroke in strokes) renderer.draw(canvas, stroke, transform)
+            for (stroke in masks) renderer.draw(canvas, stroke, transform)
             val tmp = File(root, "$id/$AUTO_THUMB.tmp")
             tmp.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 90, it) }
             tmp.renameTo(File(root, "$id/$AUTO_THUMB"))
