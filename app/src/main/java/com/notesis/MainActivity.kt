@@ -76,8 +76,10 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Circle
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloseFullscreen
+import androidx.compose.material.icons.filled.AutoAwesomeMosaic
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Create
 import androidx.compose.material.icons.filled.Highlight
@@ -198,8 +200,13 @@ class MainActivity : ComponentActivity() {
         // opt in properly and let the insets be dispatched instead of guessed.
         enableEdgeToEdge()
         val store = NoteStore(this)
+        val prefs = PenStore(this)
         setContent {
+            // Hoisted to the top so a change repaints every bar at once rather
+            // than whichever screen happened to be looking.
+            var skin by remember { mutableStateOf(prefs.skin) }
             MaterialTheme {
+            ProvideSkin(skin) {
                 var openNote by remember { mutableStateOf<NoteMeta?>(null) }
                 val note = openNote
                 if (note == null) {
@@ -212,12 +219,18 @@ class MainActivity : ComponentActivity() {
                     NoteScreen(
                         store = store,
                         note = note,
+                        skin = skin,
+                        onSkin = {
+                            skin = it
+                            prefs.skin = it
+                        },
                         onOpenNote = { openNote = it },
                         onBack = { openNote = null },
                     )
                     }
                 }
             }
+        }
         }
     }
 }
@@ -695,6 +708,49 @@ private fun NoteCard(
     }
 }
 
+/** Picks how the chrome is dressed, with each choice wearing its own skin. */
+@Composable
+private fun SkinButton(skin: Skin, onSkin: (Skin) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) {
+            Icon(Icons.Default.AutoAwesomeMosaic, contentDescription = "테마")
+        }
+        DropdownMenu(open, onDismissRequest = { open = false }) {
+            for (option in Skin.entries) {
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(option.label)
+                            Text(
+                                option.blurb,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.outline,
+                            )
+                        }
+                    },
+                    leadingIcon = {
+                        // Each row shows the skin it names, so the choice is
+                        // made by looking rather than by reading.
+                        ProvideSkin(option) {
+                            SkinSurface(Modifier.size(30.dp), corner = 9.dp) {}
+                        }
+                    },
+                    trailingIcon = {
+                        if (option == skin) {
+                            Icon(Icons.Default.Check, contentDescription = null)
+                        }
+                    },
+                    onClick = {
+                        open = false
+                        onSkin(option)
+                    },
+                )
+            }
+        }
+    }
+}
+
 /** Whole-library backup and restore, kept together because they are one job. */
 @Composable
 private fun BackupButton(onBackupAll: () -> Unit, onRestore: () -> Unit) {
@@ -1130,7 +1186,7 @@ private fun WebPanel(
     val web = holder.value
     var address by remember(url) { mutableStateOf(url) }
 
-    Surface(modifier = modifier, tonalElevation = 2.dp) {
+    SkinSurface(modifier = modifier, corner = 0.dp) {
         // The whole panel keeps clear of the system bars, not just its header: a
         // chat composer pinned to the bottom of the page was sitting under the
         // navigation bar with nothing holding it up.
@@ -1420,6 +1476,8 @@ private val EditMode.tints: Boolean
 private fun NoteScreen(
     store: NoteStore,
     note: NoteMeta,
+    skin: Skin,
+    onSkin: (Skin) -> Unit,
     onOpenNote: (NoteMeta) -> Unit,
     onBack: () -> Unit,
 ) {
@@ -1663,6 +1721,8 @@ private fun NoteScreen(
             onBack = onBack,
             pageLabel = "${currentPage + 1} / $pageCount",
             onPalette = { showPalette = true },
+            skin = skin,
+            onSkin = onSkin,
             docked = docked,
             onToggleDock = {
                 docked = !docked
@@ -1996,13 +2056,11 @@ private fun LassoActions(
     onDone: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Surface(
+    SkinSurface(
         modifier = modifier
             .windowInsetsPadding(ChromeInsets)
             .padding(16.dp),
-        shape = RoundedCornerShape(16.dp),
-        tonalElevation = 3.dp,
-        shadowElevation = 4.dp,
+        corner = 16.dp,
     ) {
         Row(
             Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -2026,13 +2084,11 @@ private fun ImageActions(
     onDone: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Surface(
+    SkinSurface(
         modifier = modifier
             .windowInsetsPadding(ChromeInsets)
             .padding(16.dp),
-        shape = RoundedCornerShape(16.dp),
-        tonalElevation = 3.dp,
-        shadowElevation = 4.dp,
+        corner = 16.dp,
     ) {
         Row(
             Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -2103,13 +2159,10 @@ private fun SelectionActions(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Surface(
+    SkinSurface(
         modifier = modifier
             .windowInsetsPadding(ChromeInsets)
             .padding(20.dp),
-        shape = RoundedCornerShape(20.dp),
-        tonalElevation = 3.dp,
-        shadowElevation = 6.dp,
     ) {
         Row(
             Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
@@ -2154,7 +2207,7 @@ private fun PageSidebar(
 ) {
     val pages = document?.pages ?: return
     var tab by remember { mutableIntStateOf(0) }
-    Surface(
+    SkinSurface(
         modifier = Modifier
             .windowInsetsPadding(ChromeInsets)
             .padding(12.dp)
@@ -2162,9 +2215,6 @@ private fun PageSidebar(
             // was sized before there were tabs over it.
             .width(190.dp)
             .fillMaxHeight(0.8f),
-        shape = RoundedCornerShape(20.dp),
-        tonalElevation = 3.dp,
-        shadowElevation = 4.dp,
     ) {
         Column {
             TabRow(selectedTabIndex = tab) {
@@ -2371,6 +2421,8 @@ private fun Toolbar(
     pen: PenPreset,
     mode: EditMode,
     shapeKind: ShapeKind,
+    skin: Skin,
+    onSkin: (Skin) -> Unit,
     docked: Boolean,
     fullscreen: Boolean,
     showLatency: Boolean,
@@ -2396,13 +2448,11 @@ private fun Toolbar(
     onToggleDock: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Surface(
+    SkinSurface(
         modifier = modifier,
-        // Docked, it is part of the window edge: square, and no shadow to cast
-        // onto a page it is no longer floating over.
-        shape = if (docked) RectangleShape else RoundedCornerShape(20.dp),
-        tonalElevation = 3.dp,
-        shadowElevation = if (docked) 0.dp else 4.dp,
+        // Docked, it is part of the window edge, so it takes the edge's corner
+        // rather than its own.
+        corner = if (docked) 0.dp else null,
     ) {
         // Every control one step smaller than the touch-target minimum. The bar
         // is reached with a pen, and its height is page it is not showing.
@@ -2450,6 +2500,7 @@ private fun Toolbar(
                 IconButton(onClick = onFitWidth) {
                     Icon(Icons.Default.ZoomOutMap, contentDescription = "화면에 맞추기")
                 }
+                SkinButton(skin, onSkin)
                 IconButton(onClick = onToggleDock) {
                     Icon(
                         if (docked) {
@@ -2611,10 +2662,7 @@ private fun OtherNotesButton(notes: List<NoteMeta>, onOpenNote: (NoteMeta) -> Un
  */
 @Composable
 private fun CollapsedToolbar(onExpand: () -> Unit, onDrag: (Offset) -> Unit) {
-    Surface(
-        shape = RoundedCornerShape(20.dp),
-        tonalElevation = 3.dp,
-        shadowElevation = 4.dp,
+    SkinSurface(
         modifier = Modifier.pointerInput(Unit) {
             detectDragGestures { change, delta ->
                 change.consume()

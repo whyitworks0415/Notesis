@@ -30,6 +30,12 @@ class PenStore(context: Context) {
 
     private val prefs = context.getSharedPreferences("pens", Context.MODE_PRIVATE)
 
+    /** How the chrome is dressed. Material until someone says otherwise. */
+    var skin: Skin
+        get() = runCatching { Skin.valueOf(prefs.getString(SKIN, "")!!) }
+            .getOrDefault(Skin.MATERIAL)
+        set(value) = prefs.edit().putString(SKIN, value.name).apply()
+
     /** Whether the toolbar sits flush along the top edge rather than floating. */
     var docked: Boolean
         get() = prefs.getBoolean(DOCKED, false)
@@ -72,6 +78,7 @@ class PenStore(context: Context) {
     companion object {
         private const val KEY = "tools"
         private const val DOCKED = "docked"
+        private const val SKIN = "skin"
 
         /** The thickness slider's range depends on what is being made thick. */
         fun widthRange(mode: EditMode): ClosedFloatingPointRange<Float> = when (mode) {
