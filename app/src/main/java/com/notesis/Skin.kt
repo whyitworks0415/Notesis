@@ -5,6 +5,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -177,3 +182,64 @@ fun skinBorder(): BorderStroke? {
     val rim = tokens.rim ?: return null
     return BorderStroke(tokens.rimWidth, rim)
 }
+
+/**
+ * A slider wearing the current skin. Material keeps the platform one; the glass
+ * skins swap the thumb for a lens - the same edge recipe as every other bar,
+ * just small and round - and let the track go translucent so the page reads
+ * through it the way it does through the bar the slider sits in.
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+fun SkinSlider(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    valueRange: ClosedFloatingPointRange<Float>,
+    modifier: Modifier = Modifier,
+) {
+    val skin = LocalSkin.current
+    if (skin == Skin.MATERIAL) {
+        Slider(value, onValueChange, modifier, valueRange = valueRange)
+        return
+    }
+    val scheme = MaterialTheme.colorScheme
+    Slider(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = modifier,
+        valueRange = valueRange,
+        colors = SliderDefaults.colors(
+            activeTrackColor = scheme.primary.copy(alpha = 0.55f),
+            inactiveTrackColor = scheme.onSurface.copy(alpha = 0.12f),
+        ),
+        thumb = {
+            SkinSurface(Modifier.size(SLIDER_THUMB), corner = SLIDER_THUMB / 2) {}
+        },
+    )
+}
+
+/**
+ * A switch wearing the current skin. Only the colours change: the track is the
+ * glass, the thumb stays solid, because a control that says on or off has to
+ * keep saying it against whatever is behind it.
+ */
+@Composable
+fun SkinSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    val skin = LocalSkin.current
+    if (skin == Skin.MATERIAL) {
+        Switch(checked, onCheckedChange)
+        return
+    }
+    val scheme = MaterialTheme.colorScheme
+    Switch(
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        colors = SwitchDefaults.colors(
+            checkedTrackColor = scheme.primary.copy(alpha = 0.55f),
+            uncheckedTrackColor = scheme.surface.copy(alpha = 0.45f),
+            uncheckedBorderColor = scheme.onSurface.copy(alpha = 0.28f),
+        ),
+    )
+}
+
+private val SLIDER_THUMB = 22.dp

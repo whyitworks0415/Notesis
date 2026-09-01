@@ -903,7 +903,7 @@ private fun PenDialog(
                 if (pen.tool == Tool.PEN) {
                     Spacer(Modifier.height(10.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Switch(checked = pressure, onCheckedChange = { pressure = it })
+                        SkinSwitch(checked = pressure, onCheckedChange = { pressure = it })
                         Spacer(Modifier.width(10.dp))
                         Column {
                             Text("필압", style = MaterialTheme.typography.bodyMedium)
@@ -920,7 +920,7 @@ private fun PenDialog(
                     "굵기 " + "%.1f".format(width),
                     style = MaterialTheme.typography.bodySmall,
                 )
-                Slider(
+                SkinSlider(
                     value = width.coerceIn(PenStore.widthRange(mode)),
                     onValueChange = { width = it },
                     valueRange = PenStore.widthRange(mode),
@@ -2594,7 +2594,7 @@ private fun Toolbar(
                 // one of them is always the wrong one to reach for.
                 if (mode != EditMode.LASSO && mode != EditMode.IMAGE) {
                     val range = PenStore.widthRange(mode)
-                    Slider(
+                    SkinSlider(
                         value = pen.width.coerceIn(range),
                         onValueChange = onWidth,
                         valueRange = range,
