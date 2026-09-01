@@ -98,6 +98,12 @@ class Page(
     /** Stroke count from the last save, for pages not loaded this session. */
     var savedStrokeCount: Int = 0
 
+    /**
+     * How many of this page's strokes the file already holds. Distinct from
+     * [savedStrokeCount], which describes a page that has never been read in.
+     */
+    var savedOnDisk: Int = 0
+
     companion object {
         // A4 at 150dpi. Any consistent unit works; this one makes an imported
         // PDF and a blank page land at comparable sizes.
@@ -360,7 +366,8 @@ class NoteStore(context: Context) {
         for ((index, page) in document.pages.withIndex()) {
             // A page never loaded cannot have changed, and its file must stay.
             if (!page.loaded || !page.dirty) continue
-            writeStrokes(File(dir, "${page.id}.bin"), page.strokes)
+            appendOrWriteStrokes(File(dir, "${page.id}.bin"), page.strokes, page.savedOnDisk)
+            page.savedOnDisk = page.strokes.size
             writeStrokes(File(dir, "${page.id}.mask"), page.masks.map { it.stroke })
             page.dirty = false
             if (index == 0) firstPageChanged = true
@@ -492,6 +499,157 @@ class NoteStore(context: Context) {
      * Draws the first page - its PDF background and its ink - into a small PNG.
      * Runs off the UI thread: it opens the PDF and builds stroke geometry.
      */
+    // ---- backup and export --------------------------------------------------
+
+    /**
+     * One note, or every note, written into a zip. This is the whole of the
+     * note's storage - metadata, page strokes, masking, pictures, thumbnails -
+     * so restoring it needs nothing this app does not already know how to read.
+     */
+    fun exportArchive(ids: List<String>, out: java.io.OutputStream): Boolean = runCatching {
+        java.util.zip.ZipOutputStream(out.buffered()).use { zip ->
+            zip.putNextEntry(java.util.zip.ZipEntry(ARCHIVE_MARK))
+            zip.write(
+                JSONObject()
+                    .put("version", ARCHIVE_VERSION)
+                    .put("exported", System.currentTimeMillis())
+                    .put("notes", JSONArray(ids))
+                    .toString()
+                    .toByteArray(),
+            )
+            zip.closeEntry()
+            for (id in ids) {
+                val dir = File(root, id)
+                if (!dir.isDirectory) continue
+                dir.walkTopDown().filter { it.isFile }.forEach { file ->
+                    val name = "$id/" + file.relativeTo(dir).invariantSeparatorsPath
+                    zip.putNextEntry(java.util.zip.ZipEntry(name))
+                    file.inputStream().use { it.copyTo(zip) }
+                    zip.closeEntry()
+                }
+            }
+        }
+        true
+    }.getOrDefault(false)
+
+    /**
+     * Reads an archive back. Every note comes in under a fresh id, so importing
+     * a backup on top of a live library adds to it rather than overwriting work
+     * that happens to share an id. Returns how many notes arrived.
+     */
+    fun importArchive(input: java.io.InputStream): Int = runCatching {
+        val remapped = mutableMapOf<String, String>()
+        var seen = false
+        java.util.zip.ZipInputStream(input.buffered()).use { zip ->
+            while (true) {
+                val entry = zip.nextEntry ?: break
+                if (entry.isDirectory) continue
+                if (entry.name == ARCHIVE_MARK) {
+                    seen = true
+                    zip.closeEntry()
+                    continue
+                }
+                val cut = entry.name.indexOf('/')
+                if (cut <= 0) {
+                    zip.closeEntry()
+                    continue
+                }
+                val original = entry.name.substring(0, cut)
+                val rest = entry.name.substring(cut + 1)
+                // Names inside an archive are not to be trusted with the file
+                // system: an entry that climbs out of the root is dropped.
+                if (rest.contains("..") || rest.startsWith("/")) {
+                    zip.closeEntry()
+                    continue
+                }
+                val id = remapped.getOrPut(original) { UUID.randomUUID().toString() }
+                val target = File(root, "$id/$rest")
+                target.parentFile?.mkdirs()
+                target.outputStream().use { zip.copyTo(it) }
+                zip.closeEntry()
+            }
+        }
+        if (!seen) 0 else remapped.size
+    }.getOrDefault(0)
+
+    /**
+     * The note as a PDF, with everything on it: the imported page underneath,
+     * pictures, ink, and the tape over the top. Rendered at [PDF_EXPORT_SCALE]
+     * so the ink is resolved rather than pixelated at page size.
+     */
+    fun exportPdf(id: String, out: java.io.OutputStream): Boolean = runCatching {
+        val document = load(id)
+        val pdf = android.graphics.pdf.PdfDocument()
+        val source = PdfSource.open(pdfFile(id))
+        val renderer = CanvasStrokeRenderer.create()
+        try {
+            for ((index, page) in document.pages.withIndex()) {
+                if (page.width <= 0f || page.height <= 0f) continue
+                val info = android.graphics.pdf.PdfDocument.PageInfo.Builder(
+                    page.width.toInt().coerceAtLeast(1),
+                    page.height.toInt().coerceAtLeast(1),
+                    index + 1,
+                ).create()
+                val out1 = pdf.startPage(info)
+                drawWholePage(id, page, out1.canvas, source, renderer, 1f)
+                pdf.finishPage(out1)
+            }
+            pdf.writeTo(out)
+        } finally {
+            source?.close()
+            pdf.close()
+        }
+        true
+    }.getOrDefault(false)
+
+    /**
+     * One page onto one canvas, in the order it is seen: paper, imported page,
+     * pictures, ink, tape. Shared by the PDF export and the thumbnail, because
+     * a thumbnail that disagrees with the export is a bug waiting to be filed.
+     */
+    private fun drawWholePage(
+        id: String,
+        page: Page,
+        canvas: Canvas,
+        source: PdfSource?,
+        renderer: CanvasStrokeRenderer,
+        scale: Float,
+    ) {
+        canvas.drawColor(Color.WHITE)
+        val width = (page.width * scale).toInt().coerceAtLeast(1)
+        val height = (page.height * scale).toInt().coerceAtLeast(1)
+        if (page.background == PageBackground.PDF && page.pdfPageIndex >= 0) {
+            source?.renderNow(page.pdfPageIndex, width)?.let {
+                canvas.drawBitmap(it, null, android.graphics.Rect(0, 0, width, height), null)
+            }
+        }
+        val transform = Matrix().apply { setScale(scale, scale) }
+        for (image in page.images) {
+            val bitmap = runCatching {
+                BitmapFactory.decodeFile(imageFile(id, image.id).path)
+            }.getOrNull() ?: continue
+            val target = android.graphics.RectF(
+                image.x * scale,
+                image.y * scale,
+                (image.x + image.width) * scale,
+                (image.y + image.height) * scale,
+            )
+            canvas.drawBitmap(bitmap, null, target, null)
+        }
+        val strokes = if (page.loaded) {
+            page.strokes
+        } else {
+            readStrokes(File(root, "$id/pages/${page.id}.bin"))
+        }
+        val masks = if (page.loaded) {
+            page.masks.map { it.stroke }
+        } else {
+            readStrokes(File(root, "$id/pages/${page.id}.mask"))
+        }
+        for (stroke in strokes) renderer.draw(canvas, stroke, transform)
+        for (stroke in masks) renderer.draw(canvas, stroke, transform)
+    }
+
     private fun writeAutoThumbnail(id: String, document: Document) {
         val page = document.pages.firstOrNull() ?: return
         if (page.width <= 0f || page.height <= 0f) return
@@ -575,6 +733,53 @@ class NoteStore(context: Context) {
         }.getOrNull()
     }
 
+    /**
+     * Writing a page used to mean writing all of it, so adding one stroke to a
+     * dense page rewrote every stroke on it, once per autosave. Ink is almost
+     * always appended, so when the file already holds a prefix of what is in
+     * memory the new strokes are added on the end and only the count at the
+     * head is rewritten. Anything else - an erase, an undo, a move - falls back
+     * to the full rewrite.
+     *
+     * The count goes last on purpose: a crash midway leaves a file whose header
+     * still claims the old number, and the reader takes exactly that many.
+     */
+    private fun appendOrWriteStrokes(file: File, strokes: List<Stroke>, onDisk: Int) {
+        if (!canAppendStrokes(onDisk, strokes.size, file.isFile)) {
+            writeStrokes(file, strokes)
+            return
+        }
+        val appended = runCatching {
+            java.io.RandomAccessFile(file, "rw").use { raw ->
+                if (raw.length() < HEADER_BYTES) return@use false
+                raw.seek(0)
+                if (raw.readInt() != MAGIC || raw.readInt() != VERSION) return@use false
+                if (raw.readInt() != onDisk) return@use false
+                raw.seek(raw.length())
+                DataOutputStream(java.io.BufferedOutputStream(FileOutputStreamAt(raw))).use { out ->
+                    for (i in onDisk until strokes.size) writeStroke(out, strokes[i])
+                }
+                raw.seek(COUNT_OFFSET)
+                raw.writeInt(strokes.size)
+                true
+            }
+        }.getOrDefault(false)
+        if (!appended) writeStrokes(file, strokes)
+    }
+
+    private fun writeStroke(out: DataOutputStream, stroke: Stroke) {
+        val brush = stroke.brush
+        out.writeInt(Tool.ofBrushFamily(brush.family).ordinal)
+        out.writeInt(brush.colorIntArgb)
+        out.writeFloat(brush.size)
+        out.writeFloat(brush.epsilon)
+        val inputs = ByteArrayOutputStream().also {
+            StrokeInputBatchSerialization.encode(stroke.inputs, it)
+        }.toByteArray()
+        out.writeInt(inputs.size)
+        out.write(inputs)
+    }
+
     private fun writeStrokes(file: File, strokes: List<Stroke>) {
         // Write beside the real file and rename over it, so a crash mid-write
         // leaves the previous save intact instead of a truncated page.
@@ -583,18 +788,7 @@ class NoteStore(context: Context) {
             out.writeInt(MAGIC)
             out.writeInt(VERSION)
             out.writeInt(strokes.size)
-            for (stroke in strokes) {
-                val brush = stroke.brush
-                out.writeInt(Tool.ofBrushFamily(brush.family).ordinal)
-                out.writeInt(brush.colorIntArgb)
-                out.writeFloat(brush.size)
-                out.writeFloat(brush.epsilon)
-                val inputs = ByteArrayOutputStream().also {
-                    StrokeInputBatchSerialization.encode(stroke.inputs, it)
-                }.toByteArray()
-                out.writeInt(inputs.size)
-                out.write(inputs)
-            }
+            for (stroke in strokes) writeStroke(out, stroke)
         }
         tmp.renameTo(file)
     }
@@ -634,11 +828,35 @@ class NoteStore(context: Context) {
 
     companion object {
         const val MAGIC = 0x4E545353 // "NTSS"
+        /** magic, version, count. */
+        const val HEADER_BYTES = 12L
+        const val COUNT_OFFSET = 8L
         const val CUSTOM_THUMB = "thumb.png"
         const val AUTO_THUMB = "auto.png"
         const val THUMB_WIDTH = 480
         const val MAX_IMAGE_PX = 2048
+        const val ARCHIVE_MARK = "notesis.json"
+        const val ARCHIVE_VERSION = 1
         const val THUMB_INTERVAL_MS = 20_000L
         const val VERSION = 1
     }
 }
+
+/**
+ * Writes into an already-positioned RandomAccessFile. Only so the same stroke
+ * writer can serve both the full rewrite and the append.
+ */
+private class FileOutputStreamAt(
+    private val raw: java.io.RandomAccessFile,
+) : java.io.OutputStream() {
+    override fun write(b: Int) = raw.write(b)
+    override fun write(b: ByteArray, off: Int, len: Int) = raw.write(b, off, len)
+}
+
+/**
+ * Whether a page's file can be extended rather than rewritten. Getting this
+ * wrong writes strokes twice or drops them, so it is a plain function with a
+ * test rather than a condition buried in the writer.
+ */
+internal fun canAppendStrokes(onDisk: Int, total: Int, fileExists: Boolean): Boolean =
+    fileExists && onDisk > 0 && total > onDisk

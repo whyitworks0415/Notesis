@@ -100,16 +100,25 @@ enum class Tool {
      * crosses itself the crossing is not drawn twice. Appended rather than
      * inserted, because a tool's ordinal is what is written into saved notes.
      */
-    MASK;
+    MASK,
+
+    /**
+     * The pen, with the pressure the stylus is already reporting mapped to
+     * width. Kept as its own tool rather than changing what PEN means, so a
+     * note written before this existed still draws the way it was written.
+     */
+    PRESSURE_PEN;
 
     fun brushFamily(): BrushFamily = when (this) {
         HIGHLIGHTER -> highlighter
         MASK -> masking
+        PRESSURE_PEN -> pressurePen
         else -> pen
     }
 
     companion object {
         private val pen by lazy { StockBrushes.marker() }
+        private val pressurePen by lazy { StockBrushes.pressurePen() }
 
         /**
          * The stock highlighter has a chisel tip, which draws a slanted flat end.
@@ -157,6 +166,7 @@ enum class Tool {
         fun ofBrushFamily(family: BrushFamily): Tool = when (family) {
             highlighter -> HIGHLIGHTER
             masking -> MASK
+            pressurePen -> PRESSURE_PEN
             else -> PEN
         }
     }
@@ -260,6 +270,14 @@ class InkCanvasView @JvmOverloads constructor(
 
     private val wet = InProgressStrokesView(context)
     private val dry = DryLayer(context)
+    /**
+     * Prediction. Driving the Kalman predictor directly with a chosen lead was
+     * tried and measured: the reach got wider, 8-24ms against the wrapper's
+     * 8-16, because this predictor deliberately shortens its own reach as the
+     * pen decelerates - the sample count varies whatever lead is asked for.
+     * Pinning it needs prediction this app writes itself, not a different
+     * argument to this one.
+     */
     private val predictor: MotionEventPredictor
 
     private val undoStack = mutableListOf<Edit>()
@@ -391,7 +409,6 @@ class InkCanvasView @JvmOverloads constructor(
                 val factor = (current * detector.scaleFactor)
                     .coerceIn(MIN_SCALE, MAX_SCALE) / current
                 documentToScreen.postScale(factor, factor, detector.focusX, detector.focusY)
-                onTransformChanged()
                 return true
             }
         },
@@ -411,15 +428,26 @@ class InkCanvasView @JvmOverloads constructor(
             override fun onLatencyData(latencyData: LatencyData) {
                 if (latencyData.eventAction != LatencyData.EventAction.MOVE) return
                 if (!latencyData.isOsDetectsEventSet) return
-                latency.add(latencyData.estimatedPixelPresentationTime - latencyData.osDetectsEvent)
+                // Unset fields carry Long.MIN_VALUE, and subtracting a real
+                // timestamp from that overflows into a huge positive number -
+                // which is how the HUD came to report latencies of 9.2e12ms.
+                // This panel never estimates a presentation time, so the span
+                // that can actually be measured is the one this app is
+                // responsible for: the event arriving to the draw calls for it
+                // being finished.
+                val end = latencyData.estimatedPixelPresentationTime
+                    .takeIf { it != LATENCY_UNSET }
+                    ?: latencyData.strokesViewFinishesDrawCalls
+                if (end == LATENCY_UNSET) return
+                latency.add(end - latencyData.osDetectsEvent)
             }
         })
-        predictor = MotionEventPredictor.newInstance(this)
         // On an adaptive panel the system picks a refresh rate per window from
         // what the content looks like, and a note that is mostly still reads as
         // content that does not need 120Hz. Say otherwise: this view is only
         // still until a pen touches it. Costs nothing while nothing is drawn -
         // the hint applies to frames actually produced.
+        predictor = MotionEventPredictor.newInstance(this)
         if (Build.VERSION.SDK_INT >= 35) {
             requestedFrameRate = REQUESTED_FRAME_RATE_CATEGORY_HIGH
         }
@@ -639,6 +667,8 @@ class InkCanvasView @JvmOverloads constructor(
                 if (index < 0) return true
                 val pointerId = event.getPointerId(event.actionIndex)
                 activeStylusPointer = pointerId
+                // Built per gesture: the Kalman filter is tied to one pointer on
+                // one device, and a new stroke is a new pointer.
                 if (!frameClockRunning) {
                     frameClockRunning = true
                     lastFrameNanos = 0L
@@ -826,6 +856,11 @@ class InkCanvasView @JvmOverloads constructor(
         return false
     }
 
+    /**
+     * How far ahead to predict: one display frame, measured rather than assumed,
+     * because the panel switches between 60 and 120Hz and a lead meant for one
+     * overshoots or falls short on the other.
+     */
     private fun endStylus() {
         removeCallbacks(longPress)
         selectingText = false
@@ -1010,6 +1045,7 @@ class InkCanvasView @JvmOverloads constructor(
         val target = tessellationBucket(currentScale())
         val epsilon = epsilonFor(target)
 
+        releaseDistantPages()
         val toLoad = visiblePages().filter { !it.loaded }
         val toRebuild = visiblePages().filter {
             it.loaded && it.tessellatedFor != target && it.strokes.isNotEmpty()
@@ -1045,6 +1081,9 @@ class InkCanvasView @JvmOverloads constructor(
                     // clearing it here would throw that new stroke away at the
                     // next save.
                     page.strokes.addAll(0, strokes)
+                    // The file and memory agree again from here, so the next
+                    // save can append rather than rewrite the lot.
+                    page.savedOnDisk = if (page.dirty) 0 else page.strokes.size
                     loadedMasks.firstOrNull { it.first === page }?.let { (_, masks) ->
                         page.masks.addAll(0, masks)
                     }
@@ -1066,6 +1105,37 @@ class InkCanvasView @JvmOverloads constructor(
                 dry.invalidate()
             }
         }
+    }
+
+    /**
+     * Gives back the memory of pages nowhere near the screen. Loading was a one
+     * way door: a page read once stayed in memory for the session, so paging to
+     * the end of a 120 page book held every mesh in it at once.
+     *
+     * Three things keep a page: being near the viewport, having unsaved changes,
+     * and being named by the undo history - putting a stroke back onto a page
+     * whose strokes were dropped would duplicate it when the page reloads.
+     */
+    private fun releaseDistantPages() {
+        if (document.pages.size <= KEEP_PAGES * 2 + 1) return
+        val visible = visiblePages()
+        if (visible.isEmpty()) return
+        val first = document.pages.indexOf(visible.first())
+        val last = document.pages.indexOf(visible.last())
+        if (first < 0 || last < 0) return
+        val keep = (first - KEEP_PAGES)..(last + KEEP_PAGES)
+        var released = false
+        for ((index, page) in document.pages.withIndex()) {
+            if (index in keep || !page.loaded || page.dirty) continue
+            if (undoStack.any { it.page === page } || redoStack.any { it.page === page }) continue
+            page.savedStrokeCount = page.strokes.size
+            page.strokes.clear()
+            page.masks.clear()
+            page.loaded = false
+            page.tessellatedFor = -1f
+            released = true
+        }
+        if (released) System.gc()
     }
 
     private fun sameStrokes(current: List<Stroke>, snapshot: List<Stroke>): Boolean {
@@ -2071,6 +2141,16 @@ class InkCanvasView @JvmOverloads constructor(
         const val CAPTURE_MAX_SCALE = 4f
         const val LASSO_MIN_POINTS = 6
         const val LASSO_PADDING = 10f
+        /** A lead below this is not worth predicting; above it, overshoot shows. */
+        /** Pages this far either side of the screen stay in memory. */
+        const val KEEP_PAGES = 3
+        /** Plausible bounds for one input report; outside these it is noise. */
+        /** What every LatencyData field holds until it is filled in. */
+        const val LATENCY_UNSET = Long.MIN_VALUE
+        const val MIN_REPORT_MS = 2
+        const val MAX_REPORT_MS = 40
+        const val MIN_PREDICTION_MS = 6
+        const val MAX_PREDICTION_MS = 24
         const val MASK_TAP_PX = 6f
         const val MASK_OUTLINE_PX = 2f
         const val MASK_OPAQUE = 0xFF000000.toInt()

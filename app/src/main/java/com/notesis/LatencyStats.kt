@@ -45,6 +45,13 @@ class LatencyStats(private val capacity: Int = 512) {
         if (deltaNanos > 0) frames.add(deltaNanos / 1e6)
     }
 
+    /**
+     * The measured display frame period, which is how far ahead prediction has
+     * to reach: exactly one frame, no more. Null until a frame has been timed.
+     */
+    @Synchronized
+    fun framePeriodMs(): Double? = if (frames.isEmpty()) null else frames.median()
+
     @Synchronized
     fun addPredictionLead(millis: Double) {
         leads.add(millis)
@@ -52,11 +59,6 @@ class LatencyStats(private val capacity: Int = 512) {
 
     @Synchronized
     fun render(strokeCount: Int): String {
-        if (count == 0) return "펜으로 그리면 측정됩니다"
-        val sorted = nanos.copyOf(count).apply { sort() }
-        val median = sorted[count / 2] / 1e6
-        val p95 = sorted[(count * 95 / 100).coerceAtMost(count - 1)] / 1e6
-        val worst = sorted[count - 1] / 1e6
         // The prediction line is the one to read when the wet tip looks
         // unsteady: a lead that swings is a tip that swings with it.
         val prediction = if (leads.isEmpty()) {
@@ -69,10 +71,24 @@ class LatencyStats(private val capacity: Int = 512) {
         } else {
             "프레임 %.1fms (%.0fHz)".format(frames.median(), 1000.0 / frames.median())
         }
-        return ("지연 median %.1fms  p95 %.1fms  max %.1fms" +
-            "\n입력 %.0fHz   획 %d개   n=%d" +
-            "\n%s   %s")
-            .format(median, p95, worst, lastRateHz, strokeCount, count, frame, prediction)
+        // Motion-to-photon is only reported when the platform estimates a
+        // presentation time, and this panel never does. Saying so beats
+        // printing a number that was never measured - which is what the HUD
+        // did for weeks, in units of 9.2e12 ms.
+        val motion = if (count == 0) {
+            "지연 미보고"
+        } else {
+            val sorted = nanos.copyOf(count).apply { sort() }
+            "지연 median %.1fms  p95 %.1fms".format(
+                sorted[count / 2] / 1e6,
+                sorted[(count * 95 / 100).coerceAtMost(count - 1)] / 1e6,
+            )
+        }
+        return listOf(
+            motion,
+            "입력 %.0fHz   획 %d개".format(lastRateHz, strokeCount),
+            "$frame   $prediction",
+        ).joinToString("\n")
     }
 }
 

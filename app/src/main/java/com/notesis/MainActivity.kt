@@ -68,6 +68,7 @@ import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ContentCopy
@@ -92,8 +93,10 @@ import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.Brush
+import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.ZoomOutMap
 import androidx.compose.material.icons.outlined.Edit
@@ -118,9 +121,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -256,6 +261,10 @@ private fun NoteListScreen(store: NoteStore, onOpen: (NoteMeta) -> Unit) {
     var pendingDelete by remember { mutableStateOf<NoteMeta?>(null) }
     var naming by remember { mutableStateOf(false) }
     var importing by remember { mutableStateOf(false) }
+    // Which note is being written out, and whether as a PDF rather than a backup.
+    var exporting by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
+    var busy by remember { mutableStateOf<String?>(null) }
+    var report by remember { mutableStateOf<String?>(null) }
     var importFailed by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<NoteMeta>?>(null) }
@@ -291,6 +300,79 @@ private fun NoteListScreen(store: NoteStore, onOpen: (NoteMeta) -> Unit) {
         results = withContext(Dispatchers.IO) { store.search(query) }
     }
     val shown = results ?: notes
+
+    // The user picks where it goes, so a backup survives the app being removed.
+    val saveArchive = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip"),
+    ) { uri: Uri? ->
+        val target = exporting?.first
+        exporting = null
+        if (uri == null || target == null) return@rememberLauncherForActivityResult
+        busy = "내보내는 중"
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                context.contentResolver.openOutputStream(uri)?.use {
+                    store.exportArchive(listOf(target), it)
+                } ?: false
+            }
+            busy = null
+            report = if (ok) "백업 파일을 저장했습니다" else "내보내지 못했습니다"
+        }
+    }
+
+    val saveAllArchive = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip"),
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        busy = "전체 백업 중"
+        scope.launch {
+            val ids = withContext(Dispatchers.IO) { store.list().map { it.id } }
+            val ok = withContext(Dispatchers.IO) {
+                context.contentResolver.openOutputStream(uri)?.use {
+                    store.exportArchive(ids, it)
+                } ?: false
+            }
+            busy = null
+            report = if (ok) "노트 ${ids.size}개를 백업했습니다" else "내보내지 못했습니다"
+        }
+    }
+
+    val savePdf = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/pdf"),
+    ) { uri: Uri? ->
+        val target = exporting?.first
+        exporting = null
+        if (uri == null || target == null) return@rememberLauncherForActivityResult
+        busy = "PDF로 그리는 중"
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                context.contentResolver.openOutputStream(uri)?.use {
+                    store.exportPdf(target, it)
+                } ?: false
+            }
+            busy = null
+            report = if (ok) "PDF를 저장했습니다" else "내보내지 못했습니다"
+        }
+    }
+
+    val openArchive = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        busy = "복원하는 중"
+        scope.launch {
+            val added = withContext(Dispatchers.IO) {
+                context.contentResolver.openInputStream(uri)?.use { store.importArchive(it) } ?: 0
+            }
+            busy = null
+            revision++
+            report = if (added > 0) {
+                "노트 ${added}개를 복원했습니다"
+            } else {
+                "Notesis 백업 파일이 아닙니다"
+            }
+        }
+    }
 
     val pickPdf = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
@@ -332,6 +414,10 @@ private fun NoteListScreen(store: NoteStore, onOpen: (NoteMeta) -> Unit) {
         },
         floatingActionButton = {
             Column(horizontalAlignment = Alignment.End) {
+                BackupButton(
+                    onBackupAll = { saveAllArchive.launch("Notesis-백업") },
+                    onRestore = { openArchive.launch(arrayOf("*/*")) },
+                )
                 FloatingActionButton(
                     onClick = { pickPdf.launch(arrayOf("application/pdf")) },
                     modifier = Modifier.padding(bottom = 12.dp),
@@ -380,10 +466,41 @@ private fun NoteListScreen(store: NoteStore, onOpen: (NoteMeta) -> Unit) {
                             store.clearThumbnail(note.id)
                             revision++
                         },
+                        onExport = {
+                            exporting = note.id to false
+                            saveArchive.launch(safeFileName(note.title))
+                        },
+                        onExportPdf = {
+                            exporting = note.id to true
+                            savePdf.launch(safeFileName(note.title) + ".pdf")
+                        },
                     )
                 }
             }
         }
+    }
+
+    busy?.let { label ->
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text(label) },
+            text = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(14.dp))
+                    Text("잠시만요")
+                }
+            },
+            confirmButton = {},
+        )
+    }
+
+    report?.let { message ->
+        AlertDialog(
+            onDismissRequest = { report = null },
+            title = { Text(message) },
+            confirmButton = { TextButton(onClick = { report = null }) { Text("확인") } },
+        )
     }
 
     if (importing) {
@@ -454,6 +571,8 @@ private fun NoteCard(
     onDelete: () -> Unit,
     onPickThumbnail: () -> Unit,
     onClearThumbnail: () -> Unit,
+    onExport: () -> Unit,
+    onExportPdf: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     // Keyed on the file's timestamp, so replacing the picture redraws the card
@@ -539,6 +658,28 @@ private fun NoteCard(
                                 },
                             )
                         }
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            text = { Text("백업 파일로 내보내기") },
+                            leadingIcon = {
+                                Icon(Icons.Default.Archive, contentDescription = null)
+                            },
+                            onClick = {
+                                menuOpen = false
+                                onExport()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("PDF로 내보내기") },
+                            leadingIcon = {
+                                Icon(Icons.Default.PictureAsPdf, contentDescription = null)
+                            },
+                            onClick = {
+                                menuOpen = false
+                                onExportPdf()
+                            },
+                        )
+                        HorizontalDivider()
                         DropdownMenuItem(
                             text = { Text("삭제") },
                             leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) },
@@ -552,6 +693,41 @@ private fun NoteCard(
             }
         }
     }
+}
+
+/** Whole-library backup and restore, kept together because they are one job. */
+@Composable
+private fun BackupButton(onBackupAll: () -> Unit, onRestore: () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        SmallFloatingActionButton(onClick = { open = true }) {
+            Icon(Icons.Default.Archive, contentDescription = "백업")
+        }
+        DropdownMenu(open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(
+                text = { Text("전체 백업") },
+                leadingIcon = { Icon(Icons.Default.Archive, contentDescription = null) },
+                onClick = {
+                    open = false
+                    onBackupAll()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("백업에서 복원") },
+                leadingIcon = { Icon(Icons.Default.Restore, contentDescription = null) },
+                onClick = {
+                    open = false
+                    onRestore()
+                },
+            )
+        }
+    }
+}
+
+/** A title is not a filename: strip what a file system will not take. */
+private fun safeFileName(title: String): String {
+    val cleaned = title.trim().replace(Regex("[\\\\/:*?\"<>|]"), "_")
+    return cleaned.ifBlank { "note" }.take(60)
 }
 
 /**
@@ -633,6 +809,7 @@ private fun PenDialog(
         mutableFloatStateOf(android.graphics.Color.alpha(start.colorArgb) / 255f)
     }
     var width by remember(pen) { mutableFloatStateOf(start.width) }
+    var pressure by remember(pen) { mutableStateOf(start.pressure) }
 
     val picked = Color.hsv(hue, saturation, value, alpha)
     val argb = picked.toArgb()
@@ -667,6 +844,21 @@ private fun PenDialog(
                     color = MaterialTheme.colorScheme.outline,
                 )
 
+                if (pen.tool == Tool.PEN) {
+                    Spacer(Modifier.height(10.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Switch(checked = pressure, onCheckedChange = { pressure = it })
+                        Spacer(Modifier.width(10.dp))
+                        Column {
+                            Text("필압", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "세게 누를수록 굵게",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.outline,
+                            )
+                        }
+                    }
+                }
                 Spacer(Modifier.height(10.dp))
                 Text(
                     "굵기 " + "%.1f".format(width),
@@ -697,7 +889,7 @@ private fun PenDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(PenPreset(pen.tool, argb, width)) }) {
+            TextButton(onClick = { onConfirm(PenPreset(pen.tool, argb, width, pressure)) }) {
                 Text("저장")
             }
         },
@@ -1244,7 +1436,7 @@ private fun NoteScreen(
     var lassoCount by remember { mutableIntStateOf(0) }
     val pen = settings[mode] ?: PenStore.DEFAULTS.getValue(EditMode.PEN)
     val eraserWidth = (settings[EditMode.ERASE] ?: PenStore.DEFAULTS.getValue(EditMode.ERASE)).width
-    val tool = if (mode == EditMode.ERASE) Tool.ERASER else pen.tool
+    val tool = if (mode == EditMode.ERASE) Tool.ERASER else pen.drawingTool()
 
     // Dragging the width slider changes the tool on every frame; settings are
     // written once the dragging stops rather than once per frame.

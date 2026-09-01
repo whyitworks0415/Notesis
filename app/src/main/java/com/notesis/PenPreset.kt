@@ -12,7 +12,13 @@ data class PenPreset(
     val tool: Tool,
     val colorArgb: Int,
     val width: Float,
-)
+    /** Whether the stylus's pressure reaches the width. Pens only. */
+    val pressure: Boolean = false,
+) {
+    /** The tool as it actually draws, which is where pressure is decided. */
+    fun drawingTool(): Tool =
+        if (pressure && tool == Tool.PEN) Tool.PRESSURE_PEN else tool
+}
 
 /**
  * Each tool's own settings, kept in preferences rather than in a note - how a
@@ -40,6 +46,7 @@ class PenStore(context: Context) {
                     tool = fallback.tool,
                     colorArgb = item.optInt("color", fallback.colorArgb),
                     width = item.optDouble("width", fallback.width.toDouble()).toFloat(),
+                    pressure = item.optBoolean("pressure", fallback.pressure),
                 )
             }.toMap()
         }.getOrNull().orEmpty()
@@ -55,7 +62,8 @@ class PenStore(context: Context) {
                 mode.name,
                 JSONObject()
                     .put("color", pen.colorArgb)
-                    .put("width", pen.width.toDouble()),
+                    .put("width", pen.width.toDouble())
+                    .put("pressure", pen.pressure),
             )
         }
         prefs.edit().putString(KEY, json.toString()).apply()
@@ -74,7 +82,9 @@ class PenStore(context: Context) {
 
         /** Highlighters come pre-faded; that alpha is the tool's own, not a rule. */
         val DEFAULTS: Map<EditMode, PenPreset> = mapOf(
-            EditMode.PEN to PenPreset(Tool.PEN, 0xFF000000.toInt(), 5f),
+            // Pressure on by default: the stylus has been reporting it all
+             // along, and a pen that ignores it reads as a marker.
+            EditMode.PEN to PenPreset(Tool.PEN, 0xFF000000.toInt(), 5f, pressure = true),
             EditMode.HIGHLIGHTER to PenPreset(Tool.HIGHLIGHTER, 0x66F9A825, 20f),
             EditMode.MASK to PenPreset(Tool.MASK, PageMask.DEFAULT_MASK_COLOR, 20f),
             EditMode.SHAPE to PenPreset(Tool.PEN, 0xFF1976D2.toInt(), 5f),
