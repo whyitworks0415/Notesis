@@ -48,6 +48,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.graphics.layer.GraphicsLayer
@@ -66,8 +67,7 @@ import androidx.compose.ui.unit.dp
  */
 enum class Skin(val label: String, val blurb: String) {
     MATERIAL("머티리얼", "안드로이드 기본. 불투명하고 또렷합니다."),
-    LIQUID_GLASS("리퀴드 글래스", "얇은 렌즈. 대각선 양 끝이 빛을 물고 있습니다."),
-    GLASSMORPHISM("글래스모피즘", "서리 낀 유리. 고르게 반투명합니다."),
+    GLASSMORPHISM("글래스모피즘", "서리 낀 유리. 뒤가 흐려지고 고르게 반투명합니다."),
 }
 
 /**
@@ -116,69 +116,24 @@ fun Skin.tokens(): SkinTokens = when (this) {
         tonalElevation = 3.dp,
     )
 
-    // Measured off the community Liquid Glass file, whose artboard is drawn at
-    // 2.292x iOS points, so every value in it divides out to a whole one: a 1pt
-    // bevel, a 1pt specular blurred half a point, inner glows at 3 and 16pt, and
-    // an outer shadow of only 8pt.
-    //
-    // Two things guesswork gets wrong here. The specular is not top-to-bottom -
-    // it lights the top-left and the bottom-right, light entering one corner of
-    // a lens and leaving the other. And the shadow is small: the lift comes from
-    // the glow against the inside of the edge, not from a soft drop underneath.
-    Skin.LIQUID_GLASS -> tunedGlass(LocalSkinSettings.current)
-
-    Skin.GLASSMORPHISM -> SkinTokens(
-        corner = 22.dp,
-        fillAlpha = 0.62f,
-        rim = Brush.linearGradient(
-            listOf(
-                Color.White.copy(alpha = 0.55f),
-                Color.White.copy(alpha = 0.18f),
-            ),
-        ),
-        rimWidth = 1.dp,
-        bevel = null,
-        glows = emptyList(),
-        shadow = 10.dp,
-        tonalElevation = 0.dp,
-    )
+    // Frosted glass, and the numbers the settings screen owns. No lens: one
+    // even rim, one soft shadow, and a body that is mostly what is behind it.
+    Skin.GLASSMORPHISM -> LocalSkinSettings.current.let { look ->
+        SkinTokens(
+            corner = look.corner.dp,
+            fillAlpha = 1f,
+            fill = Color(look.tint),
+            // Even, not diagonal. A gradient that lights two corners is a lens
+            // catching the light; frost scatters it the same way all round.
+            rim = SolidColor(Color(look.border)),
+            rimWidth = 1.dp,
+            bevel = null,
+            glows = emptyList(),
+            shadow = 12.dp,
+            tonalElevation = 0.dp,
+        )
+    }
 }
-
-/**
- * The liquid glass panel, with the numbers the settings screen owns. The
- * defaults are the ones measured off the reference file: the specular lights
- * the top-left and the bottom-right, the bevel sits one line inside it, and the
- * outer shadow is small because the lift comes from the glow at the edge.
- */
-private fun tunedGlass(settings: SkinSettings) = SkinTokens(
-    corner = settings.corner.dp,
-    fillAlpha = 1f,
-    fill = Color(settings.tint),
-    rim = Brush.linearGradient(
-        0f to Color(settings.border),
-        0.16f to Color(settings.border).copy(alpha = 0.14f),
-        0.5f to Color.Transparent,
-        0.84f to Color(settings.border).copy(alpha = 0.14f),
-        1f to Color(settings.border).copy(alpha = 0.88f),
-        start = Offset.Zero,
-        end = Offset.Infinite,
-    ),
-    rimWidth = 1.dp,
-    bevel = Brush.linearGradient(
-        0f to Color.Black.copy(alpha = 0.18f),
-        0.35f to Color.Transparent,
-        0.65f to Color.Transparent,
-        1f to Color.Black.copy(alpha = 0.12f),
-        start = Offset.Zero,
-        end = Offset.Infinite,
-    ),
-    glows = listOf(
-        16.dp to Color.White.copy(alpha = 0.26f),
-        3.dp to Color.White.copy(alpha = 0.50f),
-    ),
-    shadow = 8.dp,
-    tonalElevation = 0.dp,
-)
 
 /**
  * What the glass has to look through.
@@ -186,7 +141,7 @@ private fun tunedGlass(settings: SkinSettings) = SkinTokens(
  * One layer, recorded by whatever sits under the chrome, and every pane draws
  * it back translated to its own position. Recording is the whole page redrawn
  * once more per frame, which is why this is offered rather than assumed: it is
- * switched on by [SkinSettings.refraction] or [SkinSettings.blur] being above
+ * switched on by [SkinSettings.blur] or [SkinSettings.vibrancy] being above
  * zero, and a person who wants the frames back turns them down to nothing.
  */
 class Backdrop(val layer: GraphicsLayer?) {
@@ -242,7 +197,7 @@ fun SkinSurface(
         modifier
             .shadow(tokens.shadow, shape, clip = false)
             .clip(shape)
-            .refract(shape, radius)
+            .frost()
             .background(tokens.fill ?: MaterialTheme.colorScheme.surface.copy(alpha = tokens.fillAlpha))
             .glassEdge(tokens, shape),
     ) {
@@ -251,16 +206,16 @@ fun SkinSurface(
 }
 
 /**
- * Draws the recorded backdrop back under this pane, bent.
+ * Draws the recorded backdrop back under this pane, frosted.
  *
  * The layer holds the whole page as it was drawn a moment ago; this takes the
- * part of it that lies under this pane and pushes it outward near the rim, so
- * what shows through the glass is displaced rather than merely dimmed. Without
- * a backdrop - refraction and blur both off, or a pane with nothing recorded
- * beneath it - nothing is drawn and the glass stays as it was.
+ * part of it that lies under this pane and scatters it, so what shows through
+ * is softened rather than merely dimmed. Without a backdrop - frost turned off,
+ * or a pane with nothing recorded beneath it - nothing is drawn and the panel
+ * stays as it was.
  */
 @Composable
-private fun Modifier.refract(shape: Shape, corner: Dp): Modifier {
+private fun Modifier.frost(): Modifier {
     val backdrop = LocalBackdrop.current
     val layer = backdrop.layer ?: return this
     val settings = LocalSkinSettings.current
@@ -276,18 +231,7 @@ private fun Modifier.refract(shape: Shape, corner: Dp): Modifier {
         .onGloballyPositioned { here = it.positionInRoot() }
         .drawBehind {
             val at = here - backdrop.origin
-            pane.renderEffect = refractionEffect(
-                // Zero, because the shader now runs over this pane's own layer
-                // rather than the whole page: the translate below has already
-                // put the pane's top-left at the layer's origin.
-                originX = 0f,
-                originY = 0f,
-                widthPx = size.width,
-                heightPx = size.height,
-                radiusPx = corner.toPx(),
-                strengthPx = settings.refraction.dp.toPx(),
-                depthPx = settings.depth.dp.toPx(),
-                dispersion = settings.dispersion,
+            pane.renderEffect = frostEffect(
                 blurPx = settings.blur.dp.toPx(),
                 vibrancy = settings.vibrancy,
             )
@@ -509,6 +453,9 @@ fun skinShapes(skin: Skin): Shapes = if (skin == Skin.MATERIAL) {
     )
 }
 
+/** How solid a popup's own surface is. The platform blurs what is behind it. */
+private const val POPUP_ALPHA = 0.86f
+
 /**
  * The same trick for colour. Dialogs and menus paint themselves with the
  * container roles, so making those translucent is what stops a popup from being
@@ -518,11 +465,13 @@ fun skinShapes(skin: Skin): Shapes = if (skin == Skin.MATERIAL) {
 fun skinColors(base: ColorScheme, skin: Skin): ColorScheme = if (skin == Skin.MATERIAL) {
     base
 } else {
-    val alpha = if (skin == Skin.LIQUID_GLASS) 0.72f else 0.80f
     base.copy(
-        surfaceContainer = base.surfaceContainer.copy(alpha = alpha),
-        surfaceContainerHigh = base.surfaceContainerHigh.copy(alpha = alpha),
-        surfaceContainerHighest = base.surfaceContainerHighest.copy(alpha = alpha),
-        surfaceContainerLow = base.surfaceContainerLow.copy(alpha = alpha),
+        // Popups live in their own window and are blurred by the platform
+        // rather than by the backdrop layer, so they can be far more solid than
+        // the in-app chrome without looking like a Material slab dropped in.
+        surfaceContainer = base.surfaceContainer.copy(alpha = POPUP_ALPHA),
+        surfaceContainerHigh = base.surfaceContainerHigh.copy(alpha = POPUP_ALPHA),
+        surfaceContainerHighest = base.surfaceContainerHighest.copy(alpha = POPUP_ALPHA),
+        surfaceContainerLow = base.surfaceContainerLow.copy(alpha = POPUP_ALPHA),
     )
 }

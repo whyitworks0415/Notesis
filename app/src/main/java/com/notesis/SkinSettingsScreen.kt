@@ -122,6 +122,7 @@ fun SkinSettingsScreen(
                     "%.0fdp".format(settings.blur),
                     settings.blur,
                     SkinSettings.BLUR_RANGE,
+                    note = "패널 뒤가 흐려지는 정도. 팝업 뒤에도 같은 값이 쓰입니다",
                 ) { onChange(settings.copy(blur = it)) }
                 Setting(
                     "블러 생동감",
@@ -129,27 +130,6 @@ fun SkinSettingsScreen(
                     settings.vibrancy,
                     SkinSettings.VIBRANCY_RANGE,
                 ) { onChange(settings.copy(vibrancy = it)) }
-                Setting(
-                    "Refraction",
-                    "%.0fdp".format(settings.refraction),
-                    settings.refraction,
-                    SkinSettings.REFRACTION_RANGE,
-                    note = "가장자리가 뒤를 얼마나 휘게 하는지",
-                ) { onChange(settings.copy(refraction = it)) }
-                Setting(
-                    "Depth",
-                    "%.0fdp".format(settings.depth),
-                    settings.depth,
-                    SkinSettings.DEPTH_RANGE,
-                    note = "휘어짐이 사그라드는 거리 — 유리의 두께",
-                ) { onChange(settings.copy(depth = it)) }
-                Setting(
-                    "Dispersion",
-                    "%.0f%%".format(settings.dispersion * 100),
-                    settings.dispersion,
-                    SkinSettings.DISPERSION_RANGE,
-                    note = "휘면서 색이 갈라지는 정도",
-                ) { onChange(settings.copy(dispersion = it)) }
                 Setting(
                     "모서리",
                     "%.0fdp".format(settings.corner),
@@ -214,7 +194,7 @@ enum class ColorSlot(val label: String) {
 /**
  * Glass over something worth looking through. A flat colour would hide exactly
  * the thing being tuned, so the preview sits on a band of colour and a rule of
- * lines - refraction is only visible where there is an edge to bend.
+ * lines - frost only shows where there was detail to scatter.
  */
 @Composable
 private fun Preview() {
@@ -252,7 +232,7 @@ private fun Preview() {
             SkinSurface(Modifier.fillMaxWidth(0.7f).height(96.dp)) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
-                        "가장자리에서 뒤가 휘어야 유리입니다",
+                        "뒤가 흐려지고 색은 살아 있어야 유리입니다",
                         style = MaterialTheme.typography.bodyMedium,
                         textAlign = TextAlign.Center,
                     )

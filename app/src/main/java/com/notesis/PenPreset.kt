@@ -33,7 +33,15 @@ class PenStore(context: Context) {
     /** How the chrome is dressed. Material until someone says otherwise. */
     var skin: Skin
         get() = runCatching { Skin.valueOf(prefs.getString(SKIN, "")!!) }
-            .getOrDefault(Skin.MATERIAL)
+            // The liquid glass skin is gone. Anyone who had it chosen wanted
+            // glass, not the default, so they land on the one that is left.
+            .getOrDefault(
+                if (prefs.getString(SKIN, "") == "LIQUID_GLASS") {
+                    Skin.GLASSMORPHISM
+                } else {
+                    Skin.MATERIAL
+                },
+            )
         set(value) = prefs.edit().putString(SKIN, value.name).apply()
 
     /** Whether the toolbar sits flush along the top edge rather than floating. */

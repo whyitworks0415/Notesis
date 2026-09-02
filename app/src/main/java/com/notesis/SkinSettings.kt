@@ -12,21 +12,10 @@ import org.json.JSONObject
  * release did, and the settings screen is somewhere to go from there.
  */
 data class SkinSettings(
-    /**
-     * How far the backdrop is blurred before the glass is drawn over it. Off by
-     * default, as it is in the reference screenshots: blur erases the detail
-     * that refraction has to bend, and a bend with nothing to act on looks like
-     * nothing at all. It is here for frosting, not for glass.
-     */
-    val blur: Float = 0f,
+    /** How far the backdrop is scattered behind a panel. This is the frost. */
+    val blur: Float = 20f,
     /** Saturation lift on the blurred backdrop; glass makes colour, not mud. */
     val vibrancy: Float = 0.42f,
-    /** How far the edge bends what is behind it. The lens, in one number. */
-    val refraction: Float = 19f,
-    /** How thick the glass reads: the distance the bend falls off over. */
-    val depth: Float = 97f,
-    /** How far the colours split as they bend. Zero is plain glass. */
-    val dispersion: Float = 0f,
     /** The body of the glass. Alpha is the point of this one. */
     val tint: Int = DEFAULT_TINT,
     /** The lit edge. */
@@ -39,9 +28,6 @@ data class SkinSettings(
     fun toJson(): String = JSONObject()
         .put("blur", blur.toDouble())
         .put("vibrancy", vibrancy.toDouble())
-        .put("refraction", refraction.toDouble())
-        .put("depth", depth.toDouble())
-        .put("dispersion", dispersion.toDouble())
         .put("tint", tint)
         .put("border", border)
         .put("content", content)
@@ -61,9 +47,6 @@ data class SkinSettings(
             return SkinSettings(
                 blur = json.optDouble("blur", d.blur.toDouble()).toFloat(),
                 vibrancy = json.optDouble("vibrancy", d.vibrancy.toDouble()).toFloat(),
-                refraction = json.optDouble("refraction", d.refraction.toDouble()).toFloat(),
-                depth = json.optDouble("depth", d.depth.toDouble()).toFloat(),
-                dispersion = json.optDouble("dispersion", d.dispersion.toDouble()).toFloat(),
                 tint = json.optInt("tint", d.tint),
                 border = json.optInt("border", d.border),
                 content = json.optInt("content", d.content),
@@ -73,11 +56,8 @@ data class SkinSettings(
         }
 
         /** What each control may be set to, so the screen and the shader agree. */
-        val BLUR_RANGE = 0f..48f
+        val BLUR_RANGE = 0f..60f
         val VIBRANCY_RANGE = 0f..1f
-        val REFRACTION_RANGE = 0f..40f
-        val DEPTH_RANGE = 0f..160f
-        val DISPERSION_RANGE = 0f..1f
         val CORNER_RANGE = 0f..48f
     }
 }
