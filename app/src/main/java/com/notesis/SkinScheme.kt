@@ -23,8 +23,13 @@ import kotlin.math.pow
  * comes out at #10D55A with white lettering on it, which cannot be read. So
  * each tone is bisected to the lightness that measures the L* asked for, and
  * every accent lands at the same weight as every other.
+ *
+ * [highContrast] moves the tones rather than switching to a second palette:
+ * bodies go darker, containers paler, outlines heavier. Same theme, further
+ * apart - which is what a contrast setting should do to an app somebody has
+ * already chosen the colours of.
  */
-fun schemeFrom(accent: Int): ColorScheme {
+fun schemeFrom(accent: Int, highContrast: Boolean = false): ColorScheme {
     val seed = Hsl.of(accent)
     // A colour dragged to the grey end of the picker should still theme the app
     // rather than turning every container into a slab of the same grey, and one
@@ -43,35 +48,45 @@ fun schemeFrom(accent: Int): ColorScheme {
     // red that stops meaning error.
     val danger = Palette(3f, 0.71f)
 
+    // The body of a colour, what sits inside its container, and the two lines
+    // the app draws with. Everything else keeps the tone it had: a container
+    // that goes paler and a body that goes darker is the whole of it.
+    val body = if (highContrast) 30 else 40
+    val onContainer = if (highContrast) 8 else 14
+    val container = if (highContrast) 93 else 90
+    val ink = if (highContrast) 0 else 10
+    val line = if (highContrast) 38 else 52
+    val faintLine = if (highContrast) 64 else 82
+
     return lightColorScheme(
-        primary = primary.tone(40),
+        primary = primary.tone(body),
         onPrimary = Color.White,
-        primaryContainer = primary.tone(90),
-        onPrimaryContainer = primary.tone(14),
+        primaryContainer = primary.tone(container),
+        onPrimaryContainer = primary.tone(onContainer),
         inversePrimary = primary.tone(78),
-        secondary = secondary.tone(40),
+        secondary = secondary.tone(body),
         onSecondary = Color.White,
-        secondaryContainer = secondary.tone(90),
-        onSecondaryContainer = secondary.tone(14),
-        tertiary = tertiary.tone(40),
+        secondaryContainer = secondary.tone(container),
+        onSecondaryContainer = secondary.tone(onContainer),
+        tertiary = tertiary.tone(body),
         onTertiary = Color.White,
-        tertiaryContainer = tertiary.tone(90),
-        onTertiaryContainer = tertiary.tone(14),
+        tertiaryContainer = tertiary.tone(container),
+        onTertiaryContainer = tertiary.tone(onContainer),
         background = neutral.tone(99),
-        onBackground = neutral.tone(10),
+        onBackground = neutral.tone(ink),
         surface = neutral.tone(99),
-        onSurface = neutral.tone(10),
-        surfaceVariant = variant.tone(92),
-        onSurfaceVariant = variant.tone(32),
-        surfaceTint = primary.tone(40),
+        onSurface = neutral.tone(ink),
+        surfaceVariant = variant.tone(if (highContrast) 88 else 92),
+        onSurfaceVariant = variant.tone(if (highContrast) 20 else 32),
+        surfaceTint = primary.tone(body),
         inverseSurface = neutral.tone(20),
         inverseOnSurface = neutral.tone(96),
-        error = danger.tone(40),
+        error = danger.tone(body),
         onError = Color.White,
-        errorContainer = danger.tone(90),
-        onErrorContainer = danger.tone(12),
-        outline = variant.tone(52),
-        outlineVariant = variant.tone(82),
+        errorContainer = danger.tone(container),
+        onErrorContainer = danger.tone(onContainer),
+        outline = variant.tone(line),
+        outlineVariant = variant.tone(faintLine),
         scrim = Color.Black,
         surfaceBright = neutral.tone(99),
         surfaceDim = neutral.tone(88),

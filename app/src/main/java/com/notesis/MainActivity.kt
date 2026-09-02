@@ -30,6 +30,8 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -220,12 +222,14 @@ class MainActivity : ComponentActivity() {
             // container, outline and tint goes when the accent does. Kept until
             // the accent changes: forty tones is forty bisections, which is
             // nothing once and not nothing on every recomposition.
-            val scheme = remember(look.accent) { schemeFrom(look.accent) }
+            val scheme = remember(look.accent, look.highContrast) {
+                schemeFrom(look.accent, look.highContrast)
+            }
             // The skin reaches Material's own components through the theme, so
             // dialogs, menus and cards follow it without a single call site
             // knowing a skin exists.
             MaterialTheme(
-                colorScheme = skinColors(scheme, skin),
+                colorScheme = skinColors(scheme, skin, look),
                 shapes = skinShapes(skin),
             ) {
             ProvideSkin(skin, look) {
@@ -456,8 +460,19 @@ private fun NoteListScreen(
         }
     }
 
+    // The list screen had no backdrop at all, so glass here was a low alpha over
+    // an opaque background - translucent and not frosted, which is the whole of
+    // why the skin looked like it had not been applied outside a note.
+    val look = LocalSkinSettings.current
+    val backdrop = rememberBackdrop(
+        active = LocalSkin.current != Skin.MATERIAL &&
+            (look.blur > 0.1f || look.vibrancy > 0.01f),
+    )
+    CompositionLocalProvider(LocalBackdrop provides backdrop) {
     Scaffold(
         topBar = {
+            // Flush to the window edge, and the notes pass underneath it.
+            SkinSurface(flush = true) {
             TopAppBar(
                 actions = {
                     IconButton(onClick = onSettings) {
@@ -498,16 +513,14 @@ private fun NoteListScreen(
                         )
                     }
                 },
+                // The surface underneath is the skin's, so the bar itself
+                // paints nothing: two containers stacked is what turned the
+                // frost into a flat wash.
                 colors = TopAppBarDefaults.topAppBarColors(
-                    // The glass skins let the page show through every other bar;
-                    // an opaque one here would be the odd surface out.
-                    containerColor = if (LocalSkin.current == Skin.MATERIAL) {
-                        MaterialTheme.colorScheme.surface
-                    } else {
-                        MaterialTheme.colorScheme.surface.copy(alpha = 0.55f)
-                    },
+                    containerColor = Color.Transparent,
                 ),
             )
+            }
         },
         floatingActionButton = {
             Column(horizontalAlignment = Alignment.End) {
@@ -527,6 +540,9 @@ private fun NoteListScreen(
             }
         },
     ) { padding ->
+        // Nothing inside the recording may sample it; see NoBackdrop.
+        CompositionLocalProvider(LocalBackdrop provides NoBackdrop) {
+        Box(Modifier.fillMaxSize().recordBackdrop(backdrop)) {
         if (shown.isEmpty()) {
             Box(
                 Modifier
@@ -546,12 +562,18 @@ private fun NoteListScreen(
         } else {
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(minSize = 168.dp),
-                contentPadding = PaddingValues(16.dp),
+                // The bar's height is padding inside the list rather than
+                // around it, so the notes scroll under the glass instead of
+                // stopping politely below it with nothing to frost.
+                contentPadding = PaddingValues(
+                    start = 16.dp,
+                    end = 16.dp,
+                    top = padding.calculateTopPadding() + 16.dp,
+                    bottom = padding.calculateBottomPadding() + 16.dp,
+                ),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
+                modifier = Modifier.fillMaxSize(),
             ) {
                 // Folders sit above the notes rather than beside them: they
                 // are a place, not another note.
@@ -601,6 +623,9 @@ private fun NoteListScreen(
                 }
             }
         }
+        }
+        }
+    }
     }
 
     busy?.let { label ->
@@ -2494,7 +2519,14 @@ private fun PageSidebar(
             .fillMaxHeight(0.8f),
     ) {
         Column {
-            TabRow(selectedTabIndex = tab) {
+            TabRow(
+                selectedTabIndex = tab,
+                // The panel is the surface. A TabRow paints its own container
+                // over it, opaque, which is what made the top of this sidebar
+                // the one Material bar left inside a pane of glass.
+                containerColor = Color.Transparent,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+            ) {
                 Tab(
                     selected = tab == 0,
                     onClick = { tab = 0 },
@@ -2563,6 +2595,18 @@ private fun PageSidebar(
     }
 }
 
+/**
+ * The body of a chip in a panel. Solid under Material, and under glass a wash
+ * that lets the panel through: a white card inside a pane of glass reads as a
+ * Material dialog that has been dropped into the wrong app.
+ */
+@Composable
+private fun chipFill(selected: Boolean): Color = when {
+    selected -> MaterialTheme.colorScheme.primaryContainer
+    LocalSkin.current == Skin.MATERIAL -> MaterialTheme.colorScheme.surfaceContainerLowest
+    else -> Color.White.copy(alpha = 0.34f)
+}
+
 /** One page's worth of tape: how much of it there is, and whether it is down. */
 @Composable
 private fun MaskChip(
@@ -2579,9 +2623,7 @@ private fun MaskChip(
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
-            .background(
-                if (selected) MaterialTheme.colorScheme.primaryContainer else Color.White,
-            )
+            .background(chipFill(selected))
             .border(
                 width = if (selected) 2.dp else 1.dp,
                 color = if (selected) {
@@ -2634,9 +2676,7 @@ private fun PageChip(
             Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(8.dp))
-                .background(
-                    if (selected) MaterialTheme.colorScheme.primaryContainer else Color.White,
-                )
+                .background(chipFill(selected))
                 .border(
                     width = if (selected) 2.dp else 1.dp,
                     color = if (selected) {
@@ -2728,8 +2768,8 @@ private fun Toolbar(
     SkinSurface(
         modifier = modifier,
         // Docked, it is part of the window edge, so it takes the edge's corner
-        // rather than its own.
-        corner = if (docked) 0.dp else null,
+        // and its single inner line rather than its own rim all the way round.
+        flush = docked,
     ) {
         // Every control one step smaller than the touch-target minimum. The bar
         // is reached with a pen, and its height is page it is not showing.
@@ -2738,11 +2778,33 @@ private fun Toolbar(
         ) {
         Column(
             Modifier
-                .then(if (docked) Modifier.windowInsetsPadding(ChromeInsets) else Modifier)
+                // Only the sides the bar actually touches. The full inset set
+                // includes the navigation bar, and a bar docked at the top was
+                // padding itself away from a navigation bar at the bottom of
+                // the screen - which is where the gap under the docked toolbar
+                // came from, and why it looked inset on every side at once.
+                .then(
+                    if (docked) {
+                        Modifier.windowInsetsPadding(
+                            ChromeInsets.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
+                        )
+                    } else {
+                        Modifier
+                    },
+                )
                 .padding(horizontal = 8.dp, vertical = 1.dp),
         ) {
             // ---- top row: the note, and what is done to the whole of it
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                // Docked the bar is the window and everything fits. Floating it
+                // is capped, and narrower still with the browser panel open -
+                // and a Row that cannot scroll does not shrink, it just stops
+                // drawing: the last buttons in this row, from full screen to
+                // the other notes, were being cut off the end of the bar with
+                // no way to reach them. Only the bottom row scrolled.
+                if (docked) Modifier else Modifier.horizontalScroll(rememberScrollState()),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 IconButton(onClick = onBack) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로가기")
                 }
@@ -2989,7 +3051,9 @@ private fun ToolButton(
         IconButton(
             onClick = onClick,
             colors = IconButtonDefaults.iconButtonColors(
-                contentColor = MaterialTheme.colorScheme.outline,
+                // The quieter ink, not the line colour: this is an icon, and
+                // it follows the colour the settings screen sets for icons.
+                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
             ),
         ) { Icon(icon, contentDescription = label) }
     }

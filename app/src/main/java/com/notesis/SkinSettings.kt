@@ -20,10 +20,18 @@ data class SkinSettings(
     val tint: Int = DEFAULT_TINT,
     /** The lit edge. */
     val border: Int = DEFAULT_BORDER,
+    /** Text and icons: what the theme's onSurface and outlines are made from. */
     val content: Int = DEFAULT_CONTENT,
     /** Drives the theme's primary, so it reaches Material too. */
     val accent: Int = DEFAULT_ACCENT,
     val corner: Float = 26f,
+    /**
+     * Everything legible before everything pretty. Darkens the accent, makes
+     * the glass solid, thickens every edge and gives the outlines their weight
+     * back - the same app with the contrast turned up rather than a mode of
+     * its own with its own set of surprises.
+     */
+    val highContrast: Boolean = false,
 ) {
     fun toJson(): String = JSONObject()
         .put("blur", blur.toDouble())
@@ -33,6 +41,7 @@ data class SkinSettings(
         .put("content", content)
         .put("accent", accent)
         .put("corner", corner.toDouble())
+        .put("highContrast", highContrast)
         .toString()
 
     companion object {
@@ -52,6 +61,7 @@ data class SkinSettings(
                 content = json.optInt("content", d.content),
                 accent = json.optInt("accent", d.accent),
                 corner = json.optDouble("corner", d.corner.toDouble()).toFloat(),
+                highContrast = json.optBoolean("highContrast", d.highContrast),
             )
         }
 

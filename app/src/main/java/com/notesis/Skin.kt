@@ -23,6 +23,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asAndroidPath
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.inset
@@ -125,14 +126,24 @@ fun Skin.tokens(): SkinTokens = when (this) {
     // Frosted glass, and the numbers the settings screen owns. No lens: one
     // even rim, one soft shadow, and a body that is mostly what is behind it.
     Skin.GLASSMORPHISM -> LocalSkinSettings.current.let { look ->
+        val body = Color(look.tint)
         SkinTokens(
             corner = look.corner.dp,
             fillAlpha = 1f,
-            fill = Color(look.tint),
+            // Turned up, the glass stops being see-through: a panel you can
+            // read is worth more than one you can look through, and this is
+            // the setting where somebody has said so.
+            fill = if (look.highContrast) {
+                body.copy(alpha = maxOf(body.alpha, 0.94f))
+            } else {
+                body
+            },
             // Even, not diagonal. A gradient that lights two corners is a lens
             // catching the light; frost scatters it the same way all round.
-            rim = SolidColor(Color(look.border)),
-            rimWidth = 1.dp,
+            // Turned up it becomes the ink colour, because a white rim on a
+            // white panel is an edge nobody can find.
+            rim = SolidColor(if (look.highContrast) Color(look.content) else Color(look.border)),
+            rimWidth = if (look.highContrast) 2.dp else 1.dp,
             bevel = null,
             glows = emptyList(),
             shadow = 12.dp,
@@ -156,6 +167,17 @@ class Backdrop(val layer: GraphicsLayer?) {
 }
 
 val LocalBackdrop = compositionLocalOf { Backdrop(null) }
+
+/**
+ * Nothing to look through, for the inside of a recording.
+ *
+ * A pane that refracts draws the layer, so a pane *inside* the layer draws the
+ * layer into itself and the render tree becomes a cycle - the RenderThread
+ * walks it until the stack runs out. Every screen that records a backdrop hands
+ * this to its own content, so the chrome above can frost it and the panels
+ * within it simply stay as they are.
+ */
+val NoBackdrop = Backdrop(null)
 
 @Composable
 fun rememberBackdrop(active: Boolean): Backdrop {
@@ -183,11 +205,19 @@ fun SkinSurface(
     modifier: Modifier = Modifier,
     /** Null takes the skin's own radius; pass 0.dp for chrome flush to an edge. */
     corner: Dp? = null,
+    /**
+     * Set for chrome that spans the window rather than floating in it. Its
+     * corners go square and only the inner edge is drawn: a rim all the way
+     * round something whose three other sides are the window edge reads as a
+     * seam - a hairline of daylight between the bar and the screen, which is
+     * what the gap along the top of the docked toolbar was.
+     */
+    flush: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val skin = LocalSkin.current
     val tokens = skin.tokens()
-    val radius = corner ?: tokens.corner
+    val radius = if (flush) 0.dp else (corner ?: tokens.corner)
     val shape = RoundedCornerShape(radius)
     if (skin == Skin.MATERIAL) {
         Surface(
@@ -205,10 +235,22 @@ fun SkinSurface(
             .clip(shape)
             .frost()
             .background(tokens.fill ?: MaterialTheme.colorScheme.surface.copy(alpha = tokens.fillAlpha))
-            .glassEdge(tokens, shape),
+            .then(if (flush) Modifier.flushEdge(tokens) else Modifier.glassEdge(tokens, shape)),
     ) {
         content()
     }
+}
+
+/** The one edge a window-wide bar has: the line where it lets the page go. */
+private fun Modifier.flushEdge(tokens: SkinTokens): Modifier = drawWithContent {
+    drawContent()
+    val brush = tokens.rim ?: return@drawWithContent
+    val width = tokens.rimWidth.toPx()
+    drawRect(
+        brush,
+        topLeft = Offset(0f, size.height - width),
+        size = androidx.compose.ui.geometry.Size(size.width, width),
+    )
 }
 
 /**
@@ -309,6 +351,21 @@ private fun pathOf(
         Path().apply { addRect(outline.rect) }
 }
 
+/**
+ * The skin's rim, for a surface this file does not own.
+ *
+ * A dialog paints itself, and all a theme can hand it is a colour and a shape;
+ * this is the third thing glass needs. Applied to a component's own modifier it
+ * lands outside that component's clip and on the same outline, so the dialog
+ * gets the edge every other pane has instead of ending in a soft nothing.
+ */
+@Composable
+fun skinEdge(shape: Shape): Modifier {
+    val skin = LocalSkin.current
+    if (skin == Skin.MATERIAL) return Modifier
+    return Modifier.glassEdge(skin.tokens(), shape)
+}
+
 /** The border a skin would draw, for the few places that want one directly. */
 @Composable
 fun skinBorder(): BorderStroke? {
@@ -340,6 +397,7 @@ fun SkinSlider(
 ) {
     val tokens = LocalSkin.current.tokens()
     val scheme = MaterialTheme.colorScheme
+    val trackAlpha = if (LocalSkinSettings.current.highContrast) 0.34f else 0.14f
     val density = LocalDensity.current
     var held by remember { mutableStateOf(false) }
     val span = (valueRange.endInclusive - valueRange.start).takeIf { it > 0f } ?: 1f
@@ -403,7 +461,7 @@ fun SkinSlider(
                 .fillMaxWidth()
                 .height(SLIDER_TRACK_H)
                 .clip(CircleShape)
-                .background(scheme.onSurface.copy(alpha = 0.14f)),
+                .background(scheme.onSurface.copy(alpha = trackAlpha)),
         ) {
             // Filled to the middle of the thumb, not to its near edge: the
             // reading is where the lens is centred, so that is where the colour
@@ -441,12 +499,13 @@ fun SkinSlider(
 fun SkinSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     val tokens = LocalSkin.current.tokens()
     val scheme = MaterialTheme.colorScheme
+    val trackAlpha = if (LocalSkinSettings.current.highContrast) 0.34f else 0.14f
     val shift by animateDpAsState(
         if (checked) SWITCH_W - SWITCH_THUMB_W else 0.dp,
         label = "switch thumb",
     )
     val track by animateColorAsState(
-        if (checked) scheme.primary else scheme.onSurface.copy(alpha = 0.14f),
+        if (checked) scheme.primary else scheme.onSurface.copy(alpha = trackAlpha),
         label = "switch track",
     )
     Box(
@@ -560,21 +619,40 @@ fun skinShapes(skin: Skin): Shapes = if (skin == Skin.MATERIAL) {
 private const val POPUP_ALPHA = 0.86f
 
 /**
- * The same trick for colour. Dialogs and menus paint themselves with the
- * container roles, so making those translucent is what stops a popup from being
- * the one opaque Material slab left in a glass app.
+ * The same trick for colour.
+ *
+ * Two things happen here. Text and icons take the colour the settings screen
+ * names, and they take it in every skin - ink is a choice about reading, not
+ * about texture, and it reaches the "on" roles together so a pale ink cannot
+ * leave half the app dark. Then, on glass, the container roles go translucent
+ * and pick up the glass's own tint: dialogs and menus paint themselves with
+ * those, and it is what stops a popup from being the one Material slab left in
+ * a glass app.
+ *
+ * The settings are passed rather than read off the composition: the theme is
+ * built above [ProvideSkin], where the local still holds its defaults, and a
+ * read there quietly gives back the colours nobody chose.
  */
-@Composable
-fun skinColors(base: ColorScheme, skin: Skin): ColorScheme = if (skin == Skin.MATERIAL) {
-    base
-} else {
-    base.copy(
-        // Popups live in their own window and are blurred by the platform
-        // rather than by the backdrop layer, so they can be far more solid than
-        // the in-app chrome without looking like a Material slab dropped in.
-        surfaceContainer = base.surfaceContainer.copy(alpha = POPUP_ALPHA),
-        surfaceContainerHigh = base.surfaceContainerHigh.copy(alpha = POPUP_ALPHA),
-        surfaceContainerHighest = base.surfaceContainerHighest.copy(alpha = POPUP_ALPHA),
-        surfaceContainerLow = base.surfaceContainerLow.copy(alpha = POPUP_ALPHA),
+fun skinColors(base: ColorScheme, skin: Skin, look: SkinSettings): ColorScheme {
+    val ink = Color(look.content)
+    val inked = base.copy(
+        onSurface = ink,
+        onBackground = ink,
+        // The quieter ink: labels, hints, and every icon that is not the tool
+        // in hand. Turned up it stops being quieter.
+        onSurfaceVariant = if (look.highContrast) ink else ink.copy(alpha = 0.72f),
+    )
+    if (skin == Skin.MATERIAL) return inked
+    // Popups live in their own window and are blurred by the platform rather
+    // than by the backdrop layer, so they can be far more solid than the in-app
+    // chrome without looking like a Material slab dropped in.
+    val alpha = if (look.highContrast) 0.98f else POPUP_ALPHA
+    fun glassy(container: Color): Color =
+        Color(look.tint).compositeOver(container).copy(alpha = alpha)
+    return inked.copy(
+        surfaceContainer = glassy(base.surfaceContainer),
+        surfaceContainerHigh = glassy(base.surfaceContainerHigh),
+        surfaceContainerHighest = glassy(base.surfaceContainerHighest),
+        surfaceContainerLow = glassy(base.surfaceContainerLow),
     )
 }

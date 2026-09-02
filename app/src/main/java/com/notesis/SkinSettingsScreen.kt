@@ -30,8 +30,11 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -65,8 +68,14 @@ fun SkinSettingsScreen(
 ) {
     var picking by remember { mutableStateOf<ColorSlot?>(null) }
 
+    // The screen that sets the glass was itself the one screen wearing none.
+    val backdrop = rememberBackdrop(
+        active = skin != Skin.MATERIAL && (settings.blur > 0.1f || settings.vibrancy > 0.01f),
+    )
+    CompositionLocalProvider(LocalBackdrop provides backdrop) {
     Scaffold(
         topBar = {
+            SkinSurface(flush = true) {
             TopAppBar(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
@@ -79,14 +88,21 @@ fun SkinSettingsScreen(
                         Icon(Icons.Default.Refresh, contentDescription = "기본값으로")
                     }
                 },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
             )
+            }
         },
     ) { padding ->
+        // Nothing inside the recording may sample it; see NoBackdrop.
+        CompositionLocalProvider(LocalBackdrop provides NoBackdrop) {
         LazyColumn(
             Modifier
                 .fillMaxSize()
-                .padding(padding),
-            contentPadding = PaddingValues(bottom = 32.dp),
+                .recordBackdrop(backdrop),
+            contentPadding = PaddingValues(
+                top = padding.calculateTopPadding(),
+                bottom = padding.calculateBottomPadding() + 32.dp,
+            ),
         ) {
             item { Preview() }
 
@@ -115,6 +131,16 @@ fun SkinSettingsScreen(
                         Icon(Icons.Default.Check, contentDescription = null)
                     }
                 }
+            }
+
+            item {
+                SectionLabel("읽기 쉽게")
+                ToggleRow(
+                    "고대비",
+                    "글씨는 진하게, 유리는 불투명하게, 테두리는 두껍게. 색은 그대로 두고 " +
+                        "간격만 벌립니다",
+                    settings.highContrast,
+                ) { onChange(settings.copy(highContrast = it)) }
             }
 
             item {
@@ -156,6 +182,8 @@ fun SkinSettingsScreen(
                 AccentPresets(settings.accent) { onChange(settings.copy(accent = it)) }
             }
         }
+        }
+    }
     }
 
     picking?.let { slot ->
@@ -288,6 +316,28 @@ private val ACCENTS = listOf(
     0xFF3F51B5, 0xFFEF6C00, 0xFFD8324B, 0xFFC2185B, 0xFF5A6472,
 ).map { it.toInt() }
 
+/** A setting that is either on or off, wearing the skin's own switch. */
+@Composable
+private fun ToggleRow(label: String, note: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable { onChange(!checked) }
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f).padding(end = 16.dp)) {
+            Text(label, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                note,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline,
+            )
+        }
+        SkinSwitch(checked, onChange)
+    }
+}
+
 @Composable
 private fun SectionLabel(text: String) {
     Text(
@@ -383,7 +433,7 @@ private fun SkinColorDialog(
     }
     val picked = Color.hsv(hue, saturation, value, alpha)
 
-    androidx.compose.material3.AlertDialog(
+    AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
@@ -414,12 +464,12 @@ private fun SkinColorDialog(
             }
         },
         confirmButton = {
-            androidx.compose.material3.TextButton(onClick = { onPick(picked.toArgb()) }) {
+            TextButton(onClick = { onPick(picked.toArgb()) }) {
                 Text("적용")
             }
         },
         dismissButton = {
-            androidx.compose.material3.TextButton(onClick = onDismiss) { Text("취소") }
+            TextButton(onClick = onDismiss) { Text("취소") }
         },
     )
 }

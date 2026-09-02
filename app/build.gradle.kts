@@ -14,8 +14,8 @@ android {
         // dependable from Q onward, even though ink itself declares minSdk 23.
         minSdk = 29
         targetSdk = 36
-        versionCode = 36
-        versionName = "0.20.0"
+        versionCode = 37
+        versionName = "0.21.0"
         // Galaxy Tab is arm64. Shipping one ABI keeps the native ink lib small.
         ndk { abiFilters += "arm64-v8a" }
     }
@@ -59,5 +59,10 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.ui:ui-tooling-preview")
+    // The renderer behind @Preview. Without it the annotations compile and the
+    // preview pane stays empty, which is why the chrome could only be looked at
+    // by installing the app - see Previews.kt. Debug only: it is a development
+    // tool and has no business in a release APK.
+    debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
 }
