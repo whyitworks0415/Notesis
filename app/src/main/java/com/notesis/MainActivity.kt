@@ -203,6 +203,12 @@ class MainActivity : ComponentActivity() {
         // Android 15+ draws behind the system bars whether or not you ask, so
         // opt in properly and let the insets be dispatched instead of guessed.
         enableEdgeToEdge()
+        // After enableEdgeToEdge, which installs its own bar style over
+        // anything set before it. The app is light and draws behind the status
+        // bar, so the system needs telling to use dark icons - left alone it
+        // picked white ones and the clock and battery vanished into the bar.
+        WindowCompat.getInsetsController(window, window.decorView)
+            .isAppearanceLightStatusBars = true
         val store = NoteStore(this)
         val prefs = PenStore(this)
         setContent {
@@ -2063,9 +2069,11 @@ private fun NoteScreen(
             toolbar(
                 Modifier
                     .align(Alignment.TopStart)
-                    // Never wider than what it is placed in, or the clamping
-                    // that keeps it on screen has nothing left to work with.
-                    .widthIn(max = maxBarWidth)
+                    // Capped, not just clamped. The tool row scrolls, and a
+                    // scrolling row takes every pixel it is offered, so on a
+                    // landscape tablet the bar stretched the whole 2960px with
+                    // the tools huddled in the first third of it.
+                    .widthIn(max = minOf(maxBarWidth, FLOATING_BAR_MAX))
                     // Placed and clamped together: the folded handle can be
                     // dragged anywhere, and unfolding measures the wide bar and
                     // pulls it back inside rather than letting it hang off.
@@ -2703,10 +2711,20 @@ private fun Toolbar(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Center,
-                    // Takes the slack, so the title sits in the middle and the
-                    // two clusters stay pinned to their own ends.
+                    // Docked the bar is the window's width and the title takes
+                    // the slack, so the two clusters stay pinned to their ends.
+                    // Floating, the bar is only as wide as it needs to be, and a
+                    // title that takes the slack has no end to stop at - which
+                    // is how a landscape tablet ended up with a 2960px bar and
+                    // the tools huddled in the first third of it.
                     modifier = Modifier
-                        .weight(1f)
+                        .then(
+                            if (docked) {
+                                Modifier.weight(1f)
+                            } else {
+                                Modifier.widthIn(max = 260.dp)
+                            },
+                        )
                         .padding(horizontal = 16.dp),
                 )
 
@@ -2948,6 +2966,8 @@ private const val CRASH_LOG_MAX = 256L * 1024
 
 private const val IMAGE_CACHE_BYTES = 48 * 1024 * 1024
 
+/** What the tool row needs. Past it a floating bar is empty space. */
+private val FLOATING_BAR_MAX = 860.dp
 private val WEB_PANEL_WIDTH = 460.dp
 private const val WEB_LOG_MAX = 40
 private const val WEB_LOG_LINE = 300
