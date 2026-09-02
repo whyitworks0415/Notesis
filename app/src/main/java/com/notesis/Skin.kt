@@ -264,14 +264,24 @@ private fun Modifier.refract(shape: Shape, corner: Dp): Modifier {
     val backdrop = LocalBackdrop.current
     val layer = backdrop.layer ?: return this
     val settings = LocalSkinSettings.current
+    // The pane's own layer, and the reason it exists: a RenderEffect belongs to
+    // the layer it is set on, and the backdrop layer is also what draws the page
+    // itself. Hanging the blur and the bend on it put them on the page - the PDF
+    // came out softened and over-saturated, which is the effect meant for the
+    // half-inch of glass sitting on top of it. This one holds the effect; the
+    // backdrop stays clean.
+    val pane = rememberGraphicsLayer()
     var here by remember { mutableStateOf(Offset.Zero) }
     return this
         .onGloballyPositioned { here = it.positionInRoot() }
         .drawBehind {
             val at = here - backdrop.origin
-            layer.renderEffect = refractionEffect(
-                originX = at.x,
-                originY = at.y,
+            pane.renderEffect = refractionEffect(
+                // Zero, because the shader now runs over this pane's own layer
+                // rather than the whole page: the translate below has already
+                // put the pane's top-left at the layer's origin.
+                originX = 0f,
+                originY = 0f,
                 widthPx = size.width,
                 heightPx = size.height,
                 radiusPx = corner.toPx(),
@@ -282,9 +292,10 @@ private fun Modifier.refract(shape: Shape, corner: Dp): Modifier {
                 vibrancy = settings.vibrancy,
             )
             // The pane is already clipped to its shape, so translating the
-            // whole layer back by this pane's offset lands the right part of
+            // whole backdrop back by this pane's offset lands the right part of
             // the page underneath it.
-            translate(-at.x, -at.y) { drawLayer(layer) }
+            pane.record { translate(-at.x, -at.y) { drawLayer(layer) } }
+            drawLayer(pane)
         }
 }
 

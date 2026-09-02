@@ -14,8 +14,8 @@ android {
         // dependable from Q onward, even though ink itself declares minSdk 23.
         minSdk = 29
         targetSdk = 36
-        versionCode = 34
-        versionName = "0.19.2"
+        versionCode = 35
+        versionName = "0.19.3"
         // Galaxy Tab is arm64. Shipping one ABI keeps the native ink lib small.
         ndk { abiFilters += "arm64-v8a" }
     }
