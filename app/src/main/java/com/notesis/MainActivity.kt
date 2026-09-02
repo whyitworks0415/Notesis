@@ -2001,10 +2001,14 @@ private fun NoteScreen(
             .weight(1f)
             .fillMaxWidth()
             .background(Color(0xFFE9E7E2))
-            .recordBackdrop(backdrop)
             .onSizeChanged { containerSize = it },
     ) {
         val ready = opened
+        // Only the page is recorded, never the chrome above it. A pane that
+        // refracts draws the layer, so a pane inside the recording puts the
+        // layer inside itself - the render tree becomes a cycle and the
+        // RenderThread walks it until the stack runs out.
+        Box(Modifier.fillMaxSize().recordBackdrop(backdrop)) {
         if (ready == null) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
@@ -2056,6 +2060,7 @@ private fun NoteScreen(
                     view.eraserWidth = eraserWidth
                 },
             )
+        }
         }
 
         // Autosave: each change restarts a short timer, so a burst of strokes

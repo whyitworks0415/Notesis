@@ -227,13 +227,7 @@ fun SkinSurface(
     val skin = LocalSkin.current
     val tokens = skin.tokens()
     val radius = corner ?: tokens.corner
-    // Material's corners are circular arcs by definition; only the glass skins
-    // get the continuous curve, which is part of what tells them apart.
-    val shape = if (skin == Skin.MATERIAL) {
-        RoundedCornerShape(radius)
-    } else {
-        SquircleShape(radius)
-    }
+    val shape = RoundedCornerShape(radius)
     if (skin == Skin.MATERIAL) {
         Surface(
             modifier = modifier,
@@ -496,11 +490,11 @@ fun skinShapes(skin: Skin): Shapes = if (skin == Skin.MATERIAL) {
     Shapes()
 } else {
     Shapes(
-        extraSmall = SquircleShape(10.dp),
-        small = SquircleShape(14.dp),
-        medium = SquircleShape(18.dp),
-        large = SquircleShape(22.dp),
-        extraLarge = SquircleShape(30.dp),
+        extraSmall = RoundedCornerShape(10.dp),
+        small = RoundedCornerShape(14.dp),
+        medium = RoundedCornerShape(18.dp),
+        large = RoundedCornerShape(22.dp),
+        extraLarge = RoundedCornerShape(30.dp),
     )
 }
 
