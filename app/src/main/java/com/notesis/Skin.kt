@@ -19,6 +19,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
@@ -49,6 +50,13 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.graphics.layer.GraphicsLayer
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
@@ -70,6 +78,8 @@ class SkinTokens(
     val corner: Dp,
     /** How much of the surface colour survives; the rest is what is behind. */
     val fillAlpha: Float,
+    /** The body colour, when the skin names one rather than tinting surface. */
+    val fill: Color? = null,
     /** The lit edge. Diagonal, because that is where light enters and leaves. */
     val rim: Brush?,
     val rimWidth: Dp,
@@ -82,10 +92,15 @@ class SkinTokens(
 )
 
 val LocalSkin = compositionLocalOf { Skin.MATERIAL }
+val LocalSkinSettings = compositionLocalOf { SkinSettings() }
 
 @Composable
-fun ProvideSkin(skin: Skin, content: @Composable () -> Unit) {
-    CompositionLocalProvider(LocalSkin provides skin, content = content)
+fun ProvideSkin(skin: Skin, settings: SkinSettings, content: @Composable () -> Unit) {
+    CompositionLocalProvider(
+        LocalSkin provides skin,
+        LocalSkinSettings provides settings,
+        content = content,
+    )
 }
 
 @Composable
@@ -110,37 +125,7 @@ fun Skin.tokens(): SkinTokens = when (this) {
     // it lights the top-left and the bottom-right, light entering one corner of
     // a lens and leaving the other. And the shadow is small: the lift comes from
     // the glow against the inside of the edge, not from a soft drop underneath.
-    Skin.LIQUID_GLASS -> SkinTokens(
-        corner = 26.dp,
-        // Over white paper the surface tint is most of what gets seen, so it is
-        // kept low. The reference file is dark, where the same alpha reads far
-        // heavier than it does here.
-        fillAlpha = 0.30f,
-        rim = Brush.linearGradient(
-            0f to Color.White.copy(alpha = 0.92f),
-            0.16f to Color.White.copy(alpha = 0.14f),
-            0.5f to Color.Transparent,
-            0.84f to Color.White.copy(alpha = 0.14f),
-            1f to Color.White.copy(alpha = 0.88f),
-            start = Offset.Zero,
-            end = Offset.Infinite,
-        ),
-        rimWidth = 1.dp,
-        bevel = Brush.linearGradient(
-            0f to Color.Black.copy(alpha = 0.18f),
-            0.35f to Color.Transparent,
-            0.65f to Color.Transparent,
-            1f to Color.Black.copy(alpha = 0.12f),
-            start = Offset.Zero,
-            end = Offset.Infinite,
-        ),
-        glows = listOf(
-            16.dp to Color.White.copy(alpha = 0.26f),
-            3.dp to Color.White.copy(alpha = 0.50f),
-        ),
-        shadow = 8.dp,
-        tonalElevation = 0.dp,
-    )
+    Skin.LIQUID_GLASS -> tunedGlass(LocalSkinSettings.current)
 
     Skin.GLASSMORPHISM -> SkinTokens(
         corner = 22.dp,
@@ -157,6 +142,75 @@ fun Skin.tokens(): SkinTokens = when (this) {
         shadow = 10.dp,
         tonalElevation = 0.dp,
     )
+}
+
+/**
+ * The liquid glass panel, with the numbers the settings screen owns. The
+ * defaults are the ones measured off the reference file: the specular lights
+ * the top-left and the bottom-right, the bevel sits one line inside it, and the
+ * outer shadow is small because the lift comes from the glow at the edge.
+ */
+private fun tunedGlass(settings: SkinSettings) = SkinTokens(
+    corner = settings.corner.dp,
+    fillAlpha = 1f,
+    fill = Color(settings.tint),
+    rim = Brush.linearGradient(
+        0f to Color(settings.border),
+        0.16f to Color(settings.border).copy(alpha = 0.14f),
+        0.5f to Color.Transparent,
+        0.84f to Color(settings.border).copy(alpha = 0.14f),
+        1f to Color(settings.border).copy(alpha = 0.88f),
+        start = Offset.Zero,
+        end = Offset.Infinite,
+    ),
+    rimWidth = 1.dp,
+    bevel = Brush.linearGradient(
+        0f to Color.Black.copy(alpha = 0.18f),
+        0.35f to Color.Transparent,
+        0.65f to Color.Transparent,
+        1f to Color.Black.copy(alpha = 0.12f),
+        start = Offset.Zero,
+        end = Offset.Infinite,
+    ),
+    glows = listOf(
+        16.dp to Color.White.copy(alpha = 0.26f),
+        3.dp to Color.White.copy(alpha = 0.50f),
+    ),
+    shadow = 8.dp,
+    tonalElevation = 0.dp,
+)
+
+/**
+ * What the glass has to look through.
+ *
+ * One layer, recorded by whatever sits under the chrome, and every pane draws
+ * it back translated to its own position. Recording is the whole page redrawn
+ * once more per frame, which is why this is offered rather than assumed: it is
+ * switched on by [SkinSettings.refraction] or [SkinSettings.blur] being above
+ * zero, and a person who wants the frames back turns them down to nothing.
+ */
+class Backdrop(val layer: GraphicsLayer?) {
+    /** Where the recording starts on screen, so panes can subtract their own. */
+    var origin: Offset = Offset.Zero
+}
+
+val LocalBackdrop = compositionLocalOf { Backdrop(null) }
+
+@Composable
+fun rememberBackdrop(active: Boolean): Backdrop {
+    val layer = if (active) rememberGraphicsLayer() else null
+    return remember(layer) { Backdrop(layer) }
+}
+
+/** Records everything drawn inside it, for the panes above to look through. */
+fun Modifier.recordBackdrop(backdrop: Backdrop): Modifier {
+    val layer = backdrop.layer ?: return this
+    return this
+        .onGloballyPositioned { backdrop.origin = it.positionInRoot() }
+        .drawWithContent {
+            layer.record { this@drawWithContent.drawContent() }
+            drawLayer(layer)
+        }
 }
 
 /**
@@ -194,11 +248,50 @@ fun SkinSurface(
         modifier
             .shadow(tokens.shadow, shape, clip = false)
             .clip(shape)
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = tokens.fillAlpha))
+            .refract(shape, radius)
+            .background(tokens.fill ?: MaterialTheme.colorScheme.surface.copy(alpha = tokens.fillAlpha))
             .glassEdge(tokens, shape),
     ) {
         content()
     }
+}
+
+/**
+ * Draws the recorded backdrop back under this pane, bent.
+ *
+ * The layer holds the whole page as it was drawn a moment ago; this takes the
+ * part of it that lies under this pane and pushes it outward near the rim, so
+ * what shows through the glass is displaced rather than merely dimmed. Without
+ * a backdrop - refraction and blur both off, or a pane with nothing recorded
+ * beneath it - nothing is drawn and the glass stays as it was.
+ */
+@Composable
+private fun Modifier.refract(shape: Shape, corner: Dp): Modifier {
+    val backdrop = LocalBackdrop.current
+    val layer = backdrop.layer ?: return this
+    val settings = LocalSkinSettings.current
+    var here by remember { mutableStateOf(Offset.Zero) }
+    return this
+        .onGloballyPositioned { here = it.positionInRoot() }
+        .drawBehind {
+            val at = here - backdrop.origin
+            layer.renderEffect = refractionEffect(
+                originX = at.x,
+                originY = at.y,
+                widthPx = size.width,
+                heightPx = size.height,
+                radiusPx = corner.toPx(),
+                strengthPx = settings.refraction.dp.toPx(),
+                depthPx = settings.depth.dp.toPx(),
+                dispersion = settings.dispersion,
+                blurPx = settings.blur.dp.toPx(),
+                vibrancy = settings.vibrancy,
+            )
+            // The pane is already clipped to its shape, so translating the
+            // whole layer back by this pane's offset lands the right part of
+            // the page underneath it.
+            translate(-at.x, -at.y) { drawLayer(layer) }
+        }
 }
 
 /**

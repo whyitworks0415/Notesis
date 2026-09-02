@@ -71,6 +71,7 @@ import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Delete
@@ -211,22 +212,42 @@ class MainActivity : ComponentActivity() {
             .isAppearanceLightStatusBars = true
         val store = NoteStore(this)
         val prefs = PenStore(this)
+        val lookStore = SkinSettingsStore(this)
         setContent {
             // Hoisted to the top so a change repaints every bar at once rather
             // than whichever screen happened to be looking.
             var skin by remember { mutableStateOf(prefs.skin) }
+            var look by remember { mutableStateOf(lookStore.load()) }
+            var settingsOpen by remember { mutableStateOf(false) }
             // The skin reaches Material's own components through the theme, so
             // dialogs, menus and cards follow it without a single call site
             // knowing a skin exists.
             MaterialTheme(
-                colorScheme = skinColors(MaterialTheme.colorScheme, skin),
+                // The accent reaches Material too, which is what makes the
+                // colour setting mean something in the plain theme as well.
+                colorScheme = skinColors(MaterialTheme.colorScheme, skin)
+                    .copy(primary = Color(look.accent)),
                 shapes = skinShapes(skin),
             ) {
-            ProvideSkin(skin) {
+            ProvideSkin(skin, look) {
                 var openNote by remember { mutableStateOf<NoteMeta?>(null) }
                 val note = openNote
-                if (note == null) {
-                    NoteListScreen(store) { openNote = it }
+                if (settingsOpen) {
+                    SkinSettingsScreen(
+                        skin = skin,
+                        settings = look,
+                        onSkin = {
+                            skin = it
+                            prefs.skin = it
+                        },
+                        onChange = {
+                            look = it
+                            lookStore.save(it)
+                        },
+                        onBack = { settingsOpen = false },
+                    )
+                } else if (note == null) {
+                    NoteListScreen(store, onSettings = { settingsOpen = true }) { openNote = it }
                 } else {
                     // Keyed, so jumping straight to another note builds a
                     // fresh screen instead of showing the old document until
@@ -280,7 +301,11 @@ private fun android.content.Context.recordCrashes() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun NoteListScreen(store: NoteStore, onOpen: (NoteMeta) -> Unit) {
+private fun NoteListScreen(
+    store: NoteStore,
+    onSettings: () -> Unit,
+    onOpen: (NoteMeta) -> Unit,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     // Re-read from disk whenever something changed it, rather than keeping a
@@ -435,6 +460,11 @@ private fun NoteListScreen(store: NoteStore, onOpen: (NoteMeta) -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
+                actions = {
+                    IconButton(onClick = onSettings) {
+                        Icon(Icons.Default.Tune, contentDescription = "화면 설정")
+                    }
+                },
                 navigationIcon = {
                     // Only inside a folder: at the top level there is nowhere
                     // to go back to, and an arrow that does nothing is a lie.
@@ -860,7 +890,7 @@ private fun SkinButton(skin: Skin, onSkin: (Skin) -> Unit) {
                     leadingIcon = {
                         // Each row shows the skin it names, so the choice is
                         // made by looking rather than by reading.
-                        ProvideSkin(option) {
+                        ProvideSkin(option, LocalSkinSettings.current) {
                             SkinSurface(Modifier.size(30.dp), corner = 9.dp) {}
                         }
                     },
@@ -1184,7 +1214,7 @@ private fun toolLabel(mode: EditMode): String = when (mode) {
 
 /** Saturation across, brightness down, at the given [hue]. */
 @Composable
-private fun SaturationValueField(
+internal fun SaturationValueField(
     hue: Float,
     saturation: Float,
     value: Float,
@@ -1222,7 +1252,7 @@ private fun emitSv(at: Offset, width: Int, height: Int, onChange: (Float, Float)
 
 /** A horizontal ramp with a handle: used for hue, and again for alpha. */
 @Composable
-private fun GradientStrip(
+internal fun GradientStrip(
     colors: List<Color>,
     position: Float,
     onChange: (Float) -> Unit,
@@ -1954,6 +1984,14 @@ private fun NoteScreen(
         )
     }
 
+    // The chrome looks through whatever is drawn under it, so the page records
+    // itself once a frame - but only while something actually bends or blurs it.
+    val look = LocalSkinSettings.current
+    val backdrop = rememberBackdrop(
+        active = skin != Skin.MATERIAL &&
+            (look.refraction > 0.1f || look.blur > 0.1f || look.vibrancy > 0.01f),
+    )
+    CompositionLocalProvider(LocalBackdrop provides backdrop) {
     Row(Modifier.fillMaxSize()) {
     Column(Modifier.weight(1f).fillMaxHeight()) {
     // Docked, the bar takes its own room rather than covering the page.
@@ -1963,6 +2001,7 @@ private fun NoteScreen(
             .weight(1f)
             .fillMaxWidth()
             .background(Color(0xFFE9E7E2))
+            .recordBackdrop(backdrop)
             .onSizeChanged { containerSize = it },
     ) {
         val ready = opened
@@ -2269,6 +2308,8 @@ private fun NoteScreen(
                 panel(Modifier.fillMaxHeight().width(webWidth))
             }
         }
+    }
+
     }
 
     if (webPopup && webUrl != null) {
