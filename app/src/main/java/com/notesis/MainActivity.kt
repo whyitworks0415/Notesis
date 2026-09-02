@@ -124,12 +124,10 @@ import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Slider
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
@@ -217,14 +215,17 @@ class MainActivity : ComponentActivity() {
             var skin by remember { mutableStateOf(prefs.skin) }
             var look by remember { mutableStateOf(lookStore.load()) }
             var settingsOpen by remember { mutableStateOf(false) }
+            // The whole scheme is built from the accent rather than painted over
+            // Material's baseline, so the purple that used to survive in every
+            // container, outline and tint goes when the accent does. Kept until
+            // the accent changes: forty tones is forty bisections, which is
+            // nothing once and not nothing on every recomposition.
+            val scheme = remember(look.accent) { schemeFrom(look.accent) }
             // The skin reaches Material's own components through the theme, so
             // dialogs, menus and cards follow it without a single call site
             // knowing a skin exists.
             MaterialTheme(
-                // The accent reaches Material too, which is what makes the
-                // colour setting mean something in the plain theme as well.
-                colorScheme = skinColors(MaterialTheme.colorScheme, skin)
-                    .copy(primary = Color(look.accent)),
+                colorScheme = skinColors(scheme, skin),
                 shapes = skinShapes(skin),
             ) {
             ProvideSkin(skin, look) {

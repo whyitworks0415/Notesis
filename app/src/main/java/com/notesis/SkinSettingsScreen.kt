@@ -2,6 +2,8 @@ package com.notesis
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -149,8 +151,9 @@ fun SkinSettingsScreen(
                 ColorRow(
                     "강조 색상",
                     settings.accent,
-                    note = "머티리얼 테마에도 함께 적용됩니다",
+                    note = "테마 전체가 이 색에서 만들어집니다",
                 ) { picking = ColorSlot.ACCENT }
+                AccentPresets(settings.accent) { onChange(settings.copy(accent = it)) }
             }
         }
     }
@@ -241,6 +244,49 @@ private fun Preview() {
         }
     }
 }
+
+/**
+ * The accent is now the whole theme, so it is worth being able to change it
+ * without going through a colour wheel first. These are the hues Material's own
+ * baseline is one of - the purple is that baseline, so the row starts where the
+ * app has always been and every other swatch is a different app.
+ */
+@Composable
+private fun AccentPresets(current: Int, onPick: (Int) -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(start = 20.dp, end = 20.dp, bottom = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        for (argb in ACCENTS) {
+            Box(
+                Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(Color(argb))
+                    .clickable { onPick(argb) },
+                contentAlignment = Alignment.Center,
+            ) {
+                if (argb == current) {
+                    Icon(
+                        Icons.Default.Check,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Material's own primary, and eight more hues to leave it for. */
+private val ACCENTS = listOf(
+    0xFF6750A4, 0xFF0A84FF, 0xFF00A03C, 0xFF00897B,
+    0xFF3F51B5, 0xFFEF6C00, 0xFFD8324B, 0xFFC2185B, 0xFF5A6472,
+).map { it.toInt() }
 
 @Composable
 private fun SectionLabel(text: String) {
