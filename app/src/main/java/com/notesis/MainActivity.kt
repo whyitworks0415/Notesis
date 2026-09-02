@@ -215,7 +215,13 @@ class MainActivity : ComponentActivity() {
             // Hoisted to the top so a change repaints every bar at once rather
             // than whichever screen happened to be looking.
             var skin by remember { mutableStateOf(prefs.skin) }
-            MaterialTheme {
+            // The skin reaches Material's own components through the theme, so
+            // dialogs, menus and cards follow it without a single call site
+            // knowing a skin exists.
+            MaterialTheme(
+                colorScheme = skinColors(MaterialTheme.colorScheme, skin),
+                shapes = skinShapes(skin),
+            ) {
             ProvideSkin(skin) {
                 var openNote by remember { mutableStateOf<NoteMeta?>(null) }
                 val note = openNote
@@ -2835,7 +2841,7 @@ private fun Toolbar(
                         value = pen.width.coerceIn(range),
                         onValueChange = onWidth,
                         valueRange = range,
-                        modifier = Modifier.width(110.dp),
+                        modifier = Modifier.width(SLIDER_TRACK),
                     )
                     ToolbarDivider()
                 }
@@ -2967,7 +2973,9 @@ private const val CRASH_LOG_MAX = 256L * 1024
 private const val IMAGE_CACHE_BYTES = 48 * 1024 * 1024
 
 /** What the tool row needs. Past it a floating bar is empty space. */
-private val FLOATING_BAR_MAX = 860.dp
+private val FLOATING_BAR_MAX = 940.dp
+/** Near the reference file's 6.7:1, so the filled part is not lost in the cap. */
+private val SLIDER_TRACK = 170.dp
 private val WEB_PANEL_WIDTH = 460.dp
 private const val WEB_LOG_MAX = 40
 private const val WEB_LOG_LINE = 300

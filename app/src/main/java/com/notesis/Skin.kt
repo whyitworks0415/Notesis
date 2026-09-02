@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
@@ -23,11 +25,30 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asAndroidPath
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.inset
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
@@ -152,7 +173,13 @@ fun SkinSurface(
     val skin = LocalSkin.current
     val tokens = skin.tokens()
     val radius = corner ?: tokens.corner
-    val shape = RoundedCornerShape(radius)
+    // Material's corners are circular arcs by definition; only the glass skins
+    // get the continuous curve, which is part of what tells them apart.
+    val shape = if (skin == Skin.MATERIAL) {
+        RoundedCornerShape(radius)
+    } else {
+        SquircleShape(radius)
+    }
     if (skin == Skin.MATERIAL) {
         Surface(
             modifier = modifier,
@@ -168,7 +195,7 @@ fun SkinSurface(
             .shadow(tokens.shadow, shape, clip = false)
             .clip(shape)
             .background(MaterialTheme.colorScheme.surface.copy(alpha = tokens.fillAlpha))
-            .glassEdge(tokens, radius),
+            .glassEdge(tokens, shape),
     ) {
         content()
     }
@@ -181,41 +208,57 @@ fun SkinSurface(
  * the inside - the difference between glass with thickness and a rectangle with
  * a border drawn round it.
  */
-private fun Modifier.glassEdge(tokens: SkinTokens, corner: Dp): Modifier = drawWithContent {
+private fun Modifier.glassEdge(tokens: SkinTokens, shape: Shape): Modifier = drawWithContent {
     drawContent()
-    val radius = corner.toPx()
+    // The edge follows whatever shape the fill uses - the panel's continuous
+    // curve, or the slider's true capsule. Stroking a different curve over the
+    // fill leaves a visible double line at every corner.
+    val edge = pathOf(shape, size, layoutDirection, this)
     if (tokens.glows.isNotEmpty()) {
         drawIntoCanvas { canvas ->
             val paint = android.graphics.Paint().apply {
                 isAntiAlias = true
                 style = android.graphics.Paint.Style.STROKE
             }
+            // The glows are measured for a panel. On something as thin as a
+            // slider a 16dp glow reaches past the middle from both sides and
+            // floods the whole control white, so each one is capped against the
+            // short side rather than applied blind.
+            val ceiling = size.minDimension / 4f
             for ((widthDp, colour) in tokens.glows) {
-                val glow = widthDp.toPx()
+                val glow = widthDp.toPx().coerceAtMost(ceiling)
+                if (glow <= 0.5f) continue
                 paint.strokeWidth = glow
                 paint.color = colour.toArgb()
                 paint.maskFilter = BlurMaskFilter(glow / 2f, BlurMaskFilter.Blur.NORMAL)
-                canvas.nativeCanvas.drawRoundRect(
-                    0f, 0f, size.width, size.height, radius, radius, paint,
-                )
+                canvas.nativeCanvas.drawPath(edge.asAndroidPath(), paint)
             }
         }
     }
     val width = tokens.rimWidth.toPx()
-    tokens.bevel?.let { bevel ->
-        // One line further in than the specular, so the two read as the near and
-        // the far face of the same edge rather than as one thick line.
-        inset(width * 1.5f) {
-            val r = (radius - width * 1.5f).coerceAtLeast(0f)
-            drawRoundRect(brush = bevel, cornerRadius = CornerRadius(r, r), style = Stroke(width))
+    fun strokeEdge(brush: Brush, insetBy: Float) {
+        inset(insetBy) {
+            drawPath(pathOf(shape, size, layoutDirection, this), brush, style = Stroke(width))
         }
     }
-    tokens.rim?.let { rim ->
-        inset(width / 2f) {
-            val r = (radius - width / 2f).coerceAtLeast(0f)
-            drawRoundRect(brush = rim, cornerRadius = CornerRadius(r, r), style = Stroke(width))
-        }
-    }
+    // The bevel sits one line further in than the specular, so the two read as
+    // the near and the far face of the same edge rather than as one thick line.
+    tokens.bevel?.let { strokeEdge(it, width * 1.5f) }
+    tokens.rim?.let { strokeEdge(it, width / 2f) }
+}
+
+/** A shape's outline as a path, whatever kind of outline it produces. */
+private fun pathOf(
+    shape: Shape,
+    size: androidx.compose.ui.geometry.Size,
+    layoutDirection: LayoutDirection,
+    density: Density,
+): Path = when (val outline = shape.createOutline(size, layoutDirection, density)) {
+    is androidx.compose.ui.graphics.Outline.Generic -> outline.path
+    is androidx.compose.ui.graphics.Outline.Rounded ->
+        Path().apply { addRoundRect(outline.roundRect) }
+    is androidx.compose.ui.graphics.Outline.Rectangle ->
+        Path().apply { addRect(outline.rect) }
 }
 
 /** The border a skin would draw, for the few places that want one directly. */
@@ -227,12 +270,15 @@ fun skinBorder(): BorderStroke? {
 }
 
 /**
- * A slider wearing the current skin. Material keeps the platform one; the glass
- * skins swap the thumb for a lens - the same edge recipe as every other bar,
- * just small and round - and let the track go translucent so the page reads
- * through it the way it does through the bar the slider sits in.
+ * The slider from the reference file: not a hairline with a knob on it, but a
+ * thick capsule of glass that fills as it goes. Its proportions are that file's
+ * (1484 x 221, so a hair under 7:1) and it has the state that file has and
+ * Material does not - it swells while it is held, which is the whole of how an
+ * iOS 26 slider tells you it has you.
+ *
+ * The materials are the ones measured off the Liquid Glass file, because this
+ * file's own fills could not be read - see the note in the release.
  */
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun SkinSlider(
     value: Float,
@@ -245,20 +291,76 @@ fun SkinSlider(
         Slider(value, onValueChange, modifier, valueRange = valueRange)
         return
     }
-    val scheme = MaterialTheme.colorScheme
-    Slider(
-        value = value,
-        onValueChange = onValueChange,
-        modifier = modifier,
-        valueRange = valueRange,
-        colors = SliderDefaults.colors(
-            activeTrackColor = scheme.primary.copy(alpha = 0.55f),
-            inactiveTrackColor = scheme.onSurface.copy(alpha = 0.12f),
-        ),
-        thumb = {
-            SkinSurface(Modifier.size(SLIDER_THUMB), corner = SLIDER_THUMB / 2) {}
-        },
+    var held by remember { mutableStateOf(false) }
+    val height by animateDpAsState(
+        if (held) SLIDER_HELD else SLIDER_HEIGHT,
+        label = "slider height",
     )
+    val span = (valueRange.endInclusive - valueRange.start).takeIf { it > 0f } ?: 1f
+    val fraction = ((value - valueRange.start) / span).coerceIn(0f, 1f)
+    val tokens = skin.tokens()
+    val scheme = MaterialTheme.colorScheme
+    var width by remember { mutableFloatStateOf(1f) }
+
+    fun report(x: Float) {
+        val at = (x / width).coerceIn(0f, 1f)
+        onValueChange(valueRange.start + at * span)
+    }
+
+    Box(
+        modifier
+            .height(SLIDER_HELD)
+            .onSizeChanged { width = it.width.toFloat().coerceAtLeast(1f) }
+            .pointerInput(valueRange) {
+                detectDragGestures(
+                    onDragStart = { held = true },
+                    onDragEnd = { held = false },
+                    onDragCancel = { held = false },
+                ) { change, _ ->
+                    change.consume()
+                    report(change.position.x)
+                }
+            }
+            .pointerInput(valueRange) {
+                detectTapGestures(
+                    onPress = {
+                        held = true
+                        report(it.x)
+                        tryAwaitRelease()
+                        held = false
+                    },
+                )
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        // A capsule, not a squircle: the ends of a slider are semicircular,
+        // and a superellipse end reads as a flattened rectangle at this size.
+        val shape = RoundedCornerShape(percent = 50)
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(height)
+                .clip(shape)
+                .background(scheme.onSurface.copy(alpha = 0.10f)),
+        ) {
+            // The filled part is the same glass as the bars, so the control is
+            // made of the app rather than dropped into it.
+            Box(
+                Modifier
+                    .fillMaxWidth(fraction)
+                    .fillMaxHeight()
+                    .background(scheme.primary.copy(alpha = 0.70f)),
+            )
+        }
+        // The lit edge goes over both, once, so the fill does not get an edge of
+        // its own halfway along the track.
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(height)
+                .glassEdge(tokens, shape),
+        )
+    }
 }
 
 /**
@@ -285,4 +387,44 @@ fun SkinSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     )
 }
 
-private val SLIDER_THUMB = 22.dp
+// From the reference file: 1484 x 221 is 6.7:1, so the track is thick enough
+// to be the control rather than a line under one.
+private val SLIDER_HEIGHT = 26.dp
+private val SLIDER_HELD = 34.dp
+
+/**
+ * The shapes Material's own components reach for. Overriding these is how the
+ * dialogs, menus and cards take the skin without every call site being edited:
+ * AlertDialog asks the theme for `extraLarge`, DropdownMenu for `extraSmall`,
+ * and so on, so replacing the set replaces all of them at once.
+ */
+@Composable
+fun skinShapes(skin: Skin): Shapes = if (skin == Skin.MATERIAL) {
+    Shapes()
+} else {
+    Shapes(
+        extraSmall = SquircleShape(10.dp),
+        small = SquircleShape(14.dp),
+        medium = SquircleShape(18.dp),
+        large = SquircleShape(22.dp),
+        extraLarge = SquircleShape(30.dp),
+    )
+}
+
+/**
+ * The same trick for colour. Dialogs and menus paint themselves with the
+ * container roles, so making those translucent is what stops a popup from being
+ * the one opaque Material slab left in a glass app.
+ */
+@Composable
+fun skinColors(base: ColorScheme, skin: Skin): ColorScheme = if (skin == Skin.MATERIAL) {
+    base
+} else {
+    val alpha = if (skin == Skin.LIQUID_GLASS) 0.72f else 0.80f
+    base.copy(
+        surfaceContainer = base.surfaceContainer.copy(alpha = alpha),
+        surfaceContainerHigh = base.surfaceContainerHigh.copy(alpha = alpha),
+        surfaceContainerHighest = base.surfaceContainerHighest.copy(alpha = alpha),
+        surfaceContainerLow = base.surfaceContainerLow.copy(alpha = alpha),
+    )
+}
