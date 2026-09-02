@@ -12,8 +12,13 @@ import org.json.JSONObject
  * release did, and the settings screen is somewhere to go from there.
  */
 data class SkinSettings(
-    /** How far the backdrop is blurred before the glass is drawn over it. */
-    val blur: Float = 12f,
+    /**
+     * How far the backdrop is blurred before the glass is drawn over it. Off by
+     * default, as it is in the reference screenshots: blur erases the detail
+     * that refraction has to bend, and a bend with nothing to act on looks like
+     * nothing at all. It is here for frosting, not for glass.
+     */
+    val blur: Float = 0f,
     /** Saturation lift on the blurred backdrop; glass makes colour, not mud. */
     val vibrancy: Float = 0.42f,
     /** How far the edge bends what is behind it. The lens, in one number. */

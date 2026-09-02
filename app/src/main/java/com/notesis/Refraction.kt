@@ -34,19 +34,25 @@ uniform float depth;
 uniform float dispersion;
 
 // Signed distance to a rounded box, negative inside.
-float boxDistance(float2 p, float2 half, float r) {
-    float2 q = abs(p) - half + r;
+float boxDistance(float2 p, float2 halfSize, float r) {
+    float2 q = abs(p) - halfSize + r;
     return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
 }
 
 half4 main(float2 coord) {
-    float2 half = size * 0.5;
-    float2 p = coord - origin - half;
-    float d = boxDistance(p, half, radius);
+    float2 halfSize = size * 0.5;
+    float2 p = coord - origin - halfSize;
+    float d = boxDistance(p, halfSize, radius);
 
     // Inside the glass, d is negative and grows toward zero at the rim. The
     // bend is strongest at the rim and gone by the time it is `depth` deep.
-    float into = clamp(1.0 + d / max(depth, 1.0), 0.0, 1.0);
+    //
+    // Capped against the pane: a depth larger than the pane makes every pixel
+    // an edge pixel, the displacement comes out uniform, and a uniform shift of
+    // the whole backdrop looks exactly like no shift at all. There has to be
+    // somewhere for the bend to fall off to.
+    float band = min(depth, min(halfSize.x, halfSize.y) * 0.9);
+    float into = clamp(1.0 + d / max(band, 1.0), 0.0, 1.0);
     // Squared, so the middle stays flat and the bend gathers at the edge -
     // a lens, rather than a dome.
     float amount = into * into;
@@ -111,7 +117,11 @@ fun refractionEffect(
     }
     if (!bending) return lift?.asComposeRenderEffect()
 
-    val shader = RuntimeShader(REFRACTION_AGSL).apply {
+    // Compiled at runtime, so a mistake in it is a crash at draw time rather
+    // than a red line in the editor. It degrades to no bend instead.
+    val shader = runCatching { RuntimeShader(REFRACTION_AGSL) }.getOrNull()
+        ?: return lift?.asComposeRenderEffect()
+    shader.apply {
         setFloatUniform("origin", originX, originY)
         setFloatUniform("size", widthPx, heightPx)
         setFloatUniform("radius", radiusPx)
