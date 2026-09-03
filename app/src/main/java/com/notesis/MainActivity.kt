@@ -63,6 +63,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.CropFree
+import androidx.compose.material.icons.filled.FilterCenterFocus
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -1125,6 +1126,9 @@ private fun ToolChip(
 private fun PenDialog(
     mode: EditMode,
     pen: PenPreset,
+    /** Global rather than per tool, but this is where a hand is being set up. */
+    prediction: Boolean,
+    onPrediction: (Boolean) -> Unit,
     onDismiss: () -> Unit,
     onConfirm: (PenPreset) -> Unit,
 ) {
@@ -1140,6 +1144,8 @@ private fun PenDialog(
     }
     var width by remember(pen) { mutableFloatStateOf(start.width) }
     var pressure by remember(pen) { mutableStateOf(start.pressure) }
+    var maxWidth by remember(pen) { mutableFloatStateOf(start.maxWidth) }
+    val range = PenStore.widthRange(mode, start.copy(maxWidth = maxWidth))
 
     val picked = Color.hsv(hue, saturation, value, alpha)
     val argb = picked.toArgb()
@@ -1190,14 +1196,47 @@ private fun PenDialog(
                     }
                 }
                 Spacer(Modifier.height(10.dp))
-                Text(
-                    "굵기 " + "%.1f".format(width),
-                    style = MaterialTheme.typography.bodySmall,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SkinSwitch(checked = prediction, onCheckedChange = onPrediction)
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text("예측", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "펜보다 한 프레임 앞서 그립니다. 획이 각져 보이면 꺼보세요",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.outline,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "굵기 " + "%.1f".format(width),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f),
+                    )
+                    // Where the slider's top end sits. One range has to cover a
+                    // hairline and a broad highlighter, and the pen half of it
+                    // was living in a fifth of the track.
+                    for ((label, ceiling) in PenStore.widthCeilings(mode)) {
+                        val chosen = kotlin.math.abs(range.endInclusive - ceiling) < 0.01f
+                        TextButton(onClick = { maxWidth = ceiling }) {
+                            Text(
+                                label,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (chosen) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            )
+                        }
+                    }
+                }
                 SkinSlider(
-                    value = width.coerceIn(PenStore.widthRange(mode)),
+                    value = width.coerceIn(range),
                     onValueChange = { width = it },
-                    valueRange = PenStore.widthRange(mode),
+                    valueRange = range,
                 )
                 // The pen as it will draw: real thickness, real transparency.
                 Box(
@@ -1219,7 +1258,19 @@ private fun PenDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(PenPreset(pen.tool, argb, width, pressure)) }) {
+            TextButton(
+                onClick = {
+                    onConfirm(
+                        PenPreset(
+                            pen.tool,
+                            argb,
+                            width.coerceIn(range),
+                            pressure,
+                            maxWidth,
+                        ),
+                    )
+                },
+            ) {
                 Text("저장")
             }
         },
@@ -1816,6 +1867,7 @@ private fun NoteScreen(
     // Flush against the top edge, or floating over the page. Kept in
     // preferences: where the toolbar sits is a habit, not a per-note choice.
     var docked by remember { mutableStateOf(penStore.docked) }
+    var prediction by remember { mutableStateOf(penStore.prediction) }
     // Null until it is dragged: the bar sits centred at the top by default, and
     // there is no sensible centre to store before anything has been measured.
     var barOffset by remember { mutableStateOf<Offset?>(null) }
@@ -2004,6 +2056,8 @@ private fun NoteScreen(
                 docked = !docked
                 penStore.docked = docked
             },
+            canResetBar = !docked && barOffset != null,
+            onResetBar = { barOffset = null },
             modifier = barModifier,
         )
     }
@@ -2068,6 +2122,9 @@ private fun NoteScreen(
                     }
                 },
                 update = { view ->
+                    // The frost stops while the pen is down; see Backdrop.paused.
+                    view.onDrawingChanged = { drawing -> backdrop.paused = drawing }
+                    view.predictionEnabled = prediction
                     view.tool = tool
                     view.readMode = mode == EditMode.READ
                     view.shapeKind = if (mode == EditMode.SHAPE) shapeKind else null
@@ -2181,6 +2238,11 @@ private fun NoteScreen(
             PenDialog(
                 mode = mode,
                 pen = pen,
+                prediction = prediction,
+                onPrediction = {
+                    prediction = it
+                    penStore.prediction = it
+                },
                 onDismiss = { editingPen = false },
                 onConfirm = { saved ->
                     settings = settings + (mode to saved)
@@ -2763,6 +2825,9 @@ private fun Toolbar(
     onBack: () -> Unit,
     onPalette: () -> Unit,
     onToggleDock: () -> Unit,
+    /** Whether the bar has been dragged away from where it starts. */
+    canResetBar: Boolean,
+    onResetBar: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     SkinSurface(
@@ -2860,6 +2925,18 @@ private fun Toolbar(
                         contentDescription = if (docked) "떼어내기" else "상단 고정",
                     )
                 }
+                // Only once there is somewhere to come back from. A bar that
+                // has never been moved does not need a button for moving it
+                // back, and a bar dragged to a corner and left there had no way
+                // back at all short of docking it and undocking it again.
+                if (canResetBar) {
+                    IconButton(onClick = onResetBar) {
+                        Icon(
+                            Icons.Default.FilterCenterFocus,
+                            contentDescription = "도구막대 제자리로",
+                        )
+                    }
+                }
                 IconButton(onClick = onToggleFullscreen) {
                     Icon(
                         if (fullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
@@ -2942,7 +3019,7 @@ private fun Toolbar(
                 // thickness of that tool and no other. Two sliders would mean
                 // one of them is always the wrong one to reach for.
                 if (mode != EditMode.LASSO && mode != EditMode.IMAGE) {
-                    val range = PenStore.widthRange(mode)
+                    val range = PenStore.widthRange(mode, pen)
                     SkinSlider(
                         value = pen.width.coerceIn(range),
                         onValueChange = onWidth,

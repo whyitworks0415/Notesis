@@ -14,6 +14,15 @@ data class PenPreset(
     val width: Float,
     /** Whether the stylus's pressure reaches the width. Pens only. */
     val pressure: Boolean = false,
+    /**
+     * The top of this tool's thickness slider, or zero for the tool's own.
+     *
+     * A single range has to cover a hairline and a highlighter's broadest
+     * stroke, and a slider that does both gives the useful part of a pen -
+     * everything under six - about a fifth of its travel. Setting the ceiling
+     * gives that fifth the whole track back.
+     */
+    val maxWidth: Float = 0f,
 ) {
     /** The tool as it actually draws, which is where pressure is decided. */
     fun drawingTool(): Tool =
@@ -49,6 +58,11 @@ class PenStore(context: Context) {
         get() = prefs.getBoolean(DOCKED, false)
         set(value) = prefs.edit().putBoolean(DOCKED, value).apply()
 
+    /** Whether the tip is drawn ahead of the pen. See InkCanvasView. */
+    var prediction: Boolean
+        get() = prefs.getBoolean(PREDICTION, true)
+        set(value) = prefs.edit().putBoolean(PREDICTION, value).apply()
+
     fun load(): Map<EditMode, PenPreset> {
         val raw = prefs.getString(KEY, null) ?: return DEFAULTS
         val saved = runCatching {
@@ -61,6 +75,7 @@ class PenStore(context: Context) {
                     colorArgb = item.optInt("color", fallback.colorArgb),
                     width = item.optDouble("width", fallback.width.toDouble()).toFloat(),
                     pressure = item.optBoolean("pressure", fallback.pressure),
+                    maxWidth = item.optDouble("maxWidth", fallback.maxWidth.toDouble()).toFloat(),
                 )
             }.toMap()
         }.getOrNull().orEmpty()
@@ -77,7 +92,8 @@ class PenStore(context: Context) {
                 JSONObject()
                     .put("color", pen.colorArgb)
                     .put("width", pen.width.toDouble())
-                    .put("pressure", pen.pressure),
+                    .put("pressure", pen.pressure)
+                    .put("maxWidth", pen.maxWidth.toDouble()),
             )
         }
         prefs.edit().putString(KEY, json.toString()).apply()
@@ -86,6 +102,7 @@ class PenStore(context: Context) {
     companion object {
         private const val KEY = "tools"
         private const val DOCKED = "docked"
+        private const val PREDICTION = "prediction"
         private const val SKIN = "skin"
 
         /** The thickness slider's range depends on what is being made thick. */
@@ -93,6 +110,27 @@ class PenStore(context: Context) {
             EditMode.ERASE -> 8f..96f
             EditMode.HIGHLIGHTER -> 4f..60f
             else -> 1f..24f
+        }
+
+        /** The same range with the tool's own ceiling, when one has been set. */
+        fun widthRange(mode: EditMode, pen: PenPreset?): ClosedFloatingPointRange<Float> {
+            val base = widthRange(mode)
+            val top = pen?.maxWidth ?: 0f
+            if (top <= base.start) return base
+            return base.start..top
+        }
+
+        /**
+         * The ceilings offered, as a fraction of the tool's own. Named rather
+         * than numbered, because "얇게" is what somebody wants and 8.0 is not.
+         */
+        fun widthCeilings(mode: EditMode): List<Pair<String, Float>> {
+            val full = widthRange(mode).endInclusive
+            return listOf(
+                "얇게" to full / 3f,
+                "기본" to full,
+                "굵게" to full * 3f,
+            )
         }
 
         /** Highlighters come pre-faded; that alpha is the tool's own, not a rule. */

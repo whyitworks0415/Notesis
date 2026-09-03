@@ -3,6 +3,7 @@ package com.notesis
 import android.graphics.BlurMaskFilter
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -164,6 +165,19 @@ fun Skin.tokens(): SkinTokens = when (this) {
 class Backdrop(val layer: GraphicsLayer?) {
     /** Where the recording starts on screen, so panes can subtract their own. */
     var origin: Offset = Offset.Zero
+
+    /**
+     * Held while the pen is down.
+     *
+     * Recording is the page drawn a second time, into a layer, on the same
+     * render pass as the ink - and every pane that frosts it then re-records
+     * itself through a blur because the layer changed. That is a chain of work
+     * hanging off every stroke, to keep a toolbar's frost current while
+     * somebody is looking at their pen. So it stops for the length of a stroke:
+     * the panes go on drawing the last recording, which is a frost of the page
+     * as it was a moment ago, and nobody has ever noticed the difference.
+     */
+    var paused by mutableStateOf(false)
 }
 
 val LocalBackdrop = compositionLocalOf { Backdrop(null) }
@@ -191,6 +205,12 @@ fun Modifier.recordBackdrop(backdrop: Backdrop): Modifier {
     return this
         .onGloballyPositioned { backdrop.origin = it.positionInRoot() }
         .drawWithContent {
+            // Read here rather than in composition, so putting the pen down
+            // invalidates one draw instead of recomposing the screen.
+            if (backdrop.paused) {
+                drawContent()
+                return@drawWithContent
+            }
             layer.record { this@drawWithContent.drawContent() }
             drawLayer(layer)
         }
@@ -274,15 +294,22 @@ private fun Modifier.frost(): Modifier {
     // half-inch of glass sitting on top of it. This one holds the effect; the
     // backdrop stays clean.
     val pane = rememberGraphicsLayer()
+    // Built when the numbers change and not once per pane per frame. This is a
+    // native RenderEffect: it was being allocated inside the draw of every pane
+    // on screen, every frame the page moved under them.
+    val density = LocalDensity.current
+    val effect = remember(settings.blur, settings.vibrancy, density) {
+        frostEffect(
+            blurPx = with(density) { settings.blur.dp.toPx() },
+            vibrancy = settings.vibrancy,
+        )
+    }
     var here by remember { mutableStateOf(Offset.Zero) }
     return this
         .onGloballyPositioned { here = it.positionInRoot() }
         .drawBehind {
             val at = here - backdrop.origin
-            pane.renderEffect = frostEffect(
-                blurPx = settings.blur.dp.toPx(),
-                vibrancy = settings.vibrancy,
-            )
+            pane.renderEffect = effect
             // The pane is already clipped to its shape, so translating the
             // whole backdrop back by this pane's offset lands the right part of
             // the page underneath it.
@@ -572,19 +599,30 @@ private fun Thumb(modifier: Modifier, shape: Shape, tokens: SkinTokens, glow: Co
                     1f to Color.White.copy(alpha = 0.46f),
                 ),
             )
-            .glassEdge(tokens, shape),
+            // An edge in every skin, not only the ones with a rim in their
+            // tokens. A pale lens on a pale bar is held together by its edge
+            // and nothing else - without one the control reads as an empty
+            // groove with nothing in it to move.
+            .border(
+                width = maxOf(tokens.rimWidth, 1.dp),
+                brush = tokens.rim
+                    ?: SolidColor(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.22f)),
+                shape = shape,
+            ),
     )
 }
 
 // The proportions are the reference file's: a track thin enough to be a scale
 // rather than a control, and a thumb with a face on it.
-private val SLIDER_ROW_H = 44.dp
+// One row height for everything in the toolbar: an icon button is 40dp, and a
+// slider that asks for 44 makes the whole bar taller for one control.
+private val SLIDER_ROW_H = 40.dp
 private val SLIDER_TRACK_H = 8.dp
-private val SLIDER_THUMB_W = 26.dp
-private val SLIDER_THUMB_H = 34.dp
-private val SLIDER_THUMB_W_HELD = 30.dp
-private val SLIDER_THUMB_H_HELD = 38.dp
-private val SLIDER_THUMB_CORNER = 11.dp
+private val SLIDER_THUMB_W = 24.dp
+private val SLIDER_THUMB_H = 30.dp
+private val SLIDER_THUMB_W_HELD = 28.dp
+private val SLIDER_THUMB_H_HELD = 36.dp
+private val SLIDER_THUMB_CORNER = 10.dp
 
 private val SWITCH_ROW = 44.dp
 private val SWITCH_W = 62.dp
