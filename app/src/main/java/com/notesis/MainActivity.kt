@@ -543,7 +543,13 @@ private fun NoteListScreen(
     ) { padding ->
         // Nothing inside the recording may sample it; see NoBackdrop.
         CompositionLocalProvider(LocalBackdrop provides NoBackdrop) {
-        Box(Modifier.fillMaxSize().recordBackdrop(backdrop)) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .recordBackdrop(backdrop)
+                // Opaque, so the frost replaces the page rather than adding to it.
+                .background(MaterialTheme.colorScheme.surface),
+        ) {
         if (shown.isEmpty()) {
             Box(
                 Modifier
@@ -2077,7 +2083,6 @@ private fun NoteScreen(
         Modifier
             .weight(1f)
             .fillMaxWidth()
-            .background(Color(0xFFE9E7E2))
             .onSizeChanged { containerSize = it },
     ) {
         val ready = opened
@@ -2085,7 +2090,12 @@ private fun NoteScreen(
         // refracts draws the layer, so a pane inside the recording puts the
         // layer inside itself - the render tree becomes a cycle and the
         // RenderThread walks it until the stack runs out.
-        Box(Modifier.fillMaxSize().recordBackdrop(backdrop)) {
+        // The ground goes inside the recording, not over it. Recorded on a
+        // transparent one, the layer is only the page's content, and a pane
+        // draws that blurred over the sharp copy already on screen - the same
+        // light twice, which is the wash that made the middle of every panel
+        // paler than the page beside it.
+        Box(Modifier.fillMaxSize().recordBackdrop(backdrop).background(Color(0xFFE9E7E2))) {
         if (ready == null) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()

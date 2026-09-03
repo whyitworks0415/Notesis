@@ -98,7 +98,12 @@ fun SkinSettingsScreen(
         LazyColumn(
             Modifier
                 .fillMaxSize()
-                .recordBackdrop(backdrop),
+                .recordBackdrop(backdrop)
+                // Inside the recording, so the layer holds a whole page and not
+                // a page's content on nothing. Frosting a transparent recording
+                // lays a blurred copy over the sharp one still on screen, and
+                // the doubled light is what washed out the panes.
+                .background(MaterialTheme.colorScheme.surface),
             contentPadding = PaddingValues(
                 top = padding.calculateTopPadding(),
                 bottom = padding.calculateBottomPadding() + 32.dp,
@@ -232,20 +237,28 @@ private fun Preview() {
     Box(
         Modifier
             .fillMaxWidth()
-            .height(200.dp)
-            .background(
-                Brush.linearGradient(
-                    listOf(
-                        Color(0xFF6A5AE0),
-                        Color(0xFF39C3C9),
-                        Color(0xFFF2A65A),
-                    ),
-                ),
-            ),
+            .height(200.dp),
         contentAlignment = Alignment.Center,
     ) {
         val backdrop = rememberBackdrop(active = true)
-        Box(Modifier.fillMaxSize().recordBackdrop(backdrop)) {
+        // The gradient is what the glass is supposed to be blurring, so it goes
+        // inside the recording. Left on the parent it was never in the layer:
+        // the pane showed it sharp, with a blurred ghost of the lines laid over
+        // the lines themselves.
+        Box(
+            Modifier
+                .fillMaxSize()
+                .recordBackdrop(backdrop)
+                .background(
+                    Brush.linearGradient(
+                        listOf(
+                            Color(0xFF6A5AE0),
+                            Color(0xFF39C3C9),
+                            Color(0xFFF2A65A),
+                        ),
+                    ),
+                ),
+        ) {
             Column(Modifier.fillMaxSize().padding(14.dp)) {
                 repeat(9) {
                     Box(
