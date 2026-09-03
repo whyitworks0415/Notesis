@@ -20,11 +20,24 @@ android {
         ndk { abiFilters += "arm64-v8a" }
     }
 
+    signingConfigs {
+        create("release") {
+            // Not a secret worth hiding - this never goes to a store, only
+            // sideloaded onto one tablet, and the whole point of a key of its
+            // own is that it stays the same key. The debug keystore CI used to
+            // sign with is regenerated fresh on every runner, so every release
+            // carried a different, random certificate and every install
+            // conflicted with the one already on the tablet - this is the fix.
+            storeFile = file("../keystore/release.jks")
+            storePassword = "notesis-release"
+            keyAlias = "notesis"
+            keyPassword = "notesis-release"
+        }
+    }
+
     buildTypes {
         release {
-            // Debug key for now: v0.1.0 only has to sideload onto the author's
-            // own Galaxy Tab. Swap in a real keystore before any store upload.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
