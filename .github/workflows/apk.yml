@@ -28,6 +28,12 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      # The wrapper is checked in without its executable bit - it is a Windows
+      # machine that made it - so the runner cannot run it as it stands. The bit
+      # is set in git as of this commit; this stays as the belt to that brace.
+      - name: Make the wrapper executable
+        run: chmod +x gradlew
+
       - name: Build release APK
         # gradle.properties pins org.gradle.java.home to a path on the author's
         # own Windows machine, which does not exist here. A system property on
