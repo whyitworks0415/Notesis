@@ -57,12 +57,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.CropFree
+import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.FilterCenterFocus
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
@@ -152,6 +154,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
@@ -191,9 +194,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
 
@@ -1822,6 +1827,10 @@ private fun NoteScreen(
     // so putting the eraser down gives back the pen exactly as it was left.
     var mode by remember { mutableStateOf(EditMode.PEN) }
     var shapeKind by remember { mutableStateOf(ShapeKind.LINE) }
+    // A straight line in the highlighter's or the mask's own ink, without
+    // leaving the tool to reach the separate shape pen. Scoped to those two
+    // modes only - the shape button already covers the ordinary pen.
+    var straightLine by remember { mutableStateOf(false) }
     /** True while the colour and thickness of the tool in hand is being set. */
     var editingPen by remember { mutableStateOf(false) }
     var lassoCount by remember { mutableIntStateOf(0) }
@@ -1880,6 +1889,36 @@ private fun NoteScreen(
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
     var barSize by remember { mutableStateOf(IntSize.Zero) }
     val density = LocalDensity.current
+
+    // The three-finger reference panel: which PDF it shows, and where it sits.
+    // The name is kept in preferences - the same PDF next time it opens - but
+    // position and size are not; every open starts where the gesture landed.
+    var referenceName by remember { mutableStateOf(penStore.referencePdfName) }
+    var referenceRevision by remember { mutableIntStateOf(0) }
+    var referenceOpen by remember { mutableStateOf(false) }
+    var referenceOffset by remember { mutableStateOf(Offset.Zero) }
+    var referenceSize by remember {
+        mutableStateOf(with(density) { Size(340.dp.toPx(), 440.dp.toPx()) })
+    }
+    val pickReference = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val copied = withContext(Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        referencePdfFile(context).outputStream().use { input.copyTo(it) }
+                    }
+                }.isSuccess
+            }
+            if (!copied) return@launch
+            val label = displayName(context, uri)
+            penStore.referencePdfName = label
+            referenceName = label
+            referenceRevision++
+        }
+    }
     val maxBarWidth = with(density) {
         (containerSize.width.takeIf { it > 0 } ?: Int.MAX_VALUE).toDp()
     }
@@ -2011,6 +2050,8 @@ private fun NoteScreen(
             pen = pen,
             mode = mode,
             shapeKind = shapeKind,
+            straightLine = straightLine,
+            onToggleStraightLine = { straightLine = !straightLine },
             fullscreen = fullscreen,
             showLatency = showLatency,
             // edits is read here so drawing or erasing recomposes the toolbar and
@@ -2083,7 +2124,38 @@ private fun NoteScreen(
         Modifier
             .weight(1f)
             .fillMaxWidth()
-            .onSizeChanged { containerSize = it },
+            .onSizeChanged { containerSize = it }
+            .multiFingerGestures(
+                popupOpen = { referenceOpen },
+                onUndo = { canvas?.undo(); edits++ },
+                onRedo = { canvas?.redo(); edits++ },
+                onOpenPopup = { centroid ->
+                    referenceOpen = true
+                    val w = referenceSize.width
+                    val h = referenceSize.height
+                    val maxX = (containerSize.width - w).coerceAtLeast(0f)
+                    val maxY = (containerSize.height - h).coerceAtLeast(0f)
+                    referenceOffset = Offset(
+                        (centroid.x - w / 2f).coerceIn(0f, maxX),
+                        (centroid.y - h).coerceIn(0f, maxY),
+                    )
+                },
+                onDrag = { pan, spreadFactor ->
+                    val minW = with(density) { REFERENCE_MIN_SIZE.toPx() }
+                    val minH = with(density) { REFERENCE_MIN_SIZE.toPx() }
+                    val newW = (referenceSize.width * spreadFactor)
+                        .coerceIn(minW, containerSize.width.toFloat().coerceAtLeast(minW))
+                    val newH = (referenceSize.height * spreadFactor)
+                        .coerceIn(minH, containerSize.height.toFloat().coerceAtLeast(minH))
+                    referenceSize = Size(newW, newH)
+                    val maxX = (containerSize.width - newW).coerceAtLeast(0f)
+                    val maxY = (containerSize.height - newH).coerceAtLeast(0f)
+                    referenceOffset = Offset(
+                        (referenceOffset.x + pan.x).coerceIn(0f, maxX),
+                        (referenceOffset.y + pan.y).coerceIn(0f, maxY),
+                    )
+                },
+            ),
     ) {
         val ready = opened
         // Only the page is recorded, never the chrome above it. A pane that
@@ -2137,7 +2209,14 @@ private fun NoteScreen(
                     view.predictionEnabled = prediction
                     view.tool = tool
                     view.readMode = mode == EditMode.READ
-                    view.shapeKind = if (mode == EditMode.SHAPE) shapeKind else null
+                    view.shapeKind = when {
+                        mode == EditMode.SHAPE -> shapeKind
+                        // The toggle only appears for these two, so the ink
+                        // that lands is whichever of them is actually in hand.
+                        straightLine && (mode == EditMode.HIGHLIGHTER || mode == EditMode.MASK) ->
+                            ShapeKind.LINE
+                        else -> null
+                    }
                     view.imageMode = mode == EditMode.IMAGE
                     view.captureMode = mode == EditMode.CAPTURE
                     view.maskMode = mode == EditMode.MASK
@@ -2347,6 +2426,10 @@ private fun NoteScreen(
                     canvas?.highlightSelection()
                     edits++
                 },
+                onMask = {
+                    canvas?.maskSelection()
+                    edits++
+                },
                 onDismiss = { canvas?.clearSelection() },
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
@@ -2373,6 +2456,14 @@ private fun NoteScreen(
                     canvas?.clearMasks(it)
                     edits++
                 },
+                onRevealMask = { index, maskIndex, revealed ->
+                    canvas?.setMaskRevealed(index, maskIndex, revealed)
+                    edits++
+                },
+                onDeleteMask = { index, maskIndex ->
+                    canvas?.deleteMask(index, maskIndex)
+                    edits++
+                },
                 onAdd = {
                     canvas?.addPage(currentPage)
                     edits++
@@ -2385,6 +2476,17 @@ private fun NoteScreen(
                     canvas?.setBackground(index, background)
                     edits++
                 },
+            )
+        }
+
+        if (referenceOpen) {
+            ReferencePdfPopup(
+                name = referenceName,
+                revision = referenceRevision,
+                offset = referenceOffset,
+                size = referenceSize,
+                onPick = { pickReference.launch(arrayOf("application/pdf")) },
+                onClose = { referenceOpen = false },
             )
         }
     }
@@ -2524,12 +2626,132 @@ private fun shareBitmap(context: android.content.Context, bitmap: Bitmap) {
     context.startActivity(android.content.Intent.createChooser(intent, "캡쳐 공유"))
 }
 
+/**
+ * The three-finger reference panel: a second, smaller PDF floating over the
+ * note. Which file it shows is picked here and remembered by name in
+ * [PenStore.referencePdfName] - the same one opens next time; position and
+ * size are not remembered, since where the gesture happened to land is not a
+ * habit worth keeping.
+ *
+ * Position and size arrive from outside, driven live by the gesture that
+ * opened or is now moving this - this only ever draws where it is told to be.
+ */
+@Composable
+private fun ReferencePdfPopup(
+    name: String?,
+    revision: Int,
+    offset: Offset,
+    size: Size,
+    onPick: () -> Unit,
+    onClose: () -> Unit,
+) {
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    var source by remember { mutableStateOf<PdfSource?>(null) }
+    var page by remember { mutableIntStateOf(0) }
+    var bitmap by remember { mutableStateOf<Bitmap?>(null) }
+
+    // Reopens the copy from disk only when a new one has just been picked -
+    // not on every reposition, which would mean a re-parse per frame of drag.
+    LaunchedEffect(revision) {
+        val old = source
+        val file = referencePdfFile(context)
+        source = if (file.exists()) {
+            withContext(Dispatchers.IO) { PdfSource.open(file) }
+        } else {
+            null
+        }
+        old?.close()
+        page = 0
+    }
+    DisposableEffect(Unit) { onDispose { source?.close() } }
+
+    val renderWidth = size.width.roundToInt().coerceAtLeast(64)
+    LaunchedEffect(source, page, renderWidth) {
+        val opened = source
+        bitmap = if (opened != null && page in 0 until opened.pageCount) {
+            withContext(Dispatchers.IO) { opened.renderNow(page, renderWidth) }
+        } else {
+            null
+        }
+    }
+
+    SkinSurface(
+        modifier = Modifier
+            .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
+            .size(with(density) { size.width.toDp() }, with(density) { size.height.toDp() }),
+        corner = 16.dp,
+    ) {
+        Column(Modifier.fillMaxSize()) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    name ?: "참고 PDF",
+                    style = MaterialTheme.typography.labelLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(onClick = onPick) {
+                    Icon(Icons.Default.FileOpen, contentDescription = "PDF 선택")
+                }
+                IconButton(onClick = onClose) {
+                    Icon(Icons.Default.Close, contentDescription = "참고 PDF 닫기")
+                }
+            }
+            Box(
+                Modifier.weight(1f).fillMaxWidth(),
+                contentAlignment = Alignment.Center,
+            ) {
+                val shown = bitmap
+                when {
+                    shown != null -> Image(
+                        shown.asImageBitmap(),
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Fit,
+                    )
+                    name == null -> TextButton(onClick = onPick) { Text("볼 PDF 고르기") }
+                    else -> CircularProgressIndicator()
+                }
+            }
+            val pageCount = source?.pageCount ?: 0
+            if (pageCount > 1) {
+                Row(
+                    Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(
+                        onClick = { page = (page - 1).coerceAtLeast(0) },
+                        enabled = page > 0,
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "이전 쪽")
+                    }
+                    Text("${page + 1} / $pageCount", style = MaterialTheme.typography.labelSmall)
+                    IconButton(
+                        onClick = { page = (page + 1).coerceAtMost(pageCount - 1) },
+                        enabled = page < pageCount - 1,
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "다음 쪽")
+                    }
+                }
+            }
+        }
+    }
+}
+
 /** What you can do with text lifted off a PDF page. */
 @Composable
 private fun SelectionActions(
     text: String,
     onCopy: () -> Unit,
     onHighlight: () -> Unit,
+    onMask: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -2556,6 +2778,10 @@ private fun SelectionActions(
                 Icon(Icons.Outlined.Brush, contentDescription = null)
                 Text(" 형광펜")
             }
+            TextButton(onClick = onMask) {
+                Icon(Icons.Default.VisibilityOff, contentDescription = null)
+                Text(" 마스킹")
+            }
             TextButton(onClick = onCopy) {
                 Icon(Icons.Default.ContentCopy, contentDescription = null)
                 Text(" 복사")
@@ -2575,6 +2801,8 @@ private fun PageSidebar(
     onJump: (Int) -> Unit,
     onReveal: (Int, Boolean) -> Unit,
     onClearMasks: (Int) -> Unit,
+    onRevealMask: (Int, Int, Boolean) -> Unit,
+    onDeleteMask: (Int, Int) -> Unit,
     onAdd: () -> Unit,
     onDelete: (Int) -> Unit,
     onBackground: (Int, PageBackground) -> Unit,
@@ -2635,6 +2863,10 @@ private fun PageSidebar(
                             onJump = { onJump(index) },
                             onReveal = { onReveal(index, it) },
                             onClear = { onClearMasks(index) },
+                            onRevealMask = { maskIndex, revealed ->
+                                onRevealMask(index, maskIndex, revealed)
+                            },
+                            onDeleteMask = { maskIndex -> onDeleteMask(index, maskIndex) },
                         )
                     }
                 }
@@ -2679,7 +2911,11 @@ private fun chipFill(selected: Boolean): Color = when {
     else -> Color.White.copy(alpha = 0.34f)
 }
 
-/** One page's worth of tape: how much of it there is, and whether it is down. */
+/**
+ * One page's worth of tape: the page itself, whole-page shortcuts, and then
+ * every strip on it as its own row - three strips down is three rows, each
+ * liftable and deletable on its own rather than only all together.
+ */
 @Composable
 private fun MaskChip(
     index: Int,
@@ -2688,10 +2924,12 @@ private fun MaskChip(
     onJump: () -> Unit,
     onReveal: (Boolean) -> Unit,
     onClear: () -> Unit,
+    onRevealMask: (Int, Boolean) -> Unit,
+    onDeleteMask: (Int) -> Unit,
 ) {
     val masks = page.masks
     val hidden = masks.count { !it.revealed }
-    Row(
+    Column(
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
@@ -2704,28 +2942,67 @@ private fun MaskChip(
                     MaterialTheme.colorScheme.outlineVariant
                 },
                 shape = RoundedCornerShape(8.dp),
-            )
-            .clickable(onClick = onJump)
-            .padding(start = 10.dp, top = 4.dp, bottom = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            ),
     ) {
-        Column(Modifier.weight(1f)) {
-            Text("${index + 1}", style = MaterialTheme.typography.titleSmall)
-            Text(
-                if (masks.isEmpty()) "없음" else "$hidden / ${masks.size} 가림",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.outline,
-            )
-        }
-        if (masks.isNotEmpty()) {
-            IconButton(onClick = { onReveal(hidden > 0) }) {
-                Icon(
-                    if (hidden > 0) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                    contentDescription = if (hidden > 0) "이 페이지 보이기" else "이 페이지 가리기",
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onJump)
+                .padding(start = 10.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("${index + 1}", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    if (masks.isEmpty()) "없음" else "$hidden / ${masks.size} 가림",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline,
                 )
             }
-            IconButton(onClick = onClear) {
-                Icon(Icons.Default.Delete, contentDescription = "이 페이지 마스킹 삭제")
+            if (masks.isNotEmpty()) {
+                IconButton(onClick = { onReveal(hidden > 0) }) {
+                    Icon(
+                        if (hidden > 0) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                        contentDescription = if (hidden > 0) "이 페이지 보이기" else "이 페이지 가리기",
+                    )
+                }
+                IconButton(onClick = onClear) {
+                    Icon(Icons.Default.Delete, contentDescription = "이 페이지 마스킹 삭제")
+                }
+            }
+        }
+        for ((maskIndex, mask) in masks.withIndex()) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(start = 24.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "마스크 ${maskIndex + 1}",
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(
+                    onClick = { onRevealMask(maskIndex, !mask.revealed) },
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(
+                        if (mask.revealed) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                        contentDescription = if (mask.revealed) "이 마스킹 가리기" else "이 마스킹 보이기",
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+                IconButton(
+                    onClick = { onDeleteMask(maskIndex) },
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = "이 마스킹 삭제",
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
             }
         }
     }
@@ -2810,6 +3087,8 @@ private fun Toolbar(
     pen: PenPreset,
     mode: EditMode,
     shapeKind: ShapeKind,
+    straightLine: Boolean,
+    onToggleStraightLine: () -> Unit,
     skin: Skin,
     onSkin: (Skin) -> Unit,
     docked: Boolean,
@@ -3025,6 +3304,20 @@ private fun Toolbar(
                     ToolbarDivider()
                 }
 
+                // A straight line in the tool's own ink, without switching to
+                // the separate shape pen. Only where a wobbly line is worth
+                // straightening - a mask covers a printed line, a highlighter
+                // underlines one.
+                if (mode == EditMode.HIGHLIGHTER || mode == EditMode.MASK) {
+                    ToolButton(
+                        Icons.Default.Remove,
+                        "직선",
+                        straightLine,
+                        onClick = onToggleStraightLine,
+                    )
+                    ToolbarDivider()
+                }
+
                 // One slider, whichever tool is in hand, because it sets the
                 // thickness of that tool and no other. Two sliders would mean
                 // one of them is always the wrong one to reach for.
@@ -3176,6 +3469,9 @@ private const val WEB_LOG_MAX = 40
 private const val WEB_LOG_LINE = 300
 private val WEB_PANEL_MIN = 280.dp
 private val WEB_PANEL_MAX = 1100.dp
+
+/** Below this the reference panel is too small to hold a readable page. */
+private val REFERENCE_MIN_SIZE = 220.dp
 
 private const val SEARCH_HOME = "https://www.google.com/"
 

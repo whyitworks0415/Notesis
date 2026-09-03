@@ -1283,6 +1283,41 @@ class InkCanvasView @JvmOverloads constructor(
         afterEdit(page)
     }
 
+    /**
+     * The same selected boxes as [highlightSelection], but as tape rather than
+     * ink: opaque, and on the mask list so it can be tapped up again later.
+     */
+    fun maskSelection() {
+        val found = selection ?: return
+        val page = document.pages.getOrNull(selectingPage) ?: return
+        val brush = Brush.createWithColorIntArgb(
+            family = Tool.MASK.brushFamily(),
+            // Full alpha regardless of what the mask tool is set to: a strip
+            // that only covers what the selection already showed through would
+            // not be covering anything.
+            colorIntArgb = (colorArgb and 0x00FFFFFF) or MASK_OPAQUE,
+            size = 1f,
+            epsilon = epsilonFor(currentScale()),
+        )
+        for (box in found.boxes) {
+            if (box.width() <= 0f || box.height() <= 0f) continue
+            val middle = box.centerY()
+            val inputs = MutableStrokeInputBatch()
+            inputs.add(InputToolType.STYLUS, box.left, middle, 0L)
+            inputs.add(InputToolType.STYLUS, box.right, middle, 16L)
+            // A hair over the line's own height, so the tape's rounded ends
+            // do not leave a sliver of the letters showing at top and bottom.
+            val sized = brush.copy(size = box.height() * MASK_SELECTION_HEIGHT)
+            val stroke = Stroke(sized, inputs.toImmutable())
+            val mask = PageMask(stroke)
+            page.masks += mask
+            undoStack += Edit.MaskAdded(page, mask)
+        }
+        redoStack.clear()
+        clearSelection()
+        afterEdit(page)
+    }
+
     fun selectedText(): String? = selection?.text
 
     /** Screen point -> page-local world units, as a degenerate rect. */
@@ -1328,8 +1363,17 @@ class InkCanvasView @JvmOverloads constructor(
             inputs.add(InputToolType.STYLUS, point[0], point[1], i * SHAPE_STEP_MS)
         }
         val stroke = Stroke(currentBrush(), inputs.toImmutable())
-        page.strokes += stroke
-        undoStack += Edit.Drawn(page, stroke)
+        // A straight line drawn with the mask tool covers exactly like any
+        // other strip of tape - it goes on the mask list, not the ink list, or
+        // it could never be lifted to read what is underneath.
+        if (tool == Tool.MASK) {
+            val mask = PageMask(stroke)
+            page.masks += mask
+            undoStack += Edit.MaskAdded(page, mask)
+        } else {
+            page.strokes += stroke
+            undoStack += Edit.Drawn(page, stroke)
+        }
         redoStack.clear()
         afterEdit(page)
     }
@@ -1535,6 +1579,13 @@ class InkCanvasView @JvmOverloads constructor(
         dry.invalidate()
     }
 
+    /** One strip, not the whole page - the list shows each separately. */
+    fun setMaskRevealed(pageIndex: Int, maskIndex: Int, revealed: Boolean) {
+        val page = document.pages.getOrNull(pageIndex) ?: return
+        page.masks.getOrNull(maskIndex)?.revealed = revealed
+        dry.invalidate()
+    }
+
     /** Peels every strip off one page. Undoable, one strip at a time. */
     fun clearMasks(pageIndex: Int) {
         val page = document.pages.getOrNull(pageIndex) ?: return
@@ -1544,6 +1595,16 @@ class InkCanvasView @JvmOverloads constructor(
             undoStack += Edit.MaskRemoved(page, page.masks[at], at)
         }
         page.masks.clear()
+        redoStack.clear()
+        afterEdit(page)
+    }
+
+    /** One strip lifted off for good, undoable like any other edit. */
+    fun deleteMask(pageIndex: Int, maskIndex: Int) {
+        val page = document.pages.getOrNull(pageIndex) ?: return
+        val mask = page.masks.getOrNull(maskIndex) ?: return
+        undoStack += Edit.MaskRemoved(page, mask, maskIndex)
+        page.masks.removeAt(maskIndex)
         redoStack.clear()
         afterEdit(page)
     }
@@ -2181,6 +2242,7 @@ class InkCanvasView @JvmOverloads constructor(
         const val MASK_TAP_PX = 6f
         const val MASK_OUTLINE_PX = 2f
         const val MASK_OPAQUE = 0xFF000000.toInt()
+        const val MASK_SELECTION_HEIGHT = 1.15f
         val IDENTITY = ImmutableAffineTransform(1f, 0f, 0f, 0f, 1f, 0f)
     }
 }

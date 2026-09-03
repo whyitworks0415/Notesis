@@ -63,6 +63,15 @@ class PenStore(context: Context) {
         get() = prefs.getBoolean(PREDICTION, true)
         set(value) = prefs.edit().putBoolean(PREDICTION, value).apply()
 
+    /**
+     * What the three-finger reference panel is showing, by name only - the
+     * copy itself lives at [referencePdfFile]. Null until something has been
+     * picked; picking again overwrites both.
+     */
+    var referencePdfName: String?
+        get() = prefs.getString(REFERENCE_PDF_NAME, null)
+        set(value) = prefs.edit().putString(REFERENCE_PDF_NAME, value).apply()
+
     fun load(): Map<EditMode, PenPreset> {
         val raw = prefs.getString(KEY, null) ?: return DEFAULTS
         val saved = runCatching {
@@ -104,6 +113,7 @@ class PenStore(context: Context) {
         private const val DOCKED = "docked"
         private const val PREDICTION = "prediction"
         private const val SKIN = "skin"
+        private const val REFERENCE_PDF_NAME = "referencePdfName"
 
         /** The thickness slider's range depends on what is being made thick. */
         fun widthRange(mode: EditMode): ClosedFloatingPointRange<Float> = when (mode) {
@@ -145,3 +155,9 @@ class PenStore(context: Context) {
         )
     }
 }
+
+/**
+ * Where the reference panel's own copy of a PDF lives - app-private, so no
+ * permission from the picker has to survive past the copy itself.
+ */
+fun referencePdfFile(context: Context): java.io.File = java.io.File(context.filesDir, "reference.pdf")
