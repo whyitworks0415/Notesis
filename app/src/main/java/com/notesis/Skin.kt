@@ -21,18 +21,25 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asAndroidPath
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.inset
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
@@ -67,6 +74,7 @@ import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
@@ -402,18 +410,22 @@ fun skinBorder(): BorderStroke? {
 }
 
 /**
- * The slider from the reference: a thin track that fills as it goes, and a lens
- * of glass standing on it.
+ * The slider: a thin track that fills as it goes, and a lens of glass standing
+ * on it that magnifies the part of the track it is over.
  *
- * Material's slider is a hairline with a disc on it; this one is the shape in
- * the file - a rounded upright pane, taller than the track and wide enough to
- * have a face, translucent so the filled part of the track carries on through
- * it instead of being cut in half by the handle. It swells while it is held,
- * which is the whole of how the control tells you it has you.
+ * Three things make this read as glass rather than as a knob, and all three are
+ * motion or refraction rather than colour:
  *
- * Both skins get the shape. The skin decides what the lens is made of: the
- * tunable glass and its lit rim under glassmorphism, plain white under
- * Material, where the tokens name no fill and no edge.
+ *  - **It magnifies.** What is behind the lens is drawn a second time inside
+ *    it, scaled about its centre, and clipped short of the rim. That clear band
+ *    round the edge is the thickness of the glass; the scaling is the only
+ *    reason the eye reads a solid object rather than a tinted hole.
+ *  - **It inflates.** Taken hold of, the lens swells and the track thickens
+ *    under it, on a spring rather than a slide, and both settle back on release.
+ *  - **It is lit.** A bright edge top and bottom, because light enters the top
+ *    face of a lens and comes back off the bottom one.
+ *
+ * Both skins get all of it. The skin decides only what the glass is made of.
  */
 @Composable
 fun SkinSlider(
@@ -430,18 +442,30 @@ fun SkinSlider(
     val span = (valueRange.endInclusive - valueRange.start).takeIf { it > 0f } ?: 1f
     val fraction = ((value - valueRange.start) / span).coerceIn(0f, 1f)
     var width by remember { mutableFloatStateOf(0f) }
-    val thumbWidth by animateDpAsState(
+    // A spring, not a slide. A tween of a fixed length arrives at the same
+    // moment however far it had to go, which is what makes an inflating control
+    // feel mechanical; a spring arrives when the distance says it should.
+    val lensWidth by animateDpAsState(
         if (held) SLIDER_THUMB_W_HELD else SLIDER_THUMB_W,
-        label = "slider thumb width",
+        animationSpec = spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessMediumLow),
+        label = "slider lens width",
     )
-    val thumbHeight by animateDpAsState(
+    val lensHeight by animateDpAsState(
         if (held) SLIDER_THUMB_H_HELD else SLIDER_THUMB_H,
-        label = "slider thumb height",
+        animationSpec = spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessMediumLow),
+        label = "slider lens height",
+    )
+    // The track swells with the lens: a handle that grows over a track that
+    // does not looks like it is coming off the rail.
+    val trackHeight by animateDpAsState(
+        if (held) SLIDER_TRACK_HELD else SLIDER_TRACK_H,
+        animationSpec = spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessMediumLow),
+        label = "slider track",
     )
 
-    // The travel is the track less one thumb, so the thumb comes to rest with
-    // its edge on the end of the track rather than half of it hanging off. It
-    // is measured at the resting width: letting the swell move the scale would
+    // The travel is the track less one lens, so the lens comes to rest with its
+    // edge on the end of the track rather than half of it hanging off. It is
+    // measured at the resting width: letting the swell move the scale would
     // make the value drift under a finger that is holding still.
     val half = with(density) { SLIDER_THUMB_W.toPx() } / 2f
     val centre = half + fraction * ((width - 2f * half).coerceAtLeast(1f))
@@ -456,6 +480,9 @@ fun SkinSlider(
         val travel = (width - 2f * half).coerceAtLeast(1f)
         latest(valueRange.start + ((x - half) / travel).coerceIn(0f, 1f) * span)
     }
+
+    val trackColour = scheme.onSurface.copy(alpha = trackAlpha)
+    val fillColour = scheme.primary
 
     Box(
         modifier
@@ -483,64 +510,108 @@ fun SkinSlider(
             },
         contentAlignment = Alignment.CenterStart,
     ) {
+        val ready = width > 2f * half
         Box(
             Modifier
                 .fillMaxWidth()
-                .height(SLIDER_TRACK_H)
+                .height(trackHeight)
                 .clip(CircleShape)
-                .background(scheme.onSurface.copy(alpha = trackAlpha)),
+                .background(trackColour),
         ) {
-            // Filled to the middle of the thumb, not to its near edge: the
+            // Filled to the middle of the lens, not to its near edge: the
             // reading is where the lens is centred, so that is where the colour
             // has to stop.
             Box(
                 Modifier
-                    .fillMaxWidth(if (width > 2f * half) (centre / width).coerceIn(0f, 1f) else 0f)
+                    .fillMaxWidth(if (ready) (centre / width).coerceIn(0f, 1f) else 0f)
                     .fillMaxHeight()
-                    .background(scheme.primary),
+                    .background(fillColour),
             )
         }
-        Thumb(
+        Lens(
             Modifier
-                .offset { IntOffset((centre - thumbWidth.toPx() / 2f).roundToInt(), 0) }
-                .size(thumbWidth, thumbHeight),
+                .offset { IntOffset((centre - lensWidth.toPx() / 2f).roundToInt(), 0) }
+                .size(lensWidth, lensHeight),
             shape = RoundedCornerShape(SLIDER_THUMB_CORNER),
             tokens = tokens,
-            // The shadow is ordinary until the thumb is taken hold of, and then
+            // The shadow is ordinary until the lens is taken hold of, and then
             // it picks up the accent - the same swell said in light.
-            glow = if (held) scheme.primary else Color.Black,
-        )
+            glow = if (held) fillColour else Color.Black,
+        ) {
+            // The track again, in the lens's own coordinates, so that what is
+            // behind the glass is genuinely behind it. Scaled about the lens
+            // centre by the caller, which is what displaces the fill's edge and
+            // thickens the bar the way a lens would.
+            val bar = trackHeight.toPx()
+            val top = (size.height - bar) / 2f
+            val corner = CornerRadius(bar / 2f)
+            val leftOfLens = -(centre - lensWidth.toPx() / 2f)
+            drawRoundRect(
+                color = trackColour,
+                topLeft = Offset(leftOfLens, top),
+                size = Size(width, bar),
+                cornerRadius = corner,
+            )
+            if (ready) {
+                drawRoundRect(
+                    color = fillColour,
+                    topLeft = Offset(leftOfLens, top),
+                    size = Size(centre, bar),
+                    cornerRadius = corner,
+                )
+            }
+        }
     }
 }
 
 /**
- * The toggle from the reference: one lens, sliding along a coloured capsule.
+ * The toggle: one lens sliding along a coloured capsule, and stretching on the
+ * way because it is a drop of glass and not a bead on a wire.
  *
- * Material's thumb is a disc that shrinks and grows inside its track. This one
- * is the other idea - a pane of glass a little taller than the track it rides
- * on, so it stands proud of it, and translucent enough that the colour beneath
- * carries through the glass rather than being hidden by it. On, then, is a
- * capsule of accent seen twice: once beside the lens and once through it.
+ * The stretch is the whole trick. It peaks halfway across and is gone at both
+ * ends, so the lens leaves its seat, elongates, and settles - and because the
+ * travel is a spring the elongation follows the spring's own overshoot rather
+ * than a curve drawn to look like one. Held down it swells in place, which is
+ * how the control says it has you before it says which way it is going.
  */
 @Composable
 fun SkinSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     val tokens = LocalSkin.current.tokens()
     val scheme = MaterialTheme.colorScheme
     val trackAlpha = if (LocalSkinSettings.current.highContrast) 0.34f else 0.14f
-    val shift by animateDpAsState(
-        if (checked) SWITCH_W - SWITCH_THUMB_W else 0.dp,
-        label = "switch thumb",
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+
+    // One spring drives everything: where the lens is, how far it has stretched
+    // and what colour the track is underneath it.
+    val travel by animateFloatAsState(
+        if (checked) 1f else 0f,
+        animationSpec = spring(dampingRatio = 0.62f, stiffness = Spring.StiffnessLow),
+        label = "switch travel",
     )
-    val track by animateColorAsState(
+    val swell by animateFloatAsState(
+        if (pressed) 1f else 0f,
+        animationSpec = spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessMediumLow),
+        label = "switch press",
+    )
+    val trackColour by animateColorAsState(
         if (checked) scheme.primary else scheme.onSurface.copy(alpha = trackAlpha),
         label = "switch track",
     )
+
+    // Nothing at either end, most in the middle. The spring overshoots past one,
+    // where this would turn negative and pinch the lens instead of stretching
+    // it, so it is floored rather than left to the arithmetic.
+    val stretch = (1f - abs(2f * travel - 1f)).coerceIn(0f, 1f)
+    val lensWidth = SWITCH_THUMB_W + SWITCH_STRETCH * stretch + SWITCH_SWELL * swell
+    val lensHeight = SWITCH_THUMB_H + SWITCH_SWELL * swell
+
     Box(
         Modifier
             .size(SWITCH_W, SWITCH_ROW)
             .toggleable(
                 value = checked,
-                interactionSource = remember { MutableInteractionSource() },
+                interactionSource = interaction,
                 // No ripple: it would be a rectangle round a capsule, and the
                 // lens moving is already the answer to the press.
                 indication = null,
@@ -554,41 +625,77 @@ fun SkinSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
                 .fillMaxWidth()
                 .height(SWITCH_TRACK)
                 .clip(CircleShape)
-                .background(track),
+                .background(trackColour),
         )
-        Thumb(
+        // Grown about its own centre, so a stretching lens reaches both ways
+        // instead of walking sideways as it swells.
+        val rest = (SWITCH_W - SWITCH_THUMB_W) * travel
+        Lens(
             Modifier
-                .offset(x = shift)
-                .size(SWITCH_THUMB_W, SWITCH_THUMB_H),
+                .offset { IntOffset((rest - (lensWidth - SWITCH_THUMB_W) / 2f).roundToPx(), 0) }
+                .size(lensWidth, lensHeight),
             shape = RoundedCornerShape(percent = 50),
             tokens = tokens,
             // A lit handle on a lit track: the glow is the accent while the
             // switch is on, and an ordinary shadow while it is off.
             glow = if (checked) scheme.primary else Color.Black,
-        )
+        ) {
+            val bar = SWITCH_TRACK.toPx()
+            val top = (size.height - bar) / 2f
+            drawRoundRect(
+                color = trackColour,
+                topLeft = Offset(-(rest - (lensWidth - SWITCH_THUMB_W) / 2f).toPx(), top),
+                size = Size(SWITCH_W.toPx(), bar),
+                cornerRadius = CornerRadius(bar / 2f),
+            )
+        }
     }
 }
 
 /**
  * The lens both controls are handled by.
  *
- * A body, two bright edges, and whatever rim the skin draws. The middle is left
- * clear on purpose - that is the part the track shows through, and it is the
- * difference between a piece of glass and a white knob.
+ * Body, refraction, specular, rim - in that order, because that is the order
+ * light meets them. The middle is left clear on purpose: [refraction] draws
+ * whatever is behind the glass a second time, scaled about the centre and
+ * clipped short of the rim, and that clear band round the edge is the only
+ * thing that says the glass has thickness. Without it the control is a tinted
+ * hole in the page.
  */
 @Composable
-private fun Thumb(modifier: Modifier, shape: Shape, tokens: SkinTokens, glow: Color) {
+private fun Lens(
+    modifier: Modifier,
+    shape: Shape,
+    tokens: SkinTokens,
+    glow: Color,
+    refraction: (DrawScope.() -> Unit)? = null,
+) {
+    val body = tokens.fill ?: Color.White.copy(alpha = 0.55f)
+    val edge = tokens.rim ?: SolidColor(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.22f))
     Box(
         modifier
             .shadow(THUMB_SHADOW, shape, clip = false, ambientColor = glow, spotColor = glow)
             .clip(shape)
-            // Two coats. The skin's own glass is thin enough to vanish against
-            // a white settings page, where the rim is white too and the only
-            // thing left holding the shape is the shadow, so the lens gets a
-            // milky base under it: still transparent enough for the track to
-            // carry through, opaque enough to be an object on a pale ground.
-            .background(Color.White.copy(alpha = 0.45f))
-            .background(tokens.fill ?: Color.White.copy(alpha = 0.55f))
+            .drawBehind {
+                // Two coats under the image: the skin's own glass is thin
+                // enough to vanish against a white page, so a milky base goes
+                // beneath it - transparent enough for the track to carry
+                // through, opaque enough to be an object on a pale ground.
+                drawRect(Color.White.copy(alpha = 0.45f))
+                drawRect(body)
+                if (refraction != null) {
+                    val inset = LENS_RIM.toPx()
+                    val inner = pathOf(
+                        shape,
+                        Size(size.width - inset * 2f, size.height - inset * 2f),
+                        layoutDirection,
+                        this,
+                    ).apply { translate(Offset(inset, inset)) }
+                    clipPath(inner) {
+                        scale(LENS_MAGNIFY, LENS_MAGNIFY, pivot = center) { refraction() }
+                    }
+                }
+            }
             // Light entering the top of the lens and coming back off the
             // bottom of it, which is what gives a flat fill a thickness.
             .background(
@@ -603,21 +710,15 @@ private fun Thumb(modifier: Modifier, shape: Shape, tokens: SkinTokens, glow: Co
             // tokens. A pale lens on a pale bar is held together by its edge
             // and nothing else - without one the control reads as an empty
             // groove with nothing in it to move.
-            .border(
-                width = maxOf(tokens.rimWidth, 1.dp),
-                brush = tokens.rim
-                    ?: SolidColor(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.22f)),
-                shape = shape,
-            ),
+            .border(width = maxOf(tokens.rimWidth, 1.dp), brush = edge, shape = shape),
     )
 }
 
-// The proportions are the reference file's: a track thin enough to be a scale
-// rather than a control, and a thumb with a face on it.
 // One row height for everything in the toolbar: an icon button is 40dp, and a
 // slider that asks for 44 makes the whole bar taller for one control.
 private val SLIDER_ROW_H = 40.dp
 private val SLIDER_TRACK_H = 8.dp
+private val SLIDER_TRACK_HELD = 10.dp
 private val SLIDER_THUMB_W = 24.dp
 private val SLIDER_THUMB_H = 30.dp
 private val SLIDER_THUMB_W_HELD = 28.dp
@@ -631,8 +732,16 @@ private val SWITCH_THUMB_W = 40.dp
 // Taller than the track it rides on, so the lens sits on the capsule instead
 // of in it - the overhang is what reads as glass laid on top.
 private val SWITCH_THUMB_H = 38.dp
+/** How much longer the lens gets halfway across. */
+private val SWITCH_STRETCH = 9.dp
+/** And how much bigger it gets under a finger that has not let go yet. */
+private val SWITCH_SWELL = 3.dp
 
 private val THUMB_SHADOW = 6.dp
+/** The clear band round the rim: the edge of the glass carries no image. */
+private val LENS_RIM = 5.dp
+/** How much bigger what is behind the glass looks through it. */
+private const val LENS_MAGNIFY = 1.32f
 
 /**
  * The shapes Material's own components reach for. Overriding these is how the
