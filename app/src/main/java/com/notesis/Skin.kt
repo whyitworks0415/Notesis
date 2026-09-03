@@ -497,6 +497,11 @@ fun SkinSlider(
                 Modifier
                     .fillMaxWidth(if (width > 2f * half) (centre / width).coerceIn(0f, 1f) else 0f)
                     .fillMaxHeight()
+                    // The outer clip only rounds the track's own two ends; the
+                    // fill's far edge is a corner of its own and stayed square
+                    // wherever the thumb was short of the end. Its own capsule
+                    // rounds that edge too.
+                    .clip(CircleShape)
                     .background(scheme.primary),
             )
         }
