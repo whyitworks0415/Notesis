@@ -11,7 +11,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Canvas
@@ -64,7 +68,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.CropFree
-import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.FilterCenterFocus
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
@@ -194,7 +197,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -1890,34 +1892,15 @@ private fun NoteScreen(
     var barSize by remember { mutableStateOf(IntSize.Zero) }
     val density = LocalDensity.current
 
-    // The three-finger reference panel: which PDF it shows, and where it sits.
-    // The name is kept in preferences - the same PDF next time it opens - but
-    // position and size are not; every open starts where the gesture landed.
-    var referenceName by remember { mutableStateOf(penStore.referencePdfName) }
-    var referenceRevision by remember { mutableIntStateOf(0) }
+    // The three-finger reference panel: another page of this same note,
+    // floating over the one being written on - not a second file. Which page
+    // and where it sits both start fresh each time it opens; only being open
+    // at all would be worth remembering, and it never stays open past a note.
     var referenceOpen by remember { mutableStateOf(false) }
+    var referencePage by remember { mutableIntStateOf(0) }
     var referenceOffset by remember { mutableStateOf(Offset.Zero) }
     var referenceSize by remember {
         mutableStateOf(with(density) { Size(340.dp.toPx(), 440.dp.toPx()) })
-    }
-    val pickReference = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument(),
-    ) { uri: Uri? ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        scope.launch {
-            val copied = withContext(Dispatchers.IO) {
-                runCatching {
-                    context.contentResolver.openInputStream(uri)?.use { input ->
-                        referencePdfFile(context).outputStream().use { input.copyTo(it) }
-                    }
-                }.isSuccess
-            }
-            if (!copied) return@launch
-            val label = displayName(context, uri)
-            penStore.referencePdfName = label
-            referenceName = label
-            referenceRevision++
-        }
     }
     val maxBarWidth = with(density) {
         (containerSize.width.takeIf { it > 0 } ?: Int.MAX_VALUE).toDp()
@@ -2124,38 +2107,7 @@ private fun NoteScreen(
         Modifier
             .weight(1f)
             .fillMaxWidth()
-            .onSizeChanged { containerSize = it }
-            .multiFingerGestures(
-                popupOpen = { referenceOpen },
-                onUndo = { canvas?.undo(); edits++ },
-                onRedo = { canvas?.redo(); edits++ },
-                onOpenPopup = { centroid ->
-                    referenceOpen = true
-                    val w = referenceSize.width
-                    val h = referenceSize.height
-                    val maxX = (containerSize.width - w).coerceAtLeast(0f)
-                    val maxY = (containerSize.height - h).coerceAtLeast(0f)
-                    referenceOffset = Offset(
-                        (centroid.x - w / 2f).coerceIn(0f, maxX),
-                        (centroid.y - h).coerceIn(0f, maxY),
-                    )
-                },
-                onDrag = { pan, spreadFactor ->
-                    val minW = with(density) { REFERENCE_MIN_SIZE.toPx() }
-                    val minH = with(density) { REFERENCE_MIN_SIZE.toPx() }
-                    val newW = (referenceSize.width * spreadFactor)
-                        .coerceIn(minW, containerSize.width.toFloat().coerceAtLeast(minW))
-                    val newH = (referenceSize.height * spreadFactor)
-                        .coerceIn(minH, containerSize.height.toFloat().coerceAtLeast(minH))
-                    referenceSize = Size(newW, newH)
-                    val maxX = (containerSize.width - newW).coerceAtLeast(0f)
-                    val maxY = (containerSize.height - newH).coerceAtLeast(0f)
-                    referenceOffset = Offset(
-                        (referenceOffset.x + pan.x).coerceIn(0f, maxX),
-                        (referenceOffset.y + pan.y).coerceIn(0f, maxY),
-                    )
-                },
-            ),
+            .onSizeChanged { containerSize = it },
     ) {
         val ready = opened
         // Only the page is recorded, never the chrome above it. A pane that
@@ -2227,6 +2179,35 @@ private fun NoteScreen(
                         if (mode == EditMode.MASK) pen.colorArgb or 0xFF000000.toInt() else pen.colorArgb
                     view.strokeWidth = pen.width
                     view.eraserWidth = eraserWidth
+                    view.onUndo = { canvas?.undo(); edits++ }
+                    view.onRedo = { canvas?.redo(); edits++ }
+                    view.referenceOpen = referenceOpen
+                    view.onOpenReference = { cx, cy ->
+                        referenceOpen = true
+                        referencePage = currentPage
+                        val w = referenceSize.width
+                        val h = referenceSize.height
+                        val maxX = (containerSize.width - w).coerceAtLeast(0f)
+                        val maxY = (containerSize.height - h).coerceAtLeast(0f)
+                        referenceOffset = Offset(
+                            (cx - w / 2f).coerceIn(0f, maxX),
+                            (cy - h).coerceIn(0f, maxY),
+                        )
+                    }
+                    view.onReferenceDrag = { panX, panY, spreadFactor ->
+                        val minSize = with(density) { REFERENCE_MIN_SIZE.toPx() }
+                        val newW = (referenceSize.width * spreadFactor)
+                            .coerceIn(minSize, containerSize.width.toFloat().coerceAtLeast(minSize))
+                        val newH = (referenceSize.height * spreadFactor)
+                            .coerceIn(minSize, containerSize.height.toFloat().coerceAtLeast(minSize))
+                        referenceSize = Size(newW, newH)
+                        val maxX = (containerSize.width - newW).coerceAtLeast(0f)
+                        val maxY = (containerSize.height - newH).coerceAtLeast(0f)
+                        referenceOffset = Offset(
+                            (referenceOffset.x + panX).coerceIn(0f, maxX),
+                            (referenceOffset.y + panY).coerceIn(0f, maxY),
+                        )
+                    }
                 },
             )
         }
@@ -2479,13 +2460,23 @@ private fun NoteScreen(
             )
         }
 
-        if (referenceOpen) {
+        // Scale from nothing rather than sliding in from an edge: it opens
+        // from wherever the gesture was, not from a side of the screen.
+        // Qualified like the sidebar's below: the enclosing scopes put more
+        // than one overload in reach, and this is the one without a receiver.
+        androidx.compose.animation.AnimatedVisibility(
+            visible = referenceOpen,
+            enter = fadeIn(tween(180)) + scaleIn(tween(180), initialScale = 0.85f),
+            exit = fadeOut(tween(120)) + scaleOut(tween(120), targetScale = 0.85f),
+        ) {
             ReferencePdfPopup(
-                name = referenceName,
-                revision = referenceRevision,
+                canvas = canvas,
+                pageCount = canvas?.pageCount ?: 0,
+                page = referencePage,
+                edits = edits,
                 offset = referenceOffset,
                 size = referenceSize,
-                onPick = { pickReference.launch(arrayOf("application/pdf")) },
+                onPageChange = { referencePage = it },
                 onClose = { referenceOpen = false },
             )
         }
@@ -2627,53 +2618,40 @@ private fun shareBitmap(context: android.content.Context, bitmap: Bitmap) {
 }
 
 /**
- * The three-finger reference panel: a second, smaller PDF floating over the
- * note. Which file it shows is picked here and remembered by name in
- * [PenStore.referencePdfName] - the same one opens next time; position and
- * size are not remembered, since where the gesture happened to land is not a
- * habit worth keeping.
+ * The three-finger reference panel: another page of this same note, smaller
+ * and floating over the one being written on. Not a second file - the point
+ * is to see a different part of what is already open, ink included, so a
+ * note written across two pages does not need its own second window.
  *
  * Position and size arrive from outside, driven live by the gesture that
  * opened or is now moving this - this only ever draws where it is told to be.
  */
 @Composable
 private fun ReferencePdfPopup(
-    name: String?,
-    revision: Int,
+    canvas: InkCanvasView?,
+    pageCount: Int,
+    page: Int,
+    /** Read only to know the ink has changed - see the effect key below. */
+    edits: Int,
     offset: Offset,
     size: Size,
-    onPick: () -> Unit,
+    onPageChange: (Int) -> Unit,
     onClose: () -> Unit,
 ) {
-    val context = LocalContext.current
     val density = LocalDensity.current
-    var source by remember { mutableStateOf<PdfSource?>(null) }
-    var page by remember { mutableIntStateOf(0) }
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
 
-    // Reopens the copy from disk only when a new one has just been picked -
-    // not on every reposition, which would mean a re-parse per frame of drag.
-    LaunchedEffect(revision) {
-        val old = source
-        val file = referencePdfFile(context)
-        source = if (file.exists()) {
-            withContext(Dispatchers.IO) { PdfSource.open(file) }
-        } else {
-            null
-        }
-        old?.close()
-        page = 0
-    }
-    DisposableEffect(Unit) { onDispose { source?.close() } }
-
     val renderWidth = size.width.roundToInt().coerceAtLeast(64)
-    LaunchedEffect(source, page, renderWidth) {
-        val opened = source
-        bitmap = if (opened != null && page in 0 until opened.pageCount) {
-            withContext(Dispatchers.IO) { opened.renderNow(page, renderWidth) }
-        } else {
-            null
+    // edits is the same counter a stroke bumps everywhere else in this screen,
+    // so a mark made on the page being shown here redraws it too - the point
+    // of showing this page rather than a second file was to see the ink on it.
+    LaunchedEffect(canvas, page, renderWidth, edits) {
+        val view = canvas
+        if (view == null || page !in 0 until pageCount) {
+            bitmap = null
+            return@LaunchedEffect
         }
+        view.renderPageSnapshot(page, renderWidth) { bitmap = it }
     }
 
     SkinSurface(
@@ -2690,17 +2668,14 @@ private fun ReferencePdfPopup(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    name ?: "참고 PDF",
+                    "참고 · ${page + 1} / $pageCount",
                     style = MaterialTheme.typography.labelLarge,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
-                IconButton(onClick = onPick) {
-                    Icon(Icons.Default.FileOpen, contentDescription = "PDF 선택")
-                }
                 IconButton(onClick = onClose) {
-                    Icon(Icons.Default.Close, contentDescription = "참고 PDF 닫기")
+                    Icon(Icons.Default.Close, contentDescription = "참고 화면 닫기")
                 }
             }
             Box(
@@ -2708,18 +2683,17 @@ private fun ReferencePdfPopup(
                 contentAlignment = Alignment.Center,
             ) {
                 val shown = bitmap
-                when {
-                    shown != null -> Image(
+                if (shown != null) {
+                    Image(
                         shown.asImageBitmap(),
                         contentDescription = null,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Fit,
                     )
-                    name == null -> TextButton(onClick = onPick) { Text("볼 PDF 고르기") }
-                    else -> CircularProgressIndicator()
+                } else {
+                    CircularProgressIndicator()
                 }
             }
-            val pageCount = source?.pageCount ?: 0
             if (pageCount > 1) {
                 Row(
                     Modifier.fillMaxWidth().padding(bottom = 4.dp),
@@ -2727,14 +2701,14 @@ private fun ReferencePdfPopup(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     IconButton(
-                        onClick = { page = (page - 1).coerceAtLeast(0) },
+                        onClick = { onPageChange((page - 1).coerceAtLeast(0)) },
                         enabled = page > 0,
                     ) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "이전 쪽")
                     }
                     Text("${page + 1} / $pageCount", style = MaterialTheme.typography.labelSmall)
                     IconButton(
-                        onClick = { page = (page + 1).coerceAtMost(pageCount - 1) },
+                        onClick = { onPageChange((page + 1).coerceAtMost(pageCount - 1)) },
                         enabled = page < pageCount - 1,
                     ) {
                         Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "다음 쪽")

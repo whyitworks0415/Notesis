@@ -242,6 +242,30 @@ class InkCanvasView @JvmOverloads constructor(
     /** Handed a rendering of the captured region, on a background thread. */
     var onCaptured: ((Bitmap) -> Unit)? = null
 
+    // ---- finger gestures, alongside the pen -----------------------------
+    //
+    // Undo, redo and the reference panel all live here rather than in an
+    // ancestor Compose modifier: this is the one place every finger touch is
+    // actually dispatched to. An AndroidView owns its own MotionEvent stream
+    // once it starts handling one, so a Compose pointerInput sitting above it
+    // is watching a stream that may already be spoken for - which is exactly
+    // why undo and redo went quiet the first time this was tried from there.
+
+    /** Two fingers, tapped twice quickly. */
+    var onUndo: (() -> Unit)? = null
+
+    /** Three fingers, the same way. */
+    var onRedo: (() -> Unit)? = null
+
+    /** Whether the reference panel is on screen right now - set from outside. */
+    var referenceOpen: Boolean = false
+
+    /** Three fingers dragged up from nothing, panel closed: where to open it. */
+    var onOpenReference: ((Float, Float) -> Unit)? = null
+
+    /** Three fingers moving once it is open: pan in each axis, then the ratio the spread grew by. */
+    var onReferenceDrag: ((Float, Float, Float) -> Unit)? = null
+
     /** Fired when a picture is picked up or let go, so the host can offer actions. */
     var onImageSelected: ((Boolean) -> Unit)? = null
 
@@ -323,6 +347,25 @@ class InkCanvasView @JvmOverloads constructor(
     private var lastFocusY = 0f
     private var currentPage = 0
     private var fitted = false
+
+    // Finger-gesture bookkeeping: one continuous touch, from the first finger
+    // down to the last one up, is one "gesture" - these track it.
+    private var gestureMaxPointers = 0
+    private var gestureStartTime = 0L
+    private var gestureMoved = 0f
+    // Three fingers are their own zone; these three track only the sustained
+    // drag once a third finger has actually landed, not the whole gesture.
+    private var have3Fingers = false
+    private var opened3fThisGesture = false
+    private var gestureStart3fY = 0f
+    private var prev3fX = 0f
+    private var prev3fY = 0f
+    private var prev3fSpread = 0f
+    // The other half of a double tap: what the last one looked like.
+    private var lastTapFingers = 0
+    private var lastTapTime = 0L
+    private var lastTapX = 0f
+    private var lastTapY = 0f
 
     private var velocityTracker: VelocityTracker? = null
     private var flingVx = 0f
@@ -901,21 +944,60 @@ class InkCanvasView @JvmOverloads constructor(
         scaleDetector.onTouchEvent(event)
         trackVelocity(event)
         when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN,
-            MotionEvent.ACTION_POINTER_DOWN,
-            MotionEvent.ACTION_POINTER_UP,
-            -> {
+            MotionEvent.ACTION_DOWN -> {
                 stopFling()
+                val focus = focusOf(event, skipPointerIndex = -1)
+                lastFocusX = focus[0]
+                lastFocusY = focus[1]
+                gestureMaxPointers = 1
+                gestureStartTime = System.currentTimeMillis()
+                gestureMoved = 0f
+                have3Fingers = false
+                opened3fThisGesture = false
+                return true
+            }
+
+            MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_POINTER_UP -> {
+                stopFling()
+                gestureMaxPointers = maxOf(gestureMaxPointers, event.pointerCount)
                 // The centroid jumps when a finger joins or leaves, so re-anchor
-                // instead of translating by that jump.
+                // instead of translating by that jump - and don't count the jump
+                // itself as movement for the tap check below.
                 val focus = focusOf(event, skipPointerIndex = leavingIndex(event))
                 lastFocusX = focus[0]
                 lastFocusY = focus[1]
+                if (event.pointerCount < 3) have3Fingers = false
                 return true
             }
 
             MotionEvent.ACTION_MOVE -> {
+                gestureMaxPointers = maxOf(gestureMaxPointers, event.pointerCount)
                 val focus = focusOf(event, skipPointerIndex = -1)
+                gestureMoved += hypot(focus[0] - lastFocusX, focus[1] - lastFocusY)
+
+                // Three fingers are a zone the page itself never used, so they
+                // never pan or zoom it - they only ever move the reference
+                // panel, or, held still, redo.
+                if (event.pointerCount >= 3) {
+                    val spread = averageSpread(event)
+                    if (!have3Fingers) {
+                        have3Fingers = true
+                        gestureStart3fY = focus[1]
+                    } else if (referenceOpen) {
+                        val factor = if (prev3fSpread > MIN_SPREAD_PX) spread / prev3fSpread else 1f
+                        onReferenceDrag?.invoke(focus[0] - prev3fX, focus[1] - prev3fY, factor)
+                    } else if (!opened3fThisGesture && gestureStart3fY - focus[1] > OPEN_DRAG_PX) {
+                        onOpenReference?.invoke(focus[0], focus[1])
+                        opened3fThisGesture = true
+                    }
+                    prev3fX = focus[0]
+                    prev3fY = focus[1]
+                    prev3fSpread = spread
+                    lastFocusX = focus[0]
+                    lastFocusY = focus[1]
+                    return true
+                }
+
                 if (!scaleDetector.isInProgress || event.pointerCount > 1) {
                     documentToScreen.postTranslate(focus[0] - lastFocusX, focus[1] - lastFocusY)
                     onTransformChanged()
@@ -928,6 +1010,7 @@ class InkCanvasView @JvmOverloads constructor(
             MotionEvent.ACTION_UP -> {
                 startFling()
                 releaseVelocity()
+                maybeHandleTap()
                 return true
             }
 
@@ -937,6 +1020,47 @@ class InkCanvasView @JvmOverloads constructor(
             }
         }
         return true
+    }
+
+    /**
+     * Undo and redo: two or three fingers, tapped twice quickly in about the
+     * same place. Judged once the last finger lifts, against how many fingers
+     * were down at the gesture's widest - not how many are left by then.
+     */
+    private fun maybeHandleTap() {
+        val duration = System.currentTimeMillis() - gestureStartTime
+        if (gestureMaxPointers !in 2..3 || duration >= TAP_MAX_MS || gestureMoved >= TAP_SLOP_PX) {
+            return
+        }
+        val now = System.currentTimeMillis()
+        val sameSpot = hypot(lastFocusX - lastTapX, lastFocusY - lastTapY) < DOUBLE_TAP_SLOP_PX
+        if (lastTapFingers == gestureMaxPointers && now - lastTapTime < DOUBLE_TAP_MS && sameSpot) {
+            when (gestureMaxPointers) {
+                2 -> onUndo?.invoke()
+                3 -> onRedo?.invoke()
+            }
+            lastTapFingers = 0
+        } else {
+            lastTapFingers = gestureMaxPointers
+            lastTapTime = now
+            lastTapX = lastFocusX
+            lastTapY = lastFocusY
+        }
+    }
+
+    /** Every pair of fingers' distance, averaged - one number for how spread the hand is. */
+    private fun averageSpread(event: MotionEvent): Float {
+        val n = event.pointerCount
+        if (n < 2) return 0f
+        var total = 0f
+        var pairs = 0
+        for (i in 0 until n) {
+            for (j in i + 1 until n) {
+                total += hypot(event.getX(i) - event.getX(j), event.getY(i) - event.getY(j))
+                pairs++
+            }
+        }
+        return if (pairs > 0) total / pairs else 0f
     }
 
     // ---- inertia ------------------------------------------------------------
@@ -1716,7 +1840,48 @@ class InkCanvasView @JvmOverloads constructor(
         }
     }
 
-    /** Draws one page's [rect] into a bitmap: background, pictures, then ink. */
+    /** How many pages this note has - the reference panel pages by this. */
+    val pageCount: Int get() = document.pages.size
+
+    /**
+     * One page of this same note - background and ink together - for the
+     * three-finger reference panel. It shows what is already open, not a
+     * second file, so a stroke on it is exactly the stroke that is there.
+     *
+     * The page's own strokes are snapshotted here, on the UI thread that owns
+     * them; the render itself, like a capture, runs on a worker and answers
+     * back on this view's own thread.
+     */
+    fun renderPageSnapshot(pageIndex: Int, widthPx: Int, onReady: (Bitmap?) -> Unit) {
+        val page = document.pages.getOrNull(pageIndex)
+        if (page == null) {
+            onReady(null)
+            return
+        }
+        val strokes = page.strokes.toList()
+        val images = page.images.map { it to imageLoader?.invoke(it.id) }
+        val pdfIndex = if (page.background == PageBackground.PDF) page.pdfPageIndex else -1
+        val pageWidth = page.width
+        val pageHeight = page.height
+        refiner.execute {
+            val bitmap = renderRegion(
+                RectF(0f, 0f, pageWidth, pageHeight),
+                pageWidth,
+                pageHeight,
+                pdfIndex,
+                strokes,
+                images,
+                widthPx,
+            )
+            post { onReady(bitmap) }
+        }
+    }
+
+    /**
+     * Draws one page's [rect] into a bitmap: background, pictures, then ink.
+     * [targetWidthPx] fixes the output size directly - for a small floating
+     * preview, not a capture meant to be read at full size.
+     */
     private fun renderRegion(
         rect: RectF,
         pageWidth: Float,
@@ -1724,9 +1889,13 @@ class InkCanvasView @JvmOverloads constructor(
         pdfIndex: Int,
         strokes: List<Stroke>,
         images: List<Pair<PageImage, Bitmap?>>,
+        targetWidthPx: Int? = null,
     ): Bitmap? = runCatching {
-        val scale = (CAPTURE_TARGET_PX / max(rect.width(), rect.height()))
-            .coerceIn(1f, CAPTURE_MAX_SCALE)
+        val scale = if (targetWidthPx != null) {
+            targetWidthPx / rect.width()
+        } else {
+            (CAPTURE_TARGET_PX / max(rect.width(), rect.height())).coerceIn(1f, CAPTURE_MAX_SCALE)
+        }
         val width = (rect.width() * scale).toInt().coerceAtLeast(1)
         val height = (rect.height() * scale).toInt().coerceAtLeast(1)
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
@@ -2243,6 +2412,18 @@ class InkCanvasView @JvmOverloads constructor(
         const val MASK_OUTLINE_PX = 2f
         const val MASK_OPAQUE = 0xFF000000.toInt()
         const val MASK_SELECTION_HEIGHT = 1.15f
+
+        /** A tap this fast, moved this little, is a tap and not the start of a pan. */
+        const val TAP_MAX_MS = 250L
+        const val TAP_SLOP_PX = 28f
+        const val DOUBLE_TAP_MS = 400L
+        const val DOUBLE_TAP_SLOP_PX = 140f
+
+        /** How far up three fingers have to travel before that reads as "open it". */
+        const val OPEN_DRAG_PX = 120f
+
+        /** Below this the fingers are practically on top of each other; no factor. */
+        const val MIN_SPREAD_PX = 8f
         val IDENTITY = ImmutableAffineTransform(1f, 0f, 0f, 0f, 1f, 0f)
     }
 }
