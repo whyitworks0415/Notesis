@@ -248,6 +248,31 @@ class InkCanvasView @JvmOverloads constructor(
     /** Fired whenever committed ink changes, so the host can autosave. */
     var onStrokesChanged: (() -> Unit)? = null
 
+    /**
+     * Raised when the pen goes down and again when it comes up.
+     *
+     * The chrome above this view frosts what is under it, and doing that means
+     * recording the page into a layer every frame it moves. That recording is
+     * on the same render pass as the ink, and it is the one thing between here
+     * and the screen that this app can decide not to do. Nobody is looking at
+     * the toolbar while they write, so the answer is to stop while the pen is
+     * down and pick the frost back up when it lifts.
+     */
+    var onDrawingChanged: ((Boolean) -> Unit)? = null
+
+    /**
+     * Whether the tip is drawn ahead of the pen.
+     *
+     * Prediction buys back most of the motion-to-photon gap, and it pays for it
+     * with a tip that reaches past where the pen actually is. On a fast change
+     * of direction the reach lands on the wrong side of the corner and is taken
+     * back a frame later, which is seen as the stroke going briefly angular. It
+     * is the right trade for most hands and the wrong one for some, so it is a
+     * switch rather than a decision - and it is the first thing to turn off
+     * when the ink looks faceted.
+     */
+    var predictionEnabled: Boolean = true
+
     /** Fired when the page under the middle of the screen changes. */
     var onCurrentPageChanged: ((Int) -> Unit)? = null
 
@@ -667,6 +692,7 @@ class InkCanvasView @JvmOverloads constructor(
                 if (index < 0) return true
                 val pointerId = event.getPointerId(event.actionIndex)
                 activeStylusPointer = pointerId
+                onDrawingChanged?.invoke(true)
                 // Built per gesture: the Kalman filter is tied to one pointer on
                 // one device, and a new stroke is a new pointer.
                 if (!frameClockRunning) {
@@ -793,7 +819,7 @@ class InkCanvasView @JvmOverloads constructor(
                 }
                 val strokeId = activeStrokeId ?: return false
                 latency.addSamples(1 + event.historySize)
-                val predicted = predictor.predict()
+                val predicted = if (predictionEnabled) predictor.predict() else null
                 try {
                     if (predicted != null) {
                         // Ground truth for the tip's steadiness: the distance
@@ -864,6 +890,7 @@ class InkCanvasView @JvmOverloads constructor(
     private fun endStylus() {
         removeCallbacks(longPress)
         selectingText = false
+        if (activeStylusPointer != null) onDrawingChanged?.invoke(false)
         activeStylusPointer = null
         activeStrokeId = null
         erasing = false

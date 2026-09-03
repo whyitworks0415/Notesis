@@ -48,7 +48,10 @@ fun AlertDialog(
         // The window is only reachable from inside the dialog's own content, and
         // confirmButton is the one slot every call site fills.
         confirmButton = { BlurBehind(); confirmButton() },
-        modifier = modifier,
+        // Colour and shape a dialog takes from the theme; the lit edge it has
+        // to be given. Without it a glass dialog was a Material panel that
+        // happened to be translucent.
+        modifier = modifier.then(skinEdge(shape)),
         dismissButton = dismissButton,
         icon = icon,
         title = title,

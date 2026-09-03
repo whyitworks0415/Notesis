@@ -1,0 +1,62 @@
+# Builds the APK on GitHub's runners, because the tablet is the only machine
+# around and it cannot build itself. Runs on a push to a work branch or on
+# demand from the Actions tab, and leaves the APK in two places: a build
+# artifact, and a release, which is the one a tablet browser can install from
+# in a single tap.
+name: APK
+
+on:
+  push:
+    branches: ["main", "claude/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build release APK
+        # gradle.properties pins org.gradle.java.home to a path on the author's
+        # own Windows machine, which does not exist here. A system property on
+        # the command line outranks the properties file, so the pin stays where
+        # it is useful and this build uses the JDK that was just set up.
+        run: ./gradlew assembleRelease -Dorg.gradle.java.home="$JAVA_HOME" --no-daemon --stacktrace
+
+      - name: Name the build
+        id: name
+        run: |
+          VERSION=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          cp app/build/outputs/apk/release/app-release.apk "Notesis-$VERSION-${{ github.run_number }}.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Notesis-${{ steps.name.outputs.version }}-${{ github.run_number }}
+          path: Notesis-*.apk
+          if-no-files-found: error
+
+      - name: Publish a release to install from
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.name.outputs.tag }}
+          name: Notesis ${{ steps.name.outputs.version }} (#${{ github.run_number }})
+          body: |
+            `${{ github.sha }}` · ${{ github.ref_name }}
+
+            아래 apk를 태블릿에서 바로 받아 설치하세요.
+          files: Notesis-*.apk
+          fail_on_unmatched_files: true
