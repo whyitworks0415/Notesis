@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
@@ -115,8 +116,23 @@ fun SkinSettingsScreen(
                         .padding(horizontal = 20.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    ProvideSkin(option, settings) {
-                        SkinSurface(Modifier.size(44.dp), corner = 13.dp) {}
+                    // On something to look through. These sample the skin, and
+                    // a pane of glass on a white settings page is a white
+                    // square: the sample showed nothing because there was
+                    // nothing behind it to show.
+                    Box(
+                        Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(13.dp))
+                            .background(
+                                Brush.linearGradient(
+                                    listOf(Color(0xFF6A5AE0), Color(0xFF39C3C9)),
+                                ),
+                            ),
+                    ) {
+                        ProvideSkin(option, settings) {
+                            SkinSurface(Modifier.fillMaxSize(), corner = 13.dp) {}
+                        }
                     }
                     Spacer(Modifier.width(16.dp))
                     Column(Modifier.weight(1f)) {

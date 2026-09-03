@@ -259,8 +259,10 @@ fun SkinSurface(
     }
     Box(
         modifier
-            .shadow(tokens.shadow, shape, clip = false)
-            .clip(shape)
+            // clip = true, and no second clip after it: the shadow's own layer
+            // does the clipping, and a shadow that is allowed to clip is one
+            // the platform draws around the shape rather than under all of it.
+            .shadow(tokens.shadow, shape, clip = true)
             .frost()
             .background(tokens.fill ?: MaterialTheme.colorScheme.surface.copy(alpha = tokens.fillAlpha))
             .then(if (flush) Modifier.flushEdge(tokens) else Modifier.glassEdge(tokens, shape)),
@@ -670,19 +672,27 @@ private fun Lens(
     glow: Color,
     refraction: (DrawScope.() -> Unit)? = null,
 ) {
-    val body = tokens.fill ?: Color.White.copy(alpha = 0.55f)
+    val body = tokens.fill ?: Color.White.copy(alpha = 0.30f)
     val edge = tokens.rim ?: SolidColor(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.22f))
     Box(
         modifier
-            .shadow(THUMB_SHADOW, shape, clip = false, ambientColor = glow, spotColor = glow)
-            .clip(shape)
+            // Clipped by the shadow's own layer rather than by a second one
+            // after it. Two layers where one will do, and a shadow told not to
+            // clip is a shadow the platform cannot punch the shape out of - it
+            // gets drawn under the whole outline instead of only around it, and
+            // a translucent lens shows it.
+            .shadow(THUMB_SHADOW, shape, clip = true, ambientColor = glow, spotColor = glow)
             .drawBehind {
-                // Two coats under the image: the skin's own glass is thin
-                // enough to vanish against a white page, so a milky base goes
-                // beneath it - transparent enough for the track to carry
-                // through, opaque enough to be an object on a pale ground.
-                drawRect(Color.White.copy(alpha = 0.45f))
-                drawRect(body)
+                // The image first, then the tint over it.
+                //
+                // This was the wrong way round, and it is what made the middle
+                // of every lens paler than the thing it was magnifying: a milky
+                // base coat went down first, the refracted track was painted on
+                // top of it, and anything in that track carrying alpha - which
+                // is the whole of an unfilled slider - came out as white card
+                // seen through a wash rather than as the track seen through
+                // glass. Glass tints what it is looking at; it is not a card
+                // with a picture on it.
                 if (refraction != null) {
                     val inset = LENS_RIM.toPx()
                     val inner = pathOf(
@@ -695,15 +705,17 @@ private fun Lens(
                         scale(LENS_MAGNIFY, LENS_MAGNIFY, pivot = center) { refraction() }
                     }
                 }
+                drawRect(body)
             }
-            // Light entering the top of the lens and coming back off the
-            // bottom of it, which is what gives a flat fill a thickness.
+            // Light entering the top of the lens and coming back off the bottom
+            // of it. Only the two edges: a highlight that reaches the middle is
+            // paint, not light, and the middle is where the image has to be.
             .background(
                 Brush.verticalGradient(
-                    0f to Color.White.copy(alpha = 0.72f),
-                    0.3f to Color.White.copy(alpha = 0.06f),
-                    0.7f to Color.White.copy(alpha = 0.06f),
-                    1f to Color.White.copy(alpha = 0.46f),
+                    0f to Color.White.copy(alpha = 0.55f),
+                    0.26f to Color.Transparent,
+                    0.74f to Color.Transparent,
+                    1f to Color.White.copy(alpha = 0.34f),
                 ),
             )
             // An edge in every skin, not only the ones with a rim in their
