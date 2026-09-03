@@ -504,7 +504,9 @@ fun SkinSlider(
             Modifier
                 .offset { IntOffset((centre - thumbWidth.toPx() / 2f).roundToInt(), 0) }
                 .size(thumbWidth, thumbHeight),
-            shape = RoundedCornerShape(SLIDER_THUMB_CORNER),
+            // A capsule, as in the file: the ends are half the thumb's height,
+            // so the lens has no corner of its own to argue with the track's.
+            shape = RoundedCornerShape(percent = 50),
             tokens = tokens,
             // The shadow is ordinary until the thumb is taken hold of, and then
             // it picks up the accent - the same swell said in light.
@@ -527,8 +529,10 @@ fun SkinSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     val tokens = LocalSkin.current.tokens()
     val scheme = MaterialTheme.colorScheme
     val trackAlpha = if (LocalSkinSettings.current.highContrast) 0.34f else 0.14f
+    // Inside the track at both ends, by the same margin the knob leaves above
+    // and below it.
     val shift by animateDpAsState(
-        if (checked) SWITCH_W - SWITCH_THUMB_W else 0.dp,
+        if (checked) SWITCH_W - SWITCH_THUMB_W - SWITCH_THUMB_INSET else SWITCH_THUMB_INSET,
         label = "switch thumb",
     )
     val track by animateColorAsState(
@@ -612,25 +616,33 @@ private fun Thumb(modifier: Modifier, shape: Shape, tokens: SkinTokens, glow: Co
     )
 }
 
-// The proportions are the reference file's: a track thin enough to be a scale
-// rather than a control, and a thumb with a face on it.
+// Measured off the reference prototype rather than guessed at, and the ratios
+// are what was wrong before: both lenses were portrait, taller than they were
+// wide, and the file's are the other way round - a wide, flat capsule lying
+// along the track. Everything here is that file's proportion at this app's
+// scale.
+//
+// Slider: the thumb is 1.45 as wide as it is tall, and about four and a half
+// times the height of the track it rides on.
 // One row height for everything in the toolbar: an icon button is 40dp, and a
 // slider that asks for 44 makes the whole bar taller for one control.
 private val SLIDER_ROW_H = 40.dp
-private val SLIDER_TRACK_H = 8.dp
-private val SLIDER_THUMB_W = 24.dp
-private val SLIDER_THUMB_H = 30.dp
-private val SLIDER_THUMB_W_HELD = 28.dp
-private val SLIDER_THUMB_H_HELD = 36.dp
-private val SLIDER_THUMB_CORNER = 10.dp
+private val SLIDER_TRACK_H = 6.dp
+private val SLIDER_THUMB_W = 36.dp
+private val SLIDER_THUMB_H = 25.dp
+private val SLIDER_THUMB_W_HELD = 40.dp
+private val SLIDER_THUMB_H_HELD = 28.dp
 
+// Switch: the track is 2.32 as wide as it is tall, and the knob sits *inside*
+// it - 1.47 track-heights wide, 0.885 of one tall, with the rest of the height
+// left as an even margin. It used to stand proud of the track, which is a
+// different control from the one in the file.
 private val SWITCH_ROW = 44.dp
-private val SWITCH_W = 62.dp
+private val SWITCH_W = 74.dp
 private val SWITCH_TRACK = 32.dp
-private val SWITCH_THUMB_W = 40.dp
-// Taller than the track it rides on, so the lens sits on the capsule instead
-// of in it - the overhang is what reads as glass laid on top.
-private val SWITCH_THUMB_H = 38.dp
+private val SWITCH_THUMB_W = 47.dp
+private val SWITCH_THUMB_H = 28.dp
+private val SWITCH_THUMB_INSET = 2.dp
 
 private val THUMB_SHADOW = 6.dp
 
