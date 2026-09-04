@@ -63,6 +63,26 @@ class PenStore(context: Context) {
         get() = prefs.getBoolean(PREDICTION, true)
         set(value) = prefs.edit().putBoolean(PREDICTION, value).apply()
 
+    /**
+     * The page a note was left on, so opening it again carries on from there
+     * rather than from the top. Per note, and in preferences rather than in the
+     * note: where somebody stopped reading is not part of the document.
+     */
+    fun lastPage(noteId: String): Int = prefs.getInt("$LAST_PAGE$noteId", 0)
+
+    fun setLastPage(noteId: String, page: Int) =
+        prefs.edit().putInt("$LAST_PAGE$noteId", page).apply()
+
+    /** Which note the reference panel was last pointed at. */
+    var referenceNote: String?
+        get() = prefs.getString(REFERENCE_NOTE, null)
+        set(value) = prefs.edit().putString(REFERENCE_NOTE, value).apply()
+
+    /** Whether the reference panel refits its page whenever it is resized. */
+    var referenceFit: Boolean
+        get() = prefs.getBoolean(REFERENCE_FIT, true)
+        set(value) = prefs.edit().putBoolean(REFERENCE_FIT, value).apply()
+
     fun load(): Map<EditMode, PenPreset> {
         val raw = prefs.getString(KEY, null) ?: return DEFAULTS
         val saved = runCatching {
@@ -104,12 +124,15 @@ class PenStore(context: Context) {
         private const val DOCKED = "docked"
         private const val PREDICTION = "prediction"
         private const val SKIN = "skin"
+        private const val LAST_PAGE = "lastPage:"
+        private const val REFERENCE_NOTE = "referenceNote"
+        private const val REFERENCE_FIT = "referenceFit"
 
         /** The thickness slider's range depends on what is being made thick. */
         fun widthRange(mode: EditMode): ClosedFloatingPointRange<Float> = when (mode) {
-            EditMode.ERASE -> 8f..96f
-            EditMode.HIGHLIGHTER -> 4f..60f
-            else -> 1f..24f
+            EditMode.ERASE -> 8f..120f
+            EditMode.HIGHLIGHTER -> 4f..90f
+            else -> 1f..40f
         }
 
         /** The same range with the tool's own ceiling, when one has been set. */

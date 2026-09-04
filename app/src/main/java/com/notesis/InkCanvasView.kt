@@ -300,6 +300,18 @@ class InkCanvasView @JvmOverloads constructor(
     /** Fired when the page under the middle of the screen changes. */
     var onCurrentPageChanged: ((Int) -> Unit)? = null
 
+    /**
+     * Fired when the zoom changes, as a multiple of fit-to-width rather than of
+     * document units: 1.0 is the page filling the view, which is the only zoom
+     * anybody has a feel for. Only on an actual change, so a pinch that has
+     * hit the limit stops reporting instead of waking the host once a frame.
+     */
+    var onZoomChanged: ((Float) -> Unit)? = null
+
+    /** The scale fit-to-width last chose; the denominator of that multiple. */
+    private var fitScale = 0f
+    private var reportedZoom = 0f
+
     /** Fired when PDF text gets selected or cleared, so the host can offer actions. */
     var onSelectionChanged: ((PdfSelection?) -> Unit)? = null
 
@@ -557,6 +569,7 @@ class InkCanvasView @JvmOverloads constructor(
         if (width == 0) return
         fitted = true
         val scale = width * FIT_MARGIN / document.widestPage()
+        fitScale = scale
         documentToScreen.reset()
         documentToScreen.postScale(scale, scale)
         documentToScreen.postTranslate((width - document.widestPage() * scale) / 2f, 0f)
@@ -672,6 +685,15 @@ class InkCanvasView @JvmOverloads constructor(
         documentToScreen.invert(screenToDocument)
         dry.invalidate()
         updateCurrentPage()
+        if (fitScale > 0f) {
+            val zoom = currentScale() / fitScale
+            // A percent point of slack: the fling settles by thousandths and
+            // there is no reading to be had from those.
+            if (abs(zoom - reportedZoom) > 0.005f) {
+                reportedZoom = zoom
+                onZoomChanged?.invoke(zoom)
+            }
+        }
         // Only once the zoom settles - rebuilding on every pinch frame would
         // cost far more than it buys.
         scheduleRefine()

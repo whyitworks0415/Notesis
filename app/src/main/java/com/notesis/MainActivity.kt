@@ -61,7 +61,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
@@ -70,6 +69,7 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.FilterCenterFocus
+import androidx.compose.material.icons.filled.FitScreen
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -537,15 +537,17 @@ private fun NoteListScreen(
                     onBackupAll = { saveAllArchive.launch("Notesis-백업") },
                     onRestore = { openArchive.launch(arrayOf("*/*")) },
                 )
-                FloatingActionButton(
+                GlassFab(
                     onClick = { pickPdf.launch(arrayOf("application/pdf")) },
-                    modifier = Modifier.padding(bottom = 12.dp),
-                ) {
-                    Icon(Icons.Default.Description, contentDescription = "PDF 가져오기")
-                }
-                FloatingActionButton(onClick = { naming = true }) {
-                    Icon(Icons.Default.Add, contentDescription = "새 노트")
-                }
+                    icon = Icons.Default.Description,
+                    contentDescription = "PDF 가져오기",
+                    modifier = Modifier.padding(top = 12.dp, bottom = 12.dp),
+                )
+                GlassFab(
+                    onClick = { naming = true },
+                    icon = Icons.Default.Add,
+                    contentDescription = "새 노트",
+                )
             }
         },
     ) { padding ->
@@ -763,7 +765,14 @@ private fun NoteCard(
     val skin = LocalSkin.current
     Card(
         onClick = onOpen,
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        // No shadow on glass. A shadow is drawn under the whole card, not only
+        // around it, and the card's body is translucent - so the strip under
+        // the thumbnail, which is the only part you can see through, showed the
+        // shadow beneath it: dark at the edges, clear in the middle. That pale
+        // patch under every note's name was a shadow seen from the front.
+        elevation = CardDefaults.cardElevation(
+            defaultElevation = if (skin == Skin.MATERIAL) 1.dp else 0.dp,
+        ),
         colors = if (skin == Skin.MATERIAL) {
             CardDefaults.cardColors()
         } else {
@@ -1040,14 +1049,59 @@ private fun FolderDialog(
     )
 }
 
+/**
+ * A floating button in the skin the rest of the chrome is wearing.
+ *
+ * Material's own FAB paints its container itself, so the three buttons in the
+ * corner of the note list stayed opaque slabs while every other pane on the
+ * screen went to glass. Under Material this is still that FAB; under glass it
+ * is a [SkinSurface] with the icon in it, frosting the list underneath the way
+ * the toolbar does.
+ */
+@Composable
+private fun GlassFab(
+    onClick: () -> Unit,
+    icon: ImageVector,
+    contentDescription: String,
+    modifier: Modifier = Modifier,
+    small: Boolean = false,
+) {
+    val side = if (small) 40.dp else 56.dp
+    if (LocalSkin.current == Skin.MATERIAL) {
+        if (small) {
+            SmallFloatingActionButton(onClick = onClick, modifier = modifier) {
+                Icon(icon, contentDescription = contentDescription)
+            }
+        } else {
+            FloatingActionButton(onClick = onClick, modifier = modifier) {
+                Icon(icon, contentDescription = contentDescription)
+            }
+        }
+        return
+    }
+    SkinSurface(modifier = modifier.size(side), corner = 16.dp) {
+        // Clickable inside the surface, so the ripple is clipped to the corner
+        // rather than squaring it off.
+        Box(
+            Modifier.fillMaxSize().clickable(onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, contentDescription = contentDescription)
+        }
+    }
+}
+
 /** Whole-library backup and restore, kept together because they are one job. */
 @Composable
 private fun BackupButton(onBackupAll: () -> Unit, onRestore: () -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
-        SmallFloatingActionButton(onClick = { open = true }) {
-            Icon(Icons.Default.Archive, contentDescription = "백업")
-        }
+        GlassFab(
+            onClick = { open = true },
+            icon = Icons.Default.Archive,
+            contentDescription = "백업",
+            small = true,
+        )
         DropdownMenu(open, onDismissRequest = { open = false }) {
             DropdownMenuItem(
                 text = { Text("전체 백업") },
@@ -1896,11 +1950,15 @@ private fun NoteScreen(
     // The three-finger reference panel: a second, live InkCanvasView floating
     // over this one, on whichever note and page it is pointed at - any note,
     // not only this one, and writable, since a reference worth keeping open
-    // is usually a reference worth adding to. Which note and page it shows,
-    // and where it sits, all start fresh each time it opens.
+    // is usually a reference worth adding to. The note it shows is remembered
+    // in preferences, so it is still the same one after a close, after leaving
+    // the note, and after the app has been shut.
     var referenceOpen by remember { mutableStateOf(false) }
-    var referenceNoteId by remember { mutableStateOf(note.id) }
+    var referenceNoteId by remember { mutableStateOf(penStore.referenceNote ?: note.id) }
     var referencePage by remember { mutableIntStateOf(0) }
+    // Whether the panel refits its page to its own width every time it is
+    // resized. Off, the page keeps whatever zoom it was put at.
+    var referenceFit by remember { mutableStateOf(penStore.referenceFit) }
     var referenceOffset by remember { mutableStateOf(Offset.Zero) }
     var referenceSize by remember {
         mutableStateOf(with(density) { Size(340.dp.toPx(), 440.dp.toPx()) })
@@ -1932,6 +1990,8 @@ private fun NoteScreen(
     var edits by remember { mutableIntStateOf(0) }
     var pageCount by remember { mutableIntStateOf(note.pageCount) }
     var currentPage by remember { mutableIntStateOf(0) }
+    // A multiple of fit-to-width, which is the 100% anybody means.
+    var zoom by remember { mutableFloatStateOf(1f) }
     var canvas by remember { mutableStateOf<InkCanvasView?>(null) }
     var latencyText by remember { mutableStateOf("") }
     var selectedText by remember { mutableStateOf<String?>(null) }
@@ -2092,6 +2152,7 @@ private fun NoteScreen(
                 edits++
             },
             onFitWidth = { canvas?.fitWidth() },
+            zoomLabel = "${(zoom * 100).roundToInt()}%",
             onToggleFullscreen = { fullscreen = !fullscreen },
             onToggleLatency = { showLatency = !showLatency },
             onTogglePages = { showPages = !showPages },
@@ -2121,8 +2182,13 @@ private fun NoteScreen(
     )
     CompositionLocalProvider(LocalBackdrop provides backdrop) {
     Row(Modifier.fillMaxSize()) {
-    Column(Modifier.weight(1f).fillMaxHeight()) {
-    // Docked, the bar takes its own room rather than covering the page.
+    // The page's own ground, behind the bar as well as behind the page. Docked,
+    // the bar takes its own room, and that room was the bare window underneath -
+    // white above it where the status bar inset is and white in the seam below,
+    // with the glass tinting nothing but that white. Painting the paper colour
+    // the whole way up closes both gaps and gives the glass something of the
+    // page's own to sit on.
+    Column(Modifier.weight(1f).fillMaxHeight().background(Color(0xFFE9E7E2))) {
     if (docked && !collapsed) toolbar(Modifier.fillMaxWidth())
     Box(
         Modifier
@@ -2157,11 +2223,18 @@ private fun NoteScreen(
                             store.loadMasks(note.id, page, epsilon)
                         }
                         open(ready.first, ready.second)
+                        // Where the note was left. Posted, because the fit to
+                        // width that decides the scale happens on the first
+                        // layout and would otherwise undo the scroll.
+                        penStore.lastPage(note.id).takeIf { it > 0 }?.let { resume ->
+                            post { scrollToPage(resume) }
+                        }
                         onStrokesChanged = {
                             edits++
                             pageCount = document.pages.size
                         }
                         onCurrentPageChanged = { currentPage = it }
+                        onZoomChanged = { zoom = it }
                         onSelectionChanged = { selectedText = it?.text }
                         onImageSelected = { imageSelected = it }
                         onLassoSelected = { lassoCount = it }
@@ -2204,9 +2277,10 @@ private fun NoteScreen(
                     view.onRedo = { canvas?.redo(); edits++ }
                     view.referenceOpen = referenceOpen
                     view.onOpenReference = { cx, cy ->
+                        // Whichever note it was last pointed at stays pointed
+                        // at. Closing the panel is putting a book down, not
+                        // throwing it away.
                         referenceOpen = true
-                        referenceNoteId = note.id
-                        referencePage = currentPage
                         val w = referenceSize.width
                         val h = referenceSize.height
                         val maxX = (containerSize.width - w).coerceAtLeast(0f)
@@ -2252,6 +2326,7 @@ private fun NoteScreen(
                 val view = canvas
                 if (view != null) {
                     store.save(note.id, note.title, view.document)
+                    penStore.setLastPage(note.id, view.currentPageIndex())
                 } else {
                     opened?.second?.close()
                 }
@@ -2483,14 +2558,26 @@ private fun NoteScreen(
             ReferencePanel(
                 store = store,
                 notes = referenceNotes,
-                noteId = referenceNoteId,
+                // The remembered note may have been deleted since; fall back to
+                // the one being written on rather than to a blank panel.
+                noteId = referenceNoteId.takeIf { id -> referenceNotes.any { it.id == id } }
+                    ?: note.id,
                 page = referencePage,
                 tool = tool,
                 pen = pen,
                 eraserWidth = eraserWidth,
                 offset = referenceOffset,
                 size = referenceSize,
-                onNoteChange = { referenceNoteId = it; referencePage = 0 },
+                fit = referenceFit,
+                onFit = {
+                    referenceFit = it
+                    penStore.referenceFit = it
+                },
+                onNoteChange = {
+                    referenceNoteId = it
+                    penStore.referenceNote = it
+                    referencePage = 0
+                },
                 onPageChange = { referencePage = it },
                 onDrag = ::moveReference,
                 onClose = { referenceOpen = false },
@@ -2653,6 +2740,9 @@ private fun ReferencePanel(
     eraserWidth: Float,
     offset: Offset,
     size: Size,
+    /** Whether resizing the panel refits its page to the new width. */
+    fit: Boolean,
+    onFit: (Boolean) -> Unit,
     onNoteChange: (String) -> Unit,
     onPageChange: (Int) -> Unit,
     onDrag: (panX: Float, panY: Float, spreadFactor: Float) -> Unit,
@@ -2664,6 +2754,10 @@ private fun ReferencePanel(
     var view by remember { mutableStateOf<InkCanvasView?>(null) }
     var popupEdits by remember { mutableIntStateOf(0) }
     var noteMenu by remember { mutableStateOf(false) }
+    var pageMenu by remember { mutableStateOf(false) }
+    // What has been typed into the picker's search box. Cleared with the menu,
+    // so opening it again offers everything rather than the last hunt.
+    var noteQuery by remember { mutableStateOf("") }
 
     // A different note is a different document and a different PDF, decoded
     // the same way opening one from the list is - off the main thread, since
@@ -2680,6 +2774,16 @@ private fun ReferencePanel(
         onDispose { opened?.second?.close() }
     }
     LaunchedEffect(view, page, opened) { view?.scrollToPage(page) }
+    // Refitting is a full relayout of the page, so it happens once the size has
+    // settled rather than on every frame of a three-finger spread - refitting
+    // per frame is what made resizing crawl.
+    LaunchedEffect(view, size, fit) {
+        if (!fit) return@LaunchedEffect
+        val v = view ?: return@LaunchedEffect
+        delay(REFERENCE_FIT_DELAY_MS)
+        v.fitWidth()
+        v.scrollToPage(page)
+    }
 
     // No debounce: a stroke made here and lost to a quick close is worse than
     // the occasional extra write, and NoteStore only ever writes dirty pages
@@ -2713,12 +2817,40 @@ private fun ReferencePanel(
                             title,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.widthIn(max = 150.dp),
+                            modifier = Modifier.widthIn(max = 120.dp),
                         )
                         Icon(Icons.Default.ArrowDropDown, contentDescription = "다른 노트")
                     }
-                    DropdownMenu(noteMenu, onDismissRequest = { noteMenu = false }) {
-                        for (candidate in notes) {
+                    DropdownMenu(
+                        noteMenu,
+                        onDismissRequest = {
+                            noteMenu = false
+                            noteQuery = ""
+                        },
+                    ) {
+                        // A picker that only scrolls is a picker you give up on
+                        // once the library is more than a screenful.
+                        OutlinedTextField(
+                            value = noteQuery,
+                            onValueChange = { noteQuery = it },
+                            singleLine = true,
+                            placeholder = { Text("노트 찾기") },
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                            modifier = Modifier
+                                .padding(horizontal = 12.dp, vertical = 4.dp)
+                                .width(220.dp),
+                        )
+                        val matches = notes.filter {
+                            it.title.contains(noteQuery.trim(), ignoreCase = true)
+                        }
+                        if (matches.isEmpty()) {
+                            DropdownMenuItem(
+                                text = { Text("결과가 없습니다") },
+                                enabled = false,
+                                onClick = {},
+                            )
+                        }
+                        for (candidate in matches) {
                             DropdownMenuItem(
                                 text = {
                                     Text(
@@ -2734,11 +2866,53 @@ private fun ReferencePanel(
                                 },
                                 onClick = {
                                     noteMenu = false
+                                    noteQuery = ""
                                     if (candidate.id != noteId) onNoteChange(candidate.id)
                                 },
                             )
                         }
                     }
+                }
+                // Page picking, where the note is picked. Two arrows along the
+                // bottom edge cost a whole row of a panel that is already small,
+                // and stepping one page at a time is not how anybody reaches
+                // page forty.
+                if (pageCount > 1) {
+                    Box {
+                        TextButton(onClick = { pageMenu = true }) {
+                            Text(
+                                "${page + 1}/$pageCount",
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                        }
+                        DropdownMenu(pageMenu, onDismissRequest = { pageMenu = false }) {
+                            for (index in 0 until pageCount) {
+                                DropdownMenuItem(
+                                    text = { Text("${index + 1}쪽") },
+                                    trailingIcon = {
+                                        if (index == page) {
+                                            Icon(Icons.Default.Check, contentDescription = null)
+                                        }
+                                    },
+                                    onClick = {
+                                        pageMenu = false
+                                        onPageChange(index)
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+                IconButton(onClick = { onFit(!fit) }) {
+                    Icon(
+                        Icons.Default.FitScreen,
+                        contentDescription = "크기에 맞추기",
+                        tint = if (fit) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.outline
+                        },
+                    )
                 }
                 IconButton(onClick = onClose) {
                     Icon(Icons.Default.Close, contentDescription = "참고 화면 닫기")
@@ -2786,27 +2960,6 @@ private fun ReferencePanel(
                             v.eraserWidth = eraserWidth
                         },
                     )
-                }
-            }
-            if (pageCount > 1) {
-                Row(
-                    Modifier.fillMaxWidth().padding(bottom = 4.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    IconButton(
-                        onClick = { onPageChange((page - 1).coerceAtLeast(0)) },
-                        enabled = page > 0,
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "이전 쪽")
-                    }
-                    Text("${page + 1} / $pageCount", style = MaterialTheme.typography.labelSmall)
-                    IconButton(
-                        onClick = { onPageChange((page + 1).coerceAtMost(pageCount - 1)) },
-                        enabled = page < pageCount - 1,
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "다음 쪽")
-                    }
                 }
             }
         }
@@ -3174,6 +3327,8 @@ private fun Toolbar(
     onUndo: () -> Unit,
     onRedo: () -> Unit,
     onFitWidth: () -> Unit,
+    /** The zoom as a percentage of fit-to-width, which is what the button resets to. */
+    zoomLabel: String,
     onToggleFullscreen: () -> Unit,
     onToggleLatency: () -> Unit,
     onTogglePages: () -> Unit,
@@ -3268,8 +3423,11 @@ private fun Toolbar(
                 IconButton(onClick = onRedo, enabled = canRedo) {
                     Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "다시실행")
                 }
-                IconButton(onClick = onFitWidth) {
+                // The reading and the reset are one control: the number tells
+                // you where the zoom is, and pressing it puts it back to 100.
+                TextButton(onClick = onFitWidth) {
                     Icon(Icons.Default.ZoomOutMap, contentDescription = "화면에 맞추기")
+                    Text(" $zoomLabel", style = MaterialTheme.typography.labelMedium)
                 }
                 SkinButton(skin, onSkin)
                 IconButton(onClick = onToggleDock) {
@@ -3540,6 +3698,9 @@ private val WEB_PANEL_MAX = 1100.dp
 
 /** Below this the reference panel is too small to hold a readable page. */
 private val REFERENCE_MIN_SIZE = 220.dp
+
+/** How long the panel's size has to hold still before its page is refitted. */
+private const val REFERENCE_FIT_DELAY_MS = 200L
 
 private const val SEARCH_HOME = "https://www.google.com/"
 
