@@ -1840,48 +1840,7 @@ class InkCanvasView @JvmOverloads constructor(
         }
     }
 
-    /** How many pages this note has - the reference panel pages by this. */
-    val pageCount: Int get() = document.pages.size
-
-    /**
-     * One page of this same note - background and ink together - for the
-     * three-finger reference panel. It shows what is already open, not a
-     * second file, so a stroke on it is exactly the stroke that is there.
-     *
-     * The page's own strokes are snapshotted here, on the UI thread that owns
-     * them; the render itself, like a capture, runs on a worker and answers
-     * back on this view's own thread.
-     */
-    fun renderPageSnapshot(pageIndex: Int, widthPx: Int, onReady: (Bitmap?) -> Unit) {
-        val page = document.pages.getOrNull(pageIndex)
-        if (page == null) {
-            onReady(null)
-            return
-        }
-        val strokes = page.strokes.toList()
-        val images = page.images.map { it to imageLoader?.invoke(it.id) }
-        val pdfIndex = if (page.background == PageBackground.PDF) page.pdfPageIndex else -1
-        val pageWidth = page.width
-        val pageHeight = page.height
-        refiner.execute {
-            val bitmap = renderRegion(
-                RectF(0f, 0f, pageWidth, pageHeight),
-                pageWidth,
-                pageHeight,
-                pdfIndex,
-                strokes,
-                images,
-                widthPx,
-            )
-            post { onReady(bitmap) }
-        }
-    }
-
-    /**
-     * Draws one page's [rect] into a bitmap: background, pictures, then ink.
-     * [targetWidthPx] fixes the output size directly - for a small floating
-     * preview, not a capture meant to be read at full size.
-     */
+    /** Draws one page's [rect] into a bitmap: background, pictures, then ink. */
     private fun renderRegion(
         rect: RectF,
         pageWidth: Float,
@@ -1889,13 +1848,9 @@ class InkCanvasView @JvmOverloads constructor(
         pdfIndex: Int,
         strokes: List<Stroke>,
         images: List<Pair<PageImage, Bitmap?>>,
-        targetWidthPx: Int? = null,
     ): Bitmap? = runCatching {
-        val scale = if (targetWidthPx != null) {
-            targetWidthPx / rect.width()
-        } else {
-            (CAPTURE_TARGET_PX / max(rect.width(), rect.height())).coerceIn(1f, CAPTURE_MAX_SCALE)
-        }
+        val scale = (CAPTURE_TARGET_PX / max(rect.width(), rect.height()))
+            .coerceIn(1f, CAPTURE_MAX_SCALE)
         val width = (rect.width() * scale).toInt().coerceAtLeast(1)
         val height = (rect.height() * scale).toInt().coerceAtLeast(1)
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)

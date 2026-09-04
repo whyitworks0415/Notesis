@@ -66,6 +66,7 @@ import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.FilterCenterFocus
@@ -1892,20 +1893,40 @@ private fun NoteScreen(
     var barSize by remember { mutableStateOf(IntSize.Zero) }
     val density = LocalDensity.current
 
-    // The three-finger reference panel: another page of this same note,
-    // floating over the one being written on - not a second file. Which page
-    // and where it sits both start fresh each time it opens; only being open
-    // at all would be worth remembering, and it never stays open past a note.
+    // The three-finger reference panel: a second, live InkCanvasView floating
+    // over this one, on whichever note and page it is pointed at - any note,
+    // not only this one, and writable, since a reference worth keeping open
+    // is usually a reference worth adding to. Which note and page it shows,
+    // and where it sits, all start fresh each time it opens.
     var referenceOpen by remember { mutableStateOf(false) }
+    var referenceNoteId by remember { mutableStateOf(note.id) }
     var referencePage by remember { mutableIntStateOf(0) }
     var referenceOffset by remember { mutableStateOf(Offset.Zero) }
     var referenceSize by remember {
         mutableStateOf(with(density) { Size(340.dp.toPx(), 440.dp.toPx()) })
     }
+    // Three fingers on the panel itself, once it is open: the spread is how
+    // much it grows, the drag is where it goes. One function because the
+    // panel's own view and the gesture that opened it both end up calling it.
+    fun moveReference(panX: Float, panY: Float, spreadFactor: Float) {
+        val minSize = with(density) { REFERENCE_MIN_SIZE.toPx() }
+        val newW = (referenceSize.width * spreadFactor)
+            .coerceIn(minSize, containerSize.width.toFloat().coerceAtLeast(minSize))
+        val newH = (referenceSize.height * spreadFactor)
+            .coerceIn(minSize, containerSize.height.toFloat().coerceAtLeast(minSize))
+        referenceSize = Size(newW, newH)
+        val maxX = (containerSize.width - newW).coerceAtLeast(0f)
+        val maxY = (containerSize.height - newH).coerceAtLeast(0f)
+        referenceOffset = Offset(
+            (referenceOffset.x + panX).coerceIn(0f, maxX),
+            (referenceOffset.y + panY).coerceIn(0f, maxY),
+        )
+    }
     val maxBarWidth = with(density) {
         (containerSize.width.takeIf { it > 0 } ?: Int.MAX_VALUE).toDp()
     }
     val otherNotes = remember(note.id) { store.list().filter { it.id != note.id } }
+    val referenceNotes = remember(note, otherNotes) { listOf(note) + otherNotes }
     var showLatency by remember { mutableStateOf(false) }
     var showPages by remember { mutableStateOf(false) }
     var edits by remember { mutableIntStateOf(0) }
@@ -2184,6 +2205,7 @@ private fun NoteScreen(
                     view.referenceOpen = referenceOpen
                     view.onOpenReference = { cx, cy ->
                         referenceOpen = true
+                        referenceNoteId = note.id
                         referencePage = currentPage
                         val w = referenceSize.width
                         val h = referenceSize.height
@@ -2194,20 +2216,9 @@ private fun NoteScreen(
                             (cy - h).coerceIn(0f, maxY),
                         )
                     }
-                    view.onReferenceDrag = { panX, panY, spreadFactor ->
-                        val minSize = with(density) { REFERENCE_MIN_SIZE.toPx() }
-                        val newW = (referenceSize.width * spreadFactor)
-                            .coerceIn(minSize, containerSize.width.toFloat().coerceAtLeast(minSize))
-                        val newH = (referenceSize.height * spreadFactor)
-                            .coerceIn(minSize, containerSize.height.toFloat().coerceAtLeast(minSize))
-                        referenceSize = Size(newW, newH)
-                        val maxX = (containerSize.width - newW).coerceAtLeast(0f)
-                        val maxY = (containerSize.height - newH).coerceAtLeast(0f)
-                        referenceOffset = Offset(
-                            (referenceOffset.x + panX).coerceIn(0f, maxX),
-                            (referenceOffset.y + panY).coerceIn(0f, maxY),
-                        )
-                    }
+                    // Moving and resizing the panel itself is handled on its own
+                    // view now, not here - three fingers on the main page only
+                    // ever open it; see ReferencePanel.
                 },
             )
         }
@@ -2469,14 +2480,19 @@ private fun NoteScreen(
             enter = fadeIn(tween(180)) + scaleIn(tween(180), initialScale = 0.85f),
             exit = fadeOut(tween(120)) + scaleOut(tween(120), targetScale = 0.85f),
         ) {
-            ReferencePdfPopup(
-                canvas = canvas,
-                pageCount = canvas?.pageCount ?: 0,
+            ReferencePanel(
+                store = store,
+                notes = referenceNotes,
+                noteId = referenceNoteId,
                 page = referencePage,
-                edits = edits,
+                tool = tool,
+                pen = pen,
+                eraserWidth = eraserWidth,
                 offset = referenceOffset,
                 size = referenceSize,
+                onNoteChange = { referenceNoteId = it; referencePage = 0 },
                 onPageChange = { referencePage = it },
+                onDrag = ::moveReference,
                 onClose = { referenceOpen = false },
             )
         }
@@ -2618,41 +2634,65 @@ private fun shareBitmap(context: android.content.Context, bitmap: Bitmap) {
 }
 
 /**
- * The three-finger reference panel: another page of this same note, smaller
- * and floating over the one being written on. Not a second file - the point
- * is to see a different part of what is already open, ink included, so a
- * note written across two pages does not need its own second window.
- *
- * Position and size arrive from outside, driven live by the gesture that
- * opened or is now moving this - this only ever draws where it is told to be.
+ * The three-finger reference panel: a second, live [InkCanvasView] floating
+ * over the one being written on, pointed at any note and any page - not a
+ * snapshot of one. Writable, with whatever tool is in hand on the toolbar,
+ * because a reference worth keeping open is usually a reference worth adding
+ * to; its own three fingers move and resize the panel itself, the same
+ * gesture that opened it, now caught by this view instead of the one under it.
  */
 @Composable
-private fun ReferencePdfPopup(
-    canvas: InkCanvasView?,
-    pageCount: Int,
+private fun ReferencePanel(
+    store: NoteStore,
+    /** This note first, then every other one - what the picker offers. */
+    notes: List<NoteMeta>,
+    noteId: String,
     page: Int,
-    /** Read only to know the ink has changed - see the effect key below. */
-    edits: Int,
+    tool: Tool,
+    pen: PenPreset,
+    eraserWidth: Float,
     offset: Offset,
     size: Size,
+    onNoteChange: (String) -> Unit,
     onPageChange: (Int) -> Unit,
+    onDrag: (panX: Float, panY: Float, spreadFactor: Float) -> Unit,
     onClose: () -> Unit,
 ) {
+    val context = LocalContext.current
     val density = LocalDensity.current
-    var bitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var opened by remember { mutableStateOf<Pair<Document, PdfSource?>?>(null) }
+    var view by remember { mutableStateOf<InkCanvasView?>(null) }
+    var popupEdits by remember { mutableIntStateOf(0) }
+    var noteMenu by remember { mutableStateOf(false) }
 
-    val renderWidth = size.width.roundToInt().coerceAtLeast(64)
-    // edits is the same counter a stroke bumps everywhere else in this screen,
-    // so a mark made on the page being shown here redraws it too - the point
-    // of showing this page rather than a second file was to see the ink on it.
-    LaunchedEffect(canvas, page, renderWidth, edits) {
-        val view = canvas
-        if (view == null || page !in 0 until pageCount) {
-            bitmap = null
-            return@LaunchedEffect
+    // A different note is a different document and a different PDF, decoded
+    // the same way opening one from the list is - off the main thread, since
+    // parsing a PDF header there is a visible freeze.
+    LaunchedEffect(noteId) {
+        opened = null
+        opened = withContext(Dispatchers.IO) {
+            store.load(noteId) to PdfSource.open(store.pdfFile(noteId), PdfSource.cacheBytesFor(context))
         }
-        view.renderPageSnapshot(page, renderWidth) { bitmap = it }
     }
+    // This panel's own PdfSource, closed here - the note underneath opened a
+    // different one, or none, and does not know this one exists.
+    DisposableEffect(noteId) {
+        onDispose { opened?.second?.close() }
+    }
+    LaunchedEffect(view, page, opened) { view?.scrollToPage(page) }
+
+    // No debounce: a stroke made here and lost to a quick close is worse than
+    // the occasional extra write, and NoteStore only ever writes dirty pages
+    // anyway - see the comment on the note's own autosave.
+    LaunchedEffect(popupEdits) {
+        if (popupEdits == 0) return@LaunchedEffect
+        val v = view ?: return@LaunchedEffect
+        val title = notes.find { it.id == noteId }?.title ?: return@LaunchedEffect
+        withContext(Dispatchers.IO) { store.save(noteId, title, v.document) }
+    }
+
+    val title = notes.find { it.id == noteId }?.title ?: noteId
+    val pageCount = opened?.first?.pages?.size ?: 0
 
     SkinSurface(
         modifier = Modifier
@@ -2664,34 +2704,88 @@ private fun ReferencePdfPopup(
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                    .padding(start = 4.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    "참고 · ${page + 1} / $pageCount",
-                    style = MaterialTheme.typography.labelLarge,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
+                Box(Modifier.weight(1f)) {
+                    TextButton(onClick = { noteMenu = true }) {
+                        Text(
+                            title,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.widthIn(max = 150.dp),
+                        )
+                        Icon(Icons.Default.ArrowDropDown, contentDescription = "다른 노트")
+                    }
+                    DropdownMenu(noteMenu, onDismissRequest = { noteMenu = false }) {
+                        for (candidate in notes) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        candidate.title,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                },
+                                trailingIcon = {
+                                    if (candidate.id == noteId) {
+                                        Icon(Icons.Default.Check, contentDescription = null)
+                                    }
+                                },
+                                onClick = {
+                                    noteMenu = false
+                                    if (candidate.id != noteId) onNoteChange(candidate.id)
+                                },
+                            )
+                        }
+                    }
+                }
                 IconButton(onClick = onClose) {
                     Icon(Icons.Default.Close, contentDescription = "참고 화면 닫기")
                 }
             }
-            Box(
-                Modifier.weight(1f).fillMaxWidth(),
-                contentAlignment = Alignment.Center,
-            ) {
-                val shown = bitmap
-                if (shown != null) {
-                    Image(
-                        shown.asImageBitmap(),
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Fit,
-                    )
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                val ready = opened
+                if (ready == null) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
                 } else {
-                    CircularProgressIndicator()
+                    AndroidView(
+                        modifier = Modifier.fillMaxSize(),
+                        factory = { viewContext ->
+                            InkCanvasView(viewContext).apply {
+                                pageLoader = { p, epsilon -> store.loadPage(noteId, p, epsilon) }
+                                maskLoader = { p, epsilon -> store.loadMasks(noteId, p, epsilon) }
+                                imageLoader = { imageId ->
+                                    runCatching {
+                                        android.graphics.BitmapFactory
+                                            .decodeFile(store.imageFile(noteId, imageId).path)
+                                    }.getOrNull()
+                                }
+                                open(ready.first, ready.second)
+                                onStrokesChanged = { popupEdits++ }
+                                // Already open by definition - three fingers on
+                                // this view only ever move or resize it, never
+                                // open a reference panel of its own.
+                                referenceOpen = true
+                                onReferenceDrag = onDrag
+                                onUndo = { undo(); popupEdits++ }
+                                onRedo = { redo(); popupEdits++ }
+                                view = this
+                            }
+                        },
+                        update = { v ->
+                            v.tool = tool
+                            v.colorArgb = if (tool == Tool.MASK) {
+                                pen.colorArgb or 0xFF000000.toInt()
+                            } else {
+                                pen.colorArgb
+                            }
+                            v.strokeWidth = pen.width
+                            v.eraserWidth = eraserWidth
+                        },
+                    )
                 }
             }
             if (pageCount > 1) {
