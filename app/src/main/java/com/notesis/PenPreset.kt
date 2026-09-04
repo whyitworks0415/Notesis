@@ -63,6 +63,11 @@ class PenStore(context: Context) {
         get() = prefs.getBoolean(PREDICTION, true)
         set(value) = prefs.edit().putBoolean(PREDICTION, value).apply()
 
+    /** Whether sharpening waits for the pinch to end. See InkCanvasView. */
+    var deferDetail: Boolean
+        get() = prefs.getBoolean(DEFER_DETAIL, true)
+        set(value) = prefs.edit().putBoolean(DEFER_DETAIL, value).apply()
+
     /**
      * The page a note was left on, so opening it again carries on from there
      * rather than from the top. Per note, and in preferences rather than in the
@@ -123,6 +128,7 @@ class PenStore(context: Context) {
         private const val KEY = "tools"
         private const val DOCKED = "docked"
         private const val PREDICTION = "prediction"
+        private const val DEFER_DETAIL = "deferDetail"
         private const val SKIN = "skin"
         private const val LAST_PAGE = "lastPage:"
         private const val REFERENCE_NOTE = "referenceNote"

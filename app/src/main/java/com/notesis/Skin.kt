@@ -638,15 +638,20 @@ private val SLIDER_THUMB_H = 25.dp
 private val SLIDER_THUMB_W_HELD = 40.dp
 private val SLIDER_THUMB_H_HELD = 28.dp
 
-// Switch: the track is 2.32 as wide as it is tall, and the knob sits *inside*
-// it - 1.47 track-heights wide, 0.885 of one tall, with the rest of the height
-// left as an even margin. It used to stand proud of the track, which is a
-// different control from the one in the file.
-private val SWITCH_ROW = 44.dp
-private val SWITCH_W = 74.dp
-private val SWITCH_TRACK = 32.dp
-private val SWITCH_THUMB_W = 47.dp
-private val SWITCH_THUMB_H = 28.dp
+// Switch: the knob sits *inside* the track, with an even margin round it, and
+// it used to stand proud of it - a different control from the one in the file.
+//
+// The file's own proportion is 2.32 track-widths to its height, with a knob
+// half again as wide as it is tall, and at this app's scale that came out as a
+// 74dp bar with a lozenge sliding along it: far longer than anything else in a
+// settings row and read as a slider rather than a switch. Tightened to a knob
+// that is round and a track a little over twice its width, which is the same
+// idea at a length that belongs beside a line of text.
+private val SWITCH_ROW = 40.dp
+private val SWITCH_W = 54.dp
+private val SWITCH_TRACK = 30.dp
+private val SWITCH_THUMB_W = 26.dp
+private val SWITCH_THUMB_H = 26.dp
 private val SWITCH_THUMB_INSET = 2.dp
 
 private val THUMB_SHADOW = 6.dp

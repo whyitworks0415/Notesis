@@ -297,6 +297,29 @@ class InkCanvasView @JvmOverloads constructor(
      */
     var predictionEnabled: Boolean = true
 
+    /**
+     * Whether detail work waits for the pinch to finish.
+     *
+     * Everything that makes a page look right at its new size - rebuilding the
+     * stroke meshes at the fidelity the zoom now needs, rendering the PDF at
+     * the width it is now drawn at, cutting sharp tiles for the region on
+     * screen - is work that only matters once somebody has stopped moving. Done
+     * while the fingers are still on the glass it competes for the same frame
+     * the pinch is being drawn in, and the pinch is what stutters.
+     *
+     * On, the page is drawn from whatever is already in hand for the length of
+     * the gesture - a little soft at the new zoom - and everything is brought up
+     * to the new size the moment the fingers lift. Off, it is done as it goes,
+     * which is sharper throughout and slower on a page with a lot on it.
+     */
+    var deferDetail: Boolean = true
+
+    /** True between the second finger going down and the pinch ending. */
+    private var zooming = false
+
+    /** Whether detail work should be held off right now. */
+    private fun holdingDetail(): Boolean = deferDetail && zooming
+
     /** Fired when the page under the middle of the screen changes. */
     var onCurrentPageChanged: ((Int) -> Unit)? = null
 
@@ -976,12 +999,16 @@ class InkCanvasView @JvmOverloads constructor(
                 gestureMoved = 0f
                 have3Fingers = false
                 opened3fThisGesture = false
+                zooming = false
                 return true
             }
 
             MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_POINTER_UP -> {
                 stopFling()
                 gestureMaxPointers = maxOf(gestureMaxPointers, event.pointerCount)
+                // A second finger is the start of a pinch, and from here until
+                // the hand lifts the page is drawn from what is already in hand.
+                if (event.pointerCount >= 2) zooming = true
                 // The centroid jumps when a finger joins or leaves, so re-anchor
                 // instead of translating by that jump - and don't count the jump
                 // itself as movement for the tap check below.
@@ -1033,15 +1060,32 @@ class InkCanvasView @JvmOverloads constructor(
                 startFling()
                 releaseVelocity()
                 maybeHandleTap()
+                endZoom()
                 return true
             }
 
             MotionEvent.ACTION_CANCEL -> {
                 releaseVelocity()
+                endZoom()
                 return true
             }
         }
         return true
+    }
+
+    /**
+     * The hand has lifted: bring the page up to the size it is now drawn at.
+     *
+     * One repaint, which is what asks the PDF for the width and the tiles it
+     * now needs, and one refine, which rebuilds the stroke meshes at the
+     * fidelity the new zoom deserves. Everything that was skipped for the
+     * length of the pinch happens here, once.
+     */
+    private fun endZoom() {
+        if (!zooming) return
+        zooming = false
+        dry.invalidate()
+        scheduleRefine()
     }
 
     /**
@@ -1215,6 +1259,7 @@ class InkCanvasView @JvmOverloads constructor(
         // Never while a stroke is being drawn: the page list would be swapped
         // out from under the stroke that is about to land on it.
         if (activeStylusPointer != null) return
+        if (holdingDetail()) return
         val target = tessellationBucket(currentScale())
         val epsilon = epsilonFor(target)
 
@@ -1348,6 +1393,11 @@ class InkCanvasView @JvmOverloads constructor(
 
     private fun scheduleRefine() {
         removeCallbacks(refineRunnable)
+        // Nothing at all while the pinch is on. The zero-delay path below exists
+        // so a page that has never been read does not wait to appear, and during
+        // a pinch that path fires on every page scrolled into view - a full read
+        // and rebuild on the frame the zoom is being drawn in. endZoom posts one.
+        if (holdingDetail()) return
         // A page with nothing on it yet should not wait out the settle delay -
         // that delay exists to avoid rebuilding mid-pinch, not to hold up the
         // first paint of a note.
@@ -2285,11 +2335,16 @@ class InkCanvasView @JvmOverloads constructor(
         private fun drawPdf(canvas: Canvas, page: Page, index: Int): Boolean {
             val source = pdf ?: return false
             val scale = currentScale()
+            // Mid-pinch, take what is cached and ask for nothing: rendering a
+            // page or a screenful of tiles at each size the zoom passes through
+            // is work thrown away by the next frame, and it is thrown away by
+            // competing with the frame that is being pinched.
+            val render = !holdingDetail()
 
             // The whole page at modest resolution is the floor: it is cheap, it
             // is always there, and it means a tile that has not arrived yet
             // shows slightly soft rather than blank.
-            val base = source.bitmap(page.pdfPageIndex, (page.width * scale).toInt())
+            val base = source.bitmap(page.pdfPageIndex, (page.width * scale).toInt(), render)
             if (base != null) {
                 canvas.drawBitmap(base, null, pageRect, bitmapPaint)
             } else {
@@ -2307,6 +2362,7 @@ class InkCanvasView @JvmOverloads constructor(
                         page.width,
                         page.height,
                         scale,
+                        render,
                     )) {
                         canvas.drawBitmap(tile.bitmap, null, tile.source, bitmapPaint)
                     }

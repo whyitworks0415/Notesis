@@ -1197,6 +1197,8 @@ private fun PenDialog(
     /** Global rather than per tool, but this is where a hand is being set up. */
     prediction: Boolean,
     onPrediction: (Boolean) -> Unit,
+    deferDetail: Boolean,
+    onDeferDetail: (Boolean) -> Unit,
     onDismiss: () -> Unit,
     onConfirm: (PenPreset) -> Unit,
 ) {
@@ -1271,6 +1273,20 @@ private fun PenDialog(
                         Text("예측", style = MaterialTheme.typography.bodyMedium)
                         Text(
                             "펜보다 한 프레임 앞서 그립니다. 획이 각져 보이면 꺼보세요",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.outline,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SkinSwitch(checked = deferDetail, onCheckedChange = onDeferDetail)
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text("확대 후 선명하게", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "확대하는 동안은 있는 그대로 그리고, 손을 떼면 그때 다시 " +
+                                "선명하게 만듭니다. 글이 많은 페이지에서 확대가 버벅이면 켜두세요",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.outline,
                         )
@@ -1940,6 +1956,7 @@ private fun NoteScreen(
     // preferences: where the toolbar sits is a habit, not a per-note choice.
     var docked by remember { mutableStateOf(penStore.docked) }
     var prediction by remember { mutableStateOf(penStore.prediction) }
+    var deferDetail by remember { mutableStateOf(penStore.deferDetail) }
     // Null until it is dragged: the bar sits centred at the top by default, and
     // there is no sensible centre to store before anything has been measured.
     var barOffset by remember { mutableStateOf<Offset?>(null) }
@@ -2253,6 +2270,7 @@ private fun NoteScreen(
                     // The frost stops while the pen is down; see Backdrop.paused.
                     view.onDrawingChanged = { drawing -> backdrop.paused = drawing }
                     view.predictionEnabled = prediction
+                    view.deferDetail = deferDetail
                     view.tool = tool
                     view.readMode = mode == EditMode.READ
                     view.shapeKind = when {
@@ -2398,6 +2416,11 @@ private fun NoteScreen(
                 onPrediction = {
                     prediction = it
                     penStore.prediction = it
+                },
+                deferDetail = deferDetail,
+                onDeferDetail = {
+                    deferDetail = it
+                    penStore.deferDetail = it
                 },
                 onDismiss = { editingPen = false },
                 onConfirm = { saved ->
@@ -2566,6 +2589,7 @@ private fun NoteScreen(
                 tool = tool,
                 pen = pen,
                 eraserWidth = eraserWidth,
+                deferDetail = deferDetail,
                 offset = referenceOffset,
                 size = referenceSize,
                 fit = referenceFit,
@@ -2738,6 +2762,7 @@ private fun ReferencePanel(
     tool: Tool,
     pen: PenPreset,
     eraserWidth: Float,
+    deferDetail: Boolean,
     offset: Offset,
     size: Size,
     /** Whether resizing the panel refits its page to the new width. */
@@ -2958,6 +2983,7 @@ private fun ReferencePanel(
                             }
                             v.strokeWidth = pen.width
                             v.eraserWidth = eraserWidth
+                            v.deferDetail = deferDetail
                         },
                     )
                 }

@@ -92,14 +92,14 @@ class PdfSource private constructor(
      * [wantPx]. Bucketing by powers of two is what stops every pinch frame from
      * kicking off a fresh render of the same page.
      */
-    fun bitmap(index: Int, wantPx: Int): Bitmap? {
+    fun bitmap(index: Int, wantPx: Int, request: Boolean = true): Bitmap? {
         val width = bucketFor(wantPx)
         val key = keyOf(index, width)
         cache.get(key)?.let { return it }
         // A coarser render of the same page is a better thing to show than blank
         // paper while the sharper one is still being made.
         val fallback = coarserThan(index, width)
-        request(key) { renderWholePage(index, width) }
+        if (request) request(key) { renderWholePage(index, width) }
         return fallback
     }
 
@@ -119,6 +119,8 @@ class PdfSource private constructor(
         pageWidth: Float,
         pageHeight: Float,
         pixelsPerUnit: Float,
+        /** False while the zoom is still moving: show what is cached, render nothing. */
+        request: Boolean = true,
     ): List<PdfTile> {
         if (closed || index !in 0 until pageCount) return emptyList()
         val density = densityFor(pixelsPerUnit)
@@ -144,7 +146,7 @@ class PdfSource private constructor(
                 if (bitmap != null) ready += PdfTile(source, bitmap) else missing += key
             }
         }
-        if (missing.isNotEmpty()) {
+        if (request && missing.isNotEmpty()) {
             requestTiles(index, missing, tileUnits, density, pageWidth, pageHeight)
         }
         return ready
