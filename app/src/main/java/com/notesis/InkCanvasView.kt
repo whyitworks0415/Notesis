@@ -53,8 +53,16 @@ import kotlin.math.min
 import kotlin.math.sin
 import kotlin.math.atan2
 
-/** Deepest zoom the canvas allows, in screen pixels per page unit. */
-const val MAX_CANVAS_SCALE = 8f
+/**
+ * Deepest zoom worth sharpening for, in screen pixels per page unit.
+ *
+ * Not the zoom limit - that is [InkCanvasView.MAX_ZOOM], and it is a multiple
+ * of fit-to-width, because a limit in page units means a different amount of
+ * magnification on every screen. This is where the mesh and the PDF tiles stop
+ * being rebuilt finer: past it the picture is magnified rather than redrawn,
+ * which costs nothing and is the right trade at the far end of the range.
+ */
+const val MAX_CANVAS_SCALE = 16f
 
 /** Ink's recommended mesh fidelity, in physical pixels. */
 const val TESSELLATION_TARGET_PX = 0.1f
@@ -266,6 +274,16 @@ class InkCanvasView @JvmOverloads constructor(
     /** Three fingers moving once it is open: pan in each axis, then the ratio the spread grew by. */
     var onReferenceDrag: ((Float, Float, Float) -> Unit)? = null
 
+    /**
+     * The hand has come off a panel drag. Growing a panel while it is being
+     * dragged is a picture being stretched; this is where the host turns that
+     * back into a panel of the new size with a page drawn for it.
+     */
+    var onReferenceDragEnd: (() -> Unit)? = null
+
+    /** Whether this gesture has actually moved the panel, so its end is worth reporting. */
+    private var draggedReference = false
+
     /** Fired when a picture is picked up or let go, so the host can offer actions. */
     var onImageSelected: ((Boolean) -> Unit)? = null
 
@@ -319,6 +337,16 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** Whether detail work should be held off right now. */
     private fun holdingDetail(): Boolean = deferDetail && zooming
+
+    /**
+     * The ceiling on zoom, in page units: ten times fit-to-width, which is what
+     * the toolbar reads out as 1000%. Measured from the fit rather than fixed,
+     * because a fixed number of pixels per page unit is a different amount of
+     * magnification on a phone, a portrait tablet and a landscape one - it was
+     * eight, and that is barely 350% across a landscape screen.
+     */
+    private fun maxScale(): Float =
+        if (fitScale > 0f) fitScale * MAX_ZOOM else MAX_CANVAS_SCALE
 
     /** Fired when the page under the middle of the screen changes. */
     var onCurrentPageChanged: ((Int) -> Unit)? = null
@@ -510,7 +538,7 @@ class InkCanvasView @JvmOverloads constructor(
                 // Clamping the *result* rather than the factor, so a pinch that
                 // would overshoot the limit still zooms up to it.
                 val factor = (current * detector.scaleFactor)
-                    .coerceIn(MIN_SCALE, MAX_SCALE) / current
+                    .coerceIn(MIN_SCALE, maxScale()) / current
                 documentToScreen.postScale(factor, factor, detector.focusX, detector.focusY)
                 return true
             }
@@ -596,6 +624,17 @@ class InkCanvasView @JvmOverloads constructor(
         documentToScreen.reset()
         documentToScreen.postScale(scale, scale)
         documentToScreen.postTranslate((width - document.widestPage() * scale) / 2f, 0f)
+        onTransformChanged()
+    }
+
+    /**
+     * Zooms about the top-left corner by [factor], for a host that has just
+     * resized this view by the same amount and wants the page to have grown
+     * with it rather than to have stayed put in a larger window.
+     */
+    fun zoomBy(factor: Float) {
+        if (factor <= 0f || abs(factor - 1f) < 1e-4f) return
+        documentToScreen.postScale(factor, factor, 0f, 0f)
         onTransformChanged()
     }
 
@@ -1000,6 +1039,7 @@ class InkCanvasView @JvmOverloads constructor(
                 have3Fingers = false
                 opened3fThisGesture = false
                 zooming = false
+                draggedReference = false
                 return true
             }
 
@@ -1034,7 +1074,10 @@ class InkCanvasView @JvmOverloads constructor(
                         gestureStart3fY = focus[1]
                     } else if (referenceOpen) {
                         val factor = if (prev3fSpread > MIN_SPREAD_PX) spread / prev3fSpread else 1f
-                        onReferenceDrag?.invoke(focus[0] - prev3fX, focus[1] - prev3fY, factor)
+                        onReferenceDrag?.let {
+                            it(focus[0] - prev3fX, focus[1] - prev3fY, factor)
+                            draggedReference = true
+                        }
                     } else if (!opened3fThisGesture && gestureStart3fY - focus[1] > OPEN_DRAG_PX) {
                         onOpenReference?.invoke(focus[0], focus[1])
                         opened3fThisGesture = true
@@ -1082,6 +1125,10 @@ class InkCanvasView @JvmOverloads constructor(
      * length of the pinch happens here, once.
      */
     private fun endZoom() {
+        if (draggedReference) {
+            draggedReference = false
+            onReferenceDragEnd?.invoke()
+        }
         if (!zooming) return
         zooming = false
         dry.invalidate()
@@ -2407,7 +2454,9 @@ class InkCanvasView @JvmOverloads constructor(
 
     private companion object {
         const val MIN_SCALE = 0.1f
-        const val MAX_SCALE = MAX_CANVAS_SCALE
+
+        /** How far past fit-to-width the zoom goes: 10x, which reads as 1000%. */
+        const val MAX_ZOOM = 10f
         const val FIT_MARGIN = 0.94f
         const val HIGHLIGHT_ALPHA = 0x66000000
         const val RULE_SPACING = 60f

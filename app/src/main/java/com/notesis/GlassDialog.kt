@@ -4,6 +4,7 @@ import android.os.Build
 import android.view.WindowManager
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.material3.AlertDialogDefaults
+import androidx.compose.material3.MenuDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Modifier
@@ -11,6 +12,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.compose.material3.AlertDialog as MaterialAlertDialog
@@ -75,7 +77,22 @@ fun DropdownMenu(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    MaterialDropdownMenu(expanded, onDismissRequest, modifier) {
+    MaterialDropdownMenu(
+        expanded,
+        onDismissRequest,
+        modifier,
+        // No shadow on glass. A shadow is drawn under the whole panel and not
+        // only around it, and a glass menu's body is translucent - so the
+        // shadow showed through it, dark at the edges and clear in the middle.
+        // That pale patch in the centre of the AI menu, and of every other
+        // menu in the app, was its own shadow seen from the front. Same bug as
+        // the one under each note's name; same fix.
+        shadowElevation = if (LocalSkin.current == Skin.MATERIAL) {
+            MenuDefaults.ShadowElevation
+        } else {
+            0.dp
+        },
+    ) {
         BlurBehind()
         content()
     }

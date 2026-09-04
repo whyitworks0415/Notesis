@@ -168,6 +168,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -1977,21 +1979,39 @@ private fun NoteScreen(
     // resized. Off, the page keeps whatever zoom it was put at.
     var referenceFit by remember { mutableStateOf(penStore.referenceFit) }
     var referenceOffset by remember { mutableStateOf(Offset.Zero) }
+    // The panel's laid-out size, and the amount it is being stretched by right
+    // now. Two of them, because a spread that re-lays-out the panel on every
+    // frame is a relayout of everything in it on every frame: that was the
+    // shake, and it was also why the page inside seemed to move on its own -
+    // the window grew and the page it held did not. Growing is a scale on the
+    // whole panel instead, one number on the render thread, so the page grows
+    // with its frame exactly. When the hand comes off, the stretch is folded
+    // into the size and the page is zoomed by the same amount, which puts the
+    // picture back where it was and redraws it sharp. See onReferenceDragEnd.
     var referenceSize by remember {
         mutableStateOf(with(density) { Size(340.dp.toPx(), 440.dp.toPx()) })
     }
+    var referenceStretch by remember { mutableFloatStateOf(1f) }
     // Three fingers on the panel itself, once it is open: the spread is how
     // much it grows, the drag is where it goes. One function because the
     // panel's own view and the gesture that opened it both end up calling it.
     fun moveReference(panX: Float, panY: Float, spreadFactor: Float) {
         val minSize = with(density) { REFERENCE_MIN_SIZE.toPx() }
-        val newW = (referenceSize.width * spreadFactor)
-            .coerceIn(minSize, containerSize.width.toFloat().coerceAtLeast(minSize))
-        val newH = (referenceSize.height * spreadFactor)
-            .coerceIn(minSize, containerSize.height.toFloat().coerceAtLeast(minSize))
-        referenceSize = Size(newW, newH)
-        val maxX = (containerSize.width - newW).coerceAtLeast(0f)
-        val maxY = (containerSize.height - newH).coerceAtLeast(0f)
+        val floor = minSize / minOf(referenceSize.width, referenceSize.height)
+        val ceiling = if (containerSize.width > 0 && containerSize.height > 0) {
+            minOf(
+                containerSize.width / referenceSize.width,
+                containerSize.height / referenceSize.height,
+            )
+        } else {
+            floor
+        }
+        referenceStretch = (referenceStretch * spreadFactor)
+            .coerceIn(floor, maxOf(floor, ceiling))
+        val w = referenceSize.width * referenceStretch
+        val h = referenceSize.height * referenceStretch
+        val maxX = (containerSize.width - w).coerceAtLeast(0f)
+        val maxY = (containerSize.height - h).coerceAtLeast(0f)
         referenceOffset = Offset(
             (referenceOffset.x + panX).coerceIn(0f, maxX),
             (referenceOffset.y + panY).coerceIn(0f, maxY),
@@ -2299,8 +2319,8 @@ private fun NoteScreen(
                         // at. Closing the panel is putting a book down, not
                         // throwing it away.
                         referenceOpen = true
-                        val w = referenceSize.width
-                        val h = referenceSize.height
+                        val w = referenceSize.width * referenceStretch
+                        val h = referenceSize.height * referenceStretch
                         val maxX = (containerSize.width - w).coerceAtLeast(0f)
                         val maxY = (containerSize.height - h).coerceAtLeast(0f)
                         referenceOffset = Offset(
@@ -2592,6 +2612,21 @@ private fun NoteScreen(
                 deferDetail = deferDetail,
                 offset = referenceOffset,
                 size = referenceSize,
+                stretch = referenceStretch,
+                onStretchEnd = { view ->
+                    // The stretch becomes the size, and the page inside is
+                    // zoomed by the same amount, so the picture is unchanged
+                    // and drawn for the size it is now at rather than blown up.
+                    val factor = referenceStretch
+                    if (factor != 1f) {
+                        referenceSize = Size(
+                            referenceSize.width * factor,
+                            referenceSize.height * factor,
+                        )
+                        referenceStretch = 1f
+                        view?.zoomBy(factor)
+                    }
+                },
                 fit = referenceFit,
                 onFit = {
                     referenceFit = it
@@ -2765,7 +2800,11 @@ private fun ReferencePanel(
     deferDetail: Boolean,
     offset: Offset,
     size: Size,
-    /** Whether resizing the panel refits its page to the new width. */
+    /** What the whole panel is scaled by while a spread is in progress. */
+    stretch: Float,
+    /** The spread has ended: fold [stretch] into the size, given this panel's view. */
+    onStretchEnd: (InkCanvasView?) -> Unit,
+    /** Whether the panel fits its page to its own width when it changes page or note. */
     fit: Boolean,
     onFit: (Boolean) -> Unit,
     onNoteChange: (String) -> Unit,
@@ -2798,15 +2837,12 @@ private fun ReferencePanel(
     DisposableEffect(noteId) {
         onDispose { opened?.second?.close() }
     }
-    LaunchedEffect(view, page, opened) { view?.scrollToPage(page) }
-    // Refitting is a full relayout of the page, so it happens once the size has
-    // settled rather than on every frame of a three-finger spread - refitting
-    // per frame is what made resizing crawl.
-    LaunchedEffect(view, size, fit) {
-        if (!fit) return@LaunchedEffect
+    // A note or a page change refits the page to the panel, when that is asked
+    // for. Not a resize: a resize now scales the page along with its frame, and
+    // refitting after one would undo exactly that.
+    LaunchedEffect(view, noteId, page, opened, fit) {
         val v = view ?: return@LaunchedEffect
-        delay(REFERENCE_FIT_DELAY_MS)
-        v.fitWidth()
+        if (fit) v.fitWidth()
         v.scrollToPage(page)
     }
 
@@ -2826,6 +2862,16 @@ private fun ReferencePanel(
     SkinSurface(
         modifier = Modifier
             .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
+            // Scaled from its own top-left, so the corner the offset placed
+            // stays where it was put and the panel grows away from it. This is
+            // a draw-time transform: nothing inside is measured again, which is
+            // what makes a spread smooth and keeps the page in step with the
+            // frame around it rather than resizing out from under it.
+            .graphicsLayer {
+                scaleX = stretch
+                scaleY = stretch
+                transformOrigin = TransformOrigin(0f, 0f)
+            }
             .size(with(density) { size.width.toDp() }, with(density) { size.height.toDp() }),
         corner = 16.dp,
     ) {
@@ -2969,6 +3015,7 @@ private fun ReferencePanel(
                                 // open a reference panel of its own.
                                 referenceOpen = true
                                 onReferenceDrag = onDrag
+                                onReferenceDragEnd = { onStretchEnd(this) }
                                 onUndo = { undo(); popupEdits++ }
                                 onRedo = { redo(); popupEdits++ }
                                 view = this
@@ -3724,9 +3771,6 @@ private val WEB_PANEL_MAX = 1100.dp
 
 /** Below this the reference panel is too small to hold a readable page. */
 private val REFERENCE_MIN_SIZE = 220.dp
-
-/** How long the panel's size has to hold still before its page is refitted. */
-private const val REFERENCE_FIT_DELAY_MS = 200L
 
 private const val SEARCH_HOME = "https://www.google.com/"
 
