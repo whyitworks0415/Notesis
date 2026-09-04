@@ -1975,8 +1975,8 @@ private fun NoteScreen(
     var referenceOpen by remember { mutableStateOf(false) }
     var referenceNoteId by remember { mutableStateOf(penStore.referenceNote ?: note.id) }
     var referencePage by remember { mutableIntStateOf(0) }
-    // Whether the panel refits its page to its own width every time it is
-    // resized. Off, the page keeps whatever zoom it was put at.
+    // Whether the page in the panel is fitted to the panel's width. Off, it
+    // keeps whatever zoom it was put at.
     var referenceFit by remember { mutableStateOf(penStore.referenceFit) }
     var referenceOffset by remember { mutableStateOf(Offset.Zero) }
     // The panel's laid-out size, and the amount it is being stretched by right
@@ -1998,11 +1998,13 @@ private fun NoteScreen(
     fun moveReference(panX: Float, panY: Float, spreadFactor: Float) {
         val minSize = with(density) { REFERENCE_MIN_SIZE.toPx() }
         val floor = minSize / minOf(referenceSize.width, referenceSize.height)
-        val ceiling = if (containerSize.width > 0 && containerSize.height > 0) {
-            minOf(
-                containerSize.width / referenceSize.width,
-                containerSize.height / referenceSize.height,
-            )
+        // Width only. Capping against the height too meant a panel whose height
+        // had already reached the screen could not be widened at all, however
+        // much narrower than the screen it still was - and width is the
+        // dimension a page is read across. Taller than the screen is allowed;
+        // it sits against the top and the rest is below the fold.
+        val ceiling = if (containerSize.width > 0) {
+            containerSize.width / referenceSize.width
         } else {
             floor
         }
@@ -2328,9 +2330,11 @@ private fun NoteScreen(
                             (cy - h).coerceIn(0f, maxY),
                         )
                     }
+                    // Three fingers down the page, with the panel already open,
+                    // put it away: the gesture that opened it, run backwards.
+                    view.onCloseReference = { referenceOpen = false }
                     // Moving and resizing the panel itself is handled on its own
-                    // view now, not here - three fingers on the main page only
-                    // ever open it; see ReferencePanel.
+                    // view, not here; see ReferencePanel.
                 },
             )
         }
@@ -2614,9 +2618,13 @@ private fun NoteScreen(
                 size = referenceSize,
                 stretch = referenceStretch,
                 onStretchEnd = { view ->
-                    // The stretch becomes the size, and the page inside is
-                    // zoomed by the same amount, so the picture is unchanged
-                    // and drawn for the size it is now at rather than blown up.
+                    // The stretch becomes the size. What happens to the page is
+                    // left with the view to do when the new size actually
+                    // arrives: either it fits the new width, which is how a
+                    // note is read, or it is zoomed by the same amount the
+                    // frame was, which leaves the picture exactly as it looked
+                    // being stretched. Done here it would be done against the
+                    // old size, and that was the lurch when the hand came off.
                     val factor = referenceStretch
                     if (factor != 1f) {
                         referenceSize = Size(
@@ -2624,7 +2632,7 @@ private fun NoteScreen(
                             referenceSize.height * factor,
                         )
                         referenceStretch = 1f
-                        view?.zoomBy(factor)
+                        view?.onNextResize(factor, fitInstead = referenceFit)
                     }
                 },
                 fit = referenceFit,
@@ -2804,7 +2812,11 @@ private fun ReferencePanel(
     stretch: Float,
     /** The spread has ended: fold [stretch] into the size, given this panel's view. */
     onStretchEnd: (InkCanvasView?) -> Unit,
-    /** Whether the panel fits its page to its own width when it changes page or note. */
+    /**
+     * Whether the page is fitted to the panel's width - on opening a note, on
+     * changing page, and after a resize. Off, it keeps whatever zoom it was put
+     * at, and a resize scales it by exactly what the frame grew by.
+     */
     fit: Boolean,
     onFit: (Boolean) -> Unit,
     onNoteChange: (String) -> Unit,

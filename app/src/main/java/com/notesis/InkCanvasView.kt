@@ -271,6 +271,9 @@ class InkCanvasView @JvmOverloads constructor(
     /** Three fingers dragged up from nothing, panel closed: where to open it. */
     var onOpenReference: ((Float, Float) -> Unit)? = null
 
+    /** The same drag the other way up, on the page, while the panel is open. */
+    var onCloseReference: (() -> Unit)? = null
+
     /** Three fingers moving once it is open: pan in each axis, then the ratio the spread grew by. */
     var onReferenceDrag: ((Float, Float, Float) -> Unit)? = null
 
@@ -420,6 +423,7 @@ class InkCanvasView @JvmOverloads constructor(
     // drag once a third finger has actually landed, not the whole gesture.
     private var have3Fingers = false
     private var opened3fThisGesture = false
+    private var closed3fThisGesture = false
     private var gestureStart3fY = 0f
     private var prev3fX = 0f
     private var prev3fY = 0f
@@ -604,7 +608,24 @@ class InkCanvasView @JvmOverloads constructor(
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        if (!fitted && w > 0) fitWidth()
+        if (!fitted && w > 0) {
+            fitWidth()
+            pendingZoom = 0f
+            return
+        }
+        val pending = pendingZoom
+        if (pending == 0f || w == 0) return
+        pendingZoom = 0f
+        if (!pendingFit) {
+            zoomBy(pending)
+            return
+        }
+        // Fitting resets the whole transform, vertical position included, so
+        // the page being looked at has to be put back afterwards - otherwise a
+        // resize sends the panel to the top of the note.
+        val here = currentPage
+        fitWidth()
+        scrollToPage(here)
     }
 
     override fun onDetachedFromWindow() {
@@ -628,11 +649,26 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     /**
-     * Zooms about the top-left corner by [factor], for a host that has just
-     * resized this view by the same amount and wants the page to have grown
-     * with it rather than to have stayed put in a larger window.
+     * What to do to the page the next time this view is resized: zoom it by
+     * [factor], or fit it to the new width instead.
+     *
+     * The host resizes this view by changing what it asks for in a layout that
+     * has not happened yet, so doing the zoom when the host asks for it does it
+     * against the old size - the page is scaled up and then clamped back inside
+     * a view that is still small, and the whole thing jumps twice as the layout
+     * catches up. That was the lurch when a hand came off a panel spread. Held
+     * here instead, and spent at the exact moment the new size arrives.
      */
-    fun zoomBy(factor: Float) {
+    fun onNextResize(factor: Float, fitInstead: Boolean) {
+        pendingZoom = factor
+        pendingFit = fitInstead
+    }
+
+    private var pendingZoom = 0f
+    private var pendingFit = false
+
+    /** Zooms about the top-left corner, which is the corner a resize keeps. */
+    private fun zoomBy(factor: Float) {
         if (factor <= 0f || abs(factor - 1f) < 1e-4f) return
         documentToScreen.postScale(factor, factor, 0f, 0f)
         onTransformChanged()
@@ -1038,6 +1074,7 @@ class InkCanvasView @JvmOverloads constructor(
                 gestureMoved = 0f
                 have3Fingers = false
                 opened3fThisGesture = false
+                closed3fThisGesture = false
                 zooming = false
                 draggedReference = false
                 return true
@@ -1072,11 +1109,18 @@ class InkCanvasView @JvmOverloads constructor(
                     if (!have3Fingers) {
                         have3Fingers = true
                         gestureStart3fY = focus[1]
-                    } else if (referenceOpen) {
+                    } else if (referenceOpen && onReferenceDrag != null) {
                         val factor = if (prev3fSpread > MIN_SPREAD_PX) spread / prev3fSpread else 1f
-                        onReferenceDrag?.let {
-                            it(focus[0] - prev3fX, focus[1] - prev3fY, factor)
-                            draggedReference = true
+                        onReferenceDrag?.invoke(focus[0] - prev3fX, focus[1] - prev3fY, factor)
+                        draggedReference = true
+                    } else if (referenceOpen) {
+                        // On the page rather than on the panel, and the panel is
+                        // already open: the same drag that opened it, the other
+                        // way up, puts it away. Nothing else here has a use for
+                        // three fingers going down.
+                        if (!closed3fThisGesture && focus[1] - gestureStart3fY > OPEN_DRAG_PX) {
+                            onCloseReference?.invoke()
+                            closed3fThisGesture = true
                         }
                     } else if (!opened3fThisGesture && gestureStart3fY - focus[1] > OPEN_DRAG_PX) {
                         onOpenReference?.invoke(focus[0], focus[1])
