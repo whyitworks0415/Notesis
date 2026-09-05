@@ -234,10 +234,12 @@ enum class ColorSlot(val label: String) {
  */
 @Composable
 private fun Preview() {
+    var amount by remember { androidx.compose.runtime.mutableFloatStateOf(0.58f) }
+    var enabled by remember { mutableStateOf(true) }
     Box(
         Modifier
             .fillMaxWidth()
-            .height(200.dp),
+            .height(230.dp),
         contentAlignment = Alignment.Center,
     ) {
         val backdrop = rememberBackdrop(active = true)
@@ -273,13 +275,36 @@ private fun Preview() {
             }
         }
         androidx.compose.runtime.CompositionLocalProvider(LocalBackdrop provides backdrop) {
-            SkinSurface(Modifier.fillMaxWidth(0.7f).height(96.dp)) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            SkinSurface(Modifier.fillMaxWidth(0.76f).height(138.dp)) {
+                Column(
+                    Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.Center,
+                ) {
                     Text(
-                        "뒤가 흐려지고 색은 살아 있어야 유리입니다",
+                        if (LocalSkin.current == Skin.LIQUID_GLASS) {
+                            "빛을 품고, 손끝에서 형태가 변하는 렌즈"
+                        } else {
+                            "뒤가 흐려지고 색은 살아 있어야 유리입니다"
+                        },
                         style = MaterialTheme.typography.bodyMedium,
                         textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth(),
                     )
+                    Spacer(Modifier.height(8.dp))
+                    SkinSlider(
+                        value = amount,
+                        onValueChange = { amount = it },
+                        valueRange = 0f..1f,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("인터랙티브 글래스", style = MaterialTheme.typography.bodySmall)
+                        SkinSwitch(enabled) { enabled = it }
+                    }
                 }
             }
         }
