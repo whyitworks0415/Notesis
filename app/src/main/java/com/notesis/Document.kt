@@ -212,6 +212,12 @@ data class NoteMeta(
 class NoteStore(context: Context) {
 
     private val root = File(context.filesDir, "notes").apply { mkdirs() }
+    /**
+     * One exit save queue for the store. A note screen must be able to disappear
+     * immediately without doing file IO on the UI thread, while the write itself
+     * still needs to outlive that composable's cancelled coroutine scope.
+     */
+    private val saveWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
 
     /**
      * Every folder that has a note in it. Folders are not objects with their own
@@ -399,6 +405,7 @@ class NoteStore(context: Context) {
     fun loadMasks(id: String, page: Page, epsilon: Float): List<PageMask> =
         readStrokes(File(root, "$id/pages/${page.id}.mask"), epsilon).map { PageMask(it) }
 
+    @Synchronized
     fun save(id: String, title: String, document: Document) {
         val dir = File(root, "$id/pages")
         if (!dir.isDirectory && !dir.mkdirs()) return
@@ -434,6 +441,11 @@ class NoteStore(context: Context) {
         val auto = File(root, "$id/$AUTO_THUMB")
         val stale = System.currentTimeMillis() - auto.lastModified() > THUMB_INTERVAL_MS
         if (!auto.isFile || (firstPageChanged && stale)) writeAutoThumbnail(id, document)
+    }
+
+    /** Queues a final save without holding the main thread while a note closes. */
+    fun saveLater(id: String, title: String, document: Document) {
+        saveWorker.execute { save(id, title, document) }
     }
 
     private fun imagesToJson(page: Page): JSONArray {

@@ -91,7 +91,10 @@ private const val LIQUID_GLASS_SHADER = """
         float invLength = 1.0 / max(length(d), 0.001);
         float2 direction = d * invLength;
         float2 shift = direction * edge * edge * bend;
-        float2 sampleAt = clamp(p - shift, float2(0.0), safeSize);
+        // The clear lens pushes the scene away from its centre at the steep
+        // edge. Sampling inward here inverted that curvature, making the pane
+        // read as a hollow pressed into the page rather than glass above it.
+        float2 sampleAt = clamp(p + shift, float2(0.0), safeSize);
 
         // Physical glass separates wavelengths very slightly at a steep edge.
         // Kept below a pixel so it reads as energy, never as a colour fringe.

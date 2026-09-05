@@ -12,6 +12,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -2027,8 +2028,11 @@ private fun NoteScreen(
     var showLatency by remember { mutableStateOf(false) }
     var showPages by remember { mutableStateOf(false) }
     var edits by remember { mutableIntStateOf(0) }
-    var pageCount by remember { mutableIntStateOf(note.pageCount) }
-    var currentPage by remember { mutableIntStateOf(0) }
+    val resumePage = remember(note.id, note.pageCount) {
+        restoredPage(penStore.lastPage(note.id), note.pageCount)
+    }
+    var pageCount by remember(note.id) { mutableIntStateOf(note.pageCount) }
+    var currentPage by remember(note.id) { mutableIntStateOf(resumePage) }
     // A multiple of fit-to-width, which is the 100% anybody means.
     var zoom by remember { mutableFloatStateOf(1f) }
     var canvas by remember { mutableStateOf<InkCanvasView?>(null) }
@@ -2219,6 +2223,8 @@ private fun NoteScreen(
     val backdrop = rememberBackdrop(
         active = skin != Skin.MATERIAL && (look.blur > 0.1f || look.vibrancy > 0.01f),
     )
+    var drawingPage by remember { mutableStateOf(false) }
+    var movingPage by remember { mutableStateOf(false) }
     CompositionLocalProvider(LocalBackdrop provides backdrop) {
     Row(Modifier.fillMaxSize()) {
     // The page's own ground, behind the bar as well as behind the page. Docked,
@@ -2261,18 +2267,20 @@ private fun NoteScreen(
                         maskLoader = { page, epsilon ->
                             store.loadMasks(note.id, page, epsilon)
                         }
-                        open(ready.first, ready.second)
-                        // Where the note was left. Posted, because the fit to
-                        // width that decides the scale happens on the first
-                        // layout and would otherwise undo the scroll.
-                        penStore.lastPage(note.id).takeIf { it > 0 }?.let { resume ->
-                            post { scrollToPage(resume) }
-                        }
+                        // The view restores only after its first measured width
+                        // has established fit-to-width, so that fit cannot send
+                        // the note back to page one a frame later.
+                        open(ready.first, ready.second, initialPage = resumePage)
                         onStrokesChanged = {
                             edits++
                             pageCount = document.pages.size
                         }
-                        onCurrentPageChanged = { currentPage = it }
+                        onCurrentPageChanged = {
+                            currentPage = it
+                            // Save while reading, not only while leaving. This
+                            // survives process death and makes reopening exact.
+                            penStore.setLastPage(note.id, it)
+                        }
                         onZoomChanged = { zoom = it }
                         onSelectionChanged = { selectedText = it?.text }
                         onImageSelected = { imageSelected = it }
@@ -2290,7 +2298,14 @@ private fun NoteScreen(
                 },
                 update = { view ->
                     // The frost stops while the pen is down; see Backdrop.paused.
-                    view.onDrawingChanged = { drawing -> backdrop.paused = drawing }
+                    view.onDrawingChanged = { drawing ->
+                        drawingPage = drawing
+                        backdrop.paused = drawing || movingPage
+                    }
+                    view.onViewportInteractionChanged = { moving ->
+                        movingPage = moving
+                        backdrop.paused = moving || drawingPage
+                    }
                     view.predictionEnabled = prediction
                     view.deferDetail = deferDetail
                     view.tool = tool
@@ -2367,8 +2382,11 @@ private fun NoteScreen(
             onDispose {
                 val view = canvas
                 if (view != null) {
-                    store.save(note.id, note.title, view.document)
                     penStore.setLastPage(note.id, view.currentPageIndex())
+                    // A synchronous final save here blocked the UI thread while
+                    // the note was disappearing. The store owns a serial worker
+                    // that outlives this composable, so leaving stays immediate.
+                    store.saveLater(note.id, note.title, view.document)
                 } else {
                     opened?.second?.close()
                 }
@@ -2390,6 +2408,23 @@ private fun NoteScreen(
                     .align(Alignment.TopStart)
                     .windowInsetsPadding(ChromeInsets)
                     .padding(top = 84.dp, start = 24.dp),
+            )
+        }
+
+        if (pageCount > 1 && !showPages) {
+            PageScrubber(
+                currentPage = currentPage,
+                pageCount = pageCount,
+                onJump = { page ->
+                    currentPage = page
+                    penStore.setLastPage(note.id, page)
+                    canvas?.scrollToPage(page)
+                },
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .fillMaxHeight(0.70f)
+                    .windowInsetsPadding(ChromeInsets)
+                    .padding(end = 6.dp),
             )
         }
 
@@ -3093,6 +3128,100 @@ private fun SelectionActions(
                 Text(" 복사")
             }
             TextButton(onClick = onDismiss) { Text("취소") }
+        }
+    }
+}
+
+/**
+ * A page-scale scrollbar: the whole note is reachable with one short drag.
+ *
+ * The visible thumb is deliberately smaller than its 52dp touch target. It
+ * borrows the current skin's surface, so Liquid Glass gets the same refracting
+ * capsule as the rest of the chrome without making the rail visually heavy.
+ */
+@Composable
+private fun PageScrubber(
+    currentPage: Int,
+    pageCount: Int,
+    onJump: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (pageCount <= 1) return
+    val page = restoredPage(currentPage, pageCount)
+    val fraction = page.toFloat() / (pageCount - 1).toFloat()
+    val density = LocalDensity.current
+    val scheme = MaterialTheme.colorScheme
+    val liquid = LocalSkin.current == Skin.LIQUID_GLASS
+    val thumbHeight = 52.dp
+    val thumbHeightPx = with(density) { thumbHeight.toPx() }
+    var trackHeight by remember { mutableIntStateOf(0) }
+    var dragging by remember { mutableStateOf(false) }
+    val thumbWidth by animateDpAsState(
+        targetValue = if (dragging && liquid) 40.dp else 34.dp,
+        animationSpec = tween(120),
+        label = "page scrubber width",
+    )
+    val travel = (trackHeight - thumbHeightPx).coerceAtLeast(0f)
+    val thumbY = (fraction * travel).roundToInt()
+
+    fun jumpAt(y: Float) {
+        onJump(scrubbedPage(y, trackHeight.toFloat(), thumbHeightPx, pageCount))
+    }
+
+    Box(
+        modifier
+            .width(52.dp)
+            .onSizeChanged { trackHeight = it.height }
+            .pointerInput(pageCount, trackHeight, onJump) {
+                detectDragGestures(
+                    onDragStart = {
+                        dragging = true
+                        jumpAt(it.y)
+                    },
+                    onDragEnd = { dragging = false },
+                    onDragCancel = { dragging = false },
+                ) { change, _ ->
+                    change.consume()
+                    jumpAt(change.position.y)
+                }
+            }
+            .pointerInput(pageCount, trackHeight, onJump) {
+                detectTapGestures { jumpAt(it.y) }
+            },
+        contentAlignment = Alignment.TopCenter,
+    ) {
+        Box(
+            Modifier
+                .align(Alignment.Center)
+                .width(if (liquid) 6.dp else 4.dp)
+                .fillMaxHeight()
+                .clip(CircleShape)
+                .background(scheme.onSurface.copy(alpha = if (liquid) 0.16f else 0.12f)),
+        ) {
+            if (fraction > 0f) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .fillMaxHeight(fraction)
+                        .clip(CircleShape)
+                        .background(scheme.primary.copy(alpha = if (liquid) 0.84f else 1f)),
+                )
+            }
+        }
+        SkinSurface(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .offset { IntOffset(0, thumbY) }
+                .size(thumbWidth, thumbHeight),
+            corner = 100.dp,
+        ) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    "${page + 1}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = scheme.onSurface,
+                )
+            }
         }
     }
 }

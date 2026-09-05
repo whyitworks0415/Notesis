@@ -306,6 +306,16 @@ class InkCanvasView @JvmOverloads constructor(
     var onDrawingChanged: ((Boolean) -> Unit)? = null
 
     /**
+     * Raised for the lifetime of a finger pan or pinch.
+     *
+     * Glass records the whole page again to provide a live backdrop. Keeping
+     * that second render running while the page itself is moving can turn one
+     * busy PDF frame into two. The host freezes the last recording for the
+     * gesture and refreshes it when the hand lifts.
+     */
+    var onViewportInteractionChanged: ((Boolean) -> Unit)? = null
+
+    /**
      * Whether the tip is drawn ahead of the pen.
      *
      * Prediction buys back most of the motion-to-photon gap, and it pays for it
@@ -413,6 +423,8 @@ class InkCanvasView @JvmOverloads constructor(
     private var lastFocusY = 0f
     private var currentPage = 0
     private var fitted = false
+    /** Page to restore once the first real view width has established the scale. */
+    private var pageToRestore: Int? = null
 
     // Finger-gesture bookkeeping: one continuous touch, from the first finger
     // down to the last one up, is one "gesture" - these track it.
@@ -589,7 +601,7 @@ class InkCanvasView @JvmOverloads constructor(
         onTransformChanged()
     }
 
-    fun open(document: Document, pdf: PdfSource?) {
+    fun open(document: Document, pdf: PdfSource?, initialPage: Int = 0) {
         this.pdf?.close()
         this.document = document
         document.invalidateLayout()
@@ -602,6 +614,7 @@ class InkCanvasView @JvmOverloads constructor(
         undoStack.clear()
         redoStack.clear()
         fitted = false
+        pageToRestore = initialPage.coerceIn(document.pages.indices)
         requestLayout()
         dry.invalidate()
     }
@@ -611,6 +624,8 @@ class InkCanvasView @JvmOverloads constructor(
         if (!fitted && w > 0) {
             fitWidth()
             pendingZoom = 0f
+            pageToRestore?.let(::scrollToPage)
+            pageToRestore = null
             return
         }
         val pending = pendingZoom
@@ -630,6 +645,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
+        stopFling()
         removeCallbacks(refineRunnable)
         refiner.shutdown()
         pdf?.close()
@@ -1066,6 +1082,7 @@ class InkCanvasView @JvmOverloads constructor(
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 stopFling()
+                onViewportInteractionChanged?.invoke(true)
                 val focus = focusOf(event, skipPointerIndex = -1)
                 lastFocusX = focus[0]
                 lastFocusY = focus[1]
@@ -1148,12 +1165,16 @@ class InkCanvasView @JvmOverloads constructor(
                 releaseVelocity()
                 maybeHandleTap()
                 endZoom()
+                // A real fling keeps moving the page after the hand lifts, so
+                // keep the expensive live glass recording paused until it ends.
+                if (!flinging) onViewportInteractionChanged?.invoke(false)
                 return true
             }
 
             MotionEvent.ACTION_CANCEL -> {
                 releaseVelocity()
                 endZoom()
+                onViewportInteractionChanged?.invoke(false)
                 return true
             }
         }
@@ -1253,6 +1274,7 @@ class InkCanvasView @JvmOverloads constructor(
     private fun stopFling() {
         flinging = false
         removeCallbacks(flingStep)
+        onViewportInteractionChanged?.invoke(false)
     }
 
     private val flingStep = object : Runnable {
@@ -1433,7 +1455,6 @@ class InkCanvasView @JvmOverloads constructor(
         val last = document.pages.indexOf(visible.last())
         if (first < 0 || last < 0) return
         val keep = (first - KEEP_PAGES)..(last + KEEP_PAGES)
-        var released = false
         for ((index, page) in document.pages.withIndex()) {
             if (index in keep || !page.loaded || page.dirty) continue
             if (undoStack.any { it.page === page } || redoStack.any { it.page === page }) continue
@@ -1442,9 +1463,9 @@ class InkCanvasView @JvmOverloads constructor(
             page.masks.clear()
             page.loaded = false
             page.tessellatedFor = -1f
-            released = true
         }
-        if (released) System.gc()
+        // Let ART schedule collection itself. Calling System.gc() here pauses
+        // the UI thread precisely when a long note has just been scrolled.
     }
 
     private fun sameStrokes(current: List<Stroke>, snapshot: List<Stroke>): Boolean {

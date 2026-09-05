@@ -833,14 +833,14 @@ private fun Thumb(
             // Clear enough that the track keeps running through the lens. The
             // opposing gradients make the top edge catch and the lower face
             // retain weight against a white page.
-            .background(Color.White.copy(alpha = 0.16f))
+            .background(Color.White.copy(alpha = 0.36f))
             .background(tokens.fill ?: Color.Transparent)
             .background(
                 Brush.verticalGradient(
-                    0f to Color.White.copy(alpha = 0.78f),
-                    0.18f to Color.White.copy(alpha = 0.16f),
-                    0.58f to Color.White.copy(alpha = 0.04f),
-                    1f to Color.White.copy(alpha = 0.38f),
+                    0f to Color.White.copy(alpha = 0.86f),
+                    0.18f to Color.White.copy(alpha = 0.22f),
+                    0.58f to Color.White.copy(alpha = 0.08f),
+                    1f to Color.White.copy(alpha = 0.50f),
                 ),
             )
             .liquidLight(if (energized) glow else Color.White)
@@ -893,23 +893,17 @@ private const val LIQUID_SLIDER_PRESS_STRETCH = 7f
 private const val LIQUID_SLIDER_TAP_STRETCH = 3f
 private const val LIQUID_SLIDER_MAX_STRETCH = 12f
 
-// Switch: the knob sits *inside* the track, with an even margin round it, and
-// it used to stand proud of it - a different control from the one in the file.
-//
-// The file's own proportion is 2.32 track-widths to its height, with a knob
-// half again as wide as it is tall, and at this app's scale that came out as a
-// 74dp bar with a lozenge sliding along it: far longer than anything else in a
-// settings row and read as a slider rather than a switch. Tightened to a knob
-// that is round and a track a little over twice its width, which is the same
-// idea at a length that belongs beside a line of text.
-private val SWITCH_ROW = 40.dp
-private val SWITCH_W = 54.dp
-private val SWITCH_TRACK = 30.dp
-private val SWITCH_THUMB_W = 26.dp
-private val SWITCH_THUMB_H = 26.dp
+// Switch: the reference file's own proportions. The control is intentionally
+// long and its knob intentionally lozenge-shaped; shortening it to a conventional
+// Android switch was the visual mismatch the reference makes most obvious.
+private val SWITCH_ROW = 44.dp
+private val SWITCH_W = 74.dp
+private val SWITCH_TRACK = 32.dp
+private val SWITCH_THUMB_W = 47.dp
+private val SWITCH_THUMB_H = 28.dp
 private val SWITCH_THUMB_INSET = 2.dp
-private val LIQUID_SWITCH_THUMB_W_HELD = 32.dp
-private val LIQUID_SWITCH_THUMB_H_HELD = 25.dp
+private val LIQUID_SWITCH_THUMB_W_HELD = 52.dp
+private val LIQUID_SWITCH_THUMB_H_HELD = 29.dp
 
 private val THUMB_SHADOW = 6.dp
 private val LIQUID_THUMB_SHADOW = 8.dp
