@@ -155,6 +155,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -205,8 +206,11 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
+import kotlin.math.abs
 
 class MainActivity : ComponentActivity() {
+
+    private var incomingViewerRequest: ViewerRequest? by mutableStateOf(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -214,15 +218,10 @@ class MainActivity : ComponentActivity() {
         // Android 15+ draws behind the system bars whether or not you ask, so
         // opt in properly and let the insets be dispatched instead of guessed.
         enableEdgeToEdge()
-        // After enableEdgeToEdge, which installs its own bar style over
-        // anything set before it. The app is light and draws behind the status
-        // bar, so the system needs telling to use dark icons - left alone it
-        // picked white ones and the clock and battery vanished into the bar.
-        WindowCompat.getInsetsController(window, window.decorView)
-            .isAppearanceLightStatusBars = true
         val store = NoteStore(this)
         val prefs = PenStore(this)
         val lookStore = SkinSettingsStore(this)
+        acceptDocumentIntent(intent)
         setContent {
             // Hoisted to the top so a change repaints every bar at once rather
             // than whichever screen happened to be looking.
@@ -234,8 +233,16 @@ class MainActivity : ComponentActivity() {
             // container, outline and tint goes when the accent does. Kept until
             // the accent changes: forty tones is forty bisections, which is
             // nothing once and not nothing on every recomposition.
-            val scheme = remember(look.accent, look.highContrast) {
-                schemeFrom(look.accent, look.highContrast)
+            val darkMode = look.themeMode == AppThemeMode.DARK
+            val scheme = remember(look.accent, look.highContrast, darkMode) {
+                schemeFrom(look.accent, look.highContrast, darkMode)
+            }
+            // edge-to-edge 시스템 바의 아이콘도 앱 모드와 동시에 바꿉니다.
+            SideEffect {
+                WindowCompat.getInsetsController(window, window.decorView).apply {
+                    isAppearanceLightStatusBars = !darkMode
+                    isAppearanceLightNavigationBars = !darkMode
+                }
             }
             // The skin reaches Material's own components through the theme, so
             // dialogs, menus and cards follow it without a single call site
@@ -246,8 +253,18 @@ class MainActivity : ComponentActivity() {
             ) {
             ProvideSkin(skin, look) {
                 var openNote by remember { mutableStateOf<NoteMeta?>(null) }
+                var pickedDocument by remember { mutableStateOf<ViewerRequest?>(null) }
+                val viewedDocument = incomingViewerRequest ?: pickedDocument
                 val note = openNote
-                if (settingsOpen) {
+                if (viewedDocument != null) {
+                    ReadOnlyDocumentScreen(
+                        request = viewedDocument,
+                        onBack = {
+                            incomingViewerRequest = null
+                            pickedDocument = null
+                        },
+                    )
+                } else if (settingsOpen) {
                     SkinSettingsScreen(
                         skin = skin,
                         settings = look,
@@ -262,7 +279,12 @@ class MainActivity : ComponentActivity() {
                         onBack = { settingsOpen = false },
                     )
                 } else if (note == null) {
-                    NoteListScreen(store, onSettings = { settingsOpen = true }) { openNote = it }
+                    NoteListScreen(
+                        store = store,
+                        onSettings = { settingsOpen = true },
+                        onOpenDocument = { pickedDocument = it },
+                        onOpen = { openNote = it },
+                    )
                 } else {
                     // Keyed, so jumping straight to another note builds a
                     // fresh screen instead of showing the old document until
@@ -284,6 +306,19 @@ class MainActivity : ComponentActivity() {
             }
         }
         }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        acceptDocumentIntent(intent)
+    }
+
+    private fun acceptDocumentIntent(intent: android.content.Intent?) {
+        if (intent?.action != android.content.Intent.ACTION_VIEW) return
+        val uri = intent.data ?: return
+        val request = viewerRequest(this, uri)
+        if (isSupportedDocumentName(request.name)) incomingViewerRequest = request
     }
 }
 
@@ -319,6 +354,7 @@ private fun android.content.Context.recordCrashes() {
 private fun NoteListScreen(
     store: NoteStore,
     onSettings: () -> Unit,
+    onOpenDocument: (ViewerRequest) -> Unit,
     onOpen: (NoteMeta) -> Unit,
 ) {
     val context = LocalContext.current
@@ -339,6 +375,19 @@ private fun NoteListScreen(
     var results by remember { mutableStateOf<List<NoteMeta>?>(null) }
     // Which note the image picker, once it comes back, belongs to.
     var thumbnailFor by remember { mutableStateOf<NoteMeta?>(null) }
+
+    val openDocument = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        runCatching {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        }
+        onOpenDocument(viewerRequest(context, uri))
+    }
 
     val pickThumbnail = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent(),
@@ -476,11 +525,16 @@ private fun NoteListScreen(
     // an opaque background - translucent and not frosted, which is the whole of
     // why the skin looked like it had not been applied outside a note.
     val look = LocalSkinSettings.current
+    val currentSkin = LocalSkin.current
     val backdrop = rememberBackdrop(
-        active = LocalSkin.current != Skin.MATERIAL &&
+        active = currentSkin == Skin.GLASSMORPHISM &&
             (look.blur > 0.1f || look.vibrancy > 0.01f),
     )
-    CompositionLocalProvider(LocalBackdrop provides backdrop) {
+    val liquidBackdrop = rememberLiquidGlassBackdrop()
+    CompositionLocalProvider(
+        LocalBackdrop provides backdrop,
+        LocalLiquidGlassBackdrop provides if (currentSkin == Skin.LIQUID_GLASS) liquidBackdrop else null,
+    ) {
     Scaffold(
         topBar = {
             // Flush to the window edge, and the notes pass underneath it.
@@ -547,6 +601,12 @@ private fun NoteListScreen(
                     modifier = Modifier.padding(top = 12.dp, bottom = 12.dp),
                 )
                 GlassFab(
+                    onClick = { openDocument.launch(SUPPORTED_DOCUMENT_MIME_TYPES) },
+                    icon = Icons.Default.FolderOpen,
+                    contentDescription = "문서 열기",
+                    modifier = Modifier.padding(bottom = 12.dp),
+                )
+                GlassFab(
                     onClick = { naming = true },
                     icon = Icons.Default.Add,
                     contentDescription = "새 노트",
@@ -555,11 +615,21 @@ private fun NoteListScreen(
         },
     ) { padding ->
         // Nothing inside the recording may sample it; see NoBackdrop.
-        CompositionLocalProvider(LocalBackdrop provides NoBackdrop) {
+        CompositionLocalProvider(
+            LocalBackdrop provides NoBackdrop,
+            LocalLiquidGlassBackdrop provides null,
+        ) {
         Box(
             Modifier
                 .fillMaxSize()
                 .recordBackdrop(backdrop)
+                .then(
+                    if (currentSkin == Skin.LIQUID_GLASS) {
+                        Modifier.captureLiquidGlassBackdrop(liquidBackdrop)
+                    } else {
+                        Modifier
+                    },
+                )
                 // Opaque, so the frost replaces the page rather than adding to it.
                 .background(MaterialTheme.colorScheme.surface),
         ) {
@@ -1605,6 +1675,8 @@ private fun WebPanel(
         Column(
             Modifier
                 .fillMaxHeight()
+                // 시스템 바 inset도 패널의 실제 표면색으로 칠해 상단 회색 띠를 없앱니다.
+                .background(MaterialTheme.colorScheme.surface)
                 .windowInsetsPadding(ChromeInsets),
         ) {
             Row(
@@ -1966,6 +2038,15 @@ private fun NoteScreen(
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
     var barSize by remember { mutableStateOf(IntSize.Zero) }
     val density = LocalDensity.current
+    val otherNotes = remember(note.id) { store.list().filter { it.id != note.id } }
+    val referenceNotes = remember(note, otherNotes) { listOf(note) + otherNotes }
+    val initialReferenceNoteId = remember(note.id, referenceNotes) {
+        penStore.referenceNote?.takeIf { saved -> referenceNotes.any { it.id == saved } } ?: note.id
+    }
+    val initialReferencePage = remember(initialReferenceNoteId, referenceNotes) {
+        val count = referenceNotes.first { it.id == initialReferenceNoteId }.pageCount
+        restoredPage(penStore.lastPage(initialReferenceNoteId), count)
+    }
 
     // The three-finger reference panel: a second, live InkCanvasView floating
     // over this one, on whichever note and page it is pointed at - any note,
@@ -1974,8 +2055,8 @@ private fun NoteScreen(
     // in preferences, so it is still the same one after a close, after leaving
     // the note, and after the app has been shut.
     var referenceOpen by remember { mutableStateOf(false) }
-    var referenceNoteId by remember { mutableStateOf(penStore.referenceNote ?: note.id) }
-    var referencePage by remember { mutableIntStateOf(0) }
+    var referenceNoteId by remember { mutableStateOf(initialReferenceNoteId) }
+    var referencePage by remember { mutableIntStateOf(initialReferencePage) }
     // Whether the page in the panel is fitted to the panel's width. Off, it
     // keeps whatever zoom it was put at.
     var referenceFit by remember { mutableStateOf(penStore.referenceFit) }
@@ -2023,8 +2104,6 @@ private fun NoteScreen(
     val maxBarWidth = with(density) {
         (containerSize.width.takeIf { it > 0 } ?: Int.MAX_VALUE).toDp()
     }
-    val otherNotes = remember(note.id) { store.list().filter { it.id != note.id } }
-    val referenceNotes = remember(note, otherNotes) { listOf(note) + otherNotes }
     var showLatency by remember { mutableStateOf(false) }
     var showPages by remember { mutableStateOf(false) }
     var edits by remember { mutableIntStateOf(0) }
@@ -2033,6 +2112,17 @@ private fun NoteScreen(
     }
     var pageCount by remember(note.id) { mutableIntStateOf(note.pageCount) }
     var currentPage by remember(note.id) { mutableIntStateOf(resumePage) }
+    // 빠른 스크러버는 처음부터 화면을 차지하지 않고, 실제로 세 페이지 경계를
+    // 지나 긴 노트 탐색이 필요해진 순간부터 나타납니다.
+    var pagesTraversed by remember(note.id) { mutableIntStateOf(0) }
+    var pageScrubberVisible by remember(note.id) { mutableStateOf(false) }
+    var pageScrubberActivity by remember(note.id) { mutableIntStateOf(0) }
+    // 마지막 페이지 이동마다 이전 타이머가 취소됩니다. 이동이 멈춘 뒤에만 사라집니다.
+    LaunchedEffect(pageScrubberActivity) {
+        if (!pageScrubberVisible) return@LaunchedEffect
+        delay(PAGE_SCRUBBER_IDLE_MS)
+        pageScrubberVisible = false
+    }
     // A multiple of fit-to-width, which is the 100% anybody means.
     var zoom by remember { mutableFloatStateOf(1f) }
     var canvas by remember { mutableStateOf<InkCanvasView?>(null) }
@@ -2221,11 +2311,16 @@ private fun NoteScreen(
     // itself once a frame - but only while something actually bends or blurs it.
     val look = LocalSkinSettings.current
     val backdrop = rememberBackdrop(
-        active = skin != Skin.MATERIAL && (look.blur > 0.1f || look.vibrancy > 0.01f),
+        active = skin == Skin.GLASSMORPHISM &&
+            (look.blur > 0.1f || look.vibrancy > 0.01f),
     )
+    val liquidBackdrop = rememberLiquidGlassBackdrop()
     var drawingPage by remember { mutableStateOf(false) }
     var movingPage by remember { mutableStateOf(false) }
-    CompositionLocalProvider(LocalBackdrop provides backdrop) {
+    CompositionLocalProvider(
+        LocalBackdrop provides backdrop,
+        LocalLiquidGlassBackdrop provides if (skin == Skin.LIQUID_GLASS) liquidBackdrop else null,
+    ) {
     Row(Modifier.fillMaxSize()) {
     // The page's own ground, behind the bar as well as behind the page. Docked,
     // the bar takes its own room, and that room was the bare window underneath -
@@ -2233,12 +2328,10 @@ private fun NoteScreen(
     // with the glass tinting nothing but that white. Painting the paper colour
     // the whole way up closes both gaps and gives the glass something of the
     // page's own to sit on.
-    Column(Modifier.weight(1f).fillMaxHeight().background(Color(0xFFE9E7E2))) {
-    if (docked && !collapsed) toolbar(Modifier.fillMaxWidth())
+    Box(Modifier.weight(1f).fillMaxHeight().background(Color(0xFFE9E7E2))) {
     Box(
         Modifier
-            .weight(1f)
-            .fillMaxWidth()
+            .fillMaxSize()
             .onSizeChanged { containerSize = it },
     ) {
         val ready = opened
@@ -2251,14 +2344,29 @@ private fun NoteScreen(
         // draws that blurred over the sharp copy already on screen - the same
         // light twice, which is the wash that made the middle of every panel
         // paler than the page beside it.
-        Box(Modifier.fillMaxSize().recordBackdrop(backdrop).background(Color(0xFFE9E7E2))) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .recordBackdrop(backdrop)
+                .then(
+                    if (skin == Skin.LIQUID_GLASS) {
+                        Modifier.captureLiquidGlassBackdrop(liquidBackdrop)
+                    } else {
+                        Modifier
+                    },
+                )
+                .background(Color(0xFFE9E7E2)),
+        ) {
         if (ready == null) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
             }
         } else {
             AndroidView(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    // AndroidView를 Backdrop 레이어에 안정적으로 합성합니다.
+                    .graphicsLayer { alpha = 0.999f },
                 factory = { viewContext ->
                     InkCanvasView(viewContext).apply {
                         pageLoader = { page, epsilon ->
@@ -2276,7 +2384,13 @@ private fun NoteScreen(
                             pageCount = document.pages.size
                         }
                         onCurrentPageChanged = {
+                            val traversed = pagesTraversed + abs(it - currentPage)
+                            pagesTraversed = traversed
                             currentPage = it
+                            if (shouldShowPageScrubber(traversed, pageCount)) {
+                                pageScrubberVisible = true
+                                pageScrubberActivity++
+                            }
                             // Save while reading, not only while leaving. This
                             // survives process death and makes reopening exact.
                             penStore.setLastPage(note.id, it)
@@ -2361,8 +2475,10 @@ private fun NoteScreen(
             if (edits == 0) return@LaunchedEffect
             delay(AUTOSAVE_DELAY_MS)
             val view = canvas ?: return@LaunchedEffect
-            // Only pages marked dirty are actually written; see NoteStore.
-            withContext(Dispatchers.IO) { store.save(note.id, note.title, view.document) }
+            // Snapshot on the UI thread before the serial worker writes it.
+            // Passing the live document to Dispatchers.IO raced pen commits and
+            // mesh rebuilds, which is the repeated CME found in crash.log.
+            store.saveLater(note.id, note.title, view.document)
             // Then read back what was just written, so the page can be found by
             // what it says. Only the page being worked on: recognising the
             // whole note on every autosave would cost more than it is worth,
@@ -2411,20 +2527,24 @@ private fun NoteScreen(
             )
         }
 
-        if (pageCount > 1 && !showPages) {
+        androidx.compose.animation.AnimatedVisibility(
+            visible = pageScrubberVisible && !showPages,
+            enter = fadeIn(tween(120)),
+            exit = fadeOut(tween(220)),
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .fillMaxHeight(0.70f)
+                .windowInsetsPadding(ChromeInsets)
+                .padding(end = 6.dp),
+        ) {
             PageScrubber(
                 currentPage = currentPage,
                 pageCount = pageCount,
                 onJump = { page ->
-                    currentPage = page
                     penStore.setLastPage(note.id, page)
                     canvas?.scrollToPage(page)
                 },
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .fillMaxHeight(0.70f)
-                    .windowInsetsPadding(ChromeInsets)
-                    .padding(end = 6.dp),
+                modifier = Modifier.fillMaxHeight(),
             )
         }
 
@@ -2632,6 +2752,9 @@ private fun NoteScreen(
         // from wherever the gesture was, not from a side of the screen.
         // Qualified like the sidebar's below: the enclosing scopes put more
         // than one overload in reach, and this is the one without a receiver.
+        val activeReferenceNoteId = referenceNoteId
+            .takeIf { id -> referenceNotes.any { it.id == id } }
+            ?: note.id
         androidx.compose.animation.AnimatedVisibility(
             visible = referenceOpen,
             enter = fadeIn(tween(180)) + scaleIn(tween(180), initialScale = 0.85f),
@@ -2642,11 +2765,13 @@ private fun NoteScreen(
                 notes = referenceNotes,
                 // The remembered note may have been deleted since; fall back to
                 // the one being written on rather than to a blank panel.
-                noteId = referenceNoteId.takeIf { id -> referenceNotes.any { it.id == id } }
-                    ?: note.id,
+                noteId = activeReferenceNoteId,
                 page = referencePage,
+                mode = mode,
                 tool = tool,
                 pen = pen,
+                shapeKind = shapeKind,
+                straightLine = straightLine,
                 eraserWidth = eraserWidth,
                 deferDetail = deferDetail,
                 offset = referenceOffset,
@@ -2678,14 +2803,24 @@ private fun NoteScreen(
                 onNoteChange = {
                     referenceNoteId = it
                     penStore.referenceNote = it
-                    referencePage = 0
+                    val count = referenceNotes.firstOrNull { candidate -> candidate.id == it }
+                        ?.pageCount ?: 1
+                    // 다른 노트로 바꿀 때도 그 노트를 마지막으로 읽던 페이지에서 엽니다.
+                    referencePage = restoredPage(penStore.lastPage(it), count)
                 },
-                onPageChange = { referencePage = it },
+                onPageChange = {
+                    referencePage = it
+                    // 일반 화면과 팝업 화면이 같은 마지막 페이지 값을 공유합니다.
+                    penStore.setLastPage(activeReferenceNoteId, it)
+                },
                 onDrag = ::moveReference,
                 onClose = { referenceOpen = false },
             )
         }
     }
+        if (docked && !collapsed) {
+            toolbar(Modifier.align(Alignment.TopCenter).fillMaxWidth())
+        }
     }
 
         if (!webPopup) {
@@ -2837,8 +2972,11 @@ private fun ReferencePanel(
     notes: List<NoteMeta>,
     noteId: String,
     page: Int,
+    mode: EditMode,
     tool: Tool,
     pen: PenPreset,
+    shapeKind: ShapeKind,
+    straightLine: Boolean,
     eraserWidth: Float,
     deferDetail: Boolean,
     offset: Offset,
@@ -2864,6 +3002,7 @@ private fun ReferencePanel(
     var opened by remember { mutableStateOf<Pair<Document, PdfSource?>?>(null) }
     var view by remember { mutableStateOf<InkCanvasView?>(null) }
     var popupEdits by remember { mutableIntStateOf(0) }
+    var popupLassoCount by remember { mutableIntStateOf(0) }
     var noteMenu by remember { mutableStateOf(false) }
     var pageMenu by remember { mutableStateOf(false) }
     // What has been typed into the picker's search box. Cleared with the menu,
@@ -2887,10 +3026,16 @@ private fun ReferencePanel(
     // A note or a page change refits the page to the panel, when that is asked
     // for. Not a resize: a resize now scales the page along with its frame, and
     // refitting after one would undo exactly that.
-    LaunchedEffect(view, noteId, page, opened, fit) {
+    LaunchedEffect(view, noteId, opened, fit) {
         val v = view ?: return@LaunchedEffect
         if (fit) v.fitWidth()
         v.scrollToPage(page)
+    }
+    LaunchedEffect(mode, view) {
+        if (mode != EditMode.LASSO) {
+            view?.clearLassoSelection()
+            popupLassoCount = 0
+        }
     }
 
     // No debounce: a stroke made here and lost to a quick close is worse than
@@ -2900,11 +3045,20 @@ private fun ReferencePanel(
         if (popupEdits == 0) return@LaunchedEffect
         val v = view ?: return@LaunchedEffect
         val title = notes.find { it.id == noteId }?.title ?: return@LaunchedEffect
-        withContext(Dispatchers.IO) { store.save(noteId, title, v.document) }
+        store.saveLater(noteId, title, v.document)
     }
 
     val title = notes.find { it.id == noteId }?.title ?: noteId
     val pageCount = opened?.first?.pages?.size ?: 0
+    val panelShape = RoundedCornerShape(16.dp)
+    val panelBorder = Brush.linearGradient(
+        listOf(
+            Color.White.copy(alpha = 0.94f),
+            MaterialTheme.colorScheme.outline.copy(alpha = 0.76f),
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.34f),
+            Color.White.copy(alpha = 0.78f),
+        ),
+    )
 
     SkinSurface(
         modifier = Modifier
@@ -2919,7 +3073,10 @@ private fun ReferencePanel(
                 scaleY = stretch
                 transformOrigin = TransformOrigin(0f, 0f)
             }
-            .size(with(density) { size.width.toDp() }, with(density) { size.height.toDp() }),
+            .size(with(density) { size.width.toDp() }, with(density) { size.height.toDp() })
+            // 유리 표면이 밝은 페이지와 겹쳐도 팝업 외곽을 잃지 않도록 밝은 림과
+            // 테마 윤곽색을 함께 사용합니다.
+            .border(1.5.dp, panelBorder, panelShape),
         corner = 16.dp,
     ) {
         Column(Modifier.fillMaxSize()) {
@@ -3014,6 +3171,7 @@ private fun ReferencePanel(
                                     },
                                     onClick = {
                                         pageMenu = false
+                                        view?.scrollToPage(index)
                                         onPageChange(index)
                                     },
                                 )
@@ -3032,7 +3190,12 @@ private fun ReferencePanel(
                         },
                     )
                 }
-                IconButton(onClick = onClose) {
+                IconButton(
+                    onClick = {
+                        view?.currentPageIndex()?.let(onPageChange)
+                        onClose()
+                    },
+                ) {
                     Icon(Icons.Default.Close, contentDescription = "참고 화면 닫기")
                 }
             }
@@ -3047,6 +3210,12 @@ private fun ReferencePanel(
                         modifier = Modifier.fillMaxSize(),
                         factory = { viewContext ->
                             InkCanvasView(viewContext).apply {
+                                // 팝업 안에서는 페이지 폭이 패널 폭보다 작아지는
+                                // 축소를 허용하지 않습니다. 확대와 필기는 그대로입니다.
+                                minimumScaleIsFitWidth = true
+                                // 작은 팝업에서는 같은 손가락 이동으로 더 많은 페이지를
+                                // 넘길 수 있게 하고, 관성 속도에도 같은 배율을 적용합니다.
+                                viewportPanMultiplier = REFERENCE_SCROLL_MULTIPLIER
                                 pageLoader = { p, epsilon -> store.loadPage(noteId, p, epsilon) }
                                 maskLoader = { p, epsilon -> store.loadMasks(noteId, p, epsilon) }
                                 imageLoader = { imageId ->
@@ -3055,8 +3224,10 @@ private fun ReferencePanel(
                                             .decodeFile(store.imageFile(noteId, imageId).path)
                                     }.getOrNull()
                                 }
-                                open(ready.first, ready.second)
+                                open(ready.first, ready.second, initialPage = page)
                                 onStrokesChanged = { popupEdits++ }
+                                onLassoSelected = { popupLassoCount = it }
+                                onCurrentPageChanged = { onPageChange(it) }
                                 // Already open by definition - three fingers on
                                 // this view only ever move or resize it, never
                                 // open a reference panel of its own.
@@ -3070,6 +3241,17 @@ private fun ReferencePanel(
                         },
                         update = { v ->
                             v.tool = tool
+                            v.readMode = mode == EditMode.READ
+                            v.maskMode = mode == EditMode.MASK
+                            v.lassoMode = mode == EditMode.LASSO
+                            v.imageMode = mode == EditMode.IMAGE
+                            v.shapeKind = when {
+                                mode == EditMode.SHAPE -> shapeKind
+                                straightLine &&
+                                    (mode == EditMode.HIGHLIGHTER || mode == EditMode.MASK) ->
+                                    ShapeKind.LINE
+                                else -> null
+                            }
                             v.colorArgb = if (tool == Tool.MASK) {
                                 pen.colorArgb or 0xFF000000.toInt()
                             } else {
@@ -3080,6 +3262,14 @@ private fun ReferencePanel(
                             v.deferDetail = deferDetail
                         },
                     )
+                    if (popupLassoCount > 0) {
+                        LassoActions(
+                            count = popupLassoCount,
+                            onDelete = { view?.deleteLassoSelection() },
+                            onDone = { view?.clearLassoSelection() },
+                            modifier = Modifier.align(Alignment.BottomCenter),
+                        )
+                    }
                 }
             }
         }
@@ -3254,25 +3444,15 @@ private fun PageSidebar(
             .fillMaxHeight(0.8f),
     ) {
         Column {
-            TabRow(
-                selectedTabIndex = tab,
-                // The panel is the surface. A TabRow paints its own container
-                // over it, opaque, which is what made the top of this sidebar
-                // the one Material bar left inside a pane of glass.
-                containerColor = Color.Transparent,
-                contentColor = MaterialTheme.colorScheme.onSurface,
-            ) {
-                Tab(
-                    selected = tab == 0,
-                    onClick = { tab = 0 },
-                    text = { Text("페이지") },
-                )
-                Tab(
-                    selected = tab == 1,
-                    onClick = { tab = 1 },
-                    text = { Text("마스킹") },
-                )
-            }
+            LiquidSegmentedControl(
+                segments = listOf("페이지", "마스킹"),
+                selectedIndex = tab,
+                onSelected = { tab = it },
+                useLiquidGlass = LocalSkin.current == Skin.LIQUID_GLASS,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp),
+            )
             LazyColumn(
                 Modifier.weight(1f),
                 contentPadding = PaddingValues(10.dp),
@@ -3637,11 +3817,23 @@ private fun Toolbar(
                 IconButton(onClick = onRedo, enabled = canRedo) {
                     Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "다시실행")
                 }
-                // The reading and the reset are one control: the number tells
-                // you where the zoom is, and pressing it puts it back to 100.
-                TextButton(onClick = onFitWidth) {
-                    Icon(Icons.Default.ZoomOutMap, contentDescription = "화면에 맞추기")
-                    Text(" $zoomLabel", style = MaterialTheme.typography.labelMedium)
+                // 확대 아이콘과 수치는 분리해 둘을 감싸는 강조 칸은 만들지 않고,
+                // 숫자는 행의 정중앙에 놓습니다.
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = onFitWidth,
+                        modifier = Modifier.size(40.dp),
+                    ) {
+                        Icon(Icons.Default.ZoomOutMap, contentDescription = "화면에 맞추기")
+                    }
+                    Text(
+                        zoomLabel,
+                        style = MaterialTheme.typography.labelMedium,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .widthIn(min = 44.dp)
+                            .padding(horizontal = 4.dp),
+                    )
                 }
                 SkinButton(skin, onSkin)
                 IconButton(onClick = onToggleDock) {
@@ -3854,29 +4046,29 @@ private fun ToolButton(
     tint: Color? = null,
     onClick: () -> Unit,
 ) {
-    if (selected) {
-        FilledIconButton(
-            onClick = onClick,
-            colors = if (tint == null) {
-                IconButtonDefaults.filledIconButtonColors()
-            } else {
-                IconButtonDefaults.filledIconButtonColors(
-                    containerColor = tint,
-                    // A black icon on a black pen is no icon at all.
-                    contentColor = if (tint.luminance() < 0.5f) Color.White else Color.Black,
-                )
-            },
-        ) { Icon(icon, contentDescription = label) }
-    } else {
-        IconButton(
-            onClick = onClick,
-            colors = IconButtonDefaults.iconButtonColors(
-                // The quieter ink, not the line colour: this is an icon, and
-                // it follows the colour the settings screen sets for icons.
-                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+    val shape = CircleShape
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier
+            .clip(shape)
+            .then(
+                if (selected) {
+                    Modifier
+                        .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
+                } else {
+                    Modifier
+                },
             ),
-        ) { Icon(icon, contentDescription = label) }
-    }
+        colors = IconButtonDefaults.iconButtonColors(
+            // 선택한 도구만 기존처럼 조용한 배경과 색으로 구분합니다.
+            contentColor = when {
+                selected && tint != null -> tint
+                selected -> MaterialTheme.colorScheme.primary
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        ),
+    ) { Icon(icon, contentDescription = label) }
 }
 
 @Composable
@@ -3895,6 +4087,9 @@ private const val SEARCH_DEBOUNCE_MS = 220L
 
 private const val PEN_SAVE_DELAY_MS = 400L
 
+/** 페이지 이동이 끝난 뒤 스크러버가 화면에 남아 있는 시간입니다. */
+private const val PAGE_SCRUBBER_IDLE_MS = 1600L
+
 private const val CRASH_LOG = "crash.log"
 private const val CRASH_LOG_MAX = 256L * 1024
 
@@ -3912,6 +4107,9 @@ private val WEB_PANEL_MAX = 1100.dp
 
 /** Below this the reference panel is too small to hold a readable page. */
 private val REFERENCE_MIN_SIZE = 220.dp
+
+/** 작은 팝업 안의 페이지 이동 거리와 관성 속도를 키우는 배율입니다. */
+private const val REFERENCE_SCROLL_MULTIPLIER = 1.65f
 
 private const val SEARCH_HOME = "https://www.google.com/"
 

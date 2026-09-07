@@ -70,9 +70,14 @@ fun SkinSettingsScreen(
 
     // The screen that sets the glass was itself the one screen wearing none.
     val backdrop = rememberBackdrop(
-        active = skin != Skin.MATERIAL && (settings.blur > 0.1f || settings.vibrancy > 0.01f),
+        active = skin == Skin.GLASSMORPHISM &&
+            (settings.blur > 0.1f || settings.vibrancy > 0.01f),
     )
-    CompositionLocalProvider(LocalBackdrop provides backdrop) {
+    val liquidBackdrop = rememberLiquidGlassBackdrop()
+    CompositionLocalProvider(
+        LocalBackdrop provides backdrop,
+        LocalLiquidGlassBackdrop provides if (skin == Skin.LIQUID_GLASS) liquidBackdrop else null,
+    ) {
     Scaffold(
         topBar = {
             SkinSurface(flush = true) {
@@ -94,11 +99,21 @@ fun SkinSettingsScreen(
         },
     ) { padding ->
         // Nothing inside the recording may sample it; see NoBackdrop.
-        CompositionLocalProvider(LocalBackdrop provides NoBackdrop) {
+        CompositionLocalProvider(
+            LocalBackdrop provides NoBackdrop,
+            LocalLiquidGlassBackdrop provides null,
+        ) {
         LazyColumn(
             Modifier
                 .fillMaxSize()
                 .recordBackdrop(backdrop)
+                .then(
+                    if (skin == Skin.LIQUID_GLASS) {
+                        Modifier.captureLiquidGlassBackdrop(liquidBackdrop)
+                    } else {
+                        Modifier
+                    },
+                )
                 // Inside the recording, so the layer holds a whole page and not
                 // a page's content on nothing. Frosting a transparent recording
                 // lays a blurred copy over the sharp one still on screen, and
@@ -110,6 +125,23 @@ fun SkinSettingsScreen(
             ),
         ) {
             item { Preview() }
+
+            item {
+                SectionLabel("화면 모드")
+                LiquidSegmentedControl(
+                    segments = AppThemeMode.entries.map { it.label },
+                    selectedIndex = settings.themeMode.ordinal,
+                    onSelected = { index ->
+                        onChange(settings.copy(themeMode = AppThemeMode.entries[index]))
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp),
+                    // 이 항목은 배경을 기록하는 목록 안에 있으므로 순환 샘플링 없이
+                    // 라이트/다크 양쪽에서 확실히 읽히는 단색 인디케이터를 씁니다.
+                    useLiquidGlass = false,
+                )
+            }
 
             item { SectionLabel("테마") }
             items(Skin.entries) { option ->
@@ -163,6 +195,29 @@ fun SkinSettingsScreen(
                     settings.vibrancy,
                     SkinSettings.VIBRANCY_RANGE,
                 ) { onChange(settings.copy(vibrancy = it)) }
+                if (skin == Skin.LIQUID_GLASS) {
+                    Setting(
+                        "렌즈 깊이",
+                        "%.0fdp".format(settings.depth),
+                        settings.depth,
+                        SkinSettings.DEPTH_RANGE,
+                        note = "가장자리에서 굴절이 안쪽으로 이어지는 거리입니다",
+                    ) { onChange(settings.copy(depth = it)) }
+                    Setting(
+                        "굴절량",
+                        "%.0fdp".format(settings.refraction),
+                        settings.refraction,
+                        SkinSettings.REFRACTION_RANGE,
+                        note = "배경이 렌즈 가장자리에서 휘어 보이는 양입니다",
+                    ) { onChange(settings.copy(refraction = it)) }
+                    Setting(
+                        "색수차",
+                        "%.0f%%".format(settings.dispersion * 100f),
+                        settings.dispersion,
+                        SkinSettings.DISPERSION_RANGE,
+                        note = "굴절 가장자리의 미세한 RGB 분리 강도입니다",
+                    ) { onChange(settings.copy(dispersion = it)) }
+                }
                 Setting(
                     "모서리",
                     "%.0fdp".format(settings.corner),
@@ -243,6 +298,7 @@ private fun Preview() {
         contentAlignment = Alignment.Center,
     ) {
         val backdrop = rememberBackdrop(active = true)
+        val liquidBackdrop = rememberLiquidGlassBackdrop()
         // The gradient is what the glass is supposed to be blurring, so it goes
         // inside the recording. Left on the parent it was never in the layer:
         // the pane showed it sharp, with a blurred ghost of the lines laid over
@@ -251,6 +307,7 @@ private fun Preview() {
             Modifier
                 .fillMaxSize()
                 .recordBackdrop(backdrop)
+                .captureLiquidGlassBackdrop(liquidBackdrop)
                 .background(
                     Brush.linearGradient(
                         listOf(
@@ -274,7 +331,10 @@ private fun Preview() {
                 }
             }
         }
-        androidx.compose.runtime.CompositionLocalProvider(LocalBackdrop provides backdrop) {
+        androidx.compose.runtime.CompositionLocalProvider(
+            LocalBackdrop provides backdrop,
+            LocalLiquidGlassBackdrop provides liquidBackdrop,
+        ) {
             SkinSurface(Modifier.fillMaxWidth(0.76f).height(138.dp)) {
                 Column(
                     Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 14.dp),

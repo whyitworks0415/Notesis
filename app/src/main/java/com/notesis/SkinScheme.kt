@@ -1,6 +1,7 @@
 package com.notesis
 
 import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.graphics.Color
 import kotlin.math.abs
@@ -29,7 +30,11 @@ import kotlin.math.pow
  * apart - which is what a contrast setting should do to an app somebody has
  * already chosen the colours of.
  */
-fun schemeFrom(accent: Int, highContrast: Boolean = false): ColorScheme {
+fun schemeFrom(
+    accent: Int,
+    highContrast: Boolean = false,
+    dark: Boolean = false,
+): ColorScheme {
     val seed = Hsl.of(accent)
     // A colour dragged to the grey end of the picker should still theme the app
     // rather than turning every container into a slab of the same grey, and one
@@ -47,6 +52,57 @@ fun schemeFrom(accent: Int, highContrast: Boolean = false): ColorScheme {
     // Error stays red whatever the accent is. A red that follows the theme is a
     // red that stops meaning error.
     val danger = Palette(3f, 0.71f)
+
+    if (dark) {
+        // Material의 다크 톤 역할을 같은 강조색 팔레트에서 만듭니다. 순수 검정 대신
+        // 강조색을 아주 조금 머금은 표면을 써서 유리와 페이지 경계를 읽기 쉽게 합니다.
+        val body = if (highContrast) 90 else 80
+        val onBody = if (highContrast) 5 else 20
+        val container = if (highContrast) 18 else 30
+        val onContainer = if (highContrast) 98 else 90
+        val ink = if (highContrast) 100 else 90
+        val line = if (highContrast) 78 else 60
+        val faintLine = if (highContrast) 48 else 30
+
+        return darkColorScheme(
+            primary = primary.tone(body),
+            onPrimary = primary.tone(onBody),
+            primaryContainer = primary.tone(container),
+            onPrimaryContainer = primary.tone(onContainer),
+            inversePrimary = primary.tone(40),
+            secondary = secondary.tone(body),
+            onSecondary = secondary.tone(onBody),
+            secondaryContainer = secondary.tone(container),
+            onSecondaryContainer = secondary.tone(onContainer),
+            tertiary = tertiary.tone(body),
+            onTertiary = tertiary.tone(onBody),
+            tertiaryContainer = tertiary.tone(container),
+            onTertiaryContainer = tertiary.tone(onContainer),
+            background = neutral.tone(if (highContrast) 0 else 6),
+            onBackground = neutral.tone(ink),
+            surface = neutral.tone(if (highContrast) 0 else 6),
+            onSurface = neutral.tone(ink),
+            surfaceVariant = variant.tone(if (highContrast) 18 else 30),
+            onSurfaceVariant = variant.tone(if (highContrast) 95 else 80),
+            surfaceTint = primary.tone(body),
+            inverseSurface = neutral.tone(90),
+            inverseOnSurface = neutral.tone(20),
+            error = danger.tone(body),
+            onError = danger.tone(onBody),
+            errorContainer = danger.tone(container),
+            onErrorContainer = danger.tone(onContainer),
+            outline = variant.tone(line),
+            outlineVariant = variant.tone(faintLine),
+            scrim = Color.Black,
+            surfaceBright = neutral.tone(24),
+            surfaceDim = neutral.tone(if (highContrast) 0 else 6),
+            surfaceContainerLowest = neutral.tone(if (highContrast) 0 else 4),
+            surfaceContainerLow = neutral.tone(10),
+            surfaceContainer = neutral.tone(12),
+            surfaceContainerHigh = neutral.tone(17),
+            surfaceContainerHighest = neutral.tone(22),
+        )
+    }
 
     // The body of a colour, what sits inside its container, and the two lines
     // the app draws with. Everything else keeps the tone it had: a container

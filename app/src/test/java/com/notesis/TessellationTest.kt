@@ -56,4 +56,25 @@ class TessellationTest {
     fun `zooming out does not ask for finer meshes than needed`() {
         assertTrue(epsilonFor(1f) > epsilonFor(MAX_CANVAS_SCALE))
     }
+
+    @Test
+    fun `straight ink is not moved by corner smoothing`() {
+        assertEquals(0f, smoothingBlendForTurn(10f, 0f, 12f, 0f))
+    }
+
+    @Test
+    fun `sharp turns receive more smoothing than gentle turns`() {
+        val gentle = smoothingBlendForTurn(10f, 0f, 10f, 3f)
+        val corner = smoothingBlendForTurn(10f, 0f, 0f, 10f)
+
+        assertTrue(corner > gentle)
+        assertTrue(corner <= 0.24f)
+    }
+
+    @Test
+    fun `prediction is suppressed only on a meaningful sharp turn`() {
+        assertTrue(shouldSuppressPrediction(10f, 0f, 0f, 10f))
+        assertTrue(!shouldSuppressPrediction(10f, 0f, 10f, 2f))
+        assertTrue(!shouldSuppressPrediction(0.1f, 0f, 0f, 0.1f))
+    }
 }

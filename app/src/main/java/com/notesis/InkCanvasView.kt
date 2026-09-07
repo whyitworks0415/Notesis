@@ -1,3 +1,5 @@
+@file:Suppress("RestrictedApi")
+
 package com.notesis
 
 import android.os.Build
@@ -8,6 +10,8 @@ import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.RectF
+import android.graphics.RenderEffect
+import android.graphics.Shader
 import android.util.AttributeSet
 import android.view.Choreographer
 import android.view.MotionEvent
@@ -91,6 +95,39 @@ fun tessellationBucket(scale: Float): Float {
     while (bucket < scale && bucket < MAX_CANVAS_SCALE) bucket *= 2f
     return bucket.coerceAtMost(MAX_CANVAS_SCALE)
 }
+
+/** 두 연속 이동 벡터가 만드는 회전량에 따라 코너를 둥글게 할 혼합 비율입니다. */
+internal fun smoothingBlendForTurn(
+    previousDx: Float,
+    previousDy: Float,
+    nextDx: Float,
+    nextDy: Float,
+): Float {
+    val previousLength = hypot(previousDx, previousDy)
+    val nextLength = hypot(nextDx, nextDy)
+    if (previousLength < 1e-3f || nextLength < 1e-3f) return 0f
+    val cosine = ((previousDx * nextDx + previousDy * nextDy) /
+        (previousLength * nextLength)).coerceIn(-1f, 1f)
+    // 직선은 0, 90도는 약 0.16, 완전한 반전도 0.24를 넘지 않아 필체를 보존합니다.
+    return (((1f - cosine) * 0.5f) * 0.32f).coerceIn(0f, 0.24f)
+}
+
+/** 급회전 한 프레임에서는 예측점이 코너 바깥으로 튀지 않게 합니다. */
+internal fun shouldSuppressPrediction(
+    previousDx: Float,
+    previousDy: Float,
+    nextDx: Float,
+    nextDy: Float,
+): Boolean {
+    val previousLength = hypot(previousDx, previousDy)
+    val nextLength = hypot(nextDx, nextDy)
+    if (previousLength < 0.5f || nextLength < 0.5f) return false
+    val cosine = (previousDx * nextDx + previousDy * nextDy) /
+        (previousLength * nextLength)
+    return cosine < PREDICTION_CORNER_COSINE
+}
+
+private const val PREDICTION_CORNER_COSINE = 0.57f
 
 /** Fidelity for a stroke that has no zoom context yet, such as one just loaded. */
 const val STROKE_EPSILON = TESSELLATION_TARGET_PX
@@ -351,6 +388,12 @@ class InkCanvasView @JvmOverloads constructor(
     /** Whether detail work should be held off right now. */
     private fun holdingDetail(): Boolean = deferDetail && zooming
 
+    /** 팝업 노트는 아무리 축소해도 페이지 폭이 패널 폭보다 작아지지 않습니다. */
+    var minimumScaleIsFitWidth: Boolean = false
+
+    /** 손가락 페이지 이동량과 fling 속도 배율입니다. 일반 화면은 1, 작은 팝업만 높입니다. */
+    var viewportPanMultiplier: Float = 1f
+
     /**
      * The ceiling on zoom, in page units: ten times fit-to-width, which is what
      * the toolbar reads out as 1000%. Measured from the fit rather than fixed,
@@ -417,8 +460,15 @@ class InkCanvasView @JvmOverloads constructor(
     private var activeStylusPointer: Int? = null
     private var activeStrokeId: InProgressStrokeId? = null
     private var activePage: Page? = null
+    private var lastStylusX = Float.NaN
+    private var lastStylusY = Float.NaN
+    private var lastStylusDx = 0f
+    private var lastStylusDy = 0f
     private var erasing = false
     private var lastErasePoint: FloatArray? = null
+    private var eraserCursorVisible = false
+    private var eraserCursorX = 0f
+    private var eraserCursorY = 0f
     private var lastFocusX = 0f
     private var lastFocusY = 0f
     private var currentPage = 0
@@ -451,6 +501,10 @@ class InkCanvasView @JvmOverloads constructor(
     private var flingVy = 0f
     private var flingLastNanos = 0L
     private var flinging = false
+    private var lastMotionEventMillis = 0L
+    private var motionBlurX = 0f
+    private var motionBlurY = 0f
+    private val clearMotionBlur = Runnable { applyMotionBlur(0f, 0f) }
 
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
     private var selection: PdfSelection? = null
@@ -553,8 +607,9 @@ class InkCanvasView @JvmOverloads constructor(
                 val current = currentScale()
                 // Clamping the *result* rather than the factor, so a pinch that
                 // would overshoot the limit still zooms up to it.
+                val minimum = if (minimumScaleIsFitWidth && fitScale > 0f) fitScale else MIN_SCALE
                 val factor = (current * detector.scaleFactor)
-                    .coerceIn(MIN_SCALE, maxScale()) / current
+                    .coerceIn(minimum, maxScale()) / current
                 documentToScreen.postScale(factor, factor, detector.focusX, detector.focusY)
                 return true
             }
@@ -632,15 +687,12 @@ class InkCanvasView @JvmOverloads constructor(
         if (pending == 0f || w == 0) return
         pendingZoom = 0f
         if (!pendingFit) {
+            // 팝업 폭이 바뀌면 최소 배율의 기준도 새 폭으로 함께 이동합니다.
+            fitScale = w * FIT_MARGIN / document.widestPage()
             zoomBy(pending)
             return
         }
-        // Fitting resets the whole transform, vertical position included, so
-        // the page being looked at has to be put back afterwards - otherwise a
-        // resize sends the panel to the top of the note.
-        val here = currentPage
         fitWidth()
-        scrollToPage(here)
     }
 
     override fun onDetachedFromWindow() {
@@ -652,15 +704,25 @@ class InkCanvasView @JvmOverloads constructor(
         pdf = null
     }
 
-    /** Scales the widest page to the view, which is where every note starts. */
+    /**
+     * 가장 넓은 페이지의 폭을 뷰의 폭과 정확히 맞춥니다.
+     *
+     * 세로 위치까지 0으로 초기화하면 맞춤 버튼을 누르는 한 프레임 동안 첫
+     * 페이지가 현재 페이지가 되어 버립니다. 현재 페이지의 Y 이동을 새 배율과
+     * 같은 행렬에 넣고 한 번만 알리므로 페이지 번호와 저장 위치가 바뀌지 않습니다.
+     */
     fun fitWidth() {
         if (width == 0) return
         fitted = true
         val scale = width * FIT_MARGIN / document.widestPage()
         fitScale = scale
+        val here = currentPage.coerceIn(document.pages.indices)
         documentToScreen.reset()
         documentToScreen.postScale(scale, scale)
-        documentToScreen.postTranslate((width - document.widestPage() * scale) / 2f, 0f)
+        documentToScreen.getValues(matrixValues)
+        matrixValues[Matrix.MTRANS_X] = (width - document.widestPage() * scale) / 2f
+        matrixValues[Matrix.MTRANS_Y] = -document.topOf(here) * scale + PAGE_TOP_MARGIN_PX
+        documentToScreen.setValues(matrixValues)
         onTransformChanged()
     }
 
@@ -686,7 +748,10 @@ class InkCanvasView @JvmOverloads constructor(
     /** Zooms about the top-left corner, which is the corner a resize keeps. */
     private fun zoomBy(factor: Float) {
         if (factor <= 0f || abs(factor - 1f) < 1e-4f) return
-        documentToScreen.postScale(factor, factor, 0f, 0f)
+        val current = currentScale()
+        val minimum = if (minimumScaleIsFitWidth && fitScale > 0f) fitScale else MIN_SCALE
+        val applied = (current * factor).coerceIn(minimum, maxScale()) / current
+        documentToScreen.postScale(applied, applied, 0f, 0f)
         onTransformChanged()
     }
 
@@ -744,7 +809,10 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun afterEdit(vararg changed: Page) {
-        for (page in changed) page.dirty = true
+        for (page in changed) {
+            page.dirty = true
+            page.revision++
+        }
         dry.invalidate()
         onStrokesChanged?.invoke()
         // An undone erase puts back strokes built at whatever zoom they were
@@ -859,6 +927,27 @@ class InkCanvasView @JvmOverloads constructor(
         return if (stylus || activeStylusPointer != null) onStylus(event) else onFingers(event)
     }
 
+    override fun onHoverEvent(event: MotionEvent): Boolean {
+        val stylus = event.getToolType(event.actionIndex) == MotionEvent.TOOL_TYPE_STYLUS
+        if (!stylus) return super.onHoverEvent(event)
+        when (event.actionMasked) {
+            MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE -> {
+                val show = tool == Tool.ERASER || event.isEraserGesture()
+                eraserCursorVisible = show
+                if (show) {
+                    eraserCursorX = event.x
+                    eraserCursorY = event.y
+                }
+                dry.invalidate()
+            }
+            MotionEvent.ACTION_HOVER_EXIT -> {
+                eraserCursorVisible = false
+                dry.invalidate()
+            }
+        }
+        return true
+    }
+
     private fun onStylus(event: MotionEvent): Boolean {
         predictor.record(event)
         when (event.actionMasked) {
@@ -925,6 +1014,10 @@ class InkCanvasView @JvmOverloads constructor(
                     lastErasePoint = null
                     eraseAlong(event, event.actionIndex)
                 } else {
+                    lastStylusX = event.x
+                    lastStylusY = event.y
+                    lastStylusDx = 0f
+                    lastStylusDy = 0f
                     activeStrokeId = wet.startStroke(
                         event = event,
                         pointerId = pointerId,
@@ -998,13 +1091,24 @@ class InkCanvasView @JvmOverloads constructor(
                 }
                 val strokeId = activeStrokeId ?: return false
                 latency.addSamples(1 + event.historySize)
-                val predicted = if (predictionEnabled) predictor.predict() else null
+                val x = event.getX(index)
+                val y = event.getY(index)
+                val dx = if (lastStylusX.isFinite()) x - lastStylusX else 0f
+                val dy = if (lastStylusY.isFinite()) y - lastStylusY else 0f
+                val sharpTurn = shouldSuppressPrediction(lastStylusDx, lastStylusDy, dx, dy)
+                if (hypot(dx, dy) >= 0.5f) {
+                    lastStylusDx = dx
+                    lastStylusDy = dy
+                    lastStylusX = x
+                    lastStylusY = y
+                }
+                val predicted = if (predictionEnabled && !sharpTurn) predictor.predict() else null
                 try {
                     if (predicted != null) {
                         // Ground truth for the tip's steadiness: the distance
                         // the prediction reaches past the newest real sample.
                         latency.addPredictionLead(
-                            (predicted.eventTimeNanos - event.eventTimeNanos) / 1e6,
+                            (predicted.eventTime - event.eventTime).toDouble(),
                         )
                     }
                     wet.addToStroke(event, pointerId, strokeId, predicted)
@@ -1072,8 +1176,14 @@ class InkCanvasView @JvmOverloads constructor(
         if (activeStylusPointer != null) onDrawingChanged?.invoke(false)
         activeStylusPointer = null
         activeStrokeId = null
+        lastStylusX = Float.NaN
+        lastStylusY = Float.NaN
+        lastStylusDx = 0f
+        lastStylusDy = 0f
         erasing = false
         lastErasePoint = null
+        eraserCursorVisible = false
+        dry.invalidate()
     }
 
     private fun onFingers(event: MotionEvent): Boolean {
@@ -1094,6 +1204,7 @@ class InkCanvasView @JvmOverloads constructor(
                 closed3fThisGesture = false
                 zooming = false
                 draggedReference = false
+                lastMotionEventMillis = event.eventTime
                 return true
             }
 
@@ -1109,6 +1220,7 @@ class InkCanvasView @JvmOverloads constructor(
                 val focus = focusOf(event, skipPointerIndex = leavingIndex(event))
                 lastFocusX = focus[0]
                 lastFocusY = focus[1]
+                lastMotionEventMillis = event.eventTime
                 if (event.pointerCount < 3) have3Fingers = false
                 return true
             }
@@ -1152,7 +1264,26 @@ class InkCanvasView @JvmOverloads constructor(
                 }
 
                 if (!scaleDetector.isInProgress || event.pointerCount > 1) {
-                    documentToScreen.postTranslate(focus[0] - lastFocusX, focus[1] - lastFocusY)
+                    val multiplier = if (event.pointerCount == 1) {
+                        viewportPanMultiplier.coerceIn(0.5f, 3f)
+                    } else {
+                        1f
+                    }
+                    documentToScreen.postTranslate(
+                        (focus[0] - lastFocusX) * multiplier,
+                        (focus[1] - lastFocusY) * multiplier,
+                    )
+                    val zoomBlur = if (scaleDetector.isInProgress) {
+                        abs(scaleDetector.scaleFactor - 1f) * MOTION_ZOOM_BLUR_GAIN
+                    } else {
+                        0f
+                    }
+                    updateMotionBlur(
+                        dx = (focus[0] - lastFocusX) * multiplier,
+                        dy = (focus[1] - lastFocusY) * multiplier,
+                        eventTimeMillis = event.eventTime,
+                        extra = zoomBlur,
+                    )
                     onTransformChanged()
                 }
                 lastFocusX = focus[0]
@@ -1259,8 +1390,9 @@ class InkCanvasView @JvmOverloads constructor(
         // averages into a velocity that has nothing to do with a flick.
         if (scaleDetector.isInProgress) return
         tracker.computeCurrentVelocity(1000, MAX_FLING_VELOCITY)
-        val vx = tracker.xVelocity
-        val vy = tracker.yVelocity
+        val multiplier = viewportPanMultiplier.coerceIn(0.5f, 3f)
+        val vx = tracker.xVelocity * multiplier
+        val vy = tracker.yVelocity * multiplier
         if (hypot(vx, vy) < MIN_FLING_VELOCITY) return
         flingVx = vx
         flingVy = vy
@@ -1274,6 +1406,8 @@ class InkCanvasView @JvmOverloads constructor(
     private fun stopFling() {
         flinging = false
         removeCallbacks(flingStep)
+        removeCallbacks(clearMotionBlur)
+        applyMotionBlur(0f, 0f)
         onViewportInteractionChanged?.invoke(false)
     }
 
@@ -1288,6 +1422,7 @@ class InkCanvasView @JvmOverloads constructor(
             val beforeX = matrixValues[Matrix.MTRANS_X]
             val beforeY = matrixValues[Matrix.MTRANS_Y]
             documentToScreen.postTranslate(flingVx * dt, flingVy * dt)
+            applyMotionBlurForVelocity(flingVx, flingVy)
             onTransformChanged()
 
             // Exponential decay rather than a fixed per-frame factor, so the
@@ -1307,6 +1442,57 @@ class InkCanvasView @JvmOverloads constructor(
             }
             postOnAnimation(this)
         }
+    }
+
+    /**
+     * A fast viewport move temporarily softens the page along its direction.
+     * The radius is quantised to half pixels so a 120 Hz touch stream does not
+     * allocate a different RenderEffect for imperceptibly small changes.
+     */
+    private fun updateMotionBlur(
+        dx: Float,
+        dy: Float,
+        eventTimeMillis: Long,
+        extra: Float = 0f,
+    ) {
+        val elapsed = (eventTimeMillis - lastMotionEventMillis).coerceIn(4L, 40L)
+        lastMotionEventMillis = eventTimeMillis
+        val vx = dx / elapsed * 1000f
+        val vy = dy / elapsed * 1000f
+        val x = max(abs(vx) / MOTION_BLUR_VELOCITY_PER_PX, extra)
+        val y = max(abs(vy) / MOTION_BLUR_VELOCITY_PER_PX, extra)
+        applyMotionBlur(x, y)
+        removeCallbacks(clearMotionBlur)
+        postDelayed(clearMotionBlur, MOTION_BLUR_IDLE_MS)
+    }
+
+    private fun applyMotionBlurForVelocity(vx: Float, vy: Float) {
+        applyMotionBlur(
+            abs(vx) / MOTION_BLUR_VELOCITY_PER_PX,
+            abs(vy) / MOTION_BLUR_VELOCITY_PER_PX,
+        )
+    }
+
+    private fun applyMotionBlur(radiusX: Float, radiusY: Float) {
+        if (Build.VERSION.SDK_INT < 31) return
+        fun quantized(value: Float): Float =
+            (kotlin.math.round(value.coerceIn(0f, MOTION_BLUR_MAX_PX) * 2f) / 2f)
+        val x = quantized(radiusX)
+        val y = quantized(radiusY)
+        if (x == motionBlurX && y == motionBlurY) return
+        motionBlurX = x
+        motionBlurY = y
+        dry.setRenderEffect(
+            if (x < MOTION_BLUR_MIN_PX && y < MOTION_BLUR_MIN_PX) {
+                null
+            } else {
+                RenderEffect.createBlurEffect(
+                    x.coerceAtLeast(MOTION_BLUR_MIN_PX),
+                    y.coerceAtLeast(MOTION_BLUR_MIN_PX),
+                    Shader.TileMode.CLAMP,
+                )
+            },
+        )
     }
 
     private fun leavingIndex(event: MotionEvent): Int =
@@ -2072,16 +2258,20 @@ class InkCanvasView @JvmOverloads constructor(
         val page = activePage ?: return
         val index = document.pages.indexOf(page)
         if (index < 0) return
+        eraserCursorVisible = true
+        eraserCursorX = event.getX(pointerIndex)
+        eraserCursorY = event.getY(pointerIndex)
+        dry.invalidate()
         val point = floatArrayOf(event.getX(pointerIndex), event.getY(pointerIndex))
         screenToPage(index).mapPoints(point)
         val previous = lastErasePoint
         lastErasePoint = point
-        if (previous == null) return
-
-        val segment = ImmutableSegment(
-            ImmutableVec(previous[0], previous[1]),
-            ImmutableVec(point[0], point[1]),
-        )
+        val segment = previous?.let {
+            ImmutableSegment(
+                ImmutableVec(it[0], it[1]),
+                ImmutableVec(point[0], point[1]),
+            )
+        }
         // The tip is a square of eraserWidth around where the pen is now; the
         // segment covers the gap to the previous sample, so a fast swipe still
         // erases along its whole path instead of leaving holes between samples.
@@ -2098,12 +2288,13 @@ class InkCanvasView @JvmOverloads constructor(
         // only resolves inside its scope.
         val hit = with(Intersection) {
             page.strokes.filter {
-                segment.intersects(it.shape, IDENTITY) || tip.intersects(it.shape, IDENTITY)
+                (segment?.intersects(it.shape, IDENTITY) == true) ||
+                    tip.intersects(it.shape, IDENTITY)
             }
         }
         val maskHits = with(Intersection) {
             page.masks.filter {
-                segment.intersects(it.stroke.shape, IDENTITY) ||
+                (segment?.intersects(it.stroke.shape, IDENTITY) == true) ||
                     tip.intersects(it.stroke.shape, IDENTITY)
             }
         }
@@ -2132,14 +2323,59 @@ class InkCanvasView @JvmOverloads constructor(
                     page.masks += mask
                     undoStack += Edit.MaskAdded(page, mask)
                 } else {
-                    page.strokes += stroke
-                    undoStack += Edit.Drawn(page, stroke)
+                    // 실시간 예측을 제거한 확정 입력에 가벼운 적응형 코너 보간을
+                    // 적용합니다. 직선과 완만한 곡선은 건드리지 않고 급회전만 다듬습니다.
+                    val committed = smoothFreehandStroke(stroke)
+                    page.strokes += committed
+                    undoStack += Edit.Drawn(page, committed)
                 }
             }
             redoStack.clear()
         }
         wet.removeFinishedStrokes(finished.keys)
         if (page != null) afterEdit(page) else afterEdit()
+    }
+
+    private fun smoothFreehandStroke(stroke: Stroke): Stroke {
+        val strokeTool = Tool.ofBrushFamily(stroke.brush.family)
+        if (strokeTool != Tool.PEN && strokeTool != Tool.PRESSURE_PEN) return stroke
+        if (stroke.inputs.size < 3) return stroke
+
+        val inputs = MutableStrokeInputBatch()
+        val previous = StrokeInput()
+        val current = StrokeInput()
+        val next = StrokeInput()
+        for (i in 0 until stroke.inputs.size) {
+            val at = stroke.inputs.populate(i, current)
+            val blend = if (i == 0 || i == stroke.inputs.size - 1) {
+                0f
+            } else {
+                val before = stroke.inputs.populate(i - 1, previous)
+                val after = stroke.inputs.populate(i + 1, next)
+                smoothingBlendForTurn(
+                    at.x - before.x,
+                    at.y - before.y,
+                    after.x - at.x,
+                    after.y - at.y,
+                )
+            }
+            val x = if (blend == 0f) at.x else {
+                at.x + ((previous.x + next.x) * 0.5f - at.x) * blend
+            }
+            val y = if (blend == 0f) at.y else {
+                at.y + ((previous.y + next.y) * 0.5f - at.y) * blend
+            }
+            inputs.add(
+                type = at.toolType,
+                x = x,
+                y = y,
+                elapsedTimeMillis = at.elapsedTimeMillis,
+                pressure = at.pressure,
+                tiltRadians = at.tiltRadians,
+                orientationRadians = at.orientationRadians,
+            )
+        }
+        return Stroke(stroke.brush, inputs.toImmutable())
     }
 
     /** Committed ink and paper. Wet ink keeps its own front buffer above this. */
@@ -2182,6 +2418,23 @@ class InkCanvasView @JvmOverloads constructor(
         private val outlinePoint = MutableVec()
         private val selectionBox = RectF()
         private val handle = Paint().apply { isAntiAlias = true; color = 0xFF3B7DDD.toInt() }
+        private val eraserCursorFill = Paint().apply {
+            isAntiAlias = true
+            style = Paint.Style.FILL
+            color = 0x183B7DDD
+        }
+        private val eraserCursorOuter = Paint().apply {
+            isAntiAlias = true
+            style = Paint.Style.STROKE
+            strokeWidth = 4f * resources.displayMetrics.density
+            color = Color.WHITE
+        }
+        private val eraserCursorInner = Paint().apply {
+            isAntiAlias = true
+            style = Paint.Style.STROKE
+            strokeWidth = 1.5f * resources.displayMetrics.density
+            color = 0xCC2459B8.toInt()
+        }
 
         // Strokes are immutable, so a bounding box is worth computing once.
         // Weak keys let an erased stroke's entry go with the stroke.
@@ -2252,6 +2505,12 @@ class InkCanvasView @JvmOverloads constructor(
                     if (page === selectedImagePage) drawImageHandles(scoped)
                     scoped.restore()
                 }
+            }
+            if (eraserCursorVisible) {
+                val radius = (eraserWidth * currentScale() / 2f).coerceAtLeast(0.5f)
+                canvas.drawCircle(eraserCursorX, eraserCursorY, radius, eraserCursorFill)
+                canvas.drawCircle(eraserCursorX, eraserCursorY, radius, eraserCursorOuter)
+                canvas.drawCircle(eraserCursorX, eraserCursorY, radius, eraserCursorInner)
             }
         }
 
@@ -2522,7 +2781,8 @@ class InkCanvasView @JvmOverloads constructor(
 
         /** How far past fit-to-width the zoom goes: 10x, which reads as 1000%. */
         const val MAX_ZOOM = 10f
-        const val FIT_MARGIN = 0.94f
+        // 페이지 폭과 태블릿의 실제 콘텐츠 폭을 1:1로 맞춥니다.
+        const val FIT_MARGIN = 1f
         const val HIGHLIGHT_ALPHA = 0x66000000
         const val RULE_SPACING = 60f
         const val PAGE_TOP_MARGIN_PX = 24f
@@ -2533,6 +2793,12 @@ class InkCanvasView @JvmOverloads constructor(
         const val MAX_FLING_VELOCITY = 12000f
         /** Higher is stickier; this lands close to the platform list fling. */
         const val FLING_FRICTION = 3.2f
+        /** About 5 px of blur at a brisk 3000 px/s flick. */
+        const val MOTION_BLUR_VELOCITY_PER_PX = 600f
+        const val MOTION_ZOOM_BLUR_GAIN = 120f
+        const val MOTION_BLUR_MAX_PX = 12f
+        const val MOTION_BLUR_MIN_PX = 0.5f
+        const val MOTION_BLUR_IDLE_MS = 52L
         const val DETAIL_THRESHOLD_PX = 2048
         const val SHADOW = 4f
         const val SHAPE_STEP_MS = 8L

@@ -113,9 +113,13 @@ val LocalSkinSettings = compositionLocalOf { SkinSettings() }
 
 @Composable
 fun ProvideSkin(skin: Skin, settings: SkinSettings, content: @Composable () -> Unit) {
+    // 앱 전역 설정 감시는 여기에서 한 번만 만들고 모든 Liquid Glass 컨트롤이 공유합니다.
+    val inheritedEffectsAllowed = LocalLiquidGlassEffectsAllowed.current
+    val effectsAllowed = inheritedEffectsAllowed ?: rememberSystemLiquidGlassEffectsAllowed()
     CompositionLocalProvider(
         LocalSkin provides skin,
         LocalSkinSettings provides settings,
+        LocalLiquidGlassEffectsAllowed provides effectsAllowed,
         content = content,
     )
 }
@@ -152,7 +156,17 @@ fun Skin.tokens(): SkinTokens = when (this) {
             // catching the light; frost scatters it the same way all round.
             // Turned up it becomes the ink colour, because a white rim on a
             // white panel is an edge nobody can find.
-            rim = SolidColor(if (look.highContrast) Color(look.content) else Color(look.border)),
+            rim = SolidColor(
+                if (look.highContrast) {
+                    if (look.themeMode == AppThemeMode.DARK) {
+                        MaterialTheme.colorScheme.onSurface
+                    } else {
+                        Color(look.content)
+                    }
+                } else {
+                    Color(look.border)
+                },
+            ),
             rimWidth = if (look.highContrast) 2.dp else 1.dp,
             bevel = null,
             glows = emptyList(),
@@ -168,7 +182,11 @@ fun Skin.tokens(): SkinTokens = when (this) {
     Skin.LIQUID_GLASS -> LocalSkinSettings.current.let { look ->
         val tint = Color(look.tint)
         val border = Color(look.border)
-        val ink = Color(look.content)
+        val ink = if (look.themeMode == AppThemeMode.DARK) {
+            MaterialTheme.colorScheme.onSurface
+        } else {
+            Color(look.content)
+        }
         val accent = Color(look.accent)
         SkinTokens(
             corner = look.corner.dp,
@@ -305,21 +323,29 @@ fun SkinSurface(
         )
         return
     }
-    Box(
+    val surfaceModifier = if (skin == Skin.LIQUID_GLASS) {
+        // API 33+에서는 Kyant Backdrop의 실제 AGSL 렌즈를 사용합니다. 고정 바도
+        // 같은 경로를 타므로 유리 효과가 빠지지 않고, 창 가장자리에는 불필요한
+        // 외곽 그림자/테두리를 그리지 않아 위아래 회색 틈이 생기지 않습니다.
+        modifier
+            .liquidGlass(
+                intensity = 1f,
+                shape = shape,
+                surfaceColor = tokens.fill
+                    ?: MaterialTheme.colorScheme.surface.copy(alpha = tokens.fillAlpha),
+                shadowElevation = if (flush) 0.dp else tokens.shadow,
+                drawBorder = !flush,
+            )
+            .then(if (flush) Modifier.flushEdge(tokens) else Modifier)
+    } else {
         modifier
             .shadow(tokens.shadow, shape, clip = false)
             .clip(shape)
             .frost()
             .background(tokens.fill ?: MaterialTheme.colorScheme.surface.copy(alpha = tokens.fillAlpha))
-            .then(
-                if (skin == Skin.LIQUID_GLASS) {
-                    Modifier.liquidLight(MaterialTheme.colorScheme.primary)
-                } else {
-                    Modifier
-                },
-            )
-            .then(if (flush) Modifier.flushEdge(tokens) else Modifier.glassEdge(tokens, shape)),
-    ) {
+            .then(if (flush) Modifier.flushEdge(tokens) else Modifier.glassEdge(tokens, shape))
+    }
+    Box(surfaceModifier) {
         content()
     }
 }
@@ -957,7 +983,9 @@ private const val POPUP_ALPHA = 0.86f
  * read there quietly gives back the colours nobody chose.
  */
 fun skinColors(base: ColorScheme, skin: Skin, look: SkinSettings): ColorScheme {
-    val ink = Color(look.content)
+    // 다크 모드에서 라이트 모드용 사용자 잉크색을 그대로 쓰면 검은 글씨가 됩니다.
+    // 이 경우 생성한 다크 팔레트의 대비 보장 색을 사용합니다.
+    val ink = if (look.themeMode == AppThemeMode.DARK) base.onSurface else Color(look.content)
     val inked = base.copy(
         onSurface = ink,
         onBackground = ink,

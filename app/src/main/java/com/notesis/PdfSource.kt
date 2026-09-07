@@ -7,6 +7,7 @@ import android.graphics.Point
 import android.graphics.RectF
 import android.graphics.pdf.PdfRenderer
 import android.graphics.pdf.models.selection.SelectionBoundary
+import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.util.LruCache
 import java.io.File
@@ -214,6 +215,7 @@ class PdfSource private constructor(
 
     /** Every text run on a page, joined - used to build the search index. */
     fun textOf(index: Int): String = synchronized(renderLock) {
+        if (Build.VERSION.SDK_INT < 35) return ""
         if (closed || index !in 0 until pageCount) return ""
         runCatching {
             renderer.openPage(index).use { page ->
@@ -228,6 +230,7 @@ class PdfSource private constructor(
      */
     fun select(index: Int, startWorld: RectF, endWorld: RectF): PdfSelection? =
         synchronized(renderLock) {
+            if (Build.VERSION.SDK_INT < 35) return null
             if (closed || index !in 0 until pageCount) return null
             runCatching {
                 renderer.openPage(index).use { page ->
@@ -364,7 +367,10 @@ class PdfSource private constructor(
         private const val MAX_CROP_PX = 4096
         /** Tile edge in pixels. Big enough that a screen needs only a handful. */
         private const val TILE_PX = 1024f
-        private const val MAX_TILE_DENSITY = 8f
+        // The canvas can reach 16 screen pixels per page unit. Matching that
+        // ceiling keeps glyph edges one source pixel per display pixel even at
+        // maximum zoom instead of magnifying the last tile bucket twofold.
+        private const val MAX_TILE_DENSITY = MAX_CANVAS_SCALE
         private const val DETAIL_MARGIN = 0.25f
         private const val MIN_CACHE_BYTES = 64 * 1024 * 1024
         private const val MAX_CACHE_BYTES = 256 * 1024 * 1024

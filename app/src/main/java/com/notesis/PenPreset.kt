@@ -128,9 +128,12 @@ class PenStore(context: Context) {
 
         /** The thickness slider's range depends on what is being made thick. */
         fun widthRange(mode: EditMode): ClosedFloatingPointRange<Float> = when (mode) {
-            EditMode.ERASE -> 8f..120f
-            EditMode.HIGHLIGHTER -> 4f..90f
-            else -> 1f..40f
+            // The low end is deliberately a real hairline. Erasing at the low
+            // end is still reliable because InkCanvasView tests the point under
+            // the pen on ACTION_DOWN instead of waiting for a move segment.
+            EditMode.ERASE -> 1f..240f
+            EditMode.HIGHLIGHTER, EditMode.MASK -> 1f..180f
+            else -> 0.25f..80f
         }
 
         /** The same range with the tool's own ceiling, when one has been set. */

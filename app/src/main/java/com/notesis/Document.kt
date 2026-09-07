@@ -104,6 +104,13 @@ class Page(
      */
     var savedOnDisk: Int = 0
 
+    /**
+     * Main-thread content generation used to reconcile an asynchronous save.
+     * It is not persisted: it only answers whether this exact page changed
+     * after the save worker received its immutable snapshot.
+     */
+    var revision: Long = 0L
+
     companion object {
         // A4 at 150dpi. Any consistent unit works; this one makes an imported
         // PDF and a blank page land at comparable sizes.
@@ -211,7 +218,9 @@ data class NoteMeta(
  */
 class NoteStore(context: Context) {
 
+    private val appContext = context.applicationContext
     private val root = File(context.filesDir, "notes").apply { mkdirs() }
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
     /**
      * One exit save queue for the store. A note screen must be able to disappear
      * immediately without doing file IO on the UI thread, while the write itself
@@ -443,9 +452,68 @@ class NoteStore(context: Context) {
         if (!auto.isFile || (firstPageChanged && stale)) writeAutoThumbnail(id, document)
     }
 
-    /** Queues a final save without holding the main thread while a note closes. */
+    private data class SavePage(
+        val live: Page,
+        val copy: Page,
+        val revision: Long,
+    )
+
+    private data class SaveSnapshot(
+        val document: Document,
+        val pages: List<SavePage>,
+    )
+
+    /**
+     * Copies every mutable collection before it crosses onto the save worker.
+     * Stroke objects are immutable, but their page lists are not: walking a live
+     * list while the main thread commits a pen stroke used to be the recurring
+     * ConcurrentModificationException recorded in crash.log.
+     */
+    private fun snapshotForSave(document: Document): SaveSnapshot {
+        val captured = document.pages.map { live ->
+            val copy = Page(
+                id = live.id,
+                width = live.width,
+                height = live.height,
+                background = live.background,
+                pdfPageIndex = live.pdfPageIndex,
+                images = live.images.map { image ->
+                    PageImage(image.id, image.x, image.y, image.width, image.height)
+                }.toMutableList(),
+                masks = live.masks.map { mask ->
+                    PageMask(mask.stroke).also { it.revealed = mask.revealed }
+                }.toMutableList(),
+                strokes = live.strokes.toMutableList(),
+            ).also {
+                it.dirty = live.dirty
+                it.tessellatedFor = live.tessellatedFor
+                it.loaded = live.loaded
+                it.savedStrokeCount = live.savedStrokeCount
+                it.savedOnDisk = live.savedOnDisk
+                it.revision = live.revision
+            }
+            SavePage(live, copy, live.revision)
+        }
+        return SaveSnapshot(Document(captured.map { it.copy }.toMutableList()), captured)
+    }
+
+    /** Queues a snapshot save without holding the main thread during file IO. */
     fun saveLater(id: String, title: String, document: Document) {
-        saveWorker.execute { save(id, title, document) }
+        val snapshot = snapshotForSave(document)
+        saveWorker.execute {
+            val saved = runCatching { save(id, title, snapshot.document) }.isSuccess
+            if (!saved) return@execute
+            mainHandler.post {
+                // Do not mark newer work clean. A page only adopts the worker's
+                // disk count when no edit happened since this snapshot was made.
+                for (page in snapshot.pages) {
+                    if (page.live.revision != page.revision || !page.copy.loaded) continue
+                    page.live.savedOnDisk = page.copy.savedOnDisk
+                    page.live.savedStrokeCount = page.copy.strokes.size
+                    page.live.dirty = false
+                }
+            }
+        }
     }
 
     private fun imagesToJson(page: Page): JSONArray {
@@ -627,34 +695,27 @@ class NoteStore(context: Context) {
     }.getOrDefault(0)
 
     /**
-     * The note as a PDF, with everything on it: the imported page underneath,
-     * pictures, ink, and the tape over the top. Rendered at [PDF_EXPORT_SCALE]
-     * so the ink is resolved rather than pixelated at page size.
+     * The note as a PDF, retaining imported content and ink as vector paths.
+     * A PDF exported here can therefore be imported into another note without
+     * turning text or pen edges into a fixed-resolution page bitmap.
      */
-    fun exportPdf(id: String, out: java.io.OutputStream): Boolean = runCatching {
+    fun exportPdf(id: String, out: java.io.OutputStream): Boolean {
         val document = load(id)
-        val pdf = android.graphics.pdf.PdfDocument()
-        val source = PdfSource.open(pdfFile(id))
-        val renderer = CanvasStrokeRenderer.create()
-        try {
-            for ((index, page) in document.pages.withIndex()) {
-                if (page.width <= 0f || page.height <= 0f) continue
-                val info = android.graphics.pdf.PdfDocument.PageInfo.Builder(
-                    page.width.toInt().coerceAtLeast(1),
-                    page.height.toInt().coerceAtLeast(1),
-                    index + 1,
-                ).create()
-                val out1 = pdf.startPage(info)
-                drawWholePage(id, page, out1.canvas, source, renderer, 1f)
-                pdf.finishPage(out1)
-            }
-            pdf.writeTo(out)
-        } finally {
-            source?.close()
-            pdf.close()
+        val pages = document.pages.map { page ->
+            VectorPdfPage(
+                page = page,
+                strokes = readStrokes(File(root, "$id/pages/${page.id}.bin")),
+                masks = readStrokes(File(root, "$id/pages/${page.id}.mask")),
+            )
         }
-        true
-    }.getOrDefault(false)
+        return writeVectorPdf(
+            context = appContext,
+            sourceFile = pdfFile(id),
+            pages = pages,
+            imageFile = { imageId -> imageFile(id, imageId) },
+            out = out,
+        )
+    }
 
     /**
      * One page onto one canvas, in the order it is seen: paper, imported page,

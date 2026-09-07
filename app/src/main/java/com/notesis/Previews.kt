@@ -75,6 +75,13 @@ private fun PreviewInk() = ChromeSample(
     SkinSettings(accent = 0xFF0A84FF.toInt(), content = 0xFF10314F.toInt()),
 )
 
+@Preview(name = "컨트롤 · 다크 모드", widthDp = 420, heightDp = 340)
+@Composable
+private fun PreviewDark() = ChromeSample(
+    Skin.LIQUID_GLASS,
+    SkinSettings(themeMode = AppThemeMode.DARK),
+)
+
 /**
  * One panel with one of everything the settings screen can change: the two
  * controls, a filled button and an outlined one, and two icons - the tool in
@@ -84,7 +91,15 @@ private fun PreviewInk() = ChromeSample(
 private fun ChromeSample(skin: Skin, look: SkinSettings) {
     ProvideSkin(skin, look) {
         MaterialTheme(
-            colorScheme = skinColors(schemeFrom(look.accent, look.highContrast), skin, look),
+            colorScheme = skinColors(
+                schemeFrom(
+                    look.accent,
+                    look.highContrast,
+                    look.themeMode == AppThemeMode.DARK,
+                ),
+                skin,
+                look,
+            ),
             shapes = skinShapes(skin),
         ) {
             var amount by remember { mutableFloatStateOf(0.42f) }

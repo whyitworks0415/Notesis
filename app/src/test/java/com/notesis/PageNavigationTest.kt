@@ -24,4 +24,11 @@ class PageNavigationTest {
     fun `single page note never leaves its only page`() {
         assertEquals(0, scrubbedPage(400f, 500f, 50f, 1))
     }
+
+    @Test
+    fun `scrubber appears only after three page boundaries`() {
+        assertEquals(false, shouldShowPageScrubber(2, 20))
+        assertEquals(true, shouldShowPageScrubber(3, 20))
+        assertEquals(false, shouldShowPageScrubber(7, 1))
+    }
 }

@@ -13,3 +13,8 @@
 -keep class androidx.ink.brush.** { *; }
 -keep class androidx.ink.geometry.** { *; }
 -keep class androidx.ink.strokes.** { *; }
+
+# PdfBox-Android can optionally decode JPEG-2000 through Gemalto's JP2 module.
+# Export only copies existing PDF streams and never asks that optional codec to
+# render them, so the absent classes are safe to leave out of this small APK.
+-dontwarn com.gemalto.jp2.**
