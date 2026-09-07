@@ -10,8 +10,6 @@ import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.RectF
-import android.graphics.RenderEffect
-import android.graphics.Shader
 import android.util.AttributeSet
 import android.view.Choreographer
 import android.view.MotionEvent
@@ -501,10 +499,6 @@ class InkCanvasView @JvmOverloads constructor(
     private var flingVy = 0f
     private var flingLastNanos = 0L
     private var flinging = false
-    private var lastMotionEventMillis = 0L
-    private var motionBlurX = 0f
-    private var motionBlurY = 0f
-    private val clearMotionBlur = Runnable { applyMotionBlur(0f, 0f) }
 
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
     private var selection: PdfSelection? = null
@@ -1204,7 +1198,6 @@ class InkCanvasView @JvmOverloads constructor(
                 closed3fThisGesture = false
                 zooming = false
                 draggedReference = false
-                lastMotionEventMillis = event.eventTime
                 return true
             }
 
@@ -1220,7 +1213,6 @@ class InkCanvasView @JvmOverloads constructor(
                 val focus = focusOf(event, skipPointerIndex = leavingIndex(event))
                 lastFocusX = focus[0]
                 lastFocusY = focus[1]
-                lastMotionEventMillis = event.eventTime
                 if (event.pointerCount < 3) have3Fingers = false
                 return true
             }
@@ -1272,17 +1264,6 @@ class InkCanvasView @JvmOverloads constructor(
                     documentToScreen.postTranslate(
                         (focus[0] - lastFocusX) * multiplier,
                         (focus[1] - lastFocusY) * multiplier,
-                    )
-                    val zoomBlur = if (scaleDetector.isInProgress) {
-                        abs(scaleDetector.scaleFactor - 1f) * MOTION_ZOOM_BLUR_GAIN
-                    } else {
-                        0f
-                    }
-                    updateMotionBlur(
-                        dx = (focus[0] - lastFocusX) * multiplier,
-                        dy = (focus[1] - lastFocusY) * multiplier,
-                        eventTimeMillis = event.eventTime,
-                        extra = zoomBlur,
                     )
                     onTransformChanged()
                 }
@@ -1406,8 +1387,6 @@ class InkCanvasView @JvmOverloads constructor(
     private fun stopFling() {
         flinging = false
         removeCallbacks(flingStep)
-        removeCallbacks(clearMotionBlur)
-        applyMotionBlur(0f, 0f)
         onViewportInteractionChanged?.invoke(false)
     }
 
@@ -1422,7 +1401,6 @@ class InkCanvasView @JvmOverloads constructor(
             val beforeX = matrixValues[Matrix.MTRANS_X]
             val beforeY = matrixValues[Matrix.MTRANS_Y]
             documentToScreen.postTranslate(flingVx * dt, flingVy * dt)
-            applyMotionBlurForVelocity(flingVx, flingVy)
             onTransformChanged()
 
             // Exponential decay rather than a fixed per-frame factor, so the
@@ -1442,57 +1420,6 @@ class InkCanvasView @JvmOverloads constructor(
             }
             postOnAnimation(this)
         }
-    }
-
-    /**
-     * A fast viewport move temporarily softens the page along its direction.
-     * The radius is quantised to half pixels so a 120 Hz touch stream does not
-     * allocate a different RenderEffect for imperceptibly small changes.
-     */
-    private fun updateMotionBlur(
-        dx: Float,
-        dy: Float,
-        eventTimeMillis: Long,
-        extra: Float = 0f,
-    ) {
-        val elapsed = (eventTimeMillis - lastMotionEventMillis).coerceIn(4L, 40L)
-        lastMotionEventMillis = eventTimeMillis
-        val vx = dx / elapsed * 1000f
-        val vy = dy / elapsed * 1000f
-        val x = max(abs(vx) / MOTION_BLUR_VELOCITY_PER_PX, extra)
-        val y = max(abs(vy) / MOTION_BLUR_VELOCITY_PER_PX, extra)
-        applyMotionBlur(x, y)
-        removeCallbacks(clearMotionBlur)
-        postDelayed(clearMotionBlur, MOTION_BLUR_IDLE_MS)
-    }
-
-    private fun applyMotionBlurForVelocity(vx: Float, vy: Float) {
-        applyMotionBlur(
-            abs(vx) / MOTION_BLUR_VELOCITY_PER_PX,
-            abs(vy) / MOTION_BLUR_VELOCITY_PER_PX,
-        )
-    }
-
-    private fun applyMotionBlur(radiusX: Float, radiusY: Float) {
-        if (Build.VERSION.SDK_INT < 31) return
-        fun quantized(value: Float): Float =
-            (kotlin.math.round(value.coerceIn(0f, MOTION_BLUR_MAX_PX) * 2f) / 2f)
-        val x = quantized(radiusX)
-        val y = quantized(radiusY)
-        if (x == motionBlurX && y == motionBlurY) return
-        motionBlurX = x
-        motionBlurY = y
-        dry.setRenderEffect(
-            if (x < MOTION_BLUR_MIN_PX && y < MOTION_BLUR_MIN_PX) {
-                null
-            } else {
-                RenderEffect.createBlurEffect(
-                    x.coerceAtLeast(MOTION_BLUR_MIN_PX),
-                    y.coerceAtLeast(MOTION_BLUR_MIN_PX),
-                    Shader.TileMode.CLAMP,
-                )
-            },
-        )
     }
 
     private fun leavingIndex(event: MotionEvent): Int =
@@ -2793,12 +2720,6 @@ class InkCanvasView @JvmOverloads constructor(
         const val MAX_FLING_VELOCITY = 12000f
         /** Higher is stickier; this lands close to the platform list fling. */
         const val FLING_FRICTION = 3.2f
-        /** About 5 px of blur at a brisk 3000 px/s flick. */
-        const val MOTION_BLUR_VELOCITY_PER_PX = 600f
-        const val MOTION_ZOOM_BLUR_GAIN = 120f
-        const val MOTION_BLUR_MAX_PX = 12f
-        const val MOTION_BLUR_MIN_PX = 0.5f
-        const val MOTION_BLUR_IDLE_MS = 52L
         const val DETAIL_THRESHOLD_PX = 2048
         const val SHADOW = 4f
         const val SHAPE_STEP_MS = 8L
