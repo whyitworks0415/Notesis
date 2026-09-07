@@ -1,0 +1,54 @@
+:root { color-scheme: light; font-family: Arial, 'Noto Sans CJK KR', sans-serif; color: #202630; background: #e8ecf1; }
+* { box-sizing: border-box; }
+/* WebView can resolve initial percentage heights against a zero-height layout. */
+html, body { height: 100vh; height: 100dvh; margin: 0; overflow: hidden; }
+body { display: flex; flex-direction: column; }
+[hidden] { display: none !important; }
+button, input { font: inherit; }
+button { border: 1px solid #d6dce3; border-radius: 7px; background: #fff; color: #253348; min-width: 36px; min-height: 36px; cursor: pointer; padding: 4px 10px; }
+button:disabled { opacity: .35; cursor: default; }
+button:focus-visible, input:focus-visible, main:focus-visible { outline: 2px solid #2764ce; outline-offset: -2px; }
+#toolbar { display: flex; justify-content: space-between; gap: 8px; align-items: center; flex-wrap: wrap; padding: 8px 12px; background: #f8fafc; border-bottom: 1px solid #d1d8e0; flex-shrink: 0; font-size: 13px; }
+.controls { display: flex; align-items: center; gap: 6px; }
+#page-number { width: 48px; padding: 6px 2px; border: 1px solid #d6dce3; border-radius: 4px; background: white; color: #202630; text-align: center; -moz-appearance: textfield; }
+#page-number::-webkit-inner-spin-button { -webkit-appearance: none; }
+#zoom-label { min-width: 40px; text-align: center; }
+#status { flex-shrink: 0; margin: 0; padding: 12px 16px; font-size: 13px; line-height: 1.6; background: #fff; border-bottom: 1px solid #d1d8e0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 30vh; overflow: auto; }
+#status.error { color: #92322b; background: #fff5f3; }
+#viewport { flex: 1; min-height: 0; overflow: auto; padding: 24px; overscroll-behavior: contain; }
+#surface { margin: 0 auto; width: max-content; }
+.paper { color: #171b22; background: white; box-shadow: 0 3px 18px #25354b26; }
+.paper > svg { display: block; width: 100%; height: auto; }
+.flow-page { width: 794px; min-height: 1123px; padding: 72px 76px; font-size: 16px; line-height: 1.8; overflow-wrap: anywhere; }
+.flow-page h1, .flow-page h2, .flow-page h3 { line-height: 1.4; color: #141e30; }
+.flow-page h1 { font-size: 32px; padding-bottom: 14px; border-bottom: 1px solid #dde2e9; }
+.flow-page h2 { font-size: 25px; margin-top: 30px; }
+.flow-page h3 { font-size: 20px; }
+.flow-page p, .flow-page ul, .flow-page ol, .flow-page blockquote { margin: 0 0 18px; }
+.flow-page blockquote { border-left: 4px solid #91a6c7; color: #566477; padding: 8px 18px; background: #f4f7fa; }
+.flow-page pre { padding: 16px; border: 1px solid #dde3eb; border-radius: 6px; background: #f5f7fa; overflow: auto; white-space: pre-wrap; tab-size: 4; }
+.flow-page code { font-family: 'D2Coding', Consolas, monospace; font-size: .88em; background: #f1f3f6; padding: 2px 4px; border-radius: 3px; }
+.flow-page pre code { padding: 0; }
+.flow-page a { color: #2563af; text-decoration: underline; }
+.flow-page img { max-width: 100%; height: auto; }
+.flow-page table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+.flow-page td, .flow-page th { border: 1px solid #cad2dd; padding: 8px 12px; text-align: left; }
+.flow-page th { background: #edf1f6; }
+.flow-page hr { border: 0; border-top: 1px solid #d5dce6; margin: 28px 0; }
+.text-document { white-space: pre-wrap; font-family: 'D2Coding', Consolas, monospace; tab-size: 4; }
+#formula-bar { padding: 8px 14px; display: flex; gap: 16px; background: #fff; border-bottom: 1px solid #d1d8e0; font-size: 13px; max-height: 110px; overflow: auto; flex-shrink: 0; white-space: pre-wrap; }
+#cell-address { min-width: 48px; color: #217346; }
+#cell-value { overflow-wrap: anywhere; }
+#sheets { display: flex; gap: 3px; overflow-x: auto; padding: 6px 12px; flex-shrink: 0; background: #f8fafc; border-top: 1px solid #cbd3dd; }
+#sheets button { white-space: nowrap; border-color: transparent; border-radius: 4px; }
+#sheets button[aria-selected="true"] { border-bottom: 3px solid #217346; color: #19663c; font-weight: bold; }
+body.workbook #viewport { padding: 0; }
+body.workbook #surface { margin: 0; }
+.worksheet { background: white; border-spacing: 0; table-layout: fixed; border-collapse: separate; font: 14px Arial, 'Noto Sans CJK KR', sans-serif; }
+.worksheet td, .worksheet th { border-right: 1px solid #d5dce2; border-bottom: 1px solid #d5dce2; padding: 4px 7px; height: 28px; line-height: 1.25; font-weight: normal; }
+.worksheet td { white-space: pre; overflow: hidden; vertical-align: bottom; outline: none; }
+.worksheet td:focus { outline: 2px solid #217346; outline-offset: -2px; }
+.worksheet thead th { position: sticky; top: 0; z-index: 3; background: #edf1f4; text-align: center; color: #55616d; }
+.worksheet tbody th { position: sticky; left: 0; z-index: 2; background: #edf1f4; text-align: center; color: #55616d; }
+.worksheet thead th:first-child { left: 0; z-index: 4; }
+@media (max-width: 500px) { #viewport { padding: 12px; } #toolbar { padding: 6px; gap: 4px; } .controls { gap: 3px; } button { min-width: 32px; padding: 4px 7px; } }

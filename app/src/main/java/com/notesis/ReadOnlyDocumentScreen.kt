@@ -39,6 +39,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -57,6 +58,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.util.Locale
@@ -112,6 +114,7 @@ internal fun viewerRequest(context: Context, uri: Uri): ViewerRequest {
 private sealed interface ViewerLoadState {
     data object Loading : ViewerLoadState
     data class Ready(val document: PreviewDocument) : ViewerLoadState
+    data class Layout(val bytes: ByteArray) : ViewerLoadState
     data class Failed(val message: String) : ViewerLoadState
 }
 
@@ -124,15 +127,21 @@ internal fun ReadOnlyDocumentScreen(
     val context = androidx.compose.ui.platform.LocalContext.current
     var state: ViewerLoadState by remember(request.uri) { mutableStateOf(ViewerLoadState.Loading) }
     var sectionIndex by remember(request.uri) { mutableIntStateOf(0) }
+    var textOnly by remember(request.uri) { mutableStateOf(false) }
+    val hasLayout = supportsDocumentLayout(request.name)
     BackHandler(onBack = onBack)
 
-    LaunchedEffect(request.uri) {
+    LaunchedEffect(request.uri, textOnly) {
+        state = ViewerLoadState.Loading
+        sectionIndex = 0
         state = withContext(Dispatchers.IO) {
             runCatching {
                 val bytes = context.contentResolver.openInputStream(request.uri)?.use(::readDocumentBytes)
                     ?: throw UnsupportedDocumentException("파일을 열 수 없습니다.")
-                ViewerLoadState.Ready(OfficeDocumentParser.parse(request.name, bytes))
+                if (hasLayout && !textOnly) ViewerLoadState.Layout(bytes)
+                else ViewerLoadState.Ready(OfficeDocumentParser.parse(request.name, bytes))
             }.getOrElse { error ->
+                if (error is CancellationException) throw error
                 ViewerLoadState.Failed(
                     when (error) {
                         is UnsupportedDocumentException -> error.message ?: "지원하지 않는 문서입니다."
@@ -164,13 +173,20 @@ internal fun ReadOnlyDocumentScreen(
                                 style = MaterialTheme.typography.titleMedium,
                             )
                             Text(
-                                document?.let { "${it.kind.label} · 읽기 전용" } ?: "읽기 전용",
+                                if (hasLayout) {
+                                    if (textOnly) "텍스트 보기 · 읽기 전용" else "문서 보기 · 읽기 전용"
+                                } else document?.let { "${it.kind.label} · 읽기 전용" } ?: "읽기 전용",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     },
                     actions = {
+                        if (hasLayout) {
+                            TextButton(onClick = { textOnly = !textOnly }) {
+                                Text(if (textOnly) "문서 보기" else "텍스트 보기")
+                            }
+                        }
                         if (document != null && document.sections.size > 1) {
                             IconButton(
                                 onClick = { sectionIndex = (sectionIndex - 1).coerceAtLeast(0) },
@@ -191,6 +207,9 @@ internal fun ReadOnlyDocumentScreen(
         when (val current = state) {
             ViewerLoadState.Loading -> LoadingDocument(Modifier.padding(padding))
             is ViewerLoadState.Failed -> FailedDocument(current.message, Modifier.padding(padding))
+            is ViewerLoadState.Layout -> DocumentLayoutView(
+                request.name, current.bytes, Modifier.padding(padding).fillMaxSize(),
+            )
             is ViewerLoadState.Ready -> {
                 val safeIndex = sectionIndex.coerceIn(0, current.document.sections.lastIndex)
                 val section = current.document.sections[safeIndex]

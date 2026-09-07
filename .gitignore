@@ -3,3 +3,5 @@ build/
 local.properties
 *.iml
 .idea/
+node_modules/
+tools/document-viewer/test-output/

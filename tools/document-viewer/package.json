@@ -1,0 +1,21 @@
+{
+  "name": "notesis-document-viewer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@rhwp/core": "0.8.6",
+    "@web-ppt/core": "0.4.5",
+    "dompurify": "3.4.15",
+    "fflate": "0.8.3",
+    "marked": "18.0.11",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.9",
+    "@playwright/test": "1.63.0"
+  }
+}

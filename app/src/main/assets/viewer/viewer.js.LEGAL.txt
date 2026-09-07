@@ -1,0 +1,10 @@
+Bundled license information:
+
+xlsx/xlsx.mjs:
+  /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
+
+xlsx/xlsx.mjs:
+  /*! sheetjs (C) 2013-present SheetJS -- http://sheetjs.com */
+
+dompurify/dist/purify.es.mjs:
+  /*! @license DOMPurify 3.4.15 | (c) Cure53 and other contributors | Released under the Apache license 2.0 and Mozilla Public License 2.0 | github.com/cure53/DOMPurify/blob/3.4.15/LICENSE */
