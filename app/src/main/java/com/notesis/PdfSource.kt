@@ -294,6 +294,29 @@ class PdfSource private constructor(
     /** Blocking render, for callers off the UI thread that need the page now. */
     fun renderNow(index: Int, widthPx: Int): Bitmap? = renderWholePage(index, widthPx)
 
+    /** Preview the printed glyphs, independent of a PDF font's Unicode mapping. */
+    fun renderSelection(selection: PdfSelection): Bitmap? = synchronized(renderLock) {
+        if (closed || selection.boxes.isEmpty()) return null
+        runCatching {
+            val bounds = RectF(selection.boxes.first())
+            selection.boxes.drop(1).forEach { bounds.union(it) }
+            bounds.inset(-4f, -4f)
+            val scale = minOf(1200f / bounds.width(), 500f / bounds.height(), 3f)
+            if (!scale.isFinite() || scale <= 0f) return null
+            val bitmap = Bitmap.createBitmap((bounds.width() * scale).toInt().coerceAtLeast(1),
+                (bounds.height() * scale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+            bitmap.eraseColor(Color.WHITE)
+            renderer.openPage(selection.pageIndex).use { page ->
+                val transform = Matrix().apply {
+                    setScale(scale * POINTS_TO_WORLD, scale * POINTS_TO_WORLD)
+                    postTranslate(-bounds.left * scale, -bounds.top * scale)
+                }
+                page.render(bitmap, null, transform, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+            }
+            bitmap
+        }.getOrNull()
+    }
+
     private fun renderWholePage(index: Int, widthPx: Int): Bitmap? = synchronized(renderLock) {
         if (closed) return null
         runCatching {

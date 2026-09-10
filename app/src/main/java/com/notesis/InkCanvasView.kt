@@ -256,6 +256,9 @@ class InkCanvasView @JvmOverloads constructor(
     var imageMode: Boolean = false
 
     /** The pen drags out a rectangle and what is inside it comes back rendered. */
+    var textMode: Boolean = false
+    var onTextRequested: ((Int, Float, Float) -> Unit)? = null
+    private var pendingTextPlacement: Triple<Int, Float, Float>? = null
     var captureMode: Boolean = false
 
     /**
@@ -580,6 +583,7 @@ class InkCanvasView @JvmOverloads constructor(
 
         // Pictures are mutable and moving one is not undoable; adding and
         // removing are, because those are the ones that lose work.
+        class ImageReplaced(override val page: Page, val before: PageImage, val after: PageImage, val at: Int) : Edit
         class ImageAdded(override val page: Page, val image: PageImage) : Edit
         class ImageRemoved(override val page: Page, val image: PageImage, val at: Int) : Edit
 
@@ -767,6 +771,7 @@ class InkCanvasView @JvmOverloads constructor(
         // A lasso selection describes where strokes are now. Stepping history
         // moves them, so the box would sit over nothing and drag ghosts.
         clearLassoSelection()
+        clearImageSelection()
         applyInverse(edit)
         redoStack += edit
         afterEdit(edit.page)
@@ -775,9 +780,11 @@ class InkCanvasView @JvmOverloads constructor(
     fun redo() {
         val edit = redoStack.removeLastOrNull() ?: return
         clearLassoSelection()
+        clearImageSelection()
         when (edit) {
             is Edit.Drawn -> edit.page.strokes += edit.stroke
             is Edit.Erased -> edit.page.strokes.removeAll(edit.strokes)
+            is Edit.ImageReplaced -> { edit.page.images[edit.at] = edit.after; clearImageSelection() }
             is Edit.ImageAdded -> edit.page.images += edit.image
             is Edit.ImageRemoved -> edit.page.images.remove(edit.image)
             is Edit.MaskAdded -> edit.page.masks += edit.mask
@@ -796,6 +803,7 @@ class InkCanvasView @JvmOverloads constructor(
             is Edit.MaskAdded -> edit.page.masks.remove(edit.mask)
             is Edit.MaskRemoved ->
                 edit.page.masks.add(edit.at.coerceIn(0, edit.page.masks.size), edit.mask)
+            is Edit.ImageReplaced -> { edit.page.images[edit.at] = edit.before; clearImageSelection() }
             is Edit.ImageAdded -> edit.page.images.remove(edit.image)
             is Edit.ImageRemoved ->
                 edit.page.images.add(edit.at.coerceIn(0, edit.page.images.size), edit.image)
@@ -1114,6 +1122,13 @@ class InkCanvasView @JvmOverloads constructor(
 
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
                 val pointerId = activeStylusPointer ?: return false
+                // A palm/finger lifting must not finish the stylus stroke.
+                if (event.getPointerId(event.actionIndex) != pointerId) return true
+                pendingTextPlacement?.let { position ->
+                    endStylus()
+                    onTextRequested?.invoke(position.first, position.second, position.third)
+                    return true
+                }
                 if (capturing) {
                     finishCapture()
                     endStylus()
@@ -1145,7 +1160,18 @@ class InkCanvasView @JvmOverloads constructor(
                     endStylus()
                     return true
                 }
-                activeStrokeId?.let { wet.finishStroke(event, pointerId, it) }
+                activeStrokeId?.let { strokeId ->
+                    val pointerIndex = event.findPointerIndex(pointerId)
+                    val penStroke = tool == Tool.PEN || tool == Tool.PRESSURE_PEN
+                    val unstable = penStroke && pointerIndex >= 0 && lastStylusX.isFinite() &&
+                        unstableLift(event.getX(pointerIndex) - lastStylusX,
+                            event.getY(pointerIndex) - lastStylusY, lastStylusDx, lastStylusDy)
+                    if (unstable) {
+                        val end = MotionEvent.obtainNoHistory(event)
+                        end.offsetLocation(lastStylusX - event.getX(pointerIndex), lastStylusY - event.getY(pointerIndex))
+                        try { wet.finishStroke(end, pointerId, strokeId) } finally { end.recycle() }
+                    } else wet.finishStroke(event, pointerId, strokeId)
+                }
                 endStylus()
                 return true
             }
@@ -1165,6 +1191,7 @@ class InkCanvasView @JvmOverloads constructor(
      * overshoots or falls short on the other.
      */
     private fun endStylus() {
+        pendingTextPlacement = null
         removeCallbacks(longPress)
         selectingText = false
         if (activeStylusPointer != null) onDrawingChanged?.invoke(false)
@@ -1468,7 +1495,7 @@ class InkCanvasView @JvmOverloads constructor(
             size = strokeWidth,
             // Drawn at the zoom in use, so a stroke made while zoomed in is
             // already fine enough and never needs rebuilding.
-            epsilon = epsilonFor(currentScale()),
+            epsilon = strokeEpsilon(strokeWidth, epsilonFor(currentScale())),
         )
     }
 
@@ -1512,7 +1539,7 @@ class InkCanvasView @JvmOverloads constructor(
                 Triple(
                     page,
                     snapshot,
-                    snapshot.map { Stroke(it.brush.copy(epsilon = epsilon), it.inputs) },
+                    snapshot.map { Stroke(it.brush.copy(epsilon = strokeEpsilon(it.brush.size, epsilon)), it.inputs) },
                 )
             }
             post {
@@ -1594,7 +1621,7 @@ class InkCanvasView @JvmOverloads constructor(
                 is Edit.Erased ->
                     edit.strokes = edit.strokes.map { replacements[it] ?: it }
                 // Pictures are not rebuilt when a page is re-tessellated.
-                is Edit.ImageAdded, is Edit.ImageRemoved -> Unit
+                is Edit.ImageAdded, is Edit.ImageRemoved, is Edit.ImageReplaced -> Unit
                 is Edit.MaskAdded, is Edit.MaskRemoved -> Unit
                 is Edit.Moved -> {
                     edit.before = edit.before.map { replacements[it] ?: it }
@@ -1632,6 +1659,17 @@ class InkCanvasView @JvmOverloads constructor(
 
     // ---- PDF text selection -------------------------------------------------
 
+    @Volatile private var selectionSerial = 0
+
+    private fun requestSelection(source: PdfSource, pdfPage: Int, start: RectF, end: RectF) {
+        val serial = ++selectionSerial
+        refiner.execute {
+            if (serial != selectionSerial) return@execute
+            val found = source.select(pdfPage, start, end)
+            post { if (serial == selectionSerial) setSelection(found) }
+        }
+    }
+
     /**
      * The hold won: throw away the stroke it started and select the word under
      * the pen instead.
@@ -1646,8 +1684,7 @@ class InkCanvasView @JvmOverloads constructor(
 
         val point = pageLocal(pressX, pressY, index)
         selectionAnchor = point
-        val found = source.select(document.pages[index].pdfPageIndex, point, point) ?: return
-        setSelection(found)
+        requestSelection(source, document.pages[index].pdfPageIndex, point, point)
         performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
     }
 
@@ -1658,8 +1695,7 @@ class InkCanvasView @JvmOverloads constructor(
         val anchor = selectionAnchor ?: return
         if (index !in document.pages.indices) return
         val point = pageLocal(event.getX(pointerIndex), event.getY(pointerIndex), index)
-        val found = source.select(document.pages[index].pdfPageIndex, anchor, point) ?: return
-        setSelection(found)
+        requestSelection(source, document.pages[index].pdfPageIndex, anchor, point)
     }
 
     private fun setSelection(found: PdfSelection?) {
@@ -1669,6 +1705,7 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     fun clearSelection() {
+        selectionSerial++
         if (selection == null) return
         selectionAnchor = null
         setSelection(null)
@@ -1678,12 +1715,12 @@ class InkCanvasView @JvmOverloads constructor(
      * Turns the selected text boxes into real highlighter strokes, so a
      * highlight is ink on the page like any other and needs no new file format.
      */
-    fun highlightSelection() {
+    fun highlightSelection(color: Int = 0x66F9A825) {
         val found = selection ?: return
         val page = document.pages.getOrNull(selectingPage) ?: return
         val brush = Brush.createWithColorIntArgb(
             family = Tool.HIGHLIGHTER.brushFamily(),
-            colorIntArgb = (colorArgb and 0x00FFFFFF) or HIGHLIGHT_ALPHA,
+            colorIntArgb = color,
             size = 1f,
             epsilon = epsilonFor(currentScale()),
         )
@@ -1708,7 +1745,7 @@ class InkCanvasView @JvmOverloads constructor(
      * The same selected boxes as [highlightSelection], but as tape rather than
      * ink: opaque, and on the mask list so it can be tapped up again later.
      */
-    fun maskSelection() {
+    fun maskSelection(color: Int = PageMask.DEFAULT_MASK_COLOR) {
         val found = selection ?: return
         val page = document.pages.getOrNull(selectingPage) ?: return
         val brush = Brush.createWithColorIntArgb(
@@ -1716,7 +1753,7 @@ class InkCanvasView @JvmOverloads constructor(
             // Full alpha regardless of what the mask tool is set to: a strip
             // that only covers what the selection already showed through would
             // not be covering anything.
-            colorIntArgb = (colorArgb and 0x00FFFFFF) or MASK_OPAQUE,
+            colorIntArgb = (color and 0x00FFFFFF) or MASK_OPAQUE,
             size = 1f,
             epsilon = epsilonFor(currentScale()),
         )
@@ -2050,6 +2087,30 @@ class InkCanvasView @JvmOverloads constructor(
         afterEdit(page)
     }
 
+    fun selectedTextBox(): PageImage? = selectedImage?.takeIf { it.textContent != null }
+
+    fun putTextBox(imageId: String, bitmapWidth: Int, bitmapHeight: Int, content: TextBoxContent,
+        replacing: PageImage? = null, at: Triple<Int, Float, Float>? = null) {
+        val page = if (replacing != null) document.pages.firstOrNull { replacing in it.images } ?: return
+            else document.pages.getOrNull(at?.first ?: currentPage) ?: return
+        val boxWidth = bitmapWidth / 2f
+        val boxHeight = bitmapHeight / 2f
+        val image = PageImage(imageId, replacing?.x ?: at?.second ?: (page.width - boxWidth).coerceAtLeast(0f) / 2f,
+            replacing?.y ?: at?.third ?: (page.height - boxHeight).coerceAtLeast(0f) / 2f,
+            boxWidth, boxHeight, content)
+        if (replacing != null) {
+            val at = page.images.indexOf(replacing)
+            page.images[at] = image
+            undoStack += Edit.ImageReplaced(page, replacing, image, at)
+        } else {
+            page.images += image
+            undoStack += Edit.ImageAdded(page, image)
+        }
+        redoStack.clear()
+        select(image, page)
+        afterEdit(page)
+    }
+
     fun deleteSelectedImage() {
         val image = selectedImage ?: return
         val page = selectedImagePage ?: return
@@ -2065,11 +2126,10 @@ class InkCanvasView @JvmOverloads constructor(
     fun clearImageSelection() = select(null, null)
 
     private fun select(image: PageImage?, page: Page?) {
-        val had = selectedImage != null
         selectedImage = image
         selectedImagePage = page
         dry.invalidate()
-        if (had != (image != null)) onImageSelected?.invoke(image != null)
+        onImageSelected?.invoke(image != null)
     }
 
     private fun beginImageGesture(event: MotionEvent, index: Int) {
@@ -2086,6 +2146,9 @@ class InkCanvasView @JvmOverloads constructor(
         }
         if (hit == null) {
             select(null, null)
+            // Open the editor only after the stylus lifts, so the dialog cannot
+            // steal ACTION_UP and leave the canvas stuck in an active gesture.
+            if (textMode) pendingTextPlacement = Triple(index, x, y)
             return
         }
         select(hit, page)

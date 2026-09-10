@@ -29,6 +29,7 @@ class PageImage(
     var y: Float = 0f,
     var width: Float = 0f,
     var height: Float = 0f,
+    val textContent: TextBoxContent? = null,
 )
 
 /**
@@ -189,6 +190,8 @@ class Document(val pages: MutableList<Page>) {
 }
 
 /** A note as the list screen needs it, without loading any ink. */
+enum class NoteKind { INK, MARKDOWN }
+
 data class NoteMeta(
     val id: String,
     val title: String,
@@ -200,6 +203,7 @@ data class NoteMeta(
     /** Which folder it sits in. Blank is the top level, which is where notes
      *  start and where they go back to if their folder is emptied out. */
     val folder: String = "",
+    val kind: NoteKind = NoteKind.INK,
 )
 
 /**
@@ -265,6 +269,65 @@ class NoteStore(context: Context) {
         return NoteMeta(id, title, System.currentTimeMillis(), 1, 0)
     }
 
+    fun createMarkdown(title: String, text: String = "", folder: String = ""): NoteMeta {
+        val id = UUID.randomUUID().toString()
+        val dir = File(root, id).apply { mkdirs() }
+        try {
+            atomicText(File(dir, "note.md"), text)
+            atomicText(File(dir, "meta.json"), JSONObject()
+                .put("title", title).put("kind", NoteKind.MARKDOWN.name)
+                .put("modified", System.currentTimeMillis()).put("folder", folder)
+                .put("pages", JSONArray()).toString())
+            return readMeta(dir) ?: error("노트를 만들지 못했습니다")
+        } catch (error: Exception) {
+            dir.deleteRecursively()
+            throw error
+        }
+    }
+
+    fun loadMarkdown(id: String): String = File(root, "$id/note.md").readText(Charsets.UTF_8)
+
+    fun exportMarkdown(id: String, out: java.io.OutputStream): Boolean = runCatching {
+        out.bufferedWriter(Charsets.UTF_8).use { it.write(loadMarkdown(id)) }
+        true
+    }.getOrDefault(false)
+
+    /** Loads and writes use the same queue, so reopening never races an exit save. */
+    fun loadMarkdownLater(id: String, done: (Result<String>) -> Unit) {
+        saveWorker.execute {
+            val result = runCatching { loadMarkdown(id) }
+            mainHandler.post { done(result) }
+        }
+    }
+
+    fun saveMarkdownLater(id: String, title: String, text: String, done: (Result<Unit>) -> Unit = {}) {
+        saveWorker.execute {
+            val result = runCatching { saveMarkdown(id, title, text) }
+            mainHandler.post { done(result) }
+        }
+    }
+
+    internal fun saveMarkdown(id: String, title: String, text: String) {
+        val metaFile = File(root, "$id/meta.json")
+        val meta = JSONObject(metaFile.readText())
+        check(meta.optString("kind") == NoteKind.MARKDOWN.name)
+        atomicText(File(root, "$id/note.md"), text)
+        meta.put("title", title).put("modified", System.currentTimeMillis())
+        atomicText(metaFile, meta.toString())
+    }
+
+    private fun atomicText(file: File, text: String) {
+        val atomic = android.util.AtomicFile(file)
+        val output = atomic.startWrite()
+        try {
+            output.write(text.toByteArray(Charsets.UTF_8))
+            atomic.finishWrite(output)
+        } catch (error: Throwable) {
+            atomic.failWrite(output)
+            throw error
+        }
+    }
+
     /**
      * Copies the PDF into the note - the picked Uri is a loan, and a note that
      * stops rendering because the original moved is not a note.
@@ -315,6 +378,8 @@ class NoteStore(context: Context) {
         val needle = query.trim()
         if (needle.isEmpty()) return list()
         return list().filter { meta ->
+            if (meta.kind == NoteKind.MARKDOWN) return@filter meta.title.contains(needle, true) ||
+                runCatching { loadMarkdown(meta.id).contains(needle, true) }.getOrDefault(false)
             ensureTextIndex(meta.id)
             meta.title.contains(needle, ignoreCase = true) || textContains(meta.id, needle)
         }
@@ -428,13 +493,8 @@ class NoteStore(context: Context) {
             page.dirty = false
             if (index == 0) firstPageChanged = true
         }
-        // A picture left behind by an undo, or by a deleted page, is dead weight
-        // in the note directory - only what a page still points at survives.
-        val liveImages = document.pages.flatMap { page -> page.images.map { "${it.id}.png" } }
-            .toSet()
-        File(root, "$id/images").listFiles()?.forEach {
-            if (it.name !in liveImages) it.delete()
-        }
+        // Image versions may still belong to undo/redo history. Keep their files:
+        // autosave must not delete the previous version of an editable text box.
         // A page that was deleted this session leaves its file behind otherwise.
         val live = document.pages
             .flatMap {
@@ -478,7 +538,7 @@ class NoteStore(context: Context) {
                 background = live.background,
                 pdfPageIndex = live.pdfPageIndex,
                 images = live.images.map { image ->
-                    PageImage(image.id, image.x, image.y, image.width, image.height)
+                    PageImage(image.id, image.x, image.y, image.width, image.height, image.textContent)
                 }.toMutableList(),
                 masks = live.masks.map { mask ->
                     PageMask(mask.stroke).also { it.revealed = mask.revealed }
@@ -525,7 +585,9 @@ class NoteStore(context: Context) {
                     .put("x", image.x.toDouble())
                     .put("y", image.y.toDouble())
                     .put("w", image.width.toDouble())
-                    .put("h", image.height.toDouble()),
+                    .put("h", image.height.toDouble())
+                    .put("text", image.textContent?.let { content -> JSONObject()
+                        .put("value", content.text).put("size", content.size.toDouble()).put("color", content.color) }),
             )
         }
         return array
@@ -542,6 +604,10 @@ class NoteStore(context: Context) {
                 y = item.optDouble("y").toFloat(),
                 width = item.optDouble("w").toFloat(),
                 height = item.optDouble("h").toFloat(),
+                textContent = item.optJSONObject("text")?.let { content ->
+                    TextBoxContent(content.optString("value"), content.optDouble("size", 32.0).toFloat(),
+                        content.optInt("color", 0xFF000000.toInt()))
+                },
             )
         }
         return images
@@ -848,6 +914,7 @@ class NoteStore(context: Context) {
                 strokeCount = json.optInt("strokeCount"),
                 thumbnail = thumbnailOf(dir),
                 folder = json.optString("folder", ""),
+                kind = if (json.optString("kind") == NoteKind.MARKDOWN.name) NoteKind.MARKDOWN else NoteKind.INK,
             )
         }.getOrNull()
     }
@@ -935,7 +1002,7 @@ class NoteStore(context: Context) {
                             tool.brushFamily(),
                             color,
                             size,
-                            epsilon,
+                            strokeEpsilon(size, epsilon),
                         ),
                         inputs,
                     )

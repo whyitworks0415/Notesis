@@ -2,6 +2,7 @@ package com.notesis
 
 import android.content.Context
 import org.json.JSONObject
+import org.json.JSONArray
 
 /**
  * How one tool is set: what it draws with, in what colour, how thick. Colour
@@ -38,6 +39,46 @@ data class PenPreset(
 class PenStore(context: Context) {
 
     private val prefs = context.getSharedPreferences("pens", Context.MODE_PRIVATE)
+
+    var toolbarSize: Int
+        get() = prefs.getInt("toolbarSize", 0).coerceIn(0, 3)
+        set(value) = prefs.edit().putInt("toolbarSize", value.coerceIn(0, 3)).apply()
+
+    var homeColor: Int?
+        get() = if (prefs.contains("homeColor")) prefs.getInt("homeColor", 0) else null
+        set(value) { if (value == null) prefs.edit().remove("homeColor").apply()
+            else prefs.edit().putInt("homeColor", value).apply() }
+
+    var homePhoto: String?
+        get() = prefs.getString("homePhoto", null)
+        set(value) = prefs.edit().putString("homePhoto", value).apply()
+
+    fun favoriteWidths(mode: EditMode): List<Float> = runCatching {
+        val array = JSONArray(prefs.getString("widths:$mode", "[]"))
+        (0 until array.length()).map { array.getDouble(it).toFloat() }
+            .filter { it.isFinite() && it in widthRange(mode) }.distinct().sorted()
+    }.getOrDefault(emptyList())
+
+    fun saveFavoriteWidths(mode: EditMode, widths: List<Float>) {
+        prefs.edit().putString("widths:$mode", JSONArray(widths.distinct().sorted()).toString()).apply()
+    }
+
+    fun colorTemplates(): List<Pair<String, List<Int>>> = runCatching {
+        val array = JSONArray(prefs.getString("colorTemplates", "[]"))
+        (0 until array.length()).map { index ->
+            val item = array.getJSONObject(index)
+            val colors = item.getJSONArray("colors")
+            item.getString("name") to (0 until colors.length()).map { colors.getInt(it) }
+        }
+    }.getOrDefault(emptyList())
+
+    fun saveColorTemplates(templates: List<Pair<String, List<Int>>>) {
+        val array = JSONArray()
+        templates.forEach { (name, colors) ->
+            array.put(JSONObject().put("name", name).put("colors", JSONArray(colors)))
+        }
+        prefs.edit().putString("colorTemplates", array.toString()).apply()
+    }
 
     /** How the chrome is dressed. Material until someone says otherwise. */
     var skin: Skin
@@ -90,9 +131,11 @@ class PenStore(context: Context) {
                 mode to PenPreset(
                     tool = fallback.tool,
                     colorArgb = item.optInt("color", fallback.colorArgb),
-                    width = item.optDouble("width", fallback.width.toDouble()).toFloat(),
+                    width = item.optDouble("width", fallback.width.toDouble()).toFloat()
+                        .takeIf { it.isFinite() }?.coerceIn(widthRange(mode)) ?: fallback.width,
                     pressure = item.optBoolean("pressure", fallback.pressure),
-                    maxWidth = item.optDouble("maxWidth", fallback.maxWidth.toDouble()).toFloat(),
+                    maxWidth = item.optDouble("maxWidth", fallback.maxWidth.toDouble()).toFloat()
+                        .takeIf { it.isFinite() }?.coerceIn(0f, widthRange(mode).endInclusive) ?: 0f,
                 )
             }.toMap()
         }.getOrNull().orEmpty()
@@ -133,15 +176,15 @@ class PenStore(context: Context) {
             // the pen on ACTION_DOWN instead of waiting for a move segment.
             EditMode.ERASE -> 1f..240f
             EditMode.HIGHLIGHTER, EditMode.MASK -> 1f..180f
-            else -> 0.25f..80f
+            else -> 0.25f..12f
         }
 
         /** The same range with the tool's own ceiling, when one has been set. */
         fun widthRange(mode: EditMode, pen: PenPreset?): ClosedFloatingPointRange<Float> {
             val base = widthRange(mode)
             val top = pen?.maxWidth ?: 0f
-            if (top <= base.start) return base
-            return base.start..top
+            if (!top.isFinite() || top <= base.start) return base
+            return base.start..top.coerceAtMost(base.endInclusive)
         }
 
         /**
@@ -152,8 +195,8 @@ class PenStore(context: Context) {
             val full = widthRange(mode).endInclusive
             return listOf(
                 "얇게" to full / 3f,
-                "기본" to full,
-                "굵게" to full * 3f,
+                "중간" to full * 2f / 3f,
+                "최대" to full,
             )
         }
 

@@ -81,6 +81,7 @@ import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -154,6 +155,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.setValue
@@ -285,6 +287,14 @@ class MainActivity : ComponentActivity() {
                         onOpenDocument = { pickedDocument = it },
                         onOpen = { openNote = it },
                     )
+                } else if (note.kind == NoteKind.MARKDOWN) {
+                    key(note.id) {
+                        MarkdownNoteScreen(
+                            store = store,
+                            note = note,
+                            onBack = { openNote = null },
+                        )
+                    }
                 } else {
                     // Keyed, so jumping straight to another note builds a
                     // fresh screen instead of showing the old document until
@@ -368,6 +378,7 @@ private fun NoteListScreen(
     var importing by remember { mutableStateOf(false) }
     // Which note is being written out, and whether as a PDF rather than a backup.
     var exporting by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
+    var markdownExportId by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf<String?>(null) }
     var report by remember { mutableStateOf<String?>(null) }
     var importFailed by remember { mutableStateOf(false) }
@@ -375,6 +386,13 @@ private fun NoteListScreen(
     var results by remember { mutableStateOf<List<NoteMeta>?>(null) }
     // Which note the image picker, once it comes back, belongs to.
     var thumbnailFor by remember { mutableStateOf<NoteMeta?>(null) }
+    val homeStore = remember { PenStore(context) }
+    var homeRevision by remember { mutableIntStateOf(0) }
+    var showHomeBackground by remember { mutableStateOf(false) }
+    val homeColor = remember(homeRevision) { homeStore.homeColor }
+    val homePhoto = remember(homeRevision) { homeStore.homePhoto }
+    if (showHomeBackground) HomeBackgroundDialog(homeStore,
+        onChanged = { homeRevision++ }, onDismiss = { showHomeBackground = false })
 
     val openDocument = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
@@ -387,6 +405,25 @@ private fun NoteListScreen(
             )
         }
         onOpenDocument(viewerRequest(context, uri))
+    }
+
+    val importMarkdown = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val imported = withContext(Dispatchers.IO) {
+                runCatching {
+                    val title = displayName(context, uri).removeSuffix(".md").removeSuffix(".markdown")
+                    val text = context.contentResolver.openInputStream(uri)?.use {
+                        it.readBytes().toString(Charsets.UTF_8)
+                    } ?: error("파일을 읽을 수 없습니다")
+                    store.createMarkdown(title.ifBlank { "Markdown 노트" }, text)
+                }.getOrNull()
+            }
+            if (imported == null) report = "Markdown 파일을 가져오지 못했습니다"
+            else { revision++; onOpen(imported) }
+        }
     }
 
     val pickThumbnail = rememberLauncherForActivityResult(
@@ -478,6 +515,20 @@ private fun NoteListScreen(
         }
     }
 
+    val saveMarkdown = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/markdown"),
+    ) { uri: Uri? ->
+        val target = markdownExportId
+        markdownExportId = null
+        if (uri == null || target == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                context.contentResolver.openOutputStream(uri)?.use { store.exportMarkdown(target, it) } ?: false
+            }
+            report = if (ok) "Markdown 파일을 저장했습니다" else "Markdown으로 내보내지 못했습니다"
+        }
+    }
+
     val openArchive = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri: Uri? ->
@@ -541,6 +592,9 @@ private fun NoteListScreen(
             SkinSurface(flush = true) {
             TopAppBar(
                 actions = {
+                    IconButton(onClick = { showHomeBackground = true }) {
+                        Icon(Icons.Default.Image, contentDescription = "노트 목록 배경")
+                    }
                     IconButton(onClick = onSettings) {
                         Icon(Icons.Default.Tune, contentDescription = "화면 설정")
                     }
@@ -607,6 +661,12 @@ private fun NoteListScreen(
                     modifier = Modifier.padding(bottom = 12.dp),
                 )
                 GlassFab(
+                    onClick = { importMarkdown.launch(arrayOf("text/markdown", "text/plain", "application/octet-stream")) },
+                    icon = Icons.Default.Description,
+                    contentDescription = "Markdown 가져오기",
+                    modifier = Modifier.padding(bottom = 12.dp),
+                )
+                GlassFab(
                     onClick = { naming = true },
                     icon = Icons.Default.Add,
                     contentDescription = "새 노트",
@@ -631,8 +691,9 @@ private fun NoteListScreen(
                     },
                 )
                 // Opaque, so the frost replaces the page rather than adding to it.
-                .background(MaterialTheme.colorScheme.surface),
+                .background(homeColor?.let { Color(it) } ?: MaterialTheme.colorScheme.surface),
         ) {
+        HomeBackground(homePhoto)
         if (shown.isEmpty()) {
             Box(
                 Modifier
@@ -694,6 +755,12 @@ private fun NoteListScreen(
                             exporting = note.id to true
                             savePdf.launch(safeFileName(note.title) + ".pdf")
                         },
+                        onExportMarkdown = if (note.kind == NoteKind.MARKDOWN) {
+                            {
+                                markdownExportId = note.id
+                                saveMarkdown.launch(safeFileName(note.title) + ".md")
+                            }
+                        } else null,
                         onFile = { filing = note },
                         onIndex = {
                             busy = "필기를 읽는 중"
@@ -775,9 +842,13 @@ private fun NoteListScreen(
     if (naming) {
         NameDialog(
             onDismiss = { naming = false },
-            onConfirm = { title ->
+            onConfirm = { title, kind ->
                 naming = false
-                onOpen(store.create(title.ifBlank { "제목 없음" }))
+                onOpen(if (kind == NoteKind.MARKDOWN) {
+                    store.createMarkdown(title.ifBlank { "제목 없음" }, "# ${title.ifBlank { "제목 없음" }}\n\n")
+                } else {
+                    store.create(title.ifBlank { "제목 없음" })
+                })
             },
         )
     }
@@ -824,6 +895,7 @@ private fun NoteCard(
     onClearThumbnail: () -> Unit,
     onExport: () -> Unit,
     onExportPdf: () -> Unit,
+    onExportMarkdown: (() -> Unit)?,
     onIndex: () -> Unit,
     onFile: () -> Unit,
 ) {
@@ -892,7 +964,7 @@ private fun NoteCard(
             ) {
                 Column(Modifier.weight(1f)) {
                     Text(
-                        note.title,
+                        if (note.kind == NoteKind.MARKDOWN) "${note.title} · MD" else note.title,
                         style = MaterialTheme.typography.titleSmall,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -920,6 +992,16 @@ private fun NoteCard(
                                 onPickThumbnail()
                             },
                         )
+                        if (onExportMarkdown != null) {
+                            DropdownMenuItem(
+                                text = { Text(".md 파일로 내보내기") },
+                                leadingIcon = { Icon(Icons.Default.Description, contentDescription = null) },
+                                onClick = {
+                                    menuOpen = false
+                                    onExportMarkdown()
+                                },
+                            )
+                        }
                         if (hasCustomThumbnail) {
                             DropdownMenuItem(
                                 text = { Text("첫 페이지로 되돌리기") },
@@ -1297,7 +1379,7 @@ private fun PenDialog(
         onDismissRequest = onDismiss,
         title = { Text(toolLabel(mode)) },
         text = {
-            Column {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 SaturationValueField(hue, saturation, value) { s, v ->
                     saturation = s
                     value = v
@@ -1377,7 +1459,7 @@ private fun PenDialog(
                     // was living in a fifth of the track.
                     for ((label, ceiling) in PenStore.widthCeilings(mode)) {
                         val chosen = kotlin.math.abs(range.endInclusive - ceiling) < 0.01f
-                        TextButton(onClick = { maxWidth = ceiling }) {
+                        TextButton(onClick = { maxWidth = ceiling; width = width.coerceAtMost(ceiling) }) {
                             Text(
                                 label,
                                 style = MaterialTheme.typography.labelMedium,
@@ -1389,6 +1471,10 @@ private fun PenDialog(
                             )
                         }
                     }
+                }
+                WidthControls(mode, width) {
+                    width = it
+                    if (it > range.endInclusive) maxWidth = it
                 }
                 SkinSlider(
                     value = width.coerceIn(range),
@@ -1452,17 +1538,18 @@ internal fun SaturationValueField(
     value: Float,
     onChange: (Float, Float) -> Unit,
 ) {
+    val currentOnChange by rememberUpdatedState(onChange)
     Canvas(
         Modifier
             .fillMaxWidth()
             .height(150.dp)
             .clip(RoundedCornerShape(10.dp))
             .pointerInput(Unit) {
-                detectTapGestures { emitSv(it, size.width, size.height, onChange) }
+                detectTapGestures { emitSv(it, size.width, size.height, currentOnChange) }
             }
             .pointerInput(Unit) {
                 detectDragGestures { change, _ ->
-                    emitSv(change.position, size.width, size.height, onChange)
+                    emitSv(change.position, size.width, size.height, currentOnChange)
                 }
             },
     ) {
@@ -1489,17 +1576,18 @@ internal fun GradientStrip(
     position: Float,
     onChange: (Float) -> Unit,
 ) {
+    val currentOnChange by rememberUpdatedState(onChange)
     Canvas(
         Modifier
             .fillMaxWidth()
             .height(26.dp)
             .clip(RoundedCornerShape(13.dp))
             .pointerInput(Unit) {
-                detectTapGestures { onChange((it.x / size.width).coerceIn(0f, 1f)) }
+                detectTapGestures { currentOnChange((it.x / size.width).coerceIn(0f, 1f)) }
             }
             .pointerInput(Unit) {
                 detectDragGestures { change, _ ->
-                    onChange((change.position.x / size.width).coerceIn(0f, 1f))
+                    currentOnChange((change.position.x / size.width).coerceIn(0f, 1f))
                 }
             },
     ) {
@@ -1584,15 +1672,24 @@ private fun AiButton(onWeb: (String) -> Unit) {
  */
 @Composable
 private fun PaletteDialog(onDismiss: () -> Unit, onPick: (Int) -> Unit) {
+    val context = LocalContext.current
+    val store = remember { PenStore(context) }
+    var custom by remember { mutableStateOf(store.colorTemplates()) }
+    var adding by remember { mutableStateOf(false) }
+    if (adding) TemplateEditor(onDismiss = { adding = false }, onSave = { name, colors ->
+        custom = custom + (name to colors)
+        store.saveColorTemplates(custom)
+        adding = false
+    })
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("색상 템플릿") },
         text = {
-            Column {
-                for ((name, colors) in COLOR_TEMPLATES) {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                for ((name, colors) in COLOR_TEMPLATES + custom) {
                     Text(name, style = MaterialTheme.typography.labelMedium)
                     Spacer(Modifier.height(6.dp))
-                    Row {
+                    Row(Modifier.horizontalScroll(rememberScrollState())) {
                         for (rgb in colors) {
                             Box(
                                 Modifier
@@ -1605,10 +1702,15 @@ private fun PaletteDialog(onDismiss: () -> Unit, onPick: (Int) -> Unit) {
                             )
                         }
                     }
+                    if ((name to colors) in custom) TextButton(onClick = {
+                        custom = custom - (name to colors)
+                        store.saveColorTemplates(custom)
+                    }) { Text("템플릿 삭제") }
                     Spacer(Modifier.height(14.dp))
                 }
             }
         },
+        dismissButton = { TextButton(onClick = { adding = true }) { Text("+ 템플릿 추가") } },
         confirmButton = { TextButton(onClick = onDismiss) { Text("닫기") } },
     )
 }
@@ -1920,20 +2022,34 @@ private fun asUrl(text: String): String {
 }
 
 @Composable
-private fun NameDialog(onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+private fun NameDialog(onDismiss: () -> Unit, onConfirm: (String, NoteKind) -> Unit) {
     var title by remember { mutableStateOf("") }
+    var kind by remember { mutableStateOf(NoteKind.INK) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("새 노트") },
         text = {
-            OutlinedTextField(
-                value = title,
-                onValueChange = { title = it },
-                singleLine = true,
-                label = { Text("이름") },
-            )
+            Column {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    singleLine = true,
+                    label = { Text("이름") },
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    FilterChip(selected = kind == NoteKind.INK, onClick = { kind = NoteKind.INK }, label = { Text("필기 노트") })
+                    Spacer(Modifier.width(8.dp))
+                    FilterChip(selected = kind == NoteKind.MARKDOWN, onClick = { kind = NoteKind.MARKDOWN }, label = { Text("Markdown (.md)") })
+                }
+                Text(
+                    if (kind == NoteKind.MARKDOWN) "Obsidian에서 열 수 있는 note.md 파일로 저장됩니다." else "펜과 텍스트 상자를 사용하는 종이 노트입니다.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline,
+                )
+            }
         },
-        confirmButton = { TextButton(onClick = { onConfirm(title) }) { Text("만들기") } },
+        confirmButton = { TextButton(onClick = { onConfirm(title, kind) }) { Text("만들기") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
     )
 }
@@ -1949,7 +2065,7 @@ private val ChromeInsets: WindowInsets
  * What the pen does when it lands. One thing at a time, by construction, and
  * each one remembers its own colour and thickness rather than sharing a tray.
  */
-enum class EditMode { PEN, HIGHLIGHTER, MASK, LASSO, SHAPE, IMAGE, ERASE, READ, CAPTURE }
+enum class EditMode { PEN, HIGHLIGHTER, MASK, LASSO, SHAPE, IMAGE, ERASE, READ, CAPTURE, TEXT }
 
 /** Whether this mode puts something on the page in the tool's own colour. */
 private val EditMode.tints: Boolean
@@ -1994,6 +2110,9 @@ private fun NoteScreen(
     }
     var fullscreen by remember { mutableStateOf(false) }
     var imageSelected by remember { mutableStateOf(false) }
+    var showTextBox by remember { mutableStateOf(false) }
+    var replacingText by remember { mutableStateOf<PageImage?>(null) }
+    var textPosition by remember { mutableStateOf<Triple<Int, Float, Float>?>(null) }
     var captured by remember { mutableStateOf<Bitmap?>(null) }
     /** The site the side panel is showing, or null while it is closed. */
     var webUrl by remember { mutableStateOf<String?>(null) }
@@ -2026,7 +2145,9 @@ private fun NoteScreen(
     }
     // Folded away, the bar becomes a handle that can be dragged; unfolding puts
     // it back wherever that handle was left, which is the point of moving it.
-    var collapsed by remember { mutableStateOf(false) }
+    var toolbarSize by remember { mutableIntStateOf(penStore.toolbarSize) }
+    val collapsed = toolbarSize == 3
+    fun setToolbarSize(size: Int) { toolbarSize = size; penStore.toolbarSize = size }
     // Flush against the top edge, or floating over the page. Kept in
     // preferences: where the toolbar sits is a habit, not a per-note choice.
     var docked by remember { mutableStateOf(penStore.docked) }
@@ -2128,7 +2249,16 @@ private fun NoteScreen(
     var canvas by remember { mutableStateOf<InkCanvasView?>(null) }
     var latencyText by remember { mutableStateOf("") }
     var selectedText by remember { mutableStateOf<String?>(null) }
+    var selectedPdf by remember { mutableStateOf<PdfSelection?>(null) }
+    var selectionPreview by remember { mutableStateOf<Bitmap?>(null) }
+    var selectionColorMode by remember { mutableStateOf<EditMode?>(null) }
     var opened by remember { mutableStateOf<Pair<Document, PdfSource?>?>(null) }
+    LaunchedEffect(selectedPdf) {
+        selectionPreview = null
+        val selected = selectedPdf ?: return@LaunchedEffect
+        delay(120)
+        selectionPreview = withContext(Dispatchers.IO) { opened?.second?.renderSelection(selected) }
+    }
     val clipboard = LocalClipboardManager.current
     var showPalette by remember { mutableStateOf(false) }
 
@@ -2274,8 +2404,17 @@ private fun NoteScreen(
                 mode = EditMode.SHAPE
             },
             onPickImage = { pickImage.launch("image/*") },
+            onText = {
+                if (mode == EditMode.TEXT) { replacingText = null; textPosition = null; showTextBox = true }
+                mode = EditMode.TEXT
+                canvas?.clearSelection()
+            },
+            onAddText = { replacingText = null; textPosition = null; showTextBox = true; mode = EditMode.TEXT },
             onWeb = { webUrl = it },
-            onWidth = { settings = settings + (mode to pen.copy(width = it)) },
+            onWidth = {
+                settings = settings + (mode to pen.copy(width = it,
+                    maxWidth = if (pen.maxWidth > 0f) maxOf(pen.maxWidth, it) else 0f))
+            },
             onUndo = {
                 canvas?.undo()
                 edits++
@@ -2289,7 +2428,9 @@ private fun NoteScreen(
             onToggleFullscreen = { fullscreen = !fullscreen },
             onToggleLatency = { showLatency = !showLatency },
             onTogglePages = { showPages = !showPages },
-            onCollapse = { collapsed = true },
+            onCollapse = { setToolbarSize((toolbarSize + 1).coerceAtMost(3)) },
+            sizeLevel = toolbarSize,
+            onSizeLevel = { setToolbarSize(it) },
             onOpenNote = onOpenNote,
             onBack = onBack,
             pageLabel = "${currentPage + 1} / $pageCount",
@@ -2396,8 +2537,11 @@ private fun NoteScreen(
                             penStore.setLastPage(note.id, it)
                         }
                         onZoomChanged = { zoom = it }
-                        onSelectionChanged = { selectedText = it?.text }
-                        onImageSelected = { imageSelected = it }
+                        onSelectionChanged = { selectedText = it?.text; selectedPdf = it }
+                        onImageSelected = { imageSelected = it; edits++ }
+                        onTextRequested = { page, x, y ->
+                            replacingText = null; textPosition = Triple(page, x, y); showTextBox = true
+                        }
                         onLassoSelected = { lassoCount = it }
                         imageLoader = { imageId ->
                             imageCache.get(imageId) ?: runCatching {
@@ -2432,7 +2576,8 @@ private fun NoteScreen(
                             ShapeKind.LINE
                         else -> null
                     }
-                    view.imageMode = mode == EditMode.IMAGE
+                    view.textMode = mode == EditMode.TEXT
+                    view.imageMode = mode == EditMode.IMAGE || mode == EditMode.TEXT
                     view.captureMode = mode == EditMode.CAPTURE
                     view.maskMode = mode == EditMode.MASK
                     view.lassoMode = mode == EditMode.LASSO
@@ -2577,7 +2722,7 @@ private fun NoteScreen(
                     .padding(12.dp),
             ) {
                 CollapsedToolbar(
-                    onExpand = { collapsed = false },
+                    onExpand = { setToolbarSize(0) },
                     onDrag = { delta ->
                         val at = barPlacement(barOffset, barSize, containerSize)
                         barOffset = Offset(at.x + delta.x, at.y + delta.y)
@@ -2604,6 +2749,7 @@ private fun NoteScreen(
                 onDismiss = { editingPen = false },
                 onConfirm = { saved ->
                     settings = settings + (mode to saved)
+                    penStore.save(settings)
                     editingPen = false
                 },
             )
@@ -2673,8 +2819,32 @@ private fun NoteScreen(
             )
         }
 
+        if (showTextBox) TextBoxDialog(replacingText?.textContent,
+            onDismiss = { showTextBox = false }, onSave = { content ->
+                val replacing = replacingText
+                scope.launch {
+                    val result = withContext(Dispatchers.IO) { runCatching {
+                        val bitmap = renderTextBox(content)
+                        try {
+                            val image = store.addImage(note.id, bitmap) ?: error("텍스트를 저장하지 못했습니다")
+                            Triple(image.first, bitmap.width, bitmap.height)
+                        } finally { bitmap.recycle() }
+                    } }
+                    result.onSuccess { (id, width, height) ->
+                        canvas?.putTextBox(id, width, height, content, replacing, textPosition)
+                        mode = EditMode.TEXT
+                        edits++
+                        showTextBox = false
+                    }.onFailure {
+                        Toast.makeText(context, it.message ?: "텍스트를 저장하지 못했습니다", Toast.LENGTH_LONG).show()
+                    }
+                }
+            })
+
         if (imageSelected) {
             ImageActions(
+                isText = canvas?.selectedTextBox() != null,
+                onEdit = { replacingText = canvas?.selectedTextBox(); showTextBox = true },
                 onDelete = {
                     canvas?.deleteSelectedImage()
                     edits++
@@ -2684,19 +2854,33 @@ private fun NoteScreen(
             )
         }
 
+        selectionColorMode?.let { colorMode ->
+            PenDialog(mode = colorMode, pen = settings.getValue(colorMode),
+                prediction = prediction, onPrediction = { prediction = it; penStore.prediction = it },
+                deferDetail = deferDetail, onDeferDetail = { deferDetail = it; penStore.deferDetail = it },
+                onDismiss = { selectionColorMode = null }, onConfirm = {
+                    settings = settings + (colorMode to it)
+                    penStore.save(settings)
+                    selectionColorMode = null
+                })
+        }
         selectedText?.let { text ->
             SelectionActions(
-                text = text,
+                preview = selectionPreview,
+                highlightColor = settings.getValue(EditMode.HIGHLIGHTER).colorArgb,
+                maskColor = settings.getValue(EditMode.MASK).colorArgb,
+                onHighlightColor = { selectionColorMode = EditMode.HIGHLIGHTER },
+                onMaskColor = { selectionColorMode = EditMode.MASK },
                 onCopy = {
                     clipboard.setText(AnnotatedString(text))
                     canvas?.clearSelection()
                 },
                 onHighlight = {
-                    canvas?.highlightSelection()
+                    canvas?.highlightSelection(settings.getValue(EditMode.HIGHLIGHTER).colorArgb)
                     edits++
                 },
                 onMask = {
-                    canvas?.maskSelection()
+                    canvas?.maskSelection(settings.getValue(EditMode.MASK).colorArgb)
                     edits++
                 },
                 onDismiss = { canvas?.clearSelection() },
@@ -2887,6 +3071,8 @@ private fun LassoActions(
 /** Delete or let go of the picture in hand. */
 @Composable
 private fun ImageActions(
+    isText: Boolean,
+    onEdit: () -> Unit,
     onDelete: () -> Unit,
     onDone: () -> Unit,
     modifier: Modifier = Modifier,
@@ -2901,7 +3087,8 @@ private fun ImageActions(
             Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("사진", style = MaterialTheme.typography.bodyMedium)
+            Text(if (isText) "텍스트" else "사진", style = MaterialTheme.typography.bodyMedium)
+            if (isText) TextButton(onClick = onEdit) { Text("편집") }
             ToolbarDivider()
             TextButton(onClick = onDelete) {
                 Icon(Icons.Default.Delete, contentDescription = null)
@@ -3244,7 +3431,7 @@ private fun ReferencePanel(
                             v.readMode = mode == EditMode.READ
                             v.maskMode = mode == EditMode.MASK
                             v.lassoMode = mode == EditMode.LASSO
-                            v.imageMode = mode == EditMode.IMAGE
+                            v.imageMode = mode == EditMode.IMAGE || mode == EditMode.TEXT
                             v.shapeKind = when {
                                 mode == EditMode.SHAPE -> shapeKind
                                 straightLine &&
@@ -3279,7 +3466,11 @@ private fun ReferencePanel(
 /** What you can do with text lifted off a PDF page. */
 @Composable
 private fun SelectionActions(
-    text: String,
+    preview: Bitmap?,
+    highlightColor: Int,
+    maskColor: Int,
+    onHighlightColor: () -> Unit,
+    onMaskColor: () -> Unit,
     onCopy: () -> Unit,
     onHighlight: () -> Unit,
     onMask: () -> Unit,
@@ -3292,22 +3483,24 @@ private fun SelectionActions(
             .padding(20.dp),
     ) {
         Row(
-            Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                // Selected PDF text arrives with its line breaks; the chip is
-                // one line.
-                text.lineSequence().joinToString(" "),
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.width(220.dp),
-            )
+            if (preview != null) Image(preview.asImageBitmap(), "선택 영역 원본",
+                modifier = Modifier.width(220.dp).heightIn(max = 110.dp), contentScale = ContentScale.Fit)
+            else Text("선택 영역", modifier = Modifier.width(100.dp))
             ToolbarDivider()
+            TextButton(onClick = onHighlightColor) {
+                Box(Modifier.size(22.dp).background(Color(highlightColor or 0xFF000000.toInt()), CircleShape))
+                Text(" 색상")
+            }
             TextButton(onClick = onHighlight) {
                 Icon(Icons.Outlined.Brush, contentDescription = null)
                 Text(" 형광펜")
+            }
+            TextButton(onClick = onMaskColor) {
+                Box(Modifier.size(22.dp).background(Color(maskColor or 0xFF000000.toInt()), CircleShape))
+                Text(" 색상")
             }
             TextButton(onClick = onMask) {
                 Icon(Icons.Default.VisibilityOff, contentDescription = null)
@@ -3716,6 +3909,8 @@ private fun Toolbar(
     onMode: (EditMode) -> Unit,
     onShape: (ShapeKind) -> Unit,
     onPickImage: () -> Unit,
+    onText: () -> Unit,
+    onAddText: () -> Unit,
     onWeb: (String) -> Unit,
     onWidth: (Float) -> Unit,
     onUndo: () -> Unit,
@@ -3727,6 +3922,8 @@ private fun Toolbar(
     onToggleLatency: () -> Unit,
     onTogglePages: () -> Unit,
     onCollapse: () -> Unit,
+    sizeLevel: Int,
+    onSizeLevel: (Int) -> Unit,
     onOpenNote: (NoteMeta) -> Unit,
     onBack: () -> Unit,
     onPalette: () -> Unit,
@@ -3765,6 +3962,7 @@ private fun Toolbar(
                 )
                 .padding(horizontal = 8.dp, vertical = 1.dp),
         ) {
+            if (sizeLevel == 0) {
             // ---- top row: the note, and what is done to the whole of it
             Row(
                 // Docked the bar is the window and everything fits. Floating it
@@ -3869,6 +4067,7 @@ private fun Toolbar(
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
+            }
             // ---- bottom row: what the pen is doing right now
             Row(
                 Modifier
@@ -3878,7 +4077,16 @@ private fun Toolbar(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onCollapse) {
-                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "도구 숨기기")
+                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "도구막대 한 단계 줄이기")
+                }
+                ToolbarSizeButton(sizeLevel, onSizeLevel)
+                if (sizeLevel > 0) {
+                    IconButton(onClick = onUndo, enabled = canUndo) {
+                        Icon(Icons.AutoMirrored.Filled.Undo, "실행취소")
+                    }
+                    IconButton(onClick = onRedo, enabled = canRedo) {
+                        Icon(Icons.AutoMirrored.Filled.Redo, "다시실행")
+                    }
                 }
                 ToolButton(
                     Icons.Default.TouchApp,
@@ -3907,14 +4115,18 @@ private fun Toolbar(
                     pen,
                     onMode,
                 )
+                if (sizeLevel < 2) {
                 ToolChip(Icons.Default.Gesture, "올가미", EditMode.LASSO, mode, pen, onMode)
                 ShapeButton(mode == EditMode.SHAPE, shapeKind, onShape)
+                ToolButton(Icons.Default.TextFields, "텍스트 선택 · 다시 눌러 추가", mode == EditMode.TEXT, onClick = onText)
+                if (mode == EditMode.TEXT) TextButton(onClick = onAddText) { Text("+ 텍스트") }
                 ToolButton(
                     Icons.Default.AddPhotoAlternate,
                     "사진",
                     mode == EditMode.IMAGE,
                     onClick = onPickImage,
                 )
+                }
                 ToolButton(
                     Icons.Default.Delete,
                     "지우개",
@@ -3926,7 +4138,7 @@ private fun Toolbar(
                 // picker; the templates sit next to it.
                 if (mode.tints) {
                     PenChip(pen = pen, selected = true, onClick = onEditPen)
-                    IconButton(onClick = onPalette) {
+                    if (sizeLevel < 2) IconButton(onClick = onPalette) {
                         Icon(
                             Icons.Default.Palette,
                             contentDescription = "색상 템플릿",
@@ -3953,9 +4165,10 @@ private fun Toolbar(
                 // One slider, whichever tool is in hand, because it sets the
                 // thickness of that tool and no other. Two sliders would mean
                 // one of them is always the wrong one to reach for.
-                if (mode != EditMode.LASSO && mode != EditMode.IMAGE) {
+                if (mode in PenStore.DEFAULTS) {
                     val range = PenStore.widthRange(mode, pen)
-                    SkinSlider(
+                    FavoriteWidthButton(mode, pen.width, onWidth)
+                    if (sizeLevel < 2) SkinSlider(
                         value = pen.width.coerceIn(range),
                         onValueChange = onWidth,
                         valueRange = range,
@@ -3964,6 +4177,7 @@ private fun Toolbar(
                     ToolbarDivider()
                 }
 
+                if (sizeLevel < 2) {
                 IconButton(onClick = { onWeb(SEARCH_HOME) }) {
                     Icon(Icons.Default.Language, contentDescription = "인터넷")
                 }
@@ -3981,6 +4195,7 @@ private fun Toolbar(
                             MaterialTheme.colorScheme.outline
                         },
                     )
+                }
                 }
             }
         }
