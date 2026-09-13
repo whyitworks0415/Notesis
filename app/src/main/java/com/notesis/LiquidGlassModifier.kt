@@ -6,7 +6,6 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.database.ContentObserver
 import android.os.Build
-import android.graphics.RenderEffect
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
@@ -34,7 +33,6 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
@@ -49,8 +47,6 @@ import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.colorControls
 import com.kyant.backdrop.effects.lens
-import com.kyant.backdrop.effects.effect
-import com.kyant.backdrop.BackdropEffectScope
 
 /** 현재 화면 배경을 기록하는 Kyant Backdrop 레이어입니다. */
 val LocalLiquidGlassBackdrop = compositionLocalOf<KyantBackdrop?> { null }
@@ -143,7 +139,26 @@ fun Modifier.liquidGlass(
                 },
                 highlight = null,
                 shadow = null,
-                onDrawSurface = { drawRect(tint) },
+                onDrawSurface = {
+                    drawRect(tint)
+                    drawRect(
+                        Brush.verticalGradient(
+                            if (settings.refractionDirection == RefractionDirection.RAISED) {
+                                listOf(
+                                    Color.White.copy(alpha = 0.13f * amount),
+                                    Color.Transparent,
+                                    Color.Black.copy(alpha = 0.035f * amount),
+                                )
+                            } else {
+                                listOf(
+                                    Color.Black.copy(alpha = 0.055f * amount),
+                                    Color.Transparent,
+                                    Color.White.copy(alpha = 0.10f * amount),
+                                )
+                            },
+                        ),
+                    )
+                },
             )
         if (drawBorder) result = result.border(1.dp, borderColor, shape)
         return result
@@ -167,115 +182,21 @@ fun Modifier.liquidGlass(
     return result
 }
 
-/**
- * Backdrop 1.x 렌즈는 굴절 방향이 하나로 고정되어 있어 오목한 렌즈를 표현할
- * 수 없습니다. 같은 rounded-rect SDF를 쓰되 샘플 이동 부호를 설정으로 노출한
- * 앱 전용 렌즈입니다. 텍스트와 아이콘은 표면 뒤가 아니라 위에서 그려져 선명합니다.
- */
-private fun BackdropEffectScope.directionalLens(
+/** 기기별 셰이더 컴파일 차이가 없는 Backdrop 기본 렌즈를 사용하는 안전 경로입니다. */
+private fun com.kyant.backdrop.BackdropEffectScope.directionalLens(
     refractionHeight: Float,
     refractionAmount: Float,
     direction: RefractionDirection,
     depthEffect: Boolean,
     chromaticAberration: Boolean,
 ) {
-    if (Build.VERSION.SDK_INT < 33 || refractionHeight <= 0f || refractionAmount <= 0f) return
-    if (padding > 0f) padding = (padding - refractionHeight).coerceAtLeast(0f)
-
-    val radii = when (val outline = shape.createOutline(size, layoutDirection, this)) {
-        is Outline.Rounded -> outline.roundRect.let { rounded ->
-            floatArrayOf(
-                rounded.topLeftCornerRadius.x,
-                rounded.topRightCornerRadius.x,
-                rounded.bottomRightCornerRadius.x,
-                rounded.bottomLeftCornerRadius.x,
-            )
-        }
-        is Outline.Rectangle -> floatArrayOf(0f, 0f, 0f, 0f)
-        // 현재 앱 표면은 모두 원/rounded rect입니다. 새 임의 Path가 들어오면
-        // 잘못 자르는 대신 라이브러리의 안전한 기본 렌즈로 폴백합니다.
-        else -> {
-            lens(refractionHeight, refractionAmount, depthEffect, chromaticAberration)
-            return
-        }
-    }
-    val shader = obtainRuntimeShader(
-        "NotesisDirectionalRefraction${direction.name}",
-        DIRECTIONAL_REFRACTION_SHADER,
-    ).apply {
-        setFloatUniform("size", size.width, size.height)
-        setFloatUniform("offset", -padding, -padding)
-        setFloatUniform("cornerRadii", radii)
-        setFloatUniform("refractionHeight", refractionHeight)
-        setFloatUniform(
-            "refractionAmount",
-            refractionAmount * if (direction == RefractionDirection.RAISED) 1f else -1f,
-        )
-        setFloatUniform("depthEffect", if (depthEffect) 1f else 0f)
-        setFloatUniform("chromaticAberration", if (chromaticAberration) 1f else 0f)
-    }
-    effect(RenderEffect.createRuntimeShaderEffect(shader, "content"))
+    lens(
+        refractionHeight = refractionHeight,
+        refractionAmount = refractionAmount,
+        depthEffect = depthEffect && direction == RefractionDirection.RAISED,
+        chromaticAberration = chromaticAberration,
+    )
 }
-
-private const val DIRECTIONAL_REFRACTION_SHADER = """
-    uniform shader content;
-    uniform float2 size;
-    uniform float2 offset;
-    uniform float4 cornerRadii;
-    uniform float refractionHeight;
-    uniform float refractionAmount;
-    uniform float depthEffect;
-    uniform float chromaticAberration;
-
-    float radiusAt(float2 coord, float4 radii) {
-        if (coord.x >= 0.0) {
-            return coord.y <= 0.0 ? radii.y : radii.z;
-        }
-        return coord.y <= 0.0 ? radii.x : radii.w;
-    }
-
-    float sdRoundedRect(float2 coord, float2 halfSize, float radius) {
-        float2 cornerCoord = abs(coord) - (halfSize - float2(radius));
-        float outside = length(max(cornerCoord, 0.0)) - radius;
-        float inside = min(max(cornerCoord.x, cornerCoord.y), 0.0);
-        return outside + inside;
-    }
-
-    float2 gradSdRoundedRect(float2 coord, float2 halfSize, float radius) {
-        float2 cornerCoord = abs(coord) - (halfSize - float2(radius));
-        if (cornerCoord.x >= 0.0 || cornerCoord.y >= 0.0) {
-            return sign(coord) * normalize(max(cornerCoord, 0.0001));
-        }
-        float gradX = step(cornerCoord.y, cornerCoord.x);
-        return sign(coord) * float2(gradX, 1.0 - gradX);
-    }
-
-    float circleMap(float x) {
-        return 1.0 - sqrt(max(0.0, 1.0 - x * x));
-    }
-
-    half4 main(float2 coord) {
-        float2 halfSize = size * 0.5;
-        float2 centered = (coord + offset) - halfSize;
-        float radius = radiusAt(centered, cornerRadii);
-        float sd = sdRoundedRect(centered, halfSize, radius);
-        if (-sd >= refractionHeight) return content.eval(coord);
-        sd = min(sd, 0.0);
-
-        float amount = circleMap(1.0 - (-sd / refractionHeight)) * refractionAmount;
-        float gradRadius = min(radius * 1.5, min(halfSize.x, halfSize.y));
-        float2 radial = centered / max(length(centered), 0.001);
-        float2 gradient = normalize(
-            gradSdRoundedRect(centered, halfSize, gradRadius) + depthEffect * radial
-        );
-        float2 sampleAt = coord + amount * gradient;
-        half4 base = content.eval(sampleAt);
-        float chroma = chromaticAberration * min(abs(amount) * 0.055, 0.8);
-        half red = content.eval(sampleAt + gradient * chroma).r;
-        half blue = content.eval(sampleAt - gradient * chroma).b;
-        return half4(red, base.g, blue, base.a);
-    }
-"""
 
 /** 평균 배경색을 알고 있는 화면에서 사용할 자동 대비 콘텐츠 색입니다. */
 fun liquidGlassContentColor(backgroundAverage: Color): Color =
