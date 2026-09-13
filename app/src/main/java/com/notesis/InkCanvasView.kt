@@ -9,6 +9,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
+import android.graphics.Rect
 import android.graphics.RectF
 import android.text.Layout
 import android.text.StaticLayout
@@ -57,6 +58,7 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
 import kotlin.math.atan2
+import kotlin.math.ceil
 
 /**
  * Deepest zoom worth sharpening for, in screen pixels per page unit.
@@ -142,6 +144,14 @@ const val STROKE_EPSILON = TESSELLATION_TARGET_PX
 
 private const val STROKE_GRID_CELL = 256f
 private const val MAX_GRID_CELLS_PER_STROKE = 64
+
+private data class InkTileKey(
+    val page: Page,
+    val revision: Long,
+    val density: Int,
+    val tileX: Int,
+    val tileY: Int,
+)
 
 /** A page-local spatial index used by both dense-page drawing and culling. */
 private class StrokeGrid {
@@ -640,6 +650,7 @@ class InkCanvasView @JvmOverloads constructor(
     private var lastFingerEventTime = 0L
     private var viewportSpeedPxPerSecond = 0f
     private var viewportWasFast = false
+    private var viewportInteracting = false
     private var currentPage = 0
     private var lastPageDirection = 1
     private var pdfPriorityInitialized = false
@@ -742,6 +753,8 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** Mesh generation is native work; keeping it off the UI thread keeps frames. */
     private val refiner = Executors.newSingleThreadExecutor()
+    /** Dense dry ink is rasterized separately so page loading never waits for it. */
+    private val inkRasterizer = Executors.newSingleThreadExecutor()
     private val refineRunnable = Runnable { refineVisiblePages() }
     private val prefetchRunnable = Runnable {
         prioritizePdf(PREFETCH_STOP_RADIUS)
@@ -879,6 +892,8 @@ class InkCanvasView @JvmOverloads constructor(
         disposed = true
         refineRequestSerial++
         refiner.shutdownNow()
+        inkRasterizer.shutdownNow()
+        dry.close()
         pdf?.close()
         pdf = null
     }
@@ -997,6 +1012,7 @@ class InkCanvasView @JvmOverloads constructor(
         for (page in changed) {
             page.dirty = true
             page.revision++
+            dry.invalidateInk(page)
         }
         dry.invalidate()
         onStrokesChanged?.invoke()
@@ -1507,6 +1523,7 @@ class InkCanvasView @JvmOverloads constructor(
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 stopFling()
+                viewportInteracting = true
                 onViewportInteractionChanged?.invoke(true)
                 val focus = focusOf(event, skipPointerIndex = -1)
                 lastFocusX = focus[0]
@@ -1631,6 +1648,7 @@ class InkCanvasView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_UP -> {
+                viewportInteracting = false
                 startFling()
                 viewportSpeedPxPerSecond = 0f
                 viewportWasFast = false
@@ -1645,6 +1663,7 @@ class InkCanvasView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_CANCEL -> {
+                viewportInteracting = false
                 viewportSpeedPxPerSecond = 0f
                 viewportWasFast = false
                 releaseVelocity()
@@ -1941,6 +1960,7 @@ class InkCanvasView @JvmOverloads constructor(
                     }
                     page.loaded = true
                     page.tessellatedFor = minOf(target, BASE_TESSELLATION_SCALE)
+                    dry.invalidateInk(page)
                 }
                 for ((page, snapshot, rebuilt) in built) {
                     val replacements = IdentityHashMap<Stroke, Stroke>()
@@ -1956,6 +1976,7 @@ class InkCanvasView @JvmOverloads constructor(
                     // Mixed fidelity is intentional at deep zoom.
                     page.tessellatedFor = if (replaced == page.strokes.size) target else 0f
                     remapHistory(replacements)
+                    dry.invalidateInk(page)
                     // Nothing about the saved file changed: same inputs, same
                     // brush, only the generated outline. Do not dirty the page.
                 }
@@ -2101,6 +2122,7 @@ class InkCanvasView @JvmOverloads constructor(
                     }
                     page.loaded = true
                     page.tessellatedFor = BASE_TESSELLATION_SCALE
+                    dry.invalidateInk(page)
                     changed = true
                 }
                 if (changed) dry.invalidate()
@@ -2910,14 +2932,34 @@ class InkCanvasView @JvmOverloads constructor(
 
         private val strokeIndexes = IdentityHashMap<Page, StrokeGrid>()
         private val textLayouts = java.util.WeakHashMap<PageImage, TextRender>()
+        private val inkTiles = BitmapMemoryCache<InkTileKey>(RuntimeMemory.inkTileCacheBytes(context))
+        private val pendingInkTiles = mutableSetOf<InkTileKey>()
+        private val lastInkDensity = IdentityHashMap<Page, Int>()
+        private val inkBitmapSource = Rect()
+        private val inkTileDestination = RectF()
+        private var inkGeneration = 0
 
         fun clearStrokeIndexes() {
             strokeIndexes.clear()
             textLayouts.clear()
+            synchronized(pendingInkTiles) { inkGeneration++ }
+            inkTiles.evictAll()
+            lastInkDensity.clear()
         }
 
         fun dropStrokeIndex(page: Page) {
             strokeIndexes.remove(page)
+            invalidateInk(page)
+        }
+
+        fun invalidateInk(page: Page) {
+            inkTiles.snapshot().keys.filter { it.page === page }.forEach(inkTiles::remove)
+            lastInkDensity.remove(page)
+        }
+
+        fun close() {
+            synchronized(pendingInkTiles) { inkGeneration++ }
+            inkTiles.close()
         }
 
         fun strokesIn(page: Page, left: Float, top: Float, right: Float, bottom: Float): List<Stroke> =
@@ -2964,16 +3006,18 @@ class InkCanvasView @JvmOverloads constructor(
                     val visibleTop = cullTop.coerceAtLeast(0f)
                     val visibleRight = cullRight.coerceAtMost(page.width)
                     val visibleBottom = cullBottom.coerceAtMost(page.height)
-                    val visibleStrokes = strokeIndexes.getOrPut(page) { StrokeGrid() }.visible(
-                        page, visibleLeft, visibleTop, visibleRight, visibleBottom,
+                    val cachedInk = !lifted && drawInkTiles(
+                        scoped, page, visibleLeft, visibleTop, visibleRight, visibleBottom,
                     )
-                    for (stroke in visibleStrokes) {
-                        // Held strokes are drawn again below, at the offset.
-                        if (lifted && stroke in lassoStrokes) continue
-                        // Draw against the real screen transform. Caching this
-                        // call in a 1x RenderNode magnifies its edge coverage at
-                        // high zoom and produces the blocky ink seen at 372%.
-                        scope.drawStroke(stroke)
+                    if (!cachedInk) {
+                        val visibleStrokes = strokeIndexes.getOrPut(page) { StrokeGrid() }.visible(
+                            page, visibleLeft, visibleTop, visibleRight, visibleBottom,
+                        )
+                        for (stroke in visibleStrokes) {
+                            // Held strokes are drawn again below, at the offset.
+                            if (lifted && stroke in lassoStrokes) continue
+                            scope.drawStroke(stroke)
+                        }
                     }
                     if (lifted) {
                         scoped.save()
@@ -3051,6 +3095,133 @@ class InkCanvasView @JvmOverloads constructor(
                     canvas.restore()
                 }
             }
+        }
+
+        /**
+         * Draws dense, unchanged ink from scale-bucketed tiles. Until every tile
+         * covering the viewport is ready, the caller draws the vector fallback.
+         */
+        private fun drawInkTiles(
+            canvas: Canvas,
+            page: Page,
+            left: Float,
+            top: Float,
+            right: Float,
+            bottom: Float,
+        ): Boolean {
+            if (page.strokes.size < DENSE_INK_TILE_THRESHOLD || right <= left || bottom <= top) return false
+            val mayRequest = !holdingDetail() && !viewportInteracting && !flinging
+            val desiredDensity = inkDensityFor(currentScale())
+            val density = if (mayRequest) desiredDensity else lastInkDensity[page] ?: desiredDensity
+            if (mayRequest) lastInkDensity[page] = density
+            val tileUnits = INK_TILE_PX / density
+            val firstX = kotlin.math.floor(left / tileUnits).toInt().coerceAtLeast(0)
+            val lastX = kotlin.math.floor((right - 1e-3f) / tileUnits).toInt()
+            val firstY = kotlin.math.floor(top / tileUnits).toInt().coerceAtLeast(0)
+            val lastY = kotlin.math.floor((bottom - 1e-3f) / tileUnits).toInt()
+            val ready = ArrayList<Pair<InkTileKey, Bitmap>>()
+            var complete = true
+            for (tileY in firstY..lastY) for (tileX in firstX..lastX) {
+                val key = InkTileKey(page, page.revision, density, tileX, tileY)
+                val bitmap = inkTiles.get(key)
+                if (bitmap != null) {
+                    ready += key to bitmap
+                } else {
+                    complete = false
+                    if (mayRequest) requestInkTile(key, tileUnits)
+                }
+            }
+            if (!complete) return false
+            for ((key, bitmap) in ready) {
+                tileSource(key, tileUnits, inkTileDestination)
+                val coreWidth = bitmap.width - INK_TILE_BLEED_PX * 2
+                val coreHeight = bitmap.height - INK_TILE_BLEED_PX * 2
+                inkBitmapSource.set(
+                    INK_TILE_BLEED_PX,
+                    INK_TILE_BLEED_PX,
+                    INK_TILE_BLEED_PX + coreWidth,
+                    INK_TILE_BLEED_PX + coreHeight,
+                )
+                canvas.drawBitmap(bitmap, inkBitmapSource, inkTileDestination, bitmapPaint)
+            }
+            return true
+        }
+
+        private fun requestInkTile(key: InkTileKey, tileUnits: Float) {
+            synchronized(pendingInkTiles) {
+                if (!pendingInkTiles.add(key)) return
+            }
+            val source = RectF()
+            tileSource(key, tileUnits, source)
+            val bleedUnits = INK_TILE_BLEED_PX / key.density.toFloat()
+            val candidates = strokeIndexes.getOrPut(key.page) { StrokeGrid() }.visible(
+                key.page,
+                source.left - bleedUnits,
+                source.top - bleedUnits,
+                source.right + bleedUnits,
+                source.bottom + bleedUnits,
+            ).toList()
+            val generation = synchronized(pendingInkTiles) { inkGeneration }
+            val accepted = runCatching {
+                inkRasterizer.execute {
+                    try {
+                        if (disposed || synchronized(pendingInkTiles) { generation != inkGeneration }) return@execute
+                        val bitmap = runCatching {
+                            val coreWidth = ceil(source.width() * key.density).toInt().coerceAtLeast(1)
+                            val coreHeight = ceil(source.height() * key.density).toInt().coerceAtLeast(1)
+                            Bitmap.createBitmap(
+                                coreWidth + INK_TILE_BLEED_PX * 2,
+                                coreHeight + INK_TILE_BLEED_PX * 2,
+                                Bitmap.Config.ARGB_8888,
+                            )
+                        }.getOrNull() ?: return@execute
+                        val rendered = runCatching {
+                            val tileCanvas = Canvas(bitmap)
+                            val transform = Matrix().apply {
+                                setScale(key.density.toFloat(), key.density.toFloat())
+                                postTranslate(
+                                    -source.left * key.density + INK_TILE_BLEED_PX,
+                                    -source.top * key.density + INK_TILE_BLEED_PX,
+                                )
+                            }
+                            val tileRenderer = CanvasStrokeRenderer.create()
+                            for (stroke in candidates) tileRenderer.draw(tileCanvas, stroke, transform)
+                        }.isSuccess
+                        if (!rendered) {
+                            bitmap.recycle()
+                            return@execute
+                        }
+                        if (!disposed && key.page.revision == key.revision &&
+                            synchronized(pendingInkTiles) { generation == inkGeneration }
+                        ) {
+                            inkTiles.put(key, bitmap)
+                            postInvalidateOnAnimation()
+                        } else {
+                            bitmap.recycle()
+                        }
+                    } finally {
+                        synchronized(pendingInkTiles) { pendingInkTiles.remove(key) }
+                    }
+                }
+            }.isSuccess
+            if (!accepted) synchronized(pendingInkTiles) { pendingInkTiles.remove(key) }
+        }
+
+        private fun tileSource(key: InkTileKey, tileUnits: Float, out: RectF) {
+            val left = key.tileX * tileUnits
+            val top = key.tileY * tileUnits
+            out.set(
+                left,
+                top,
+                minOf(left + tileUnits, key.page.width),
+                minOf(top + tileUnits, key.page.height),
+            )
+        }
+
+        private fun inkDensityFor(scale: Float): Int {
+            var density = 1
+            while (density < scale && density < MAX_CANVAS_SCALE.toInt()) density *= 2
+            return density
         }
 
         /** The loop as it is drawn, and the box around what it caught. */
@@ -3335,6 +3506,9 @@ class InkCanvasView @JvmOverloads constructor(
         const val LASSO_PADDING = 10f
         /** Pages this far either side of the screen stay in memory. */
         const val KEEP_PAGES = 3
+        const val DENSE_INK_TILE_THRESHOLD = 1_500
+        const val INK_TILE_PX = 512f
+        const val INK_TILE_BLEED_PX = 2
         /** What every LatencyData field holds until it is filled in. */
         const val LATENCY_UNSET = Long.MIN_VALUE
         const val MIN_REPORT_MS = 2

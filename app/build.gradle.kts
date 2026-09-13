@@ -2,6 +2,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("androidx.baselineprofile")
 }
 
 android {
@@ -14,8 +15,8 @@ android {
         // dependable from Q onward, even though ink itself declares minSdk 23.
         minSdk = 29
         targetSdk = 36
-        versionCode = 53
-        versionName = "0.29.4"
+        versionCode = 54
+        versionName = "0.29.5"
         testInstrumentationRunner = "com.notesis.CustomizationInstrumentation"
         // Galaxy Tab is arm64. Shipping one ABI keeps the native ink lib small.
         ndk { abiFilters += "arm64-v8a" }
@@ -72,6 +73,7 @@ dependencies {
     implementation("com.google.mlkit:digital-ink-recognition:18.1.0")
     implementation("androidx.ink:ink-storage:1.0.0")
     implementation("androidx.activity:activity-compose:1.13.0")
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     implementation(platform("androidx.compose:compose-bom:2026.06.01"))
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
@@ -88,5 +90,14 @@ dependencies {
     // by installing the app - see Previews.kt. Debug only: it is a development
     // tool and has no business in a release APK.
     debugImplementation("androidx.compose.ui:ui-tooling")
+    debugImplementation("androidx.metrics:metrics-performance:1.0.0")
+    baselineProfile(project(":benchmark"))
     testImplementation("junit:junit:4.13.2")
+}
+
+baselineProfile {
+    dexLayoutOptimization = true
+    // Profile capture needs a connected, representative tablet. Keep ordinary
+    // release builds deterministic; run :app:generateBaselineProfile explicitly.
+    automaticGenerationDuringBuild = false
 }

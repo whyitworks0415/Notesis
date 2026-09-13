@@ -2,7 +2,6 @@ package com.notesis
 
 import android.graphics.Bitmap
 import android.net.Uri
-import android.util.LruCache
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -58,6 +57,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -217,6 +217,7 @@ import kotlin.math.abs
 class MainActivity : ComponentActivity() {
 
     private var incomingViewerRequest: ViewerRequest? by mutableStateOf(null)
+    private var performanceMonitor: PerformanceMonitor? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -320,12 +321,29 @@ class MainActivity : ComponentActivity() {
             }
         }
         }
+        performanceMonitor = PerformanceMonitor.install(window)
+    }
+
+    override fun onDestroy() {
+        performanceMonitor?.close()
+        performanceMonitor = null
+        super.onDestroy()
     }
 
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         acceptDocumentIntent(intent)
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        RuntimeMemory.trim(level)
+    }
+
+    override fun onLowMemory() {
+        super.onLowMemory()
+        RuntimeMemory.trim(android.content.ComponentCallbacks2.TRIM_MEMORY_COMPLETE)
     }
 
     private fun acceptDocumentIntent(intent: android.content.Intent?) {
@@ -373,10 +391,14 @@ private fun NoteListScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    // Re-read from disk whenever something changed it, rather than keeping a
-    // second copy of the truth in memory and having to hold the two in sync.
+    // Re-read from disk whenever something changed it. Metadata parsing and
+    // sorting are file IO, so the UI keeps its last immutable snapshot while a
+    // worker produces the next one.
     var revision by remember { mutableIntStateOf(0) }
-    val notes = remember(revision) { store.list() }
+    var notes by remember { mutableStateOf<List<NoteMeta>?>(null) }
+    LaunchedEffect(revision) {
+        notes = withContext(Dispatchers.IO) { store.list() }
+    }
     var pendingDelete by remember { mutableStateOf<NoteMeta?>(null) }
     var naming by remember { mutableStateOf(false) }
     var importing by remember { mutableStateOf(false) }
@@ -448,8 +470,8 @@ private fun NoteListScreen(
         }
     }
 
-    // Searching reads every note's text index off disk, so it runs off the main
-    // thread and only after typing settles.
+    // The first search may populate the on-disk full-text cache, so all search
+    // work stays off the main thread and only starts after typing settles.
     LaunchedEffect(query, revision) {
         if (query.isBlank()) {
             results = null
@@ -462,8 +484,11 @@ private fun NoteListScreen(
     // the point of searching is not knowing where a thing is.
     var folder by remember { mutableStateOf("") }
     var filing by remember { mutableStateOf<NoteMeta?>(null) }
-    val folders = remember(revision) { store.folders() }
-    val shown = results ?: notes.filter { it.folder == folder }
+    val availableNotes = notes.orEmpty()
+    val folders = remember(availableNotes) {
+        availableNotes.asSequence().map { it.folder }.filter { it.isNotBlank() }.distinct().sorted().toList()
+    }
+    val shown = results ?: availableNotes.filter { it.folder == folder }
 
     // The user picks where it goes, so a backup survives the app being removed.
     val saveArchive = rememberLauncherForActivityResult(
@@ -698,7 +723,11 @@ private fun NoteListScreen(
                 .background(homeColor?.let { Color(it) } ?: MaterialTheme.colorScheme.surface),
         ) {
         HomeBackground(homePhoto)
-        if (shown.isEmpty()) {
+        if (notes == null) {
+            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+        } else if (shown.isEmpty()) {
             Box(
                 Modifier
                     .fillMaxSize()
@@ -748,8 +777,10 @@ private fun NoteListScreen(
                             pickThumbnail.launch("image/*")
                         },
                         onClearThumbnail = {
-                            store.clearThumbnail(note.id)
-                            revision++
+                            scope.launch {
+                                withContext(Dispatchers.IO) { store.clearThumbnail(note.id) }
+                                revision++
+                            }
                         },
                         onExport = {
                             exporting = note.id to false
@@ -818,9 +849,11 @@ private fun NoteListScreen(
             folders = folders,
             onDismiss = { filing = null },
             onPick = { picked ->
-                store.setFolder(target.id, picked)
                 filing = null
-                revision++
+                scope.launch {
+                    withContext(Dispatchers.IO) { store.setFolder(target.id, picked) }
+                    revision++
+                }
             },
         )
     }
@@ -848,11 +881,19 @@ private fun NoteListScreen(
             onDismiss = { naming = false },
             onConfirm = { title, kind ->
                 naming = false
-                onOpen(if (kind == NoteKind.MARKDOWN) {
-                    store.createMarkdown(title.ifBlank { "제목 없음" }, "# ${title.ifBlank { "제목 없음" }}\n\n")
-                } else {
-                    store.create(title.ifBlank { "제목 없음" })
-                })
+                scope.launch {
+                    val created = withContext(Dispatchers.IO) {
+                        if (kind == NoteKind.MARKDOWN) {
+                            store.createMarkdown(
+                                title.ifBlank { "제목 없음" },
+                                "# ${title.ifBlank { "제목 없음" }}\n\n",
+                            )
+                        } else {
+                            store.create(title.ifBlank { "제목 없음" })
+                        }
+                    }
+                    onOpen(created)
+                }
             },
         )
     }
@@ -865,9 +906,11 @@ private fun NoteListScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        store.delete(note.id)
                         pendingDelete = null
-                        revision++
+                        scope.launch {
+                            withContext(Dispatchers.IO) { store.delete(note.id) }
+                            revision++
+                        }
                     },
                 ) { Text("삭제") }
             },
@@ -906,9 +949,13 @@ private fun NoteCard(
     var menuOpen by remember { mutableStateOf(false) }
     // Keyed on the file's timestamp, so replacing the picture redraws the card
     // instead of showing the decoded copy of the old one.
-    val preview = remember(note.thumbnail?.path, note.thumbnail?.lastModified()) {
-        note.thumbnail?.let { file ->
-            runCatching { android.graphics.BitmapFactory.decodeFile(file.path) }.getOrNull()
+    val thumbnailKey = note.thumbnail?.let { it.path to it.lastModified() }
+    var preview by remember(thumbnailKey) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(thumbnailKey) {
+        preview = withContext(Dispatchers.IO) {
+            note.thumbnail?.let { file ->
+                runCatching { android.graphics.BitmapFactory.decodeFile(file.path) }.getOrNull()
+            }
         }
     }
     val skin = LocalSkin.current
@@ -951,9 +998,10 @@ private fun NoteCard(
                     .background(Color(0xFFFDFCF8)),
                 contentAlignment = Alignment.Center,
             ) {
-                if (preview != null) {
+                val thumbnail = preview
+                if (thumbnail != null) {
                     Image(
-                        bitmap = preview.asImageBitmap(),
+                        bitmap = thumbnail.asImageBitmap(),
                         contentDescription = null,
                         // Crop, so a page taller than the card fills it from the
                         // top rather than sitting in a letterbox.
@@ -2166,12 +2214,10 @@ private fun NoteScreen(
     val imageCache = remember(note.id) {
         // Bounded by bytes, not by count: a handful of large pictures is what
         // would run the heap out, and counting entries cannot see that.
-        object : LruCache<String, Bitmap>(IMAGE_CACHE_BYTES) {
-            override fun sizeOf(key: String, value: Bitmap) = value.byteCount
-        }
+        BitmapMemoryCache<String>(RuntimeMemory.imageCacheBytes(context))
     }
     DisposableEffect(imageCache) {
-        onDispose { imageCache.evictAll() }
+        onDispose { imageCache.close() }
     }
     // Folded away, the bar becomes a handle that can be dragged; unfolding puts
     // it back wherever that handle was left, which is the point of moving it.
@@ -2189,15 +2235,8 @@ private fun NoteScreen(
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
     var barSize by remember { mutableStateOf(IntSize.Zero) }
     val density = LocalDensity.current
-    val otherNotes = remember(note.id) { store.list().filter { it.id != note.id } }
+    var otherNotes by remember(note.id) { mutableStateOf<List<NoteMeta>>(emptyList()) }
     val referenceNotes = remember(note, otherNotes) { listOf(note) + otherNotes }
-    val initialReferenceNoteId = remember(note.id, referenceNotes) {
-        penStore.referenceNote?.takeIf { saved -> referenceNotes.any { it.id == saved } } ?: note.id
-    }
-    val initialReferencePage = remember(initialReferenceNoteId, referenceNotes) {
-        val count = referenceNotes.first { it.id == initialReferenceNoteId }.pageCount
-        restoredPage(penStore.lastPage(initialReferenceNoteId), count)
-    }
 
     // The three-finger reference panel: a second, live InkCanvasView floating
     // over this one, on whichever note and page it is pointed at - any note,
@@ -2206,8 +2245,24 @@ private fun NoteScreen(
     // in preferences, so it is still the same one after a close, after leaving
     // the note, and after the app has been shut.
     var referenceOpen by remember { mutableStateOf(false) }
-    var referenceNoteId by remember { mutableStateOf(initialReferenceNoteId) }
-    var referencePage by remember { mutableIntStateOf(initialReferencePage) }
+    var referenceNoteId by remember(note.id) { mutableStateOf(note.id) }
+    var referencePage by remember(note.id) {
+        mutableIntStateOf(restoredPage(penStore.lastPage(note.id), note.pageCount))
+    }
+    LaunchedEffect(note.id) {
+        val loaded = withContext(Dispatchers.IO) { store.list().filter { it.id != note.id } }
+        otherNotes = loaded
+        // Preserve a panel the user already opened while the list was loading.
+        if (!referenceOpen) {
+            val all = listOf(note) + loaded
+            val restoredId = penStore.referenceNote
+                ?.takeIf { saved -> all.any { it.id == saved } }
+                ?: note.id
+            val count = all.first { it.id == restoredId }.pageCount
+            referenceNoteId = restoredId
+            referencePage = restoredPage(penStore.lastPage(restoredId), count)
+        }
+    }
     // Whether the page in the panel is fitted to the panel's width. Off, it
     // keeps whatever zoom it was put at.
     var referenceFit by remember { mutableStateOf(penStore.referenceFit) }
@@ -2827,35 +2882,42 @@ private fun NoteScreen(
             CaptureDialog(
                 bitmap = bitmap,
                 onPaste = {
-                    val added = store.addImage(note.id, bitmap)
-                    if (added != null) {
-                        canvas?.insertImage(added.first, added.second)
-                        mode = EditMode.IMAGE
-                        edits++
-                    }
                     captured = null
+                    scope.launch {
+                        val added = withContext(Dispatchers.IO) { store.addImage(note.id, bitmap) }
+                        if (added != null) {
+                            canvas?.insertImage(added.first, added.second)
+                            mode = EditMode.IMAGE
+                            edits++
+                        }
+                    }
                 },
                 onAttach = {
-                    val uri = captureUri(context, bitmap)
-                    if (uri == null) {
-                        Toast.makeText(context, "캡쳐를 저장하지 못했습니다", Toast.LENGTH_SHORT).show()
-                    } else {
-                        pendingAttachment.value = uri
-                        if (webUrl == null) webUrl = AI_SITES.first().second
-                        // Naming the two taps: the sheet behind "+" offers a
-                        // camera and a photo picker too, and neither of those
-                        // is the file chooser this capture is waiting for.
-                        Toast.makeText(
-                            context,
-                            "대화창의 + 를 누르고 \"파일\"을 고르세요",
-                            Toast.LENGTH_LONG,
-                        ).show()
-                    }
                     captured = null
+                    scope.launch {
+                        val uri = withContext(Dispatchers.IO) { captureUri(context, bitmap) }
+                        if (uri == null) {
+                            Toast.makeText(context, "캡쳐를 저장하지 못했습니다", Toast.LENGTH_SHORT).show()
+                        } else {
+                            pendingAttachment.value = uri
+                            if (webUrl == null) webUrl = AI_SITES.first().second
+                            // Naming the two taps: the sheet behind "+" offers a
+                            // camera and a photo picker too, and neither of those
+                            // is the file chooser this capture is waiting for.
+                            Toast.makeText(
+                                context,
+                                "대화창의 + 를 누르고 \"파일\"을 고르세요",
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                    }
                 },
                 onShare = {
-                    shareBitmap(context, bitmap)
                     captured = null
+                    scope.launch {
+                        val uri = withContext(Dispatchers.IO) { captureUri(context, bitmap) }
+                        if (uri != null) shareBitmap(context, uri)
+                    }
                 },
                 onDismiss = { captured = null },
             )
@@ -3199,8 +3261,7 @@ private fun captureUri(context: android.content.Context, bitmap: Bitmap): Uri? {
 }
 
 /** Hands the captured region to whatever the user picks in the share sheet. */
-private fun shareBitmap(context: android.content.Context, bitmap: Bitmap) {
-    val uri = captureUri(context, bitmap) ?: return
+private fun shareBitmap(context: android.content.Context, uri: Uri) {
     val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
         type = "image/png"
         putExtra(android.content.Intent.EXTRA_STREAM, uri)
@@ -3719,8 +3780,7 @@ private fun PageSidebar(
                 contentPadding = PaddingValues(10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                items(pages) { page ->
-                    val index = pages.indexOf(page)
+                itemsIndexed(pages, key = { _, page -> page.id }) { index, page ->
                     if (tab == 0) {
                         PageChip(
                             index = index,
@@ -4390,8 +4450,6 @@ private const val PAGE_SCRUBBER_IDLE_MS = 1600L
 
 private const val CRASH_LOG = "crash.log"
 private const val CRASH_LOG_MAX = 256L * 1024
-
-private const val IMAGE_CACHE_BYTES = 48 * 1024 * 1024
 
 /** What the tool row needs. Past it a floating bar is empty space. */
 private val FLOATING_BAR_MAX = 940.dp

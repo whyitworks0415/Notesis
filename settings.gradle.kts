@@ -6,3 +6,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "Notesis"
 include(":app")
+include(":benchmark")

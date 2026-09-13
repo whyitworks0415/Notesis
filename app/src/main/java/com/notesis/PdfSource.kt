@@ -7,6 +7,7 @@ import android.graphics.Point
 import android.graphics.RectF
 import android.graphics.pdf.PdfRenderer
 import android.graphics.pdf.models.selection.SelectionBoundary
+import android.content.ComponentCallbacks2
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.util.LruCache
@@ -40,7 +41,7 @@ class PdfSource private constructor(
     private val descriptor: ParcelFileDescriptor,
     private val renderer: PdfRenderer,
     cacheBytes: Int,
-) : AutoCloseable {
+) : AutoCloseable, MemoryTrimmable {
 
     val pageCount: Int = renderer.pageCount
 
@@ -83,6 +84,10 @@ class PdfSource private constructor(
 
     private val tileCache = object : LruCache<TileKey, Bitmap>((cacheBytes - cacheBytes / 2).coerceAtLeast(1)) {
         override fun sizeOf(key: TileKey, value: Bitmap) = value.byteCount
+    }
+
+    init {
+        RuntimeMemory.register(this)
     }
 
     /** Called on the worker thread once a requested render has landed. */
@@ -446,6 +451,19 @@ class PdfSource private constructor(
             setHasAlpha(false)
         }
 
+    override fun trimMemory(level: Int) {
+        when {
+            level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN -> {
+                cache.evictAll()
+                tileCache.evictAll()
+            }
+            level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW -> {
+                cache.trimToSize(cache.maxSize() / 2)
+                tileCache.trimToSize(tileCache.maxSize() / 2)
+            }
+        }
+    }
+
     override fun close() {
         synchronized(stateLock) {
             if (closed) return
@@ -454,6 +472,7 @@ class PdfSource private constructor(
             pendingTiles.clear()
         }
         onReady = null
+        RuntimeMemory.unregister(this)
         // PdfRenderer.render() cannot be interrupted. Do not make navigation
         // wait on its lock; discard queued tiles and finish native cleanup on a
         // single process-wide closer once the current render returns.
@@ -483,8 +502,6 @@ class PdfSource private constructor(
         // maximum zoom instead of magnifying the last tile bucket twofold.
         private const val MAX_TILE_DENSITY = MAX_CANVAS_SCALE
         private const val DETAIL_MARGIN = 0.25f
-        private const val MIN_CACHE_BYTES = 64 * 1024 * 1024
-        private const val MAX_CACHE_BYTES = 256 * 1024 * 1024
         private val closeWorker = Executors.newSingleThreadExecutor { runnable ->
             Thread(runnable, "notesis-pdf-close").apply { isDaemon = true }
         }
@@ -499,12 +516,10 @@ class PdfSource private constructor(
         fun baseWidthLimit(): Int = MAX_PAGE_WIDTH
 
         fun cacheBytesFor(context: android.content.Context): Int {
-            val manager = context.getSystemService(android.app.ActivityManager::class.java)
-            val bytes = (manager?.largeMemoryClass ?: 128).toLong() * 1024 * 1024 / 2
-            return bytes.coerceIn(MIN_CACHE_BYTES.toLong(), MAX_CACHE_BYTES.toLong()).toInt()
+            return RuntimeMemory.pdfCacheBytes(context)
         }
 
-        fun open(file: File, cacheBytes: Int = MIN_CACHE_BYTES): PdfSource? {
+        fun open(file: File, cacheBytes: Int = 32 * 1024 * 1024): PdfSource? {
             if (!file.isFile) return null
             return runCatching {
                 val descriptor =
