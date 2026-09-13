@@ -11,6 +11,12 @@ enum class AppThemeMode(val label: String) {
     DARK("다크 모드"),
 }
 
+/** Liquid Glass가 페이지 위로 솟아 보일지, 아래로 눌려 보일지 정합니다. */
+enum class RefractionDirection(val label: String) {
+    RAISED("위로 볼록"),
+    INSET("아래로 오목"),
+}
+
 /**
  * Every number the glass is made of, in one place, so the look can be tuned
  * from inside the app rather than from a rebuild. The defaults are the values
@@ -28,6 +34,8 @@ data class SkinSettings(
     val depth: Float = LiquidGlassTokens.refractionDepth.value,
     /** 렌즈가 배경 픽셀을 휘게 하는 거리(dp). */
     val refraction: Float = LiquidGlassTokens.refractionAmount.value,
+    /** 가장자리의 배경 픽셀을 바깥/안쪽 어느 방향으로 굴절할지 정합니다. */
+    val refractionDirection: RefractionDirection = RefractionDirection.RAISED,
     /** RGB 파장이 갈라지는 색수차의 체감 강도(0~1). */
     val dispersion: Float = LiquidGlassTokens.dispersion,
     /** The body of the glass. Alpha is the point of this one. */
@@ -53,6 +61,7 @@ data class SkinSettings(
         .put("vibrancy", vibrancy.toDouble())
         .put("depth", depth.toDouble())
         .put("refraction", refraction.toDouble())
+        .put("refractionDirection", refractionDirection.name)
         .put("dispersion", dispersion.toDouble())
         .put("tint", tint)
         .put("border", border)
@@ -79,6 +88,11 @@ data class SkinSettings(
                 vibrancy = json.optDouble("vibrancy", d.vibrancy.toDouble()).toFloat(),
                 depth = json.optDouble("depth", d.depth.toDouble()).toFloat(),
                 refraction = json.optDouble("refraction", d.refraction.toDouble()).toFloat(),
+                refractionDirection = runCatching {
+                    RefractionDirection.valueOf(
+                        json.optString("refractionDirection", d.refractionDirection.name),
+                    )
+                }.getOrDefault(d.refractionDirection),
                 dispersion = json.optDouble("dispersion", d.dispersion.toDouble()).toFloat(),
                 tint = json.optInt("tint", d.tint),
                 border = json.optInt("border", d.border),

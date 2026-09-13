@@ -31,10 +31,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -50,7 +49,8 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 
 /**
- * 평소에는 불투명 손잡이이고, 손을 대는 순간만 유리 렌즈로 변하는 슬라이더입니다.
+ * 트랙 위에 넓고 낮은 유리 렌즈가 놓이고, 잡으면 진행 방향으로 늘어나는
+ * Apple식 Liquid Glass 슬라이더입니다.
  */
 @Composable
 fun LiquidGlassSlider(
@@ -79,7 +79,11 @@ fun LiquidGlassSlider(
     var dragging by remember { mutableStateOf(false) }
 
     val glassAmount by animateFloatAsState(
-        targetValue = if (dragging && enabled && useLiquidGlass && effectsAllowed) 1f else 0f,
+        targetValue = when {
+            !useLiquidGlass -> 0f
+            dragging && enabled -> 1f
+            else -> 0.78f
+        },
         animationSpec = if (effectsAllowed) {
             tween(LiquidGlassTokens.transitionMillis)
         } else {
@@ -87,22 +91,19 @@ fun LiquidGlassSlider(
         },
         label = "슬라이더 유리 전환",
     )
-    val thumbScale by animateFloatAsState(
-        targetValue = if (dragging && enabled && effectsAllowed) {
-            LiquidGlassTokens.pressedScale
-        } else {
-            1f
-        },
+    val thumbWidth by androidx.compose.animation.core.animateDpAsState(
+        targetValue = if (dragging && enabled && useLiquidGlass) 44.dp else 36.dp,
         animationSpec = if (effectsAllowed) {
             spring(dampingRatio = 0.78f, stiffness = 520f)
         } else {
             snap()
         },
-        label = "슬라이더 손잡이 크기",
+        label = "슬라이더 손잡이 너비",
     )
 
-    val thumbDiameter = 28.dp
-    val thumbRadiusPx = with(density) { thumbDiameter.toPx() / 2f }
+    val restingThumbWidth = 36.dp
+    val thumbHeight = 25.dp
+    val thumbRadiusPx = with(density) { restingThumbWidth.toPx() / 2f }
     val travel = (trackWidth - thumbRadiusPx * 2f).coerceAtLeast(1f)
     val centerX = thumbRadiusPx + travel * fraction
 
@@ -156,24 +157,40 @@ fun LiquidGlassSlider(
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .height(5.dp)
+                    .height(6.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.16f)),
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                Color.White.copy(alpha = 0.26f),
+                                scheme.onSurface.copy(alpha = 0.15f),
+                                scheme.onSurface.copy(alpha = 0.22f),
+                            ),
+                        ),
+                    )
+                    .border(0.75.dp, Color.White.copy(alpha = 0.55f), CircleShape),
             ) {
                 Box(
                     Modifier
                         .fillMaxWidth(fraction)
                         .fillMaxHeight()
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary),
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(
+                                    scheme.primary.copy(alpha = 0.78f),
+                                    scheme.primary,
+                                    scheme.primary.copy(alpha = 0.82f),
+                                ),
+                            ),
+                        ),
                 )
             }
         }
 
         val thumbModifier = Modifier
-            .offset { IntOffset((centerX - thumbRadiusPx).roundToInt(), 0) }
-            .size(thumbDiameter)
-            .scale(thumbScale)
+            .offset { IntOffset((centerX - thumbWidth.toPx() / 2f).roundToInt(), 0) }
+            .size(thumbWidth, thumbHeight)
 
         ProvideLiquidGlassBackdrop(trackBackdrop) {
             if (glassAmount > 0.001f) {
@@ -181,23 +198,20 @@ fun LiquidGlassSlider(
                     thumbModifier.liquidGlass(
                         intensity = glassAmount,
                         shape = CircleShape,
-                        // 흰색 표면을 전혀 섞지 않아 트랙이 렌즈 중앙까지 이어집니다.
-                        surfaceColor = Color.Transparent,
+                        surfaceColor = Color.White.copy(alpha = 0.22f),
                         shadowElevation = 5.dp,
                     ),
                 )
             }
-            // 대기 손잡이는 테마의 단색 강조색입니다. 흰 원은 밝은 페이지 위에서
-            // 슬라이더 중앙만 하얗게 번진 것처럼 보였으므로 쓰지 않습니다. 누르면
-            // 이 면이 사라지면서 위의 투명 렌즈만 남습니다.
-            Box(
-                thumbModifier
-                    .graphicsLayer { alpha = (1f - glassAmount).coerceIn(0f, 1f) }
-                    .shadow(3.dp, CircleShape, clip = false)
-                    .clip(CircleShape)
-                    .background(scheme.primary)
-                    .border(1.dp, scheme.onPrimary.copy(alpha = 0.18f), CircleShape),
-            )
+            if (!useLiquidGlass) {
+                Box(
+                    thumbModifier
+                        .shadow(3.dp, CircleShape, clip = false)
+                        .clip(CircleShape)
+                        .background(scheme.primary)
+                        .border(1.dp, scheme.onPrimary.copy(alpha = 0.18f), CircleShape),
+                )
+            }
         }
     }
 }

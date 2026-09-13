@@ -196,6 +196,30 @@ fun SkinSettingsScreen(
                     SkinSettings.VIBRANCY_RANGE,
                 ) { onChange(settings.copy(vibrancy = it)) }
                 if (skin == Skin.LIQUID_GLASS) {
+                    Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+                        Text("굴절 방향", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            "볼록은 페이지 위로 솟은 Apple식 렌즈, 오목은 아래로 눌린 렌즈입니다",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.outline,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        LiquidSegmentedControl(
+                            segments = RefractionDirection.entries.map { it.label },
+                            selectedIndex = settings.refractionDirection.ordinal,
+                            onSelected = { index ->
+                                onChange(
+                                    settings.copy(
+                                        refractionDirection = RefractionDirection.entries[index],
+                                    ),
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            // 설정 목록 자체가 배경 캡처 안에 있으므로 순환 참조를
+                            // 피하고, 선택 결과는 위 미리보기에서 실제 렌즈로 보여줍니다.
+                            useLiquidGlass = false,
+                        )
+                    }
                     Setting(
                         "렌즈 깊이",
                         "%.0fdp".format(settings.depth),

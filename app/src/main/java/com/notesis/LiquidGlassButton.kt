@@ -40,7 +40,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 
 /**
- * 평상시에는 단정한 단색 캡슐이고, 누르는 동안만 굴절이 강해지는 버튼입니다.
+ * 평상시에도 실제 배경을 굴절시키고, 누르면 렌즈가 조금 넓어지고 깊어지는 버튼입니다.
  * [expandedContent]를 주면 길게 눌렀을 때 같은 레이아웃 안에서 메뉴로 늘어납니다.
  */
 @OptIn(ExperimentalFoundationApi::class)
@@ -70,13 +70,17 @@ fun LiquidGlassButton(
         label = "버튼 눌림 크기",
     )
     val glassAmount by animateFloatAsState(
-        targetValue = if (pressed && enabled && useLiquidGlass && effectsAllowed) 1f else 0f,
+        targetValue = when {
+            !useLiquidGlass -> 0f
+            pressed && enabled -> 1f
+            else -> 0.76f
+        },
         animationSpec = if (effectsAllowed) tween(170) else snap(),
         label = "버튼 굴절 강도",
     )
     val haloScale by animateFloatAsState(
-        // 눌린 렌즈는 원래 버튼 경계보다 넓게 퍼져 터치에 반응하는 재질로 보입니다.
-        targetValue = 1f + 0.30f * glassAmount,
+        // Apple식 버튼은 손가락 아래에서 살짝 퍼지되 터치 영역은 바꾸지 않습니다.
+        targetValue = if (pressed && enabled && useLiquidGlass) 1.08f else 1f,
         animationSpec = if (effectsAllowed) tween(190) else snap(),
         label = "버튼 유리 확장",
     )
@@ -109,7 +113,7 @@ fun LiquidGlassButton(
         )
 
     Box(buttonModifier, contentAlignment = Alignment.Center) {
-        if (glassAmount > 0.001f) {
+        if (useLiquidGlass && glassAmount > 0.001f) {
             // 이 형제 레이어만 확대하므로 터치 영역/레이아웃은 그대로이고 유리만 넘칩니다.
             Box(
                 Modifier
@@ -118,27 +122,22 @@ fun LiquidGlassButton(
                     .liquidGlass(
                         intensity = glassAmount,
                         shape = CircleShape,
-                        // 굴절만 그리고 흰 막은 추가하지 않습니다. 불투명 면은 아래
-                        // 별도 레이어가 눌림 진행률에 맞춰 사라졌다 돌아옵니다.
-                        surfaceColor = Color.Transparent,
+                        // 아주 얇은 흰 코팅만 남기고 배경이 버튼 몸체가 되게 합니다.
+                        surfaceColor = Color.White.copy(alpha = 0.20f),
                         shadowElevation = 6.dp,
                     ),
             )
         }
 
-        // 평소에는 테두리나 선택 배경이 없는 흰색 일반 버튼입니다. 눌리는 동안
-        // 면을 거의 투명하게 만들어 아래의 Backdrop 굴절이 실제로 보이게 합니다.
-        Box(
-            Modifier
-                .matchParentSize()
-                .shadow(1.dp, CircleShape, clip = false)
-                .clip(CircleShape)
-                .background(
-                    containerColor.copy(
-                        alpha = if (enabled) 1f - 0.90f * glassAmount else 0.52f,
-                    ),
-                ),
-        )
+        if (!useLiquidGlass) {
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .shadow(1.dp, CircleShape, clip = false)
+                    .clip(CircleShape)
+                    .background(containerColor.copy(alpha = if (enabled) 1f else 0.52f)),
+            )
+        }
 
         AnimatedContent(
             targetState = expanded,

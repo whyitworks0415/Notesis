@@ -463,6 +463,9 @@ class InkCanvasView @JvmOverloads constructor(
     /** The same drag the other way up, on the page, while the panel is open. */
     var onCloseReference: (() -> Unit)? = null
 
+    /** 팝업 자체에서도 세 손가락 아래 스와이프로 닫을지 여부입니다. */
+    var closeReferenceOnDownwardDrag: Boolean = false
+
     /** Three fingers moving once it is open: pan in each axis, then the ratio the spread grew by. */
     var onReferenceDrag: ((Float, Float, Float) -> Unit)? = null
 
@@ -640,6 +643,8 @@ class InkCanvasView @JvmOverloads constructor(
     private var opened3fThisGesture = false
     private var closed3fThisGesture = false
     private var gestureStart3fY = 0f
+    private var gestureStart3fX = 0f
+    private var gestureStart3fSpread = 0f
     private var prev3fX = 0f
     private var prev3fY = 0f
     private var prev3fSpread = 0f
@@ -1490,11 +1495,38 @@ class InkCanvasView @JvmOverloads constructor(
                     val spread = averageSpread(event)
                     if (!have3Fingers) {
                         have3Fingers = true
+                        gestureStart3fX = focus[0]
                         gestureStart3fY = focus[1]
+                        gestureStart3fSpread = spread
                     } else if (referenceOpen && onReferenceDrag != null) {
-                        val factor = if (prev3fSpread > MIN_SPREAD_PX) spread / prev3fSpread else 1f
-                        onReferenceDrag?.invoke(focus[0] - prev3fX, focus[1] - prev3fY, factor)
-                        draggedReference = true
+                        val totalX = focus[0] - gestureStart3fX
+                        val totalY = focus[1] - gestureStart3fY
+                        val factor = if (prev3fSpread > MIN_SPREAD_PX) {
+                            spread / prev3fSpread
+                        } else {
+                            1f
+                        }
+                        val totalSpreadFactor = if (gestureStart3fSpread > MIN_SPREAD_PX) {
+                            spread / gestureStart3fSpread
+                        } else {
+                            1f
+                        }
+                        val isResizing = kotlin.math.abs(totalSpreadFactor - 1f) > 0.06f
+                        val tracksDismissDirection = closeReferenceOnDownwardDrag &&
+                            !isResizing && totalY > 0f &&
+                            totalY > kotlin.math.abs(totalX) * 1.15f
+                        val isDownwardDismiss = tracksDismissDirection && totalY > OPEN_DRAG_PX
+                        if (isDownwardDismiss && !closed3fThisGesture) {
+                            onCloseReference?.invoke()
+                            closed3fThisGesture = true
+                        } else if (!closed3fThisGesture && !tracksDismissDirection) {
+                            onReferenceDrag?.invoke(
+                                focus[0] - prev3fX,
+                                focus[1] - prev3fY,
+                                factor,
+                            )
+                            draggedReference = true
+                        }
                     } else if (referenceOpen) {
                         // On the page rather than on the panel, and the panel is
                         // already open: the same drag that opened it, the other

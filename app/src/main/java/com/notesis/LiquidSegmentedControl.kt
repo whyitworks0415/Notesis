@@ -72,12 +72,19 @@ fun LiquidSegmentedControl(
         }
     }
 
-    BoxWithConstraints(
+    val trackModifier = if (useLiquidGlass) {
+        modifier.liquidGlass(
+            intensity = 0.72f,
+            shape = CircleShape,
+            surfaceColor = Color.White.copy(alpha = 0.14f),
+            shadowElevation = 3.dp,
+        )
+    } else {
         modifier
-            .height(44.dp)
             .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.62f)),
-    ) {
+            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+    }
+    BoxWithConstraints(trackModifier.height(44.dp)) {
         val segmentWidth = maxWidth / segments.size
         val targetX = segmentWidth * selected
         val indicatorX by animateDpAsState(

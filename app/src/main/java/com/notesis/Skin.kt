@@ -546,6 +546,16 @@ fun SkinSlider(
     modifier: Modifier = Modifier,
 ) {
     val skin = LocalSkin.current
+    if (skin == Skin.LIQUID_GLASS) {
+        LiquidGlassSlider(
+            value = value,
+            onValueChange = onValueChange,
+            valueRange = valueRange,
+            modifier = modifier,
+            label = "값",
+        )
+        return
+    }
     val tokens = skin.tokens()
     val liquid = skin == Skin.LIQUID_GLASS
     val scheme = MaterialTheme.colorScheme

@@ -12,6 +12,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -19,6 +21,8 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -908,8 +912,20 @@ private fun NoteCard(
         }
     }
     val skin = LocalSkin.current
+    val cardShape = RoundedCornerShape(20.dp)
+    val cardModifier = if (skin == Skin.LIQUID_GLASS) {
+        Modifier.liquidGlass(
+            shape = cardShape,
+            surfaceColor = Color(LocalSkinSettings.current.tint),
+            shadowElevation = 8.dp,
+        )
+    } else {
+        Modifier
+    }
     Card(
+        modifier = cardModifier,
         onClick = onOpen,
+        shape = cardShape,
         // No shadow on glass. A shadow is drawn under the whole card, not only
         // around it, and the card's body is translucent - so the strip under
         // the thumbnail, which is the only part you can see through, showed the
@@ -920,6 +936,10 @@ private fun NoteCard(
         ),
         colors = if (skin == Skin.MATERIAL) {
             CardDefaults.cardColors()
+        } else if (skin == Skin.LIQUID_GLASS) {
+            // 실제 렌즈와 표면은 modifier가 그립니다. Card의 단순 알파 면을
+            // 겹치지 않아 썸네일 아래도 투명 플라스틱처럼 보이지 않습니다.
+            CardDefaults.cardColors(containerColor = Color.Transparent)
         } else {
             // The card is mostly its own picture, so it goes only slightly
             // translucent - enough to belong with the glass, not so much that
@@ -1234,14 +1254,25 @@ private fun GlassFab(
         }
         return
     }
-    SkinSurface(modifier = modifier.size(side), corner = 16.dp) {
-        // Clickable inside the surface, so the ripple is clipped to the corner
-        // rather than squaring it off.
-        Box(
-            Modifier.fillMaxSize().clickable(onClick = onClick),
-            contentAlignment = Alignment.Center,
+    if (LocalSkin.current == Skin.LIQUID_GLASS) {
+        LiquidGlassButton(
+            onClick = onClick,
+            modifier = modifier.size(side),
+            contentPadding = PaddingValues(0.dp),
+            containerColor = Color.Transparent,
+            contentColor = MaterialTheme.colorScheme.onSurface,
         ) {
             Icon(icon, contentDescription = contentDescription)
+        }
+    } else {
+        SkinSurface(modifier = modifier.size(side), corner = 16.dp) {
+            // Clickable inside the surface, so the ripple is clipped to the corner.
+            Box(
+                Modifier.fillMaxSize().clickable(onClick = onClick),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(icon, contentDescription = contentDescription)
+            }
         }
     }
 }
@@ -2214,15 +2245,20 @@ private fun NoteScreen(
         } else {
             floor
         }
-        referenceStretch = (referenceStretch * spreadFactor)
+        val oldStretch = referenceStretch
+        referenceStretch = (oldStretch * spreadFactor)
             .coerceIn(floor, maxOf(floor, ceiling))
         val w = referenceSize.width * referenceStretch
         val h = referenceSize.height * referenceStretch
+        val oldW = referenceSize.width * oldStretch
+        val oldH = referenceSize.height * oldStretch
         val maxX = (containerSize.width - w).coerceAtLeast(0f)
         val maxY = (containerSize.height - h).coerceAtLeast(0f)
         referenceOffset = Offset(
-            (referenceOffset.x + panX).coerceIn(0f, maxX),
-            (referenceOffset.y + panY).coerceIn(0f, maxY),
+            // 핀치 중심을 화면에 고정합니다. 좌상단 고정 확대는 손가락과
+            // 팝업이 서로 다른 방향으로 미끄러져 보였습니다.
+            (referenceOffset.x + panX - (w - oldW) / 2f).coerceIn(0f, maxX),
+            (referenceOffset.y + panY - (h - oldH) / 2f).coerceIn(0f, maxY),
         )
     }
     val maxBarWidth = with(density) {
@@ -2954,8 +2990,19 @@ private fun NoteScreen(
             ?: note.id
         androidx.compose.animation.AnimatedVisibility(
             visible = referenceOpen,
-            enter = fadeIn(tween(180)) + scaleIn(tween(180), initialScale = 0.85f),
-            exit = fadeOut(tween(120)) + scaleOut(tween(120), targetScale = 0.85f),
+            enter = fadeIn(tween(140)) +
+                scaleIn(
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioNoBouncy,
+                        stiffness = Spring.StiffnessMediumLow,
+                    ),
+                    initialScale = 0.94f,
+                    transformOrigin = TransformOrigin(0.5f, 0.18f),
+                ) +
+                slideInVertically(animationSpec = tween(190)) { -it / 18 },
+            exit = fadeOut(tween(110)) +
+                scaleOut(tween(130), targetScale = 0.97f) +
+                slideOutVertically(animationSpec = tween(130)) { it / 22 },
         ) {
             ReferencePanel(
                 store = store,
@@ -3434,6 +3481,8 @@ private fun ReferencePanel(
                                 referenceOpen = true
                                 onReferenceDrag = onDrag
                                 onReferenceDragEnd = { onStretchEnd(this) }
+                                onCloseReference = onClose
+                                closeReferenceOnDownwardDrag = true
                                 onUndo = { undo(); popupEdits++ }
                                 onRedo = { redo(); popupEdits++ }
                                 view = this
@@ -4275,6 +4324,23 @@ private fun ToolButton(
     onClick: () -> Unit,
 ) {
     val shape = CircleShape
+    val contentColor = when {
+        selected && tint != null -> tint
+        selected -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    if (selected && LocalSkin.current == Skin.LIQUID_GLASS) {
+        LiquidGlassButton(
+            onClick = onClick,
+            modifier = Modifier.size(40.dp),
+            contentPadding = PaddingValues(0.dp),
+            containerColor = Color.Transparent,
+            contentColor = contentColor,
+        ) {
+            Icon(icon, contentDescription = label)
+        }
+        return
+    }
     IconButton(
         onClick = onClick,
         modifier = Modifier
@@ -4290,11 +4356,7 @@ private fun ToolButton(
             ),
         colors = IconButtonDefaults.iconButtonColors(
             // 선택한 도구만 기존처럼 조용한 배경과 색으로 구분합니다.
-            contentColor = when {
-                selected && tint != null -> tint
-                selected -> MaterialTheme.colorScheme.primary
-                else -> MaterialTheme.colorScheme.onSurfaceVariant
-            },
+            contentColor = contentColor,
         ),
     ) { Icon(icon, contentDescription = label) }
 }
