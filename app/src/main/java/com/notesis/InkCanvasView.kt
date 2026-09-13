@@ -576,6 +576,8 @@ class InkCanvasView @JvmOverloads constructor(
     /** The scale fit-to-width last chose; the denominator of that multiple. */
     private var fitScale = 0f
     private var reportedZoom = 0f
+    /** Keeps the Compose host from recomposing faster than its zoom label can be read. */
+    private var lastZoomReportNanos = 0L
 
     /** Fired when PDF text gets selected or cleared, so the host can offer actions. */
     var onSelectionChanged: ((PdfSelection?) -> Unit)? = null
@@ -598,6 +600,9 @@ class InkCanvasView @JvmOverloads constructor(
     private val dry = DryLayer(context)
     /** Android chooses its own horizon, so an overlong result is clipped to 9ms. */
     private val predictor: MotionEventPredictor
+    /** The common one-pen prediction path reuses these instead of feeding the GC every sample. */
+    private val predictedPointerProperties = arrayOf(MotionEvent.PointerProperties())
+    private val predictedPointerCoordinates = arrayOf(MotionEvent.PointerCoords())
 
     private val undoStack = mutableListOf<Edit>()
     private val redoStack = mutableListOf<Edit>()
@@ -607,6 +612,7 @@ class InkCanvasView @JvmOverloads constructor(
     private val screenToDocument = Matrix()
     private val strokeTransform = Matrix()
     private val matrixValues = FloatArray(9)
+    private val pageProbe = FloatArray(2)
 
     private var activeStylusPointer: Int? = null
     private var activeStrokeId: InProgressStrokeId? = null
@@ -1034,25 +1040,40 @@ class InkCanvasView @JvmOverloads constructor(
     private fun onTransformChanged() {
         clampTransform()
         documentToScreen.invert(screenToDocument)
-        dry.invalidate()
+        // Input can arrive several times inside one display interval. Ask for
+        // one paint on the next vsync instead of repeatedly invalidating now.
+        dry.postInvalidateOnAnimation()
         updateCurrentPage()
         if (!pdfPriorityInitialized && pdf != null) {
             pdfPriorityInitialized = true
             prioritizePdf(0)
         }
-        scheduleStoppedPrefetch()
-        if (fitScale > 0f) {
-            val zoom = currentScale() / fitScale
-            // A percent point of slack: the fling settles by thousandths and
-            // there is no reading to be had from those.
-            if (abs(zoom - reportedZoom) > 0.005f) {
-                reportedZoom = zoom
-                onZoomChanged?.invoke(zoom)
-            }
+        // A pinch is not a stop. Replacing these delayed jobs for every touch
+        // sample used to add queue churn precisely while zoom frames were due.
+        if (!zooming) {
+            scheduleStoppedPrefetch()
         }
+        reportZoom()
         // Only once the zoom settles - rebuilding on every pinch frame would
         // cost far more than it buys.
-        scheduleRefine()
+        if (!holdingDetail()) scheduleRefine()
+    }
+
+    private fun reportZoom(force: Boolean = false) {
+        if (fitScale <= 0f) return
+        val zoom = currentScale() / fitScale
+        // The canvas remains fully event-driven. Only the toolbar label is
+        // capped at 30Hz during a pinch, avoiding a full Compose state update
+        // for 120-240Hz touch streams.
+        val now = System.nanoTime()
+        if (!force && zooming && now - lastZoomReportNanos < ZOOM_REPORT_INTERVAL_NS) return
+        // A percent point of slack: the fling settles by thousandths and there
+        // is no reading to be had from those.
+        if (force || abs(zoom - reportedZoom) > 0.005f) {
+            reportedZoom = zoom
+            lastZoomReportNanos = now
+            onZoomChanged?.invoke(zoom)
+        }
     }
 
     /** Keeps the document from being flung off into empty space. */
@@ -1084,9 +1105,10 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun updateCurrentPage() {
-        val middle = floatArrayOf(width / 2f, height / 2f)
-        screenToDocument.mapPoints(middle)
-        val index = document.pageIndexAt(middle[1]).coerceAtLeast(0)
+        pageProbe[0] = width / 2f
+        pageProbe[1] = height / 2f
+        screenToDocument.mapPoints(pageProbe)
+        val index = document.pageIndexAt(pageProbe[1]).coerceAtLeast(0)
         if (index != currentPage) {
             lastPageDirection = if (index > currentPage) 1 else -1
             currentPage = index
@@ -1385,8 +1407,16 @@ class InkCanvasView @JvmOverloads constructor(
     private fun predictionAtLead(real: MotionEvent, predicted: MotionEvent): MotionEvent {
         val fraction = predictionLeadFraction(real.eventTime, predicted.eventTime, PREDICTION_LEAD_MS)
         if (fraction >= 1f) return predicted
-        val properties = Array(predicted.pointerCount) { MotionEvent.PointerProperties() }
-        val coordinates = Array(predicted.pointerCount) { MotionEvent.PointerCoords() }
+        val properties = if (predicted.pointerCount == 1) {
+            predictedPointerProperties
+        } else {
+            Array(predicted.pointerCount) { MotionEvent.PointerProperties() }
+        }
+        val coordinates = if (predicted.pointerCount == 1) {
+            predictedPointerCoordinates
+        } else {
+            Array(predicted.pointerCount) { MotionEvent.PointerCoords() }
+        }
         for (i in properties.indices) {
             predicted.getPointerProperties(i, properties[i])
             predicted.getPointerCoords(i, coordinates[i])
@@ -1605,7 +1635,11 @@ class InkCanvasView @JvmOverloads constructor(
         }
         if (!zooming) return
         zooming = false
-        dry.invalidate()
+        dry.postInvalidateOnAnimation()
+        // Run the work suppressed during the gesture once, from its final
+        // viewport and scale, and publish the exact final toolbar value.
+        scheduleStoppedPrefetch()
+        reportZoom(force = true)
         scheduleRefine()
     }
 
@@ -3217,6 +3251,7 @@ class InkCanvasView @JvmOverloads constructor(
         const val RULE_SPACING = 60f
         const val PAGE_TOP_MARGIN_PX = 24f
         const val REFINE_DEBOUNCE_MS = 200L
+        const val ZOOM_REPORT_INTERVAL_NS = 33_000_000L
         const val REFINE_MARGIN_PX = 160f
         const val BASE_TESSELLATION_SCALE = 1f
         const val EPSILON_SLOP = 0.00001f
