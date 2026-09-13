@@ -307,6 +307,8 @@ fun SkinSurface(
      * what the gap along the top of the docked toolbar was.
      */
     flush: Boolean = false,
+    /** Compact circular controls can omit the outer blur to avoid GPU layer seams. */
+    shadow: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     val skin = LocalSkin.current
@@ -318,7 +320,7 @@ fun SkinSurface(
             modifier = modifier,
             shape = shape,
             tonalElevation = tokens.tonalElevation,
-            shadowElevation = tokens.shadow,
+            shadowElevation = if (shadow) tokens.shadow else 0.dp,
             content = content,
         )
         return
@@ -333,13 +335,13 @@ fun SkinSurface(
                 shape = shape,
                 surfaceColor = tokens.fill
                     ?: MaterialTheme.colorScheme.surface.copy(alpha = tokens.fillAlpha),
-                shadowElevation = if (flush) 0.dp else tokens.shadow,
+                shadowElevation = if (flush || !shadow) 0.dp else tokens.shadow,
                 drawBorder = !flush,
             )
             .then(if (flush) Modifier.flushEdge(tokens) else Modifier)
     } else {
         modifier
-            .shadow(tokens.shadow, shape, clip = false)
+            .then(if (shadow) Modifier.shadow(tokens.shadow, shape, clip = false) else Modifier)
             .clip(shape)
             .frost()
             .background(tokens.fill ?: MaterialTheme.colorScheme.surface.copy(alpha = tokens.fillAlpha))

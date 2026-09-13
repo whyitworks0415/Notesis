@@ -1657,7 +1657,14 @@ class InkCanvasView @JvmOverloads constructor(
                 endZoom()
                 // A real fling keeps moving the page after the hand lifts, so
                 // keep the expensive live glass recording paused until it ends.
-                if (!flinging) onViewportInteractionChanged?.invoke(false)
+                if (!flinging) {
+                    onViewportInteractionChanged?.invoke(false)
+                    // The last movement frame deliberately used cached PDF
+                    // detail only. Paint once more after the hand lifts so the
+                    // final viewport can request its stable tile set.
+                    dry.postInvalidateOnAnimation()
+                    scheduleStoppedPrefetch()
+                }
                 suppressScaleUntilGestureEnd = false
                 return true
             }
@@ -1775,6 +1782,8 @@ class InkCanvasView @JvmOverloads constructor(
         flinging = false
         removeCallbacks(flingStep)
         onViewportInteractionChanged?.invoke(false)
+        dry.postInvalidateOnAnimation()
+        scheduleStoppedPrefetch()
     }
 
     private val flingStep = object : Runnable {
@@ -3400,7 +3409,10 @@ class InkCanvasView @JvmOverloads constructor(
             // page or a screenful of tiles at each size the zoom passes through
             // is work thrown away by the next frame, and it is thrown away by
             // competing with the frame that is being pinched.
-            val render = !holdingDetail()
+            // While the viewport moves, keep one coherent cached image rather
+            // than publishing detail tiles underneath the user's finger one by
+            // one. The stopped-prefetch job requests the final viewport once.
+            val render = !holdingDetail() && !viewportInteracting && !flinging
 
             // The whole page at modest resolution is the floor: it is cheap, it
             // is always there, and it means a tile that has not arrived yet

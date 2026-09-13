@@ -1,12 +1,17 @@
 package com.notesis
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,11 +22,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -29,6 +36,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
@@ -67,6 +75,7 @@ fun SkinSettingsScreen(
     onBack: () -> Unit,
 ) {
     var picking by remember { mutableStateOf<ColorSlot?>(null) }
+    var showAdvanced by remember { mutableStateOf(false) }
 
     // The screen that sets the glass was itself the one screen wearing none.
     val backdrop = rememberBackdrop(
@@ -89,8 +98,10 @@ fun SkinSettingsScreen(
                 },
                 title = { Text("화면 설정") },
                 actions = {
-                    IconButton(onClick = { onChange(SkinSettings()) }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "기본값으로")
+                    TextButton(onClick = { onChange(SkinSettings()) }) {
+                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("초기화")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
@@ -127,143 +138,82 @@ fun SkinSettingsScreen(
             item { Preview() }
 
             item {
-                SectionLabel("화면 모드")
-                LiquidSegmentedControl(
-                    segments = AppThemeMode.entries.map { it.label },
-                    selectedIndex = settings.themeMode.ordinal,
-                    onSelected = { index ->
-                        onChange(settings.copy(themeMode = AppThemeMode.entries[index]))
-                    },
+                SectionLabel("빠른 설정", "자주 바꾸는 항목만 한곳에 모았습니다")
+                SettingsCard {
+                    Text("밝기", style = MaterialTheme.typography.labelLarge)
+                    Spacer(Modifier.height(8.dp))
+                    LiquidSegmentedControl(
+                        segments = AppThemeMode.entries.map { it.label },
+                        selectedIndex = settings.themeMode.ordinal,
+                        onSelected = { index ->
+                            onChange(settings.copy(themeMode = AppThemeMode.entries[index]))
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        useLiquidGlass = false,
+                    )
+                    HorizontalDivider(Modifier.padding(vertical = 16.dp))
+                    Text("스타일", style = MaterialTheme.typography.labelLarge)
+                    Spacer(Modifier.height(8.dp))
+                    SkinPicker(skin, settings, onSkin)
+                    HorizontalDivider(Modifier.padding(vertical = 16.dp))
+                    Text("강조 색상", style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        "버튼과 선택 표시의 기준 색입니다",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    AccentPresets(settings.accent) { onChange(settings.copy(accent = it)) }
+                    HorizontalDivider(Modifier.padding(top = 8.dp))
+                    ToggleRow(
+                        "고대비",
+                        "글자와 버튼 경계를 더 또렷하게 표시합니다",
+                        settings.highContrast,
+                        compact = true,
+                    ) { onChange(settings.copy(highContrast = it)) }
+                }
+            }
+
+            item {
+                SectionLabel("세부 설정", "필요할 때만 열어 미세하게 조절하세요")
+                Surface(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp),
-                    // 이 항목은 배경을 기록하는 목록 안에 있으므로 순환 샘플링 없이
-                    // 라이트/다크 양쪽에서 확실히 읽히는 단색 인디케이터를 씁니다.
-                    useLiquidGlass = false,
-                )
-            }
-
-            item { SectionLabel("테마") }
-            items(Skin.entries) { option ->
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .clickable { onSkin(option) }
-                        .padding(horizontal = 20.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                        .padding(horizontal = 16.dp)
+                        .clip(RoundedCornerShape(22.dp))
+                        .clickable { showAdvanced = !showAdvanced },
+                    shape = RoundedCornerShape(22.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
                 ) {
-                    ProvideSkin(option, settings) {
-                        SkinSurface(Modifier.size(44.dp), corner = 13.dp) {}
-                    }
-                    Spacer(Modifier.width(16.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(option.label, style = MaterialTheme.typography.bodyLarge)
-                        Text(
-                            option.blurb,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.outline,
+                    Row(
+                        Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(if (showAdvanced) "세부 설정 접기" else "세부 설정 열기")
+                            Text(
+                                "블러 · 굴절 · 모서리 · 개별 색상",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.outline,
+                            )
+                        }
+                        Icon(
+                            if (showAdvanced) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = null,
                         )
-                    }
-                    if (option == skin) {
-                        Icon(Icons.Default.Check, contentDescription = null)
                     }
                 }
             }
 
             item {
-                SectionLabel("읽기 쉽게")
-                ToggleRow(
-                    "고대비",
-                    "글씨는 진하게, 유리는 불투명하게, 테두리는 두껍게. 색은 그대로 두고 " +
-                        "간격만 벌립니다",
-                    settings.highContrast,
-                ) { onChange(settings.copy(highContrast = it)) }
-            }
-
-            item {
-                SectionLabel("배경")
-                Setting(
-                    "블러 반경",
-                    "%.0fdp".format(settings.blur),
-                    settings.blur,
-                    SkinSettings.BLUR_RANGE,
-                    note = "패널 뒤가 흐려지는 정도. 팝업 뒤에도 같은 값이 쓰입니다",
-                ) { onChange(settings.copy(blur = it)) }
-                Setting(
-                    "블러 생동감",
-                    "+%.0f%%".format(settings.vibrancy * 100),
-                    settings.vibrancy,
-                    SkinSettings.VIBRANCY_RANGE,
-                ) { onChange(settings.copy(vibrancy = it)) }
-                if (skin == Skin.LIQUID_GLASS) {
-                    Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
-                        Text("굴절 방향", style = MaterialTheme.typography.bodyLarge)
-                        Text(
-                            "볼록은 페이지 위로 솟은 Apple식 렌즈, 오목은 아래로 눌린 렌즈입니다",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.outline,
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        LiquidSegmentedControl(
-                            segments = RefractionDirection.entries.map { it.label },
-                            selectedIndex = settings.refractionDirection.ordinal,
-                            onSelected = { index ->
-                                onChange(
-                                    settings.copy(
-                                        refractionDirection = RefractionDirection.entries[index],
-                                    ),
-                                )
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            // 설정 목록 자체가 배경 캡처 안에 있으므로 순환 참조를
-                            // 피하고, 선택 결과는 위 미리보기에서 실제 렌즈로 보여줍니다.
-                            useLiquidGlass = false,
-                        )
-                    }
-                    Setting(
-                        "렌즈 깊이",
-                        "%.0fdp".format(settings.depth),
-                        settings.depth,
-                        SkinSettings.DEPTH_RANGE,
-                        note = "가장자리에서 굴절이 안쪽으로 이어지는 거리입니다",
-                    ) { onChange(settings.copy(depth = it)) }
-                    Setting(
-                        "굴절량",
-                        "%.0fdp".format(settings.refraction),
-                        settings.refraction,
-                        SkinSettings.REFRACTION_RANGE,
-                        note = "배경이 렌즈 가장자리에서 휘어 보이는 양입니다",
-                    ) { onChange(settings.copy(refraction = it)) }
-                    Setting(
-                        "색수차",
-                        "%.0f%%".format(settings.dispersion * 100f),
-                        settings.dispersion,
-                        SkinSettings.DISPERSION_RANGE,
-                        note = "굴절 가장자리의 미세한 RGB 분리 강도입니다",
-                    ) { onChange(settings.copy(dispersion = it)) }
+                AnimatedVisibility(showAdvanced) {
+                    AdvancedSettings(
+                        skin = skin,
+                        settings = settings,
+                        onChange = onChange,
+                        onPickColor = { picking = it },
+                    )
                 }
-                Setting(
-                    "모서리",
-                    "%.0fdp".format(settings.corner),
-                    settings.corner,
-                    SkinSettings.CORNER_RANGE,
-                ) { onChange(settings.copy(corner = it)) }
-            }
-
-            item {
-                SectionLabel("카드 및 버튼")
-                ColorRow("색상", settings.tint) { picking = ColorSlot.TINT }
-                HorizontalDivider(Modifier.padding(horizontal = 20.dp))
-                ColorRow("테두리", settings.border) { picking = ColorSlot.BORDER }
-                HorizontalDivider(Modifier.padding(horizontal = 20.dp))
-                ColorRow("텍스트 및 아이콘", settings.content) { picking = ColorSlot.CONTENT }
-                HorizontalDivider(Modifier.padding(horizontal = 20.dp))
-                ColorRow(
-                    "강조 색상",
-                    settings.accent,
-                    note = "테마 전체가 이 색에서 만들어집니다",
-                ) { picking = ColorSlot.ACCENT }
-                AccentPresets(settings.accent) { onChange(settings.copy(accent = it)) }
             }
         }
         }
@@ -306,6 +256,184 @@ enum class ColorSlot(val label: String) {
     }
 }
 
+@Composable
+private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+    ) {
+        Column(Modifier.padding(horizontal = 18.dp, vertical = 16.dp), content = content)
+    }
+}
+
+@Composable
+private fun SkinPicker(
+    selected: Skin,
+    settings: SkinSettings,
+    onPick: (Skin) -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        for (option in Skin.entries) {
+            val active = option == selected
+            Surface(
+                modifier = Modifier
+                    .weight(1f)
+                    .border(
+                        if (active) 2.dp else 1.dp,
+                        if (active) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.outlineVariant,
+                        RoundedCornerShape(16.dp),
+                    )
+                    .clip(RoundedCornerShape(16.dp))
+                    .clickable { onPick(option) },
+                shape = RoundedCornerShape(16.dp),
+                color = if (active) MaterialTheme.colorScheme.primaryContainer
+                else MaterialTheme.colorScheme.surfaceContainer,
+            ) {
+                Column(
+                    Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    ProvideSkin(option, settings) {
+                        SkinSurface(Modifier.size(30.dp), corner = 10.dp) {}
+                    }
+                    Spacer(Modifier.height(7.dp))
+                    Text(
+                        option.label,
+                        style = MaterialTheme.typography.labelMedium,
+                        textAlign = TextAlign.Center,
+                        maxLines = 2,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AdvancedSettings(
+    skin: Skin,
+    settings: SkinSettings,
+    onChange: (SkinSettings) -> Unit,
+    onPickColor: (ColorSlot) -> Unit,
+) {
+    Column(Modifier.animateContentSize()) {
+        SectionLabel("유리 효과", "값을 움직이면 위 미리보기에 바로 반영됩니다")
+        SettingsCard {
+            Setting(
+                "배경 흐림",
+                "%.0fdp".format(settings.blur),
+                settings.blur,
+                SkinSettings.BLUR_RANGE,
+                note = "패널 뒤가 흐려지는 정도",
+            ) { onChange(settings.copy(blur = it)) }
+            HorizontalDivider()
+            Setting(
+                "색 생동감",
+                "+%.0f%%".format(settings.vibrancy * 100),
+                settings.vibrancy,
+                SkinSettings.VIBRANCY_RANGE,
+            ) { onChange(settings.copy(vibrancy = it)) }
+            if (skin == Skin.LIQUID_GLASS) {
+                HorizontalDivider()
+                Text("굴절 방향", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    "패널이 화면 위로 솟거나 안으로 눌려 보이는 방향",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline,
+                )
+                Spacer(Modifier.height(8.dp))
+                LiquidSegmentedControl(
+                    segments = RefractionDirection.entries.map { it.label },
+                    selectedIndex = settings.refractionDirection.ordinal,
+                    onSelected = { index ->
+                        onChange(settings.copy(refractionDirection = RefractionDirection.entries[index]))
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    useLiquidGlass = false,
+                )
+                HorizontalDivider(Modifier.padding(top = 14.dp))
+                Setting(
+                    "렌즈 깊이",
+                    "%.0fdp".format(settings.depth),
+                    settings.depth,
+                    SkinSettings.DEPTH_RANGE,
+                ) { onChange(settings.copy(depth = it)) }
+                HorizontalDivider()
+                Setting(
+                    "굴절량",
+                    "%.0fdp".format(settings.refraction),
+                    settings.refraction,
+                    SkinSettings.REFRACTION_RANGE,
+                ) { onChange(settings.copy(refraction = it)) }
+                HorizontalDivider()
+                Setting(
+                    "색수차",
+                    "%.0f%%".format(settings.dispersion * 100f),
+                    settings.dispersion,
+                    SkinSettings.DISPERSION_RANGE,
+                ) { onChange(settings.copy(dispersion = it)) }
+            }
+            HorizontalDivider()
+            Setting(
+                "둥근 모서리",
+                "%.0fdp".format(settings.corner),
+                settings.corner,
+                SkinSettings.CORNER_RANGE,
+            ) { onChange(settings.copy(corner = it)) }
+        }
+
+        SectionLabel("개별 색상", "원하는 부분만 눌러 색을 바꿀 수 있습니다")
+        SettingsCard {
+            ColorGrid(settings, onPickColor)
+        }
+    }
+}
+
+@Composable
+private fun ColorGrid(settings: SkinSettings, onPick: (ColorSlot) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ColorTile("패널", settings.tint, Modifier.weight(1f)) { onPick(ColorSlot.TINT) }
+            ColorTile("테두리", settings.border, Modifier.weight(1f)) { onPick(ColorSlot.BORDER) }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ColorTile("글자·아이콘", settings.content, Modifier.weight(1f)) {
+                onPick(ColorSlot.CONTENT)
+            }
+            ColorTile("강조", settings.accent, Modifier.weight(1f)) { onPick(ColorSlot.ACCENT) }
+        }
+    }
+}
+
+@Composable
+private fun ColorTile(label: String, argb: Int, modifier: Modifier, onClick: () -> Unit) {
+    Row(
+        modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .size(26.dp)
+                .clip(CircleShape)
+                .background(Brush.linearGradient(listOf(Color(0xFFDDDDDD), Color.White)))
+                .background(Color(argb)),
+        )
+        Spacer(Modifier.width(9.dp))
+        Text(label, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+    }
+}
+
 /**
  * Glass over something worth looking through. A flat colour would hide exactly
  * the thing being tuned, so the preview sits on a band of colour and a rule of
@@ -318,7 +446,7 @@ private fun Preview() {
     Box(
         Modifier
             .fillMaxWidth()
-            .height(230.dp),
+            .height(170.dp),
         contentAlignment = Alignment.Center,
     ) {
         val backdrop = rememberBackdrop(active = true)
@@ -343,7 +471,7 @@ private fun Preview() {
                 ),
         ) {
             Column(Modifier.fillMaxSize().padding(14.dp)) {
-                repeat(9) {
+                repeat(6) {
                     Box(
                         Modifier
                             .fillMaxWidth()
@@ -351,7 +479,7 @@ private fun Preview() {
                             .padding(end = if (it % 2 == 0) 0.dp else 90.dp)
                             .background(Color.White.copy(alpha = 0.7f)),
                     )
-                    Spacer(Modifier.height(16.dp))
+                    Spacer(Modifier.height(13.dp))
                 }
             }
         }
@@ -359,7 +487,7 @@ private fun Preview() {
             LocalBackdrop provides backdrop,
             LocalLiquidGlassBackdrop provides liquidBackdrop,
         ) {
-            SkinSurface(Modifier.fillMaxWidth(0.76f).height(138.dp)) {
+            SkinSurface(Modifier.fillMaxWidth(0.72f).height(112.dp)) {
                 Column(
                     Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 14.dp),
                     verticalArrangement = Arrangement.Center,
@@ -374,7 +502,7 @@ private fun Preview() {
                         textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(5.dp))
                     SkinSlider(
                         value = amount,
                         onValueChange = { amount = it },
@@ -440,12 +568,18 @@ private val ACCENTS = listOf(
 
 /** A setting that is either on or off, wearing the skin's own switch. */
 @Composable
-private fun ToggleRow(label: String, note: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+private fun ToggleRow(
+    label: String,
+    note: String,
+    checked: Boolean,
+    compact: Boolean = false,
+    onChange: (Boolean) -> Unit,
+) {
     Row(
         Modifier
             .fillMaxWidth()
             .clickable { onChange(!checked) }
-            .padding(horizontal = 20.dp, vertical = 12.dp),
+            .padding(horizontal = if (compact) 0.dp else 20.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f).padding(end = 16.dp)) {
@@ -461,13 +595,17 @@ private fun ToggleRow(label: String, note: String, checked: Boolean, onChange: (
 }
 
 @Composable
-private fun SectionLabel(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.outline,
-        modifier = Modifier.padding(start = 20.dp, top = 24.dp, bottom = 4.dp),
-    )
+private fun SectionLabel(text: String, description: String? = null) {
+    Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 24.dp, bottom = 8.dp)) {
+        Text(text, style = MaterialTheme.typography.titleMedium)
+        if (description != null) {
+            Text(
+                description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline,
+            )
+        }
+    }
 }
 
 @Composable
@@ -479,29 +617,48 @@ private fun Setting(
     note: String? = null,
     onChange: (Float) -> Unit,
 ) {
-    Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-            Text(
-                value,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.outline,
-            )
+    BoxWithConstraints(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
+        val labelBlock: @Composable () -> Unit = {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                    Text(
+                        value,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                if (note != null) {
+                    Text(
+                        note,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline,
+                    )
+                }
+            }
         }
-        if (note != null) {
-            Text(
-                note,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline,
-            )
+        if (maxWidth < 520.dp) {
+            Column {
+                labelBlock()
+                Spacer(Modifier.height(4.dp))
+                SkinSlider(
+                    value = current.coerceIn(range),
+                    onValueChange = onChange,
+                    valueRange = range,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f).padding(end = 20.dp)) { labelBlock() }
+                SkinSlider(
+                    value = current.coerceIn(range),
+                    onValueChange = onChange,
+                    valueRange = range,
+                    modifier = Modifier.width(220.dp),
+                )
+            }
         }
-        Spacer(Modifier.height(6.dp))
-        SkinSlider(
-            value = current.coerceIn(range),
-            onValueChange = onChange,
-            valueRange = range,
-            modifier = Modifier.fillMaxWidth(),
-        )
     }
 }
 

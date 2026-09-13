@@ -67,10 +67,19 @@ class PdfSource private constructor(
     @Volatile
     private var closed = false
 
-    // [cacheBytes] is one total budget. Half still fits one 2048px A4 page at
-    // the minimum budget; the other half keeps a screenful of sharp tiles.
-    private val cache = object : LruCache<Long, Bitmap>((cacheBytes / 2).coerceAtLeast(1)) {
-        override fun sizeOf(key: Long, value: Bitmap) = value.byteCount
+    // Keep the cheap whole-page floor small and reserve most of the budget for
+    // the visible detail tiles. A 2048px A4 bitmap alone is about 24 MiB: with
+    // the old 50/50 split it did not fit in the 12 MiB page half on a modest
+    // device and was rendered, immediately evicted, then rendered again. The
+    // tile half could hold only three 1024px tiles, so a six-tile viewport also
+    // evicted itself in a loop. Both loops appeared as text alternating between
+    // soft and sharp. 1024px page floors plus 512px tiles keep a complete
+    // viewport resident and make each quality promotion stable.
+    private val pageCacheBytes = (cacheBytes / 3).coerceIn(MIN_PAGE_CACHE_BYTES, MAX_PAGE_CACHE_BYTES)
+    private val tileCacheBytes = (cacheBytes - pageCacheBytes).coerceAtLeast(MIN_TILE_CACHE_BYTES)
+
+    private val cache = object : LruCache<Long, Bitmap>(pageCacheBytes) {
+        override fun sizeOf(key: Long, value: Bitmap) = value.allocationByteCount
     }
 
     private data class TileKey(
@@ -82,8 +91,8 @@ class PdfSource private constructor(
 
     private val pendingTiles = mutableMapOf<TileKey, Int>()
 
-    private val tileCache = object : LruCache<TileKey, Bitmap>((cacheBytes - cacheBytes / 2).coerceAtLeast(1)) {
-        override fun sizeOf(key: TileKey, value: Bitmap) = value.byteCount
+    private val tileCache = object : LruCache<TileKey, Bitmap>(tileCacheBytes) {
+        override fun sizeOf(key: TileKey, value: Bitmap) = value.allocationByteCount
     }
 
     init {
@@ -270,10 +279,16 @@ class PdfSource private constructor(
         }
     }
 
-    /** Powers of two, so panning at one zoom keeps hitting the same tiles. */
+    /**
+     * Powers of two, so panning at one zoom keeps hitting the same tiles.
+     * A little headroom around each boundary prevents tiny scale rounding
+     * changes from swapping 2x and 4x tile sets on adjacent frames.
+     */
     private fun densityFor(pixelsPerUnit: Float): Float {
         var density = 1f
-        while (density < pixelsPerUnit && density < MAX_TILE_DENSITY) density *= 2f
+        while (density * DENSITY_BUCKET_HEADROOM < pixelsPerUnit && density < MAX_TILE_DENSITY) {
+            density *= 2f
+        }
         return density
     }
 
@@ -492,11 +507,16 @@ class PdfSource private constructor(
         const val POINTS_TO_WORLD = 150f / 72f
 
         private const val MIN_PAGE_WIDTH = 1024
-        /** 2048 x ~2900 x 4B is about 24MB - past this, crops are cheaper. */
-        private const val MAX_PAGE_WIDTH = 2048
+        // The whole-page image is only a stable floor. Detail comes from tiles;
+        // keeping this at 1024 avoids a single A4 bitmap consuming the cache.
+        private const val MAX_PAGE_WIDTH = 1024
         private const val MAX_CROP_PX = 4096
-        /** Tile edge in pixels. Big enough that a screen needs only a handful. */
-        private const val TILE_PX = 1024f
+        /** Small enough for a full tablet viewport to remain in the tile LRU. */
+        private const val TILE_PX = 512f
+        private const val DENSITY_BUCKET_HEADROOM = 1.12f
+        private const val MIN_PAGE_CACHE_BYTES = 8 * 1024 * 1024
+        private const val MAX_PAGE_CACHE_BYTES = 32 * 1024 * 1024
+        private const val MIN_TILE_CACHE_BYTES = 8 * 1024 * 1024
         // The canvas can reach 16 screen pixels per page unit. Matching that
         // ceiling keeps glyph edges one source pixel per display pixel even at
         // maximum zoom instead of magnifying the last tile bucket twofold.

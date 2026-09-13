@@ -66,6 +66,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.NoteAdd
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
@@ -80,11 +81,12 @@ import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.Gesture
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.PanToolAlt
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Archive
@@ -100,7 +102,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloseFullscreen
 import androidx.compose.material.icons.filled.AutoAwesomeMosaic
 import androidx.compose.material.icons.filled.BugReport
-import androidx.compose.material.icons.filled.Create
+import androidx.compose.material.icons.filled.Draw
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Highlight
 import androidx.compose.material.icons.filled.VerticalAlignTop
 import androidx.compose.material.icons.filled.Visibility
@@ -679,25 +682,25 @@ private fun NoteListScreen(
                 )
                 GlassFab(
                     onClick = { pickPdf.launch(arrayOf("application/pdf")) },
-                    icon = Icons.Default.Description,
+                    icon = Icons.Default.PictureAsPdf,
                     contentDescription = "PDF 가져오기",
                     modifier = Modifier.padding(top = 12.dp, bottom = 12.dp),
                 )
                 GlassFab(
                     onClick = { openDocument.launch(SUPPORTED_DOCUMENT_MIME_TYPES) },
-                    icon = Icons.Default.FolderOpen,
+                    icon = Icons.Default.FileOpen,
                     contentDescription = "문서 열기",
                     modifier = Modifier.padding(bottom = 12.dp),
                 )
                 GlassFab(
                     onClick = { importMarkdown.launch(arrayOf("text/markdown", "text/plain", "application/octet-stream")) },
-                    icon = Icons.Default.Description,
+                    icon = Icons.Default.Code,
                     contentDescription = "Markdown 가져오기",
                     modifier = Modifier.padding(bottom = 12.dp),
                 )
                 GlassFab(
                     onClick = { naming = true },
-                    icon = Icons.Default.Add,
+                    icon = Icons.AutoMirrored.Filled.NoteAdd,
                     contentDescription = "새 노트",
                 )
             }
@@ -1304,12 +1307,19 @@ private fun GlassFab(
             containerColor = Color.Transparent,
             contentColor = MaterialTheme.colorScheme.onSurface,
             drawBorder = false,
-            glassShadowElevation = 3.dp,
+            // Small runtime-shader layers can expose their rectangular render
+            // bounds as a faint frame on some GPUs. The circular rim supplies
+            // enough separation here, so the external shadow is deliberately off.
+            glassShadowElevation = 0.dp,
         ) {
             Icon(icon, contentDescription = contentDescription)
         }
     } else {
-        SkinSurface(modifier = modifier.size(side), corner = 16.dp) {
+        SkinSurface(
+            modifier = modifier.size(side),
+            corner = if (small) 20.dp else 28.dp,
+            shadow = false,
+        ) {
             // Clickable inside the surface, so the ripple is clipped to the corner.
             Box(
                 Modifier.fillMaxSize().clickable(onClick = onClick),
@@ -4217,7 +4227,7 @@ private fun Toolbar(
                     }
                 }
                 ToolButton(
-                    Icons.Default.TouchApp,
+                    Icons.Default.PanToolAlt,
                     "읽기 모드",
                     mode == EditMode.READ,
                 ) { onMode(EditMode.READ) }
@@ -4226,7 +4236,7 @@ private fun Toolbar(
                 // The tools, in a fixed row. Each keeps its own colour and
                 // thickness, so picking one up is the whole of choosing what to
                 // write with - there is no tray of pens to curate.
-                ToolChip(Icons.Default.Create, "펜", EditMode.PEN, mode, pen, onMode)
+                ToolChip(Icons.Default.Draw, "펜", EditMode.PEN, mode, pen, onMode)
                 ToolChip(
                     Icons.Default.Highlight,
                     "형광펜",
@@ -4402,6 +4412,8 @@ private fun ToolButton(
             contentPadding = PaddingValues(0.dp),
             containerColor = Color.Transparent,
             contentColor = contentColor,
+            drawBorder = false,
+            glassShadowElevation = 0.dp,
         ) {
             Icon(icon, contentDescription = label)
         }
