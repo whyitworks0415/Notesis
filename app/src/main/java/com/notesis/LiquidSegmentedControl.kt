@@ -7,7 +7,9 @@ import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
@@ -84,7 +86,15 @@ fun LiquidSegmentedControl(
             .clip(CircleShape)
             .background(MaterialTheme.colorScheme.surfaceContainerHighest)
     }
-    BoxWithConstraints(trackModifier.height(44.dp)) {
+    BoxWithConstraints(
+        trackModifier
+            .border(
+                1.dp,
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
+                CircleShape,
+            )
+            .height(46.dp),
+    ) {
         val segmentWidth = maxWidth / segments.size
         val targetX = segmentWidth * selected
         val indicatorX by animateDpAsState(
@@ -102,7 +112,7 @@ fun LiquidSegmentedControl(
         val extra = segmentWidth * (0.14f * morph.value)
 
         val indicator = Modifier
-            .padding(vertical = 3.dp)
+            .padding(4.dp)
             .offset(x = indicatorX - extra / 2f)
             .width(segmentWidth + extra)
             .fillMaxHeight()
@@ -113,7 +123,7 @@ fun LiquidSegmentedControl(
                     intensity = 0.88f,
                     shape = CircleShape,
                     surfaceColor = Color.White.copy(alpha = 0.25f),
-                    shadowElevation = 3.dp,
+                    shadowElevation = 5.dp,
                 ),
             )
         } else {
@@ -127,12 +137,19 @@ fun LiquidSegmentedControl(
         Row(Modifier.fillMaxSize()) {
             segments.forEachIndexed { index, label ->
                 val isSelected = index == selected
+                val interaction = remember(index) { MutableInteractionSource() }
                 Box(
                     Modifier
                         .weight(1f)
                         .fillMaxHeight()
                         .semantics { this.selected = isSelected }
-                        .clickable(role = Role.Tab) { latestSelect(index) },
+                        // The moving capsule is the response; a Material ripple
+                        // on top used to flash the tapped half grey.
+                        .clickable(
+                            role = Role.Tab,
+                            interactionSource = interaction,
+                            indication = null,
+                        ) { latestSelect(index) },
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(

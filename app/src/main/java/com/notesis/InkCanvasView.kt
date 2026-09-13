@@ -542,6 +542,8 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** True between the second finger going down and the pinch ending. */
     private var zooming = false
+    /** A three-finger panel gesture must never leak into the two-finger scaler. */
+    private var suppressScaleUntilGestureEnd = false
 
     /** Whether detail work should be held off right now. */
     private fun holdingDetail(): Boolean = deferDetail && zooming
@@ -613,6 +615,13 @@ class InkCanvasView @JvmOverloads constructor(
     private val strokeTransform = Matrix()
     private val matrixValues = FloatArray(9)
     private val pageProbe = FloatArray(2)
+
+    /** Brush construction crosses into native Ink code, so reuse it between strokes. */
+    private var cachedBrushTool: Tool? = null
+    private var cachedBrushColor = 0
+    private var cachedBrushSize = Float.NaN
+    private var cachedBrushEpsilon = Float.NaN
+    private var cachedBrush: Brush? = null
 
     private var activeStylusPointer: Int? = null
     private var activeStrokeId: InProgressStrokeId? = null
@@ -894,6 +903,8 @@ class InkCanvasView @JvmOverloads constructor(
         matrixValues[Matrix.MTRANS_Y] = -document.topOf(here) * scale + PAGE_TOP_MARGIN_PX
         documentToScreen.setValues(matrixValues)
         onTransformChanged()
+        // Pay the native brush-construction cost now, not on the next pen down.
+        prepareBrush()
     }
 
     /**
@@ -1175,7 +1186,6 @@ class InkCanvasView @JvmOverloads constructor(
                 if (Build.VERSION.SDK_INT >= 35) {
                     requestedFrameRate = REQUESTED_FRAME_RATE_CATEGORY_HIGH
                 }
-                onDrawingChanged?.invoke(true)
                 // Built per gesture: the Kalman filter is tied to one pointer on
                 // one device, and a new stroke is a new pointer.
                 if (latencyMonitoringEnabled && !frameClockRunning) {
@@ -1185,6 +1195,7 @@ class InkCanvasView @JvmOverloads constructor(
                 }
                 activePage = document.pages[index]
                 if (captureMode && !event.isEraserGesture()) {
+                    onDrawingChanged?.invoke(true)
                     capturePage = index
                     capturing = true
                     pageLocalInto(event.x, event.y, index, shapeStart)
@@ -1193,10 +1204,12 @@ class InkCanvasView @JvmOverloads constructor(
                     return true
                 }
                 if (lassoMode && !event.isEraserGesture()) {
+                    onDrawingChanged?.invoke(true)
                     beginLasso(event, index)
                     return true
                 }
                 if (imageMode && !event.isEraserGesture()) {
+                    onDrawingChanged?.invoke(true)
                     beginImageGesture(event, index)
                     return true
                 }
@@ -1204,6 +1217,7 @@ class InkCanvasView @JvmOverloads constructor(
                 if (shape != null && !readMode && !event.isEraserGesture() &&
                     tool != Tool.ERASER
                 ) {
+                    onDrawingChanged?.invoke(true)
                     shapePage = index
                     drawingShape = true
                     pageLocalInto(event.x, event.y, index, shapeStart)
@@ -1213,6 +1227,7 @@ class InkCanvasView @JvmOverloads constructor(
                     return true
                 }
                 if (readMode && !event.isEraserGesture()) {
+                    onDrawingChanged?.invoke(true)
                     // Reading is where a covered answer gets looked at.
                     if (toggleMaskAt(event.x, event.y, index)) return true
                     pressX = event.x
@@ -1226,6 +1241,7 @@ class InkCanvasView @JvmOverloads constructor(
                 strokeIsMask = maskMode
                 erasing = tool == Tool.ERASER || event.isEraserGesture()
                 if (erasing) {
+                    onDrawingChanged?.invoke(true)
                     lastErasePoint = null
                     eraseAlong(event, event.actionIndex)
                 } else {
@@ -1241,6 +1257,9 @@ class InkCanvasView @JvmOverloads constructor(
                         // back in page-local coordinates and stays with its page.
                         motionEventToWorldTransform = screenToPage(index),
                     )
+                    // Put the first wet-ink mark on the front buffer before a
+                    // Compose state write freezes the toolbar backdrop.
+                    onDrawingChanged?.invoke(true)
                     // Writing always moves the pen straight away, so a pen that
                     // stays put is asking for the text underneath, not for ink.
                     // The stroke starts anyway and is cancelled if the hold wins,
@@ -1467,7 +1486,23 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun onFingers(event: MotionEvent): Boolean {
-        scaleDetector.onTouchEvent(event)
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            suppressScaleUntilGestureEnd = false
+        }
+        if (event.pointerCount >= 3 && !suppressScaleUntilGestureEnd) {
+            // ScaleGestureDetector otherwise zooms the page with its first two
+            // pointers while all three are resizing the popup at the same time.
+            val cancel = MotionEvent.obtain(event)
+            cancel.action = MotionEvent.ACTION_CANCEL
+            try {
+                scaleDetector.onTouchEvent(cancel)
+            } finally {
+                cancel.recycle()
+            }
+            suppressScaleUntilGestureEnd = true
+        } else if (!suppressScaleUntilGestureEnd) {
+            scaleDetector.onTouchEvent(event)
+        }
         trackVelocity(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -1605,6 +1640,7 @@ class InkCanvasView @JvmOverloads constructor(
                 // A real fling keeps moving the page after the hand lifts, so
                 // keep the expensive live glass recording paused until it ends.
                 if (!flinging) onViewportInteractionChanged?.invoke(false)
+                suppressScaleUntilGestureEnd = false
                 return true
             }
 
@@ -1614,6 +1650,7 @@ class InkCanvasView @JvmOverloads constructor(
                 releaseVelocity()
                 endZoom()
                 onViewportInteractionChanged?.invoke(false)
+                suppressScaleUntilGestureEnd = false
                 return true
             }
         }
@@ -1789,6 +1826,13 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun currentBrush(): Brush {
+        val epsilon = strokeEpsilon(strokeWidth, epsilonFor(currentScale()))
+        cachedBrush?.takeIf {
+            cachedBrushTool == tool &&
+                cachedBrushColor == colorArgb &&
+                cachedBrushSize == strokeWidth &&
+                cachedBrushEpsilon == epsilon
+        }?.let { return it }
         return Brush.createWithColorIntArgb(
             family = tool.brushFamily(),
             // Alpha included: a highlighter is a saved pen that happens to be
@@ -1799,8 +1843,14 @@ class InkCanvasView @JvmOverloads constructor(
             size = strokeWidth,
             // Drawn at the zoom in use, so a stroke made while zoomed in is
             // already fine enough and never needs rebuilding.
-            epsilon = strokeEpsilon(strokeWidth, epsilonFor(currentScale())),
-        )
+            epsilon = epsilon,
+        ).also {
+            cachedBrushTool = tool
+            cachedBrushColor = colorArgb
+            cachedBrushSize = strokeWidth
+            cachedBrushEpsilon = epsilon
+            cachedBrush = it
+        }
     }
 
     // ---- mesh refinement -----------------------------------------------------
@@ -1977,6 +2027,11 @@ class InkCanvasView @JvmOverloads constructor(
             val pageTop = document.topOf(i)
             page.takeIf { pageTop <= bottom && pageTop + page.height >= top }
         }
+    }
+
+    /** Warms the immutable Ink brush after tool settings or fit scale change. */
+    fun prepareBrush() {
+        if (tool != Tool.ERASER) currentBrush()
     }
 
     /** Current page first, then alternating in the travel direction and behind it. */

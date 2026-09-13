@@ -913,17 +913,7 @@ private fun NoteCard(
     }
     val skin = LocalSkin.current
     val cardShape = RoundedCornerShape(20.dp)
-    val cardModifier = if (skin == Skin.LIQUID_GLASS) {
-        Modifier.liquidGlass(
-            shape = cardShape,
-            surfaceColor = Color(LocalSkinSettings.current.tint),
-            shadowElevation = 8.dp,
-        )
-    } else {
-        Modifier
-    }
     Card(
-        modifier = cardModifier,
         onClick = onOpen,
         shape = cardShape,
         // No shadow on glass. A shadow is drawn under the whole card, not only
@@ -937,9 +927,13 @@ private fun NoteCard(
         colors = if (skin == Skin.MATERIAL) {
             CardDefaults.cardColors()
         } else if (skin == Skin.LIQUID_GLASS) {
-            // 실제 렌즈와 표면은 modifier가 그립니다. Card의 단순 알파 면을
-            // 겹치지 않아 썸네일 아래도 투명 플라스틱처럼 보이지 않습니다.
-            CardDefaults.cardColors(containerColor = Color.Transparent)
+            // Cards are themselves inside the backdrop recording and must not
+            // sample that recording recursively. Asking for a liquid lens here
+            // therefore entered its opaque fallback and drew the thick grey
+            // frame seen around the title strip.
+            CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
+            )
         } else {
             // The card is mostly its own picture, so it goes only slightly
             // translucent - enough to belong with the glass, not so much that
@@ -1261,6 +1255,8 @@ private fun GlassFab(
             contentPadding = PaddingValues(0.dp),
             containerColor = Color.Transparent,
             contentColor = MaterialTheme.colorScheme.onSurface,
+            drawBorder = false,
+            glassShadowElevation = 3.dp,
         ) {
             Icon(icon, contentDescription = contentDescription)
         }
@@ -2246,7 +2242,13 @@ private fun NoteScreen(
             floor
         }
         val oldStretch = referenceStretch
-        referenceStretch = (oldStretch * spreadFactor)
+        // Ignore sub-pixel resampling noise from a stationary three-finger grip.
+        val stableFactor = if (abs(spreadFactor - 1f) < REFERENCE_SCALE_DEAD_ZONE) {
+            1f
+        } else {
+            spreadFactor
+        }
+        referenceStretch = (oldStretch * stableFactor)
             .coerceIn(floor, maxOf(floor, ceiling))
         val w = referenceSize.width * referenceStretch
         val h = referenceSize.height * referenceStretch
@@ -2627,6 +2629,7 @@ private fun NoteScreen(
                     view.colorArgb =
                         if (mode == EditMode.MASK) pen.colorArgb or 0xFF000000.toInt() else pen.colorArgb
                     view.strokeWidth = pen.width
+                    view.prepareBrush()
                     view.eraserWidth = eraserWidth
                     view.onUndo = { canvas?.undo(); edits++ }
                     view.onRedo = { canvas?.redo(); edits++ }
@@ -2750,7 +2753,9 @@ private fun NoteScreen(
                     // scrolling row takes every pixel it is offered, so on a
                     // landscape tablet the bar stretched the whole 2960px with
                     // the tools huddled in the first third of it.
-                    .widthIn(max = minOf(maxBarWidth, FLOATING_BAR_MAX))
+                    // Intrinsic text must not resize the whole bar when the pen
+                    // type or a value such as 9.9/10 changes.
+                    .width(minOf(maxBarWidth, FLOATING_BAR_MAX))
                     // Placed and clamped together: the folded handle can be
                     // dragged anywhere, and unfolding measures the wide bar and
                     // pulls it back inside rather than letting it hang off.
@@ -3507,6 +3512,7 @@ private fun ReferencePanel(
                                 pen.colorArgb
                             }
                             v.strokeWidth = pen.width
+                            v.prepareBrush()
                             v.eraserWidth = eraserWidth
                             v.deferDetail = deferDetail
                         },
@@ -4377,6 +4383,7 @@ private const val INK_INDEX_IDLE_MS = 8000L
 private const val SEARCH_DEBOUNCE_MS = 220L
 
 private const val PEN_SAVE_DELAY_MS = 400L
+private const val REFERENCE_SCALE_DEAD_ZONE = 0.0025f
 
 /** 페이지 이동이 끝난 뒤 스크러버가 화면에 남아 있는 시간입니다. */
 private const val PAGE_SCRUBBER_IDLE_MS = 1600L

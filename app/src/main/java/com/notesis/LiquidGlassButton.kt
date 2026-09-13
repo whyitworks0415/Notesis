@@ -38,6 +38,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 
 /**
  * 평상시에도 실제 배경을 굴절시키고, 누르면 렌즈가 조금 넓어지고 깊어지는 버튼입니다.
@@ -58,6 +59,9 @@ fun LiquidGlassButton(
     contentColor: Color = Color(0xFF1D1D1F),
     /** 버튼 내용과 가장자리 사이의 최소 여백입니다. */
     contentPadding: PaddingValues = PaddingValues(horizontal = 16.dp, vertical = 9.dp),
+    /** Dense controls can keep the lens without drawing a second outline. */
+    drawBorder: Boolean = true,
+    glassShadowElevation: Dp = 6.dp,
     content: @Composable () -> Unit,
 ) {
     val interaction = remember { MutableInteractionSource() }
@@ -124,7 +128,8 @@ fun LiquidGlassButton(
                         shape = CircleShape,
                         // 아주 얇은 흰 코팅만 남기고 배경이 버튼 몸체가 되게 합니다.
                         surfaceColor = Color.White.copy(alpha = 0.20f),
-                        shadowElevation = 6.dp,
+                        shadowElevation = glassShadowElevation,
+                        drawBorder = drawBorder,
                     ),
             )
         }
