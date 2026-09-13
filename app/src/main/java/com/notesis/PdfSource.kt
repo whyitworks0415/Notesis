@@ -11,7 +11,10 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.util.LruCache
 import java.io.File
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.Executors
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 import kotlin.math.floor
 
 /** One rendered piece of a PDF page, with the page-local region it covers. */
@@ -52,13 +55,20 @@ class PdfSource private constructor(
     /** Cheap bookkeeping only: never held across a render. */
     private val stateLock = Any()
 
-    private val worker = Executors.newSingleThreadExecutor()
-    private val pending = mutableSetOf<Long>()
+    private val worker = ThreadPoolExecutor(
+        1, 1, 0L, TimeUnit.MILLISECONDS, LinkedBlockingQueue(),
+    )
+    private val pending = mutableMapOf<Long, Int>()
+
+    @Volatile private var viewportGeneration = 0
+    @Volatile private var wantedPages: Set<Int> = emptySet()
 
     @Volatile
     private var closed = false
 
-    private val cache = object : LruCache<Long, Bitmap>(cacheBytes) {
+    // [cacheBytes] is one total budget. Half still fits one 2048px A4 page at
+    // the minimum budget; the other half keeps a screenful of sharp tiles.
+    private val cache = object : LruCache<Long, Bitmap>((cacheBytes / 2).coerceAtLeast(1)) {
         override fun sizeOf(key: Long, value: Bitmap) = value.byteCount
     }
 
@@ -69,14 +79,40 @@ class PdfSource private constructor(
         val tileY: Int,
     )
 
-    private val pendingTiles = mutableSetOf<TileKey>()
+    private val pendingTiles = mutableMapOf<TileKey, Int>()
 
-    private val tileCache = object : LruCache<TileKey, Bitmap>(cacheBytes) {
+    private val tileCache = object : LruCache<TileKey, Bitmap>((cacheBytes - cacheBytes / 2).coerceAtLeast(1)) {
         override fun sizeOf(key: TileKey, value: Bitmap) = value.byteCount
     }
 
     /** Called on the worker thread once a requested render has landed. */
     var onReady: ((Int) -> Unit)? = null
+
+    /**
+     * Moves queued rendering priority to the pages around the current viewport.
+     * Old FIFO work is allowed to leave the executor, but it exits before
+     * opening PdfRenderer, so a fast scroll does not have to render every page
+     * passed on the way to the one where the user stopped.
+     */
+    fun prioritizePages(pageIndices: List<Int>, widthPx: Int) {
+        val ordered = pageIndices.filter { it in 0 until pageCount }.distinct()
+        if (ordered.isEmpty()) return
+        val wanted = ordered.toSet()
+        synchronized(stateLock) {
+            if (closed) return
+            if (wanted != wantedPages) {
+                wantedPages = wanted
+                viewportGeneration++
+                // Work that has not opened PdfRenderer yet is disposable. A
+                // queue reset is what makes the stopped-at page genuinely jump
+                // ahead instead of merely waiting for old no-op jobs to drain.
+                worker.queue.clear()
+                pending.clear()
+                pendingTiles.clear()
+            }
+        }
+        for (page in ordered) bitmap(page, widthPx, request = true)
+    }
 
     /** Page size in world units, or null if the page is out of range. */
     fun pageSize(index: Int): Pair<Float, Float>? = synchronized(renderLock) {
@@ -162,17 +198,29 @@ class PdfSource private constructor(
         pageWidth: Float,
         pageHeight: Float,
     ) {
+        val generation: Int
         val fresh = synchronized(stateLock) {
             if (closed) return
-            keys.filter { pendingTiles.add(it) }
+            generation = viewportGeneration
+            keys.filter { key ->
+                if (pendingTiles[key] == generation ||
+                    pendingTiles.containsKey(key) && index in wantedPages
+                ) false
+                else { pendingTiles[key] = generation; true }
+            }
         }
         if (fresh.isEmpty()) return
-        worker.execute {
+        val accepted = runCatching { worker.execute {
             runCatching {
+                if (!isRelevant(index, generation)) return@runCatching
+                val remaining = fresh.filter { tileCache.get(it) == null }
+                if (remaining.isEmpty()) return@runCatching
                 synchronized(renderLock) {
                     if (closed) return@synchronized
                     renderer.openPage(index).use { page ->
-                        for (key in fresh) {
+                        for (key in remaining) {
+                            if (closed || Thread.currentThread().isInterrupted) break
+                            if (!isRelevant(index, generation)) continue
                             val source = RectF(
                                 key.tileX * tileUnits,
                                 key.tileY * tileUnits,
@@ -196,13 +244,24 @@ class PdfSource private constructor(
                                 transform,
                                 PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY,
                             )
-                            tileCache.put(key, bitmap)
+                            // close() may have won while PdfRenderer was inside
+                            // its non-interruptible render call.
+                            synchronized(stateLock) {
+                                if (!closed) tileCache.put(key, bitmap)
+                            }
                         }
                     }
                 }
             }
-            synchronized(stateLock) { pendingTiles.removeAll(fresh.toSet()) }
-            onReady?.invoke(index)
+            synchronized(stateLock) {
+                fresh.forEach { key ->
+                    if (pendingTiles[key] == generation) pendingTiles.remove(key)
+                }
+            }
+            if (!closed && isRelevant(index, generation)) onReady?.invoke(index)
+        } }.isSuccess
+        if (!accepted) synchronized(stateLock) {
+            fresh.forEach { key -> if (pendingTiles[key] == generation) pendingTiles.remove(key) }
         }
     }
 
@@ -278,18 +337,39 @@ class PdfSource private constructor(
     }
 
     private fun request(key: Long, render: () -> Bitmap?) {
+        val generation: Int
         synchronized(stateLock) {
-            if (closed || !pending.add(key)) return
+            if (closed) return
+            generation = viewportGeneration
+            val page = (key shr 32).toInt()
+            if (pending[key] == generation || pending.containsKey(key) && page in wantedPages) return
+            pending[key] = generation
         }
-        worker.execute {
-            val bitmap = runCatching { render() }.getOrNull()
-            synchronized(stateLock) { pending.remove(key) }
-            if (bitmap != null) {
-                if (key >= 0) cache.put(key, bitmap)
-                onReady?.invoke((key shr 32).toInt())
+        val accepted = runCatching { worker.execute {
+            val page = (key shr 32).toInt()
+            val bitmap = if (cache.get(key) == null && isRelevant(page, generation)) {
+                runCatching { render() }.getOrNull()
+            } else null
+            synchronized(stateLock) {
+                if (pending[key] == generation) pending.remove(key)
             }
+            if (bitmap != null) {
+                val keep = synchronized(stateLock) {
+                    if (closed) false else {
+                        if (key >= 0) cache.put(key, bitmap)
+                        true
+                    }
+                }
+                if (keep) onReady?.invoke((key shr 32).toInt())
+            }
+        } }.isSuccess
+        if (!accepted) synchronized(stateLock) {
+            if (pending[key] == generation) pending.remove(key)
         }
     }
+
+    private fun isRelevant(page: Int, generation: Int): Boolean =
+        !closed && (generation == viewportGeneration || page in wantedPages)
 
     /** Blocking render, for callers off the UI thread that need the page now. */
     fun renderNow(index: Int, widthPx: Int): Bitmap? = renderWholePage(index, widthPx)
@@ -370,14 +450,22 @@ class PdfSource private constructor(
         synchronized(stateLock) {
             if (closed) return
             closed = true
+            pending.clear()
+            pendingTiles.clear()
         }
-        worker.shutdown()
-        synchronized(renderLock) {
-            runCatching { renderer.close() }
-            runCatching { descriptor.close() }
-        }
+        onReady = null
+        // PdfRenderer.render() cannot be interrupted. Do not make navigation
+        // wait on its lock; discard queued tiles and finish native cleanup on a
+        // single process-wide closer once the current render returns.
+        worker.shutdownNow()
         cache.evictAll()
         tileCache.evictAll()
+        closeWorker.execute {
+            synchronized(renderLock) {
+                runCatching { renderer.close() }
+                runCatching { descriptor.close() }
+            }
+        }
     }
 
     companion object {
@@ -397,6 +485,9 @@ class PdfSource private constructor(
         private const val DETAIL_MARGIN = 0.25f
         private const val MIN_CACHE_BYTES = 64 * 1024 * 1024
         private const val MAX_CACHE_BYTES = 256 * 1024 * 1024
+        private val closeWorker = Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "notesis-pdf-close").apply { isDaemon = true }
+        }
 
         /**
          * A page at [MAX_PAGE_WIDTH] is roughly 24MB, so a cache that only holds

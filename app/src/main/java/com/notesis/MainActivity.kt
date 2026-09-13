@@ -2143,6 +2143,9 @@ private fun NoteScreen(
             override fun sizeOf(key: String, value: Bitmap) = value.byteCount
         }
     }
+    DisposableEffect(imageCache) {
+        onDispose { imageCache.evictAll() }
+    }
     // Folded away, the bar becomes a handle that can be dragged; unfolding puts
     // it back wherever that handle was left, which is the point of moving it.
     var toolbarSize by remember { mutableIntStateOf(penStore.toolbarSize) }
@@ -2228,6 +2231,7 @@ private fun NoteScreen(
     var showLatency by remember { mutableStateOf(false) }
     var showPages by remember { mutableStateOf(false) }
     var edits by remember { mutableIntStateOf(0) }
+    val indexedRevisions = remember(note.id) { mutableMapOf<String, Long>() }
     val resumePage = remember(note.id, note.pageCount) {
         restoredPage(penStore.lastPage(note.id), note.pageCount)
     }
@@ -2565,6 +2569,7 @@ private fun NoteScreen(
                         backdrop.paused = moving || drawingPage
                     }
                     view.predictionEnabled = prediction
+                    view.latencyMonitoringEnabled = showLatency
                     view.deferDetail = deferDetail
                     view.tool = tool
                     view.readMode = mode == EditMode.READ
@@ -2624,16 +2629,24 @@ private fun NoteScreen(
             // Passing the live document to Dispatchers.IO raced pen commits and
             // mesh rebuilds, which is the repeated CME found in crash.log.
             store.saveLater(note.id, note.title, view.document)
-            // Then read back what was just written, so the page can be found by
-            // what it says. Only the page being worked on: recognising the
-            // whole note on every autosave would cost more than it is worth,
-            // and the rest is caught by the note's own index action.
+        }
+
+        // Handwriting recognition is useful search metadata, not part of
+        // saving. Give it a longer quiet period and do not rerun it for toolbar
+        // or image state that left the ink revision unchanged.
+        LaunchedEffect(edits) {
+            if (edits == 0) return@LaunchedEffect
+            delay(INK_INDEX_IDLE_MS)
+            val view = canvas ?: return@LaunchedEffect
             val page = view.document.pages.getOrNull(view.currentPageIndex()) ?: return@LaunchedEffect
             if (!page.loaded) return@LaunchedEffect
+            val revision = page.revision
+            if (indexedRevisions[page.id] == revision) return@LaunchedEffect
             val strokes = page.strokes.toList()
             withContext(Dispatchers.IO) {
                 indexer.textOf(strokes)?.let { store.writeInkIndex(note.id, page.id, it) }
             }
+            indexedRevisions[page.id] = revision
         }
 
         // Anything still unsaved when the screen goes away gets written now. If
@@ -2872,7 +2885,7 @@ private fun NoteScreen(
                 onHighlightColor = { selectionColorMode = EditMode.HIGHLIGHTER },
                 onMaskColor = { selectionColorMode = EditMode.MASK },
                 onCopy = {
-                    clipboard.setText(AnnotatedString(text))
+                    clipboard.setText(AnnotatedString(LatexClipboardText.convert(text)))
                     canvas?.clearSelection()
                 },
                 onHighlight = {
@@ -4298,6 +4311,7 @@ private fun ToolbarDivider() {
 }
 
 private const val AUTOSAVE_DELAY_MS = 1200L
+private const val INK_INDEX_IDLE_MS = 8000L
 private const val SEARCH_DEBOUNCE_MS = 220L
 
 private const val PEN_SAVE_DELAY_MS = 400L

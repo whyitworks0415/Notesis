@@ -169,19 +169,47 @@ class Document(val pages: MutableList<Page>) {
     /** Pages are centred on the document's horizontal axis. */
     fun leftOf(index: Int): Float = (widestPage() - pages[index].width) / 2f
 
+    /** Greatest page top at or above which [documentY] lies, found in O(log n). */
+    fun pageIndexAt(documentY: Float): Int {
+        layout()
+        if (pages.isEmpty()) return -1
+        var low = 0
+        var high = tops.lastIndex
+        while (low <= high) {
+            val middle = (low + high).ushr(1)
+            if (tops[middle] <= documentY) low = middle + 1 else high = middle - 1
+        }
+        return high.coerceIn(0, pages.lastIndex)
+    }
+
+    /** The few pages that can intersect a vertical viewport, without scanning all pages. */
+    fun pagesIntersecting(top: Float, bottom: Float): IntRange {
+        if (pages.isEmpty() || bottom < top) return IntRange.EMPTY
+        val first = pageIndexAt(top).coerceAtLeast(0)
+        var low = first
+        var high = pages.lastIndex
+        while (low <= high) {
+            val middle = (low + high).ushr(1)
+            if (topOf(middle) <= bottom) low = middle + 1 else high = middle - 1
+        }
+        return first..high.coerceAtLeast(first)
+    }
+
     /** The page under a document-space point, or the nearest one vertically. */
     fun pageAt(documentX: Float, documentY: Float): Int {
-        for (i in pages.indices) {
-            val top = topOf(i)
-            if (documentY < top + pages[i].height + PAGE_GAP / 2f) {
-                val left = leftOf(i)
-                // Ink outside the page edges is dropped rather than silently
-                // landing on a neighbour.
-                if (documentX < left || documentX > left + pages[i].width) return -1
-                return if (documentY < top) -1 else i
-            }
+        if (pages.isEmpty() || documentY < 0f) return -1
+        var index = pageIndexAt(documentY)
+        if (documentY > topOf(index) + pages[index].height + PAGE_GAP / 2f) {
+            if (index == pages.lastIndex) return -1
+            index++
         }
-        return -1
+        val top = topOf(index)
+        if (documentY < top || documentY > top + pages[index].height) return -1
+        val left = leftOf(index)
+        // Ink outside the page edges is dropped rather than silently landing
+        // on a neighbour.
+        if (documentX < left || documentX > left + pages[index].width) return -1
+        return index
     }
 
     companion object {
@@ -231,6 +259,9 @@ class NoteStore(context: Context) {
      * still needs to outlive that composable's cancelled coroutine scope.
      */
     private val saveWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private val saveQueueLock = Any()
+    private val pendingInkSaves = mutableMapOf<String, PendingSave>()
+    private val drainingInkSaves = mutableSetOf<String>()
 
     /**
      * Every folder that has a note in it. Folders are not objects with their own
@@ -523,6 +554,11 @@ class NoteStore(context: Context) {
         val pages: List<SavePage>,
     )
 
+    private data class PendingSave(
+        val title: String,
+        val snapshot: SaveSnapshot,
+    )
+
     /**
      * Copies every mutable collection before it crosses onto the save worker.
      * Stroke objects are immutable, but their page lists are not: walking a live
@@ -531,6 +567,10 @@ class NoteStore(context: Context) {
      */
     private fun snapshotForSave(document: Document): SaveSnapshot {
         val captured = document.pages.map { live ->
+            // Clean pages need only their metadata in this generation. Copying
+            // every immutable Stroke reference on every autosave doubled the
+            // largest live list, and queued saves multiplied that peak again.
+            val copyInk = live.loaded && live.dirty
             val copy = Page(
                 id = live.id,
                 width = live.width,
@@ -542,13 +582,15 @@ class NoteStore(context: Context) {
                 }.toMutableList(),
                 masks = live.masks.map { mask ->
                     PageMask(mask.stroke).also { it.revealed = mask.revealed }
-                }.toMutableList(),
-                strokes = live.strokes.toMutableList(),
+                }.takeIf { copyInk }?.toMutableList() ?: mutableListOf(),
+                strokes = if (copyInk) live.strokes.toMutableList() else mutableListOf(),
             ).also {
                 it.dirty = live.dirty
                 it.tessellatedFor = live.tessellatedFor
-                it.loaded = live.loaded
-                it.savedStrokeCount = live.savedStrokeCount
+                // A metadata-only copy behaves like an unloaded page so save()
+                // neither writes its empty lists nor reports an empty count.
+                it.loaded = copyInk
+                it.savedStrokeCount = if (live.loaded) live.strokes.size else live.savedStrokeCount
                 it.savedOnDisk = live.savedOnDisk
                 it.revision = live.revision
             }
@@ -557,12 +599,31 @@ class NoteStore(context: Context) {
         return SaveSnapshot(Document(captured.map { it.copy }.toMutableList()), captured)
     }
 
-    /** Queues a snapshot save without holding the main thread during file IO. */
+    /**
+     * Queues only the newest snapshot for one note. If disk is slower than the
+     * pen, intermediate generations are obsolete; retaining all of them was a
+     * large, avoidable heap spike and made leaving a dense note crash-prone.
+     */
     fun saveLater(id: String, title: String, document: Document) {
         val snapshot = snapshotForSave(document)
-        saveWorker.execute {
-            val saved = runCatching { save(id, title, snapshot.document) }.isSuccess
-            if (!saved) return@execute
+        val startDrain = synchronized(saveQueueLock) {
+            pendingInkSaves[id] = PendingSave(title, snapshot)
+            drainingInkSaves.add(id)
+        }
+        if (startDrain) saveWorker.execute { drainInkSaves(id) }
+    }
+
+    private fun drainInkSaves(id: String) {
+        while (true) {
+            val pending = synchronized(saveQueueLock) {
+                pendingInkSaves.remove(id) ?: run {
+                    drainingInkSaves.remove(id)
+                    return
+                }
+            }
+            val snapshot = pending.snapshot
+            val saved = runCatching { save(id, pending.title, snapshot.document) }.isSuccess
+            if (!saved) continue
             mainHandler.post {
                 // Do not mark newer work clean. A page only adopts the worker's
                 // disk count when no edit happened since this snapshot was made.

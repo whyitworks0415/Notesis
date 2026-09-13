@@ -10,6 +10,9 @@ import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.RectF
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextPaint
 import android.util.AttributeSet
 import android.view.Choreographer
 import android.view.MotionEvent
@@ -125,10 +128,158 @@ internal fun shouldSuppressPrediction(
     return cosine < PREDICTION_CORNER_COSINE
 }
 
+/** Fraction of the predictor's path that lands at the requested fixed horizon. */
+internal fun predictionLeadFraction(realTimeMs: Long, predictedTimeMs: Long, leadMs: Long): Float {
+    val available = predictedTimeMs - realTimeMs
+    if (available <= 0L || available <= leadMs) return 1f
+    return (leadMs.toFloat() / available).coerceIn(0f, 1f)
+}
+
 private const val PREDICTION_CORNER_COSINE = 0.57f
 
 /** Fidelity for a stroke that has no zoom context yet, such as one just loaded. */
 const val STROKE_EPSILON = TESSELLATION_TARGET_PX
+
+private const val STROKE_GRID_CELL = 256f
+private const val MAX_GRID_CELLS_PER_STROKE = 64
+
+/** A page-local spatial index used by both dense-page drawing and culling. */
+private class StrokeGrid {
+    private class Entry(
+        val stroke: Stroke,
+        val bounds: RectF,
+        val order: Int,
+        var cellKeys: LongArray = LongArray(0),
+    )
+
+    private val cells = HashMap<Long, MutableList<Entry>>()
+    private val spanning = ArrayList<Entry>()
+    private val entries = IdentityHashMap<Stroke, Entry>()
+    private val ordered = ArrayList<Entry?>()
+    private val included = java.util.BitSet()
+    private val result = ArrayList<Stroke>()
+    private var revision = Long.MIN_VALUE
+    private var indexedSize = 0
+    private var firstStroke: Stroke? = null
+    private var lastStroke: Stroke? = null
+
+    fun visible(page: Page, left: Float, top: Float, right: Float, bottom: Float): List<Stroke> {
+        sync(page)
+        result.clear()
+        if (right < left || bottom < top) return result
+        if (left <= 0f && top <= 0f && right >= page.width && bottom >= page.height) {
+            return page.strokes
+        }
+        included.clear()
+        val firstX = cell(left)
+        val lastX = cell(right)
+        val firstY = cell(top)
+        val lastY = cell(bottom)
+        for (y in firstY..lastY) {
+            for (x in firstX..lastX) {
+                cells[key(x, y)]?.forEach { entry -> include(entry, left, top, right, bottom) }
+            }
+        }
+        spanning.forEach { entry -> include(entry, left, top, right, bottom) }
+        var order = included.nextSetBit(0)
+        while (order >= 0) {
+            ordered.getOrNull(order)?.let { result += it.stroke }
+            order = included.nextSetBit(order + 1)
+        }
+        return result
+    }
+
+    private fun include(entry: Entry, left: Float, top: Float, right: Float, bottom: Float) {
+        if (included[entry.order]) return
+        val box = entry.bounds
+        if (box.right >= left && box.left <= right && box.bottom >= top && box.top <= bottom) {
+            included.set(entry.order)
+        }
+    }
+
+    private fun sync(page: Page) {
+        val strokes = page.strokes
+        val endpointsMatch = indexedSize == 0 || strokes.isNotEmpty() &&
+            firstStroke === strokes.first() && lastStroke === strokes.last()
+        if (revision == page.revision && indexedSize == strokes.size && endpointsMatch) return
+
+        // The dominant edit is one stroke appended at pen-up. Index just that
+        // suffix; erase, lasso, load-at-front, and retessellation rebuild once.
+        val appendOnly = strokes.size > indexedSize &&
+            (indexedSize == 0 || strokes.getOrNull(indexedSize - 1) === lastStroke)
+        if (!appendOnly) {
+            cells.clear()
+            spanning.clear()
+            entries.clear()
+            ordered.clear()
+            included.clear()
+            indexedSize = 0
+        }
+        for (i in indexedSize until strokes.size) {
+            index(strokes[i], ordered.size)
+        }
+        indexedSize = strokes.size
+        firstStroke = strokes.firstOrNull()
+        lastStroke = strokes.lastOrNull()
+        revision = page.revision
+    }
+
+    fun remove(page: Page, removed: Collection<Stroke>) {
+        for (stroke in removed) {
+            val entry = entries.remove(stroke) ?: continue
+            if (entry.cellKeys.isEmpty()) {
+                spanning.remove(entry)
+            } else {
+                for (key in entry.cellKeys) {
+                    val cell = cells[key] ?: continue
+                    cell.remove(entry)
+                    if (cell.isEmpty()) cells.remove(key)
+                }
+            }
+            ordered[entry.order] = null
+            included.clear(entry.order)
+        }
+        indexedSize = page.strokes.size
+        firstStroke = page.strokes.firstOrNull()
+        lastStroke = page.strokes.lastOrNull()
+        revision = page.revision
+    }
+
+    private fun index(stroke: Stroke, order: Int) {
+        val box = stroke.shape.computeBoundingBox() ?: return
+        val bounds = RectF(box.xMin, box.yMin, box.xMax, box.yMax)
+        val entry = Entry(stroke, bounds, order)
+        entries[stroke] = entry
+        while (ordered.size < order) ordered += null
+        ordered += entry
+        val firstX = cell(bounds.left)
+        val lastX = cell(bounds.right)
+        val firstY = cell(bounds.top)
+        val lastY = cell(bounds.bottom)
+        val count = (lastX.toLong() - firstX + 1L) * (lastY.toLong() - firstY + 1L)
+        if (count > MAX_GRID_CELLS_PER_STROKE) {
+            spanning += entry
+            return
+        }
+        val keys = LongArray(count.toInt())
+        var at = 0
+        for (y in firstY..lastY) for (x in firstX..lastX) {
+            val key = key(x, y)
+            keys[at++] = key
+            cells.getOrPut(key) { ArrayList() } += entry
+        }
+        entry.cellKeys = keys
+    }
+
+    private fun cell(value: Float): Int = kotlin.math.floor(value / STROKE_GRID_CELL).toInt()
+    private fun key(x: Int, y: Int): Long = (x.toLong() shl 32) xor (y.toLong() and 0xFFFFFFFFL)
+}
+
+private class TextRender(
+    val layout: StaticLayout,
+    val logicalWidth: Float,
+    val logicalHeight: Float,
+)
 
 /** The shapes the pen can be made to draw instead of following the hand. */
 enum class ShapeKind { LINE, ARROW, RECT, OVAL }
@@ -366,6 +517,9 @@ class InkCanvasView @JvmOverloads constructor(
      */
     var predictionEnabled: Boolean = true
 
+    /** Enables diagnostic sampling only while its HUD is actually visible. */
+    var latencyMonitoringEnabled: Boolean = false
+
     /**
      * Whether detail work waits for the pinch to finish.
      *
@@ -439,14 +593,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     private val wet = InProgressStrokesView(context)
     private val dry = DryLayer(context)
-    /**
-     * Prediction. Driving the Kalman predictor directly with a chosen lead was
-     * tried and measured: the reach got wider, 8-24ms against the wrapper's
-     * 8-16, because this predictor deliberately shortens its own reach as the
-     * pen decelerates - the sample count varies whatever lead is asked for.
-     * Pinning it needs prediction this app writes itself, not a different
-     * argument to this one.
-     */
+    /** Android chooses its own horizon, so an overlong result is clipped to 9ms. */
     private val predictor: MotionEventPredictor
 
     private val undoStack = mutableListOf<Edit>()
@@ -472,7 +619,12 @@ class InkCanvasView @JvmOverloads constructor(
     private var eraserCursorY = 0f
     private var lastFocusX = 0f
     private var lastFocusY = 0f
+    private var lastFingerEventTime = 0L
+    private var viewportSpeedPxPerSecond = 0f
+    private var viewportWasFast = false
     private var currentPage = 0
+    private var lastPageDirection = 1
+    private var pdfPriorityInitialized = false
     private var fitted = false
     /** Page to restore once the first real view width has established the scale. */
     private var pageToRestore: Int? = null
@@ -555,7 +707,7 @@ class InkCanvasView @JvmOverloads constructor(
     private var frameClockRunning = false
     private val frameCallback = object : Choreographer.FrameCallback {
         override fun doFrame(frameTimeNanos: Long) {
-            if (activeStylusPointer == null) {
+            if (activeStylusPointer == null || !latencyMonitoringEnabled) {
                 // A pen down within a frame of the last pen up would otherwise
                 // start a second loop and halve every delta it measures.
                 frameClockRunning = false
@@ -571,6 +723,12 @@ class InkCanvasView @JvmOverloads constructor(
     /** Mesh generation is native work; keeping it off the UI thread keeps frames. */
     private val refiner = Executors.newSingleThreadExecutor()
     private val refineRunnable = Runnable { refineVisiblePages() }
+    private val prefetchRunnable = Runnable {
+        prioritizePdf(PREFETCH_STOP_RADIUS)
+        prefetchNearbyPages(PREFETCH_STOP_RADIUS)
+    }
+    @Volatile private var refineRequestSerial = 0
+    @Volatile private var disposed = false
 
     private sealed interface Edit {
         val page: Page
@@ -626,6 +784,7 @@ class InkCanvasView @JvmOverloads constructor(
             // Off the UI thread, and the instance is pooled and reset once this
             // returns - read the fields, never keep the object.
             override fun onLatencyData(latencyData: LatencyData) {
+                if (!latencyMonitoringEnabled) return
                 if (latencyData.eventAction != LatencyData.EventAction.MOVE) return
                 if (!latencyData.isOsDetectsEventSet) return
                 // Unset fields carry Long.MIN_VALUE, and subtracting a real
@@ -648,15 +807,14 @@ class InkCanvasView @JvmOverloads constructor(
         // still until a pen touches it. Costs nothing while nothing is drawn -
         // the hint applies to frames actually produced.
         predictor = MotionEventPredictor.newInstance(this)
-        if (Build.VERSION.SDK_INT >= 35) {
-            requestedFrameRate = REQUESTED_FRAME_RATE_CATEGORY_HIGH
-        }
         onTransformChanged()
     }
 
     fun open(document: Document, pdf: PdfSource?, initialPage: Int = 0) {
         this.pdf?.close()
         this.document = document
+        dry.clearStrokeIndexes()
+        pdfPriorityInitialized = false
         document.invalidateLayout()
         for (page in document.pages) page.tessellatedFor = 0f
         scheduleRefine()
@@ -697,7 +855,10 @@ class InkCanvasView @JvmOverloads constructor(
         super.onDetachedFromWindow()
         stopFling()
         removeCallbacks(refineRunnable)
-        refiner.shutdown()
+        removeCallbacks(prefetchRunnable)
+        disposed = true
+        refineRequestSerial++
+        refiner.shutdownNow()
         pdf?.close()
         pdf = null
     }
@@ -840,6 +1001,7 @@ class InkCanvasView @JvmOverloads constructor(
     fun deletePage(index: Int) {
         if (document.pages.size <= 1 || index !in document.pages.indices) return
         val removed = document.pages.removeAt(index)
+        dry.dropStrokeIndex(removed)
         // Undo cannot bring the page back, so drop any history that points at it
         // rather than leaving edits that would resurrect strokes onto nothing.
         undoStack.removeAll { it.page === removed }
@@ -869,6 +1031,11 @@ class InkCanvasView @JvmOverloads constructor(
         documentToScreen.invert(screenToDocument)
         dry.invalidate()
         updateCurrentPage()
+        if (!pdfPriorityInitialized && pdf != null) {
+            pdfPriorityInitialized = true
+            prioritizePdf(0)
+        }
+        scheduleStoppedPrefetch()
         if (fitScale > 0f) {
             val zoom = currentScale() / fitScale
             // A percent point of slack: the fling settles by thousandths and
@@ -914,12 +1081,16 @@ class InkCanvasView @JvmOverloads constructor(
     private fun updateCurrentPage() {
         val middle = floatArrayOf(width / 2f, height / 2f)
         screenToDocument.mapPoints(middle)
-        var index = 0
-        for (i in document.pages.indices) {
-            if (middle[1] >= document.topOf(i)) index = i
-        }
+        val index = document.pageIndexAt(middle[1]).coerceAtLeast(0)
         if (index != currentPage) {
+            lastPageDirection = if (index > currentPage) 1 else -1
             currentPage = index
+            val radius = if (flinging || viewportSpeedPxPerSecond > FAST_VIEWPORT_PX_PER_SECOND) {
+                0
+            } else {
+                PREFETCH_SLOW_RADIUS
+            }
+            prioritizePdf(radius)
             onCurrentPageChanged?.invoke(index)
         }
     }
@@ -935,26 +1106,38 @@ class InkCanvasView @JvmOverloads constructor(
         when (event.actionMasked) {
             MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE -> {
                 val show = tool == Tool.ERASER || event.isEraserGesture()
+                val changed = show != eraserCursorVisible ||
+                    (show && hypot(event.x - eraserCursorX, event.y - eraserCursorY) >= 0.5f)
                 eraserCursorVisible = show
                 if (show) {
                     eraserCursorX = event.x
                     eraserCursorY = event.y
                 }
-                dry.invalidate()
+                if (changed) dry.invalidate()
             }
             MotionEvent.ACTION_HOVER_EXIT -> {
+                val changed = eraserCursorVisible
                 eraserCursorVisible = false
-                dry.invalidate()
+                if (changed) dry.invalidate()
             }
         }
         return true
     }
 
     private fun onStylus(event: MotionEvent): Boolean {
-        predictor.record(event)
+        // Recording runs the predictor's filter even when its output is never
+        // consumed. Prediction-off is intended to be the lean raw-input path.
+        if (predictionEnabled) predictor.record(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 if (activeStylusPointer != null) return true
+                // A pen may land while a finger fling still owns an animation
+                // frame. Freeze the page before capturing screenToPage; if the
+                // page moves afterwards, wet ink and the physical tip no longer
+                // share the same coordinate system for the rest of the stroke.
+                stopFling()
+                releaseVelocity()
+                zooming = false
                 // Unbuffered dispatch is what gets the S Pen's full sample rate
                 // instead of one point per display frame.
                 requestUnbufferedDispatch(event)
@@ -962,10 +1145,13 @@ class InkCanvasView @JvmOverloads constructor(
                 if (index < 0) return true
                 val pointerId = event.getPointerId(event.actionIndex)
                 activeStylusPointer = pointerId
+                if (Build.VERSION.SDK_INT >= 35) {
+                    requestedFrameRate = REQUESTED_FRAME_RATE_CATEGORY_HIGH
+                }
                 onDrawingChanged?.invoke(true)
                 // Built per gesture: the Kalman filter is tied to one pointer on
                 // one device, and a new stroke is a new pointer.
-                if (!frameClockRunning) {
+                if (latencyMonitoringEnabled && !frameClockRunning) {
                     frameClockRunning = true
                     lastFrameNanos = 0L
                     Choreographer.getInstance().postFrameCallback(frameCallback)
@@ -1092,7 +1278,7 @@ class InkCanvasView @JvmOverloads constructor(
                     removeCallbacks(longPress)
                 }
                 val strokeId = activeStrokeId ?: return false
-                latency.addSamples(1 + event.historySize)
+                if (latencyMonitoringEnabled) latency.addSamples(1 + event.historySize)
                 val x = event.getX(index)
                 val y = event.getY(index)
                 val dx = if (lastStylusX.isFinite()) x - lastStylusX else 0f
@@ -1104,7 +1290,8 @@ class InkCanvasView @JvmOverloads constructor(
                     lastStylusX = x
                     lastStylusY = y
                 }
-                val predicted = if (predictionEnabled && !sharpTurn) predictor.predict() else null
+                val rawPrediction = if (predictionEnabled && !sharpTurn) predictor.predict() else null
+                val predicted = rawPrediction?.let { predictionAtLead(event, it) }
                 try {
                     if (predicted != null) {
                         // Ground truth for the tip's steadiness: the distance
@@ -1115,7 +1302,8 @@ class InkCanvasView @JvmOverloads constructor(
                     }
                     wet.addToStroke(event, pointerId, strokeId, predicted)
                 } finally {
-                    predicted?.recycle()
+                    if (predicted !== rawPrediction) predicted?.recycle()
+                    rawPrediction?.recycle()
                 }
                 return true
             }
@@ -1186,16 +1374,52 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     /**
-     * How far ahead to predict: one display frame, measured rather than assumed,
-     * because the panel switches between 60 and 120Hz and a lead meant for one
-     * overshoots or falls short on the other.
+     * MotionEventPredictor has no horizon argument. Keep its filtered direction,
+     * but interpolate an overlong result back to a fixed 9ms lead.
      */
+    private fun predictionAtLead(real: MotionEvent, predicted: MotionEvent): MotionEvent {
+        val fraction = predictionLeadFraction(real.eventTime, predicted.eventTime, PREDICTION_LEAD_MS)
+        if (fraction >= 1f) return predicted
+        val properties = Array(predicted.pointerCount) { MotionEvent.PointerProperties() }
+        val coordinates = Array(predicted.pointerCount) { MotionEvent.PointerCoords() }
+        for (i in properties.indices) {
+            predicted.getPointerProperties(i, properties[i])
+            predicted.getPointerCoords(i, coordinates[i])
+            val realIndex = real.findPointerIndex(properties[i].id)
+            if (realIndex < 0) continue
+            val realX = real.getX(realIndex)
+            val realY = real.getY(realIndex)
+            coordinates[i].x = realX + (coordinates[i].x - realX) * fraction
+            coordinates[i].y = realY + (coordinates[i].y - realY) * fraction
+        }
+        return MotionEvent.obtain(
+            real.downTime,
+            real.eventTime + PREDICTION_LEAD_MS,
+            MotionEvent.ACTION_MOVE,
+            predicted.pointerCount,
+            properties,
+            coordinates,
+            predicted.metaState,
+            predicted.buttonState,
+            predicted.xPrecision,
+            predicted.yPrecision,
+            predicted.deviceId,
+            predicted.edgeFlags,
+            predicted.source,
+            predicted.flags,
+        )
+    }
+
     private fun endStylus() {
         pendingTextPlacement = null
         removeCallbacks(longPress)
         selectingText = false
         if (activeStylusPointer != null) onDrawingChanged?.invoke(false)
         activeStylusPointer = null
+        if (Build.VERSION.SDK_INT >= 35) {
+            // Let an idle note fall back to the display's normal adaptive rate.
+            requestedFrameRate = REQUESTED_FRAME_RATE_CATEGORY_NO_PREFERENCE
+        }
         activeStrokeId = null
         lastStylusX = Float.NaN
         lastStylusY = Float.NaN
@@ -1217,6 +1441,9 @@ class InkCanvasView @JvmOverloads constructor(
                 val focus = focusOf(event, skipPointerIndex = -1)
                 lastFocusX = focus[0]
                 lastFocusY = focus[1]
+                lastFingerEventTime = event.eventTime
+                viewportSpeedPxPerSecond = 0f
+                viewportWasFast = false
                 gestureMaxPointers = 1
                 gestureStartTime = System.currentTimeMillis()
                 gestureMoved = 0f
@@ -1247,7 +1474,14 @@ class InkCanvasView @JvmOverloads constructor(
             MotionEvent.ACTION_MOVE -> {
                 gestureMaxPointers = maxOf(gestureMaxPointers, event.pointerCount)
                 val focus = focusOf(event, skipPointerIndex = -1)
-                gestureMoved += hypot(focus[0] - lastFocusX, focus[1] - lastFocusY)
+                val moved = hypot(focus[0] - lastFocusX, focus[1] - lastFocusY)
+                gestureMoved += moved
+                val elapsed = (event.eventTime - lastFingerEventTime).coerceAtLeast(1L)
+                val wasFast = viewportWasFast
+                viewportSpeedPxPerSecond = moved * 1000f / elapsed
+                viewportWasFast = viewportSpeedPxPerSecond > FAST_VIEWPORT_PX_PER_SECOND
+                lastFingerEventTime = event.eventTime
+                if (wasFast && !viewportWasFast) prioritizePdf(PREFETCH_SLOW_RADIUS)
 
                 // Three fingers are a zone the page itself never used, so they
                 // never pan or zoom it - they only ever move the reference
@@ -1301,6 +1535,8 @@ class InkCanvasView @JvmOverloads constructor(
 
             MotionEvent.ACTION_UP -> {
                 startFling()
+                viewportSpeedPxPerSecond = 0f
+                viewportWasFast = false
                 releaseVelocity()
                 maybeHandleTap()
                 endZoom()
@@ -1311,6 +1547,8 @@ class InkCanvasView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_CANCEL -> {
+                viewportSpeedPxPerSecond = 0f
+                viewportWasFast = false
                 releaseVelocity()
                 endZoom()
                 onViewportInteractionChanged?.invoke(false)
@@ -1515,25 +1753,50 @@ class InkCanvasView @JvmOverloads constructor(
         if (holdingDetail()) return
         val target = tessellationBucket(currentScale())
         val epsilon = epsilonFor(target)
+        val serial = refineRequestSerial
 
         releaseDistantPages()
-        val toLoad = visiblePages().filter { !it.loaded }
-        val toRebuild = visiblePages().filter {
-            it.loaded && it.tessellatedFor != target && it.strokes.isNotEmpty()
-        }
-        if (toLoad.isEmpty() && toRebuild.isEmpty()) return
+        val visible = visiblePages()
+        val toLoad = visible.filter { !it.loaded }
 
-        // Snapshot what is being rebuilt, so a stroke drawn or erased meanwhile
-        // is detected at swap time instead of being silently thrown away.
-        val work = toRebuild.map { page -> page to page.strokes.toList() }
+        // At deep zoom only a fraction of a page is visible. Rebuilding the
+        // whole page there produced enormous meshes that were immediately off
+        // screen. Refine the viewport plus a small pan margin; newly exposed
+        // regions are picked up by the same debounced path.
+        val viewport = FloatArray(4)
+        dry.visibleDocumentBounds(viewport)
+        val margin = REFINE_MARGIN_PX / currentScale().coerceAtLeast(0.01f)
+        val work = visible.mapIndexedNotNull { _, page ->
+            if (!page.loaded || page.strokes.isEmpty()) return@mapIndexedNotNull null
+            val index = document.pages.indexOf(page)
+            if (index < 0) return@mapIndexedNotNull null
+            val left = viewport[0] - document.leftOf(index) - margin
+            val top = viewport[1] - document.topOf(index) - margin
+            val right = viewport[2] - document.leftOf(index) + margin
+            val bottom = viewport[3] - document.topOf(index) + margin
+            val strokes = page.strokes.filter { stroke ->
+                val wanted = strokeEpsilon(stroke.brush.size, epsilon)
+                if (abs(stroke.brush.epsilon - wanted) < EPSILON_SLOP) return@filter false
+                val box = stroke.shape.computeBoundingBox() ?: return@filter false
+                box.xMax >= left && box.xMin <= right && box.yMax >= top && box.yMin <= bottom
+            }
+            (page to strokes).takeIf { strokes.isNotEmpty() }
+        }
+        if (toLoad.isEmpty() && work.isEmpty()) return
+
         val loader = pageLoader
-        refiner.execute {
+        runCatching { refiner.execute {
+            if (serial != refineRequestSerial) return@execute
             val masksLoader = maskLoader
+            // Loading a full dense page at maximum zoom creates maximum-detail
+            // geometry for ink that may be far off screen. Establish a modest,
+            // crisp base mesh first and refine only the visible part below.
+            val loadEpsilon = epsilonFor(minOf(target, BASE_TESSELLATION_SCALE))
             val loaded = toLoad.mapNotNull { page ->
-                loader?.let { page to it(page, epsilon) }
+                loader?.let { page to it(page, loadEpsilon) }
             }
             val loadedMasks = toLoad.mapNotNull { page ->
-                masksLoader?.let { page to it(page, epsilon) }
+                masksLoader?.let { page to it(page, loadEpsilon) }
             }
             val built = work.map { (page, snapshot) ->
                 Triple(
@@ -1543,7 +1806,9 @@ class InkCanvasView @JvmOverloads constructor(
                 )
             }
             post {
-                if (tessellationBucket(currentScale()) != target) return@post
+                if (disposed || serial != refineRequestSerial ||
+                    tessellationBucket(currentScale()) != target
+                ) return@post
                 for ((page, strokes) in loaded) {
                     if (page.loaded) continue
                     // A stroke can be drawn on a page while its own strokes are
@@ -1559,23 +1824,29 @@ class InkCanvasView @JvmOverloads constructor(
                         page.masks.addAll(0, masks)
                     }
                     page.loaded = true
-                    page.tessellatedFor = target
+                    page.tessellatedFor = minOf(target, BASE_TESSELLATION_SCALE)
                 }
                 for ((page, snapshot, rebuilt) in built) {
-                    if (!sameStrokes(page.strokes, snapshot)) continue
                     val replacements = IdentityHashMap<Stroke, Stroke>()
                     for (i in snapshot.indices) replacements[snapshot[i]] = rebuilt[i]
-                    page.strokes.clear()
-                    page.strokes += rebuilt
-                    page.tessellatedFor = target
+                    var replaced = 0
+                    for (i in page.strokes.indices) {
+                        replacements[page.strokes[i]]?.let {
+                            page.strokes[i] = it
+                            replaced++
+                        }
+                    }
+                    if (replaced == 0) continue
+                    // Mixed fidelity is intentional at deep zoom.
+                    page.tessellatedFor = if (replaced == page.strokes.size) target else 0f
                     remapHistory(replacements)
                     // Nothing about the saved file changed: same inputs, same
                     // brush, only the generated outline. Do not dirty the page.
                 }
-                if (loaded.isNotEmpty()) onStrokesChanged?.invoke()
                 dry.invalidate()
+                if (loaded.isNotEmpty()) scheduleRefine()
             }
-        }
+        } }
     }
 
     /**
@@ -1595,23 +1866,21 @@ class InkCanvasView @JvmOverloads constructor(
         val last = document.pages.indexOf(visible.last())
         if (first < 0 || last < 0) return
         val keep = (first - KEEP_PAGES)..(last + KEEP_PAGES)
+        val protected = IdentityHashMap<Page, Boolean>()
+        undoStack.forEach { protected[it.page] = true }
+        redoStack.forEach { protected[it.page] = true }
         for ((index, page) in document.pages.withIndex()) {
             if (index in keep || !page.loaded || page.dirty) continue
-            if (undoStack.any { it.page === page } || redoStack.any { it.page === page }) continue
+            if (protected.containsKey(page)) continue
             page.savedStrokeCount = page.strokes.size
             page.strokes.clear()
             page.masks.clear()
+            dry.dropStrokeIndex(page)
             page.loaded = false
             page.tessellatedFor = -1f
         }
         // Let ART schedule collection itself. Calling System.gc() here pauses
         // the UI thread precisely when a long note has just been scrolled.
-    }
-
-    private fun sameStrokes(current: List<Stroke>, snapshot: List<Stroke>): Boolean {
-        if (current.size != snapshot.size) return false
-        for (i in current.indices) if (current[i] !== snapshot[i]) return false
-        return true
     }
 
     private fun remapHistory(replacements: IdentityHashMap<Stroke, Stroke>) {
@@ -1637,14 +1906,97 @@ class InkCanvasView @JvmOverloads constructor(
         screenToDocument.mapPoints(bounds)
         val top = minOf(bounds[1], bounds[3])
         val bottom = maxOf(bounds[1], bounds[3])
-        return document.pages.filterIndexed { i, page ->
+        return document.pagesIntersecting(top, bottom).mapNotNull { i ->
+            val page = document.pages.getOrNull(i) ?: return@mapNotNull null
             val pageTop = document.topOf(i)
-            pageTop <= bottom && pageTop + page.height >= top
+            page.takeIf { pageTop <= bottom && pageTop + page.height >= top }
         }
     }
 
+    /** Current page first, then alternating in the travel direction and behind it. */
+    private fun nearbyPageIndices(radius: Int): List<Int> {
+        if (document.pages.isEmpty()) return emptyList()
+        val center = currentPage.coerceIn(document.pages.indices)
+        val result = ArrayList<Int>(radius * 2 + 1)
+        result += center
+        for (distance in 1..radius) {
+            val ahead = center + distance * lastPageDirection
+            val behind = center - distance * lastPageDirection
+            if (ahead in document.pages.indices) result += ahead
+            if (behind in document.pages.indices) result += behind
+        }
+        return result
+    }
+
+    private fun prioritizePdf(radius: Int) {
+        val source = pdf ?: return
+        val pages = nearbyPageIndices(radius).mapNotNull { index ->
+            document.pages[index].pdfPageIndex.takeIf { it >= 0 }
+        }
+        if (pages.isEmpty()) return
+        val center = document.pages[currentPage.coerceIn(document.pages.indices)]
+        val width = (center.width * currentScale())
+            .toInt().coerceIn(PDF_PREFETCH_MIN_WIDTH, PdfSource.baseWidthLimit())
+        source.prioritizePages(pages, width)
+    }
+
+    /**
+     * Once movement settles, decode a small halo above and below the viewport.
+     * The visible page remains the zero-delay path; this work only fills what
+     * the next short scroll is likely to expose.
+     */
+    private fun prefetchNearbyPages(radius: Int) {
+        if (disposed) return
+        val anchor = currentPage
+        val visible = Collections.newSetFromMap(IdentityHashMap<Page, Boolean>())
+        visible += visiblePages()
+        val pages = nearbyPageIndices(radius).map { document.pages[it] }
+            .filter { !it.loaded && it !in visible }
+        if (pages.isEmpty()) return
+        val loader = pageLoader ?: return
+        val masksLoader = maskLoader
+        val epsilon = epsilonFor(BASE_TESSELLATION_SCALE)
+        val serial = refineRequestSerial
+        runCatching { refiner.execute {
+            val loaded = ArrayList<Pair<Page, List<Stroke>>>(pages.size)
+            val masks = ArrayList<Pair<Page, List<PageMask>>>(pages.size)
+            for (page in pages) {
+                // A new viewport has a zero-delay visible-page job waiting on
+                // this same executor. Yield after at most one disk page instead
+                // of making it wait for the old six-page halo.
+                if (disposed || serial != refineRequestSerial) break
+                loaded += page to loader(page, epsilon)
+                masksLoader?.let { masks += page to it(page, epsilon) }
+            }
+            post {
+                if (disposed || currentPage != anchor || serial != refineRequestSerial) return@post
+                var changed = false
+                for ((page, strokes) in loaded) {
+                    if (page.loaded) continue
+                    page.strokes.addAll(0, strokes)
+                    page.savedOnDisk = if (page.dirty) 0 else page.strokes.size
+                    masks.firstOrNull { it.first === page }?.let { (_, pageMasks) ->
+                        page.masks.addAll(0, pageMasks)
+                    }
+                    page.loaded = true
+                    page.tessellatedFor = BASE_TESSELLATION_SCALE
+                    changed = true
+                }
+                if (changed) dry.invalidate()
+            }
+        } }
+    }
+
+    private fun scheduleStoppedPrefetch() {
+        if (disposed) return
+        removeCallbacks(prefetchRunnable)
+        postDelayed(prefetchRunnable, PREFETCH_SETTLE_MS)
+    }
+
     private fun scheduleRefine() {
+        if (disposed) return
         removeCallbacks(refineRunnable)
+        refineRequestSerial++
         // Nothing at all while the pinch is on. The zero-delay path below exists
         // so a page that has never been read does not wait to appear, and during
         // a pinch that path fires on every page scrolled into view - a full read
@@ -2270,6 +2622,14 @@ class InkCanvasView @JvmOverloads constructor(
             eraserWidth,
             eraserWidth,
         )
+        val radius = eraserWidth / 2f
+        val candidateLeft = min(previous?.get(0) ?: point[0], point[0]) - radius
+        val candidateTop = min(previous?.get(1) ?: point[1], point[1]) - radius
+        val candidateRight = max(previous?.get(0) ?: point[0], point[0]) + radius
+        val candidateBottom = max(previous?.get(1) ?: point[1], point[1]) + radius
+        val candidates = dry.strokesIn(
+            page, candidateLeft, candidateTop, candidateRight, candidateBottom,
+        )
         // ponytail: whole-stroke eraser. A partial (pixel) eraser means splitting
         // the input batch and rebuilding both halves - worth it only if the
         // whole-stroke behaviour actually gets complained about.
@@ -2277,7 +2637,7 @@ class InkCanvasView @JvmOverloads constructor(
         // intersects() is a member extension on the Intersection object, so it
         // only resolves inside its scope.
         val hit = with(Intersection) {
-            page.strokes.filter {
+            candidates.filter {
                 (segment?.intersects(it.shape, IDENTITY) == true) ||
                     tip.intersects(it.shape, IDENTITY)
             }
@@ -2297,11 +2657,12 @@ class InkCanvasView @JvmOverloads constructor(
             undoStack += Edit.MaskRemoved(page, mask, at)
         }
         if (hit.isNotEmpty()) {
-            page.strokes.removeAll(hit)
+            page.strokes.removeAll { stroke -> hit.any { it === stroke } }
             undoStack += Edit.Erased(page, hit)
         }
         redoStack.clear()
         afterEdit(page)
+        if (hit.isNotEmpty()) dry.removeStrokesFromIndex(page, hit)
     }
 
     override fun onStrokesFinished(finished: Map<InProgressStrokeId, Stroke>) {
@@ -2426,9 +2787,24 @@ class InkCanvasView @JvmOverloads constructor(
             color = 0xCC2459B8.toInt()
         }
 
-        // Strokes are immutable, so a bounding box is worth computing once.
-        // Weak keys let an erased stroke's entry go with the stroke.
-        private val boxes = java.util.WeakHashMap<Stroke, RectF>()
+        private val strokeIndexes = IdentityHashMap<Page, StrokeGrid>()
+        private val textLayouts = java.util.WeakHashMap<PageImage, TextRender>()
+
+        fun clearStrokeIndexes() {
+            strokeIndexes.clear()
+            textLayouts.clear()
+        }
+
+        fun dropStrokeIndex(page: Page) {
+            strokeIndexes.remove(page)
+        }
+
+        fun strokesIn(page: Page, left: Float, top: Float, right: Float, bottom: Float): List<Stroke> =
+            strokeIndexes.getOrPut(page) { StrokeGrid() }.visible(page, left, top, right, bottom)
+
+        fun removeStrokesFromIndex(page: Page, strokes: Collection<Stroke>) {
+            strokeIndexes[page]?.remove(page, strokes)
+        }
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
@@ -2443,8 +2819,8 @@ class InkCanvasView @JvmOverloads constructor(
             // were at 1:1, which is exactly what made zoomed-in ink look soft and
             // bend its corners.
             renderer.drawWithStrokes(canvas) { scoped, scope ->
-                for (i in document.pages.indices) {
-                    val page = document.pages[i]
+                for (i in document.pagesIntersecting(viewport[1], viewport[3])) {
+                    val page = document.pages.getOrNull(i) ?: continue
                     val top = document.topOf(i)
                     if (top > viewport[3] || top + page.height < viewport[1]) continue
                     val left = document.leftOf(i)
@@ -2463,15 +2839,19 @@ class InkCanvasView @JvmOverloads constructor(
                     val cullRight = viewport[2] - left
                     val cullBottom = viewport[3] - top
                     val lifted = i == lassoPage && movingLasso
-                    for (stroke in page.strokes) {
+                    val visibleLeft = cullLeft.coerceAtLeast(0f)
+                    val visibleTop = cullTop.coerceAtLeast(0f)
+                    val visibleRight = cullRight.coerceAtMost(page.width)
+                    val visibleBottom = cullBottom.coerceAtMost(page.height)
+                    val visibleStrokes = strokeIndexes.getOrPut(page) { StrokeGrid() }.visible(
+                        page, visibleLeft, visibleTop, visibleRight, visibleBottom,
+                    )
+                    for (stroke in visibleStrokes) {
                         // Held strokes are drawn again below, at the offset.
                         if (lifted && stroke in lassoStrokes) continue
-                        val box = boundsOf(stroke) ?: continue
-                        if (box.right < cullLeft || box.left > cullRight ||
-                            box.bottom < cullTop || box.top > cullBottom
-                        ) {
-                            continue
-                        }
+                        // Draw against the real screen transform. Caching this
+                        // call in a 1x RenderNode magnifies its edge coverage at
+                        // high zoom and produces the blocky ink seen at 372%.
                         scope.drawStroke(stroke)
                     }
                     if (lifted) {
@@ -2504,11 +2884,6 @@ class InkCanvasView @JvmOverloads constructor(
             }
         }
 
-        private fun boundsOf(stroke: Stroke): RectF? = boxes.getOrPut(stroke) {
-            val box = stroke.shape.computeBoundingBox() ?: return null
-            RectF(box.xMin, box.yMin, box.xMax, box.yMax)
-        }
-
         private fun drawImages(canvas: Canvas, page: Page) {
             if (page.images.isEmpty()) return
             val loader = imageLoader ?: return
@@ -2520,7 +2895,40 @@ class InkCanvasView @JvmOverloads constructor(
                     image.x + image.width,
                     image.y + image.height,
                 )
-                canvas.drawBitmap(bitmap, null, imageRect, bitmapPaint)
+                val content = image.textContent
+                if (content == null) {
+                    canvas.drawBitmap(bitmap, null, imageRect, bitmapPaint)
+                } else {
+                    // Text boxes keep a bitmap for old files and export, but on
+                    // screen their glyphs are laid out as vectors. Scaling a
+                    // stored bitmap was the pixelated type seen at zoom levels.
+                    val text = textLayouts.getOrPut(image) {
+                        val logicalWidth = bitmap.width / 2f
+                        val logicalHeight = bitmap.height / 2f
+                        val paint = TextPaint(
+                            Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG or Paint.LINEAR_TEXT_FLAG,
+                        ).apply {
+                            textSize = content.size
+                            color = content.color
+                        }
+                        val width = ((bitmap.width - 16) / 2).coerceAtLeast(1)
+                        TextRender(
+                            StaticLayout.Builder.obtain(content.text, 0, content.text.length, paint, width)
+                                .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+                                .setIncludePad(true)
+                                .build(),
+                            logicalWidth,
+                            logicalHeight,
+                        )
+                    }
+                    canvas.save()
+                    canvas.clipRect(imageRect)
+                    canvas.translate(image.x, image.y)
+                    canvas.scale(image.width / text.logicalWidth, image.height / text.logicalHeight)
+                    canvas.translate(4f, 4f)
+                    text.layout.draw(canvas)
+                    canvas.restore()
+                }
             }
         }
 
@@ -2749,7 +3157,7 @@ class InkCanvasView @JvmOverloads constructor(
         }
 
         /** Screen rect mapped back into document space: [xMin, yMin, xMax, yMax]. */
-        private fun visibleDocumentBounds(out: FloatArray) {
+        fun visibleDocumentBounds(out: FloatArray) {
             out[0] = 0f
             out[1] = 0f
             out[2] = width.toFloat()
@@ -2777,6 +3185,14 @@ class InkCanvasView @JvmOverloads constructor(
         const val RULE_SPACING = 60f
         const val PAGE_TOP_MARGIN_PX = 24f
         const val REFINE_DEBOUNCE_MS = 200L
+        const val REFINE_MARGIN_PX = 160f
+        const val BASE_TESSELLATION_SCALE = 1f
+        const val EPSILON_SLOP = 0.00001f
+        const val PREFETCH_SETTLE_MS = 280L
+        const val PREFETCH_SLOW_RADIUS = 1
+        const val PREFETCH_STOP_RADIUS = 3
+        const val FAST_VIEWPORT_PX_PER_SECOND = 2200f
+        const val PDF_PREFETCH_MIN_WIDTH = 1024
         const val LONG_PRESS_MS = 350L
         const val HIGHLIGHT_HEIGHT = 0.85f
         const val MIN_FLING_VELOCITY = 80f
@@ -2795,16 +3211,13 @@ class InkCanvasView @JvmOverloads constructor(
         const val CAPTURE_MAX_SCALE = 4f
         const val LASSO_MIN_POINTS = 6
         const val LASSO_PADDING = 10f
-        /** A lead below this is not worth predicting; above it, overshoot shows. */
         /** Pages this far either side of the screen stay in memory. */
         const val KEEP_PAGES = 3
-        /** Plausible bounds for one input report; outside these it is noise. */
         /** What every LatencyData field holds until it is filled in. */
         const val LATENCY_UNSET = Long.MIN_VALUE
         const val MIN_REPORT_MS = 2
         const val MAX_REPORT_MS = 40
-        const val MIN_PREDICTION_MS = 6
-        const val MAX_PREDICTION_MS = 24
+        const val PREDICTION_LEAD_MS = 9L
         const val MASK_TAP_PX = 6f
         const val MASK_OUTLINE_PX = 2f
         const val MASK_OPAQUE = 0xFF000000.toInt()

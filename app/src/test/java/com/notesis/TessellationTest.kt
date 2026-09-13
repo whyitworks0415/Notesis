@@ -77,4 +77,11 @@ class TessellationTest {
         assertTrue(!shouldSuppressPrediction(10f, 0f, 10f, 2f))
         assertTrue(!shouldSuppressPrediction(0.1f, 0f, 0f, 0.1f))
     }
+
+    @Test
+    fun `prediction is clipped to the requested nine millisecond horizon`() {
+        assertEquals(0.5f, predictionLeadFraction(100L, 118L, 9L), 0.0001f)
+        assertEquals(1f, predictionLeadFraction(100L, 109L, 9L), 0.0001f)
+        assertEquals(1f, predictionLeadFraction(100L, 99L, 9L), 0.0001f)
+    }
 }
