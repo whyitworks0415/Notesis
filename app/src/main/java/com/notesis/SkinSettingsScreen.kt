@@ -53,6 +53,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
@@ -74,8 +75,11 @@ fun SkinSettingsScreen(
     onChange: (SkinSettings) -> Unit,
     onBack: () -> Unit,
 ) {
+    val context = LocalContext.current
+    val penStore = remember(context) { PenStore(context) }
     var picking by remember { mutableStateOf<ColorSlot?>(null) }
     var showAdvanced by remember { mutableStateOf(false) }
+    var deferPdfDetail by remember { mutableStateOf(penStore.deferDetail) }
 
     // The screen that sets the glass was itself the one screen wearing none.
     val backdrop = rememberBackdrop(
@@ -171,6 +175,28 @@ fun SkinSettingsScreen(
                         settings.highContrast,
                         compact = true,
                     ) { onChange(settings.copy(highContrast = it)) }
+                    HorizontalDivider()
+                    Text("PDF 확대 화질", style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        if (deferPdfDetail) {
+                            "확대 중에는 가볍게 표시하고 손을 떼면 선명하게 바꿉니다"
+                        } else {
+                            "확대 중에도 선명도를 유지합니다. 복잡한 PDF는 조금 버벅일 수 있습니다"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    LiquidSegmentedControl(
+                        segments = listOf("부드러운 확대", "항상 선명"),
+                        selectedIndex = if (deferPdfDetail) 0 else 1,
+                        onSelected = { index ->
+                            deferPdfDetail = index == 0
+                            penStore.deferDetail = deferPdfDetail
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        useLiquidGlass = false,
+                    )
                 }
             }
 
