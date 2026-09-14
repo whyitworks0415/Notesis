@@ -101,6 +101,21 @@ class PenStore(context: Context) {
         get() = prefs.getBoolean(DEFER_DETAIL, true)
         set(value) = prefs.edit().putBoolean(DEFER_DETAIL, value).apply()
 
+    /** Whether PDF pages outside the viewport focus receive a quiet white veil. */
+    var dimInactivePdfPages: Boolean
+        get() = prefs.getBoolean(DIM_INACTIVE_PDF_PAGES, true)
+        set(value) = prefs.edit().putBoolean(DIM_INACTIVE_PDF_PAGES, value).apply()
+
+    /** Whether explicit straight-line tools lock near-horizontal/vertical input. */
+    var axisSnap: Boolean
+        get() = prefs.getBoolean(AXIS_SNAP, true)
+        set(value) = prefs.edit().putBoolean(AXIS_SNAP, value).apply()
+
+    /** Additional smoothing applied to completed pen strokes, from 0 to 100%. */
+    var stabilization: Int
+        get() = prefs.getInt(STABILIZATION, 0).coerceIn(0, 100)
+        set(value) = prefs.edit().putInt(STABILIZATION, value.coerceIn(0, 100)).apply()
+
     /**
      * The page a note was left on, so opening it again carries on from there
      * rather than from the top. Per note, and in preferences rather than in the
@@ -164,6 +179,9 @@ class PenStore(context: Context) {
         private const val DOCKED = "docked"
         private const val PREDICTION = "prediction"
         private const val DEFER_DETAIL = "deferDetail"
+        private const val DIM_INACTIVE_PDF_PAGES = "dimInactivePdfPages"
+        private const val AXIS_SNAP = "axisSnap"
+        private const val STABILIZATION = "stabilization"
         private const val SKIN = "skin"
         private const val LAST_PAGE = "lastPage:"
         private const val REFERENCE_NOTE = "referenceNote"

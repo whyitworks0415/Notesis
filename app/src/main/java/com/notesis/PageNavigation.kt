@@ -22,3 +22,19 @@ internal fun scrubbedPage(
 /** 세 페이지 경계를 실제로 지난 뒤에만 빠른 페이지 바를 보여 줍니다. */
 internal fun shouldShowPageScrubber(pagesTraversed: Int, pageCount: Int): Boolean =
     pageCount > 1 && pagesTraversed >= 3
+
+internal enum class PageCreationEdge { START, END }
+
+/** A single-finger pull past either document end creates exactly one page. */
+internal fun pageCreationEdge(
+    pullY: Float,
+    threshold: Float,
+    maxPointers: Int,
+): PageCreationEdge? {
+    if (maxPointers != 1 || threshold <= 0f) return null
+    return when {
+        pullY >= threshold -> PageCreationEdge.START
+        pullY <= -threshold -> PageCreationEdge.END
+        else -> null
+    }
+}

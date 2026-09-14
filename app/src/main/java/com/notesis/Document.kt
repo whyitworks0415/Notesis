@@ -906,8 +906,8 @@ class NoteStore(context: Context) {
     }
 
     /**
-     * One page onto one canvas, in the order it is seen: paper, imported page,
-     * pictures, ink, tape. Shared by the PDF export and the thumbnail, because
+     * One page onto one canvas, in the order it is seen: paper, highlighter,
+     * pictures/text, opaque ink, tape. Shared by export and thumbnails, because
      * a thumbnail that disagrees with the export is a bug waiting to be filed.
      */
     private fun drawWholePage(
@@ -927,6 +927,14 @@ class NoteStore(context: Context) {
             }
         }
         val transform = Matrix().apply { setScale(scale, scale) }
+        val strokes = if (page.loaded) {
+            page.strokes
+        } else {
+            readStrokes(File(root, "$id/pages/${page.id}.bin"))
+        }
+        for (stroke in strokes) {
+            if (stroke.isHighlighterStroke()) renderer.draw(canvas, stroke, transform)
+        }
         for (image in page.images) {
             val bitmap = runCatching {
                 BitmapFactory.decodeFile(imageFile(id, image.id).path)
@@ -939,17 +947,14 @@ class NoteStore(context: Context) {
             )
             canvas.drawBitmap(bitmap, null, target, null)
         }
-        val strokes = if (page.loaded) {
-            page.strokes
-        } else {
-            readStrokes(File(root, "$id/pages/${page.id}.bin"))
-        }
         val masks = if (page.loaded) {
             page.masks.map { it.stroke }
         } else {
             readStrokes(File(root, "$id/pages/${page.id}.mask"))
         }
-        for (stroke in strokes) renderer.draw(canvas, stroke, transform)
+        for (stroke in strokes) {
+            if (!stroke.isHighlighterStroke()) renderer.draw(canvas, stroke, transform)
+        }
         for (stroke in masks) renderer.draw(canvas, stroke, transform)
     }
 
@@ -987,7 +992,12 @@ class NoteStore(context: Context) {
                 readStrokes(File(root, "$id/pages/${page.id}.mask"))
             }
             val renderer = CanvasStrokeRenderer.create()
-            for (stroke in strokes) renderer.draw(canvas, stroke, transform)
+            for (stroke in strokes) {
+                if (stroke.isHighlighterStroke()) renderer.draw(canvas, stroke, transform)
+            }
+            for (stroke in strokes) {
+                if (!stroke.isHighlighterStroke()) renderer.draw(canvas, stroke, transform)
+            }
             for (stroke in masks) renderer.draw(canvas, stroke, transform)
             val tmp = File(root, "$id/$AUTO_THUMB.tmp")
             tmp.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 90, it) }

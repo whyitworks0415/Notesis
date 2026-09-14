@@ -32,4 +32,10 @@ class CustomizationTest {
         assertEquals(0.00625f, strokeEpsilon(5f, 0.00625f), 0f)
         assertTrue(strokeEpsilon(5f, 0.1f) < 0.1f)
     }
+
+    @Test fun `erased strokes return to their original layer order in one undo`() {
+        val remaining = mutableListOf("pen-1", "pen-3")
+        restoreOrdered(remaining, listOf("highlighter", "pen-2"), listOf(0, 2))
+        assertEquals(listOf("highlighter", "pen-1", "pen-2", "pen-3"), remaining)
+    }
 }

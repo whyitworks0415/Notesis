@@ -1439,6 +1439,12 @@ private fun PenDialog(
     onPrediction: (Boolean) -> Unit,
     deferDetail: Boolean,
     onDeferDetail: (Boolean) -> Unit,
+    dimInactivePdfPages: Boolean,
+    onDimInactivePdfPages: (Boolean) -> Unit,
+    axisSnap: Boolean,
+    onAxisSnap: (Boolean) -> Unit,
+    stabilization: Int,
+    onStabilization: (Int) -> Unit,
     onDismiss: () -> Unit,
     onConfirm: (PenPreset) -> Unit,
 ) {
@@ -1532,6 +1538,50 @@ private fun PenDialog(
                         )
                     }
                 }
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SkinSwitch(
+                        checked = dimInactivePdfPages,
+                        onCheckedChange = onDimInactivePdfPages,
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text("다른 PDF 페이지 흐리게", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "현재 보는 페이지 외에는 안정적인 반투명 막으로 낮춥니다",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.outline,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SkinSwitch(checked = axisSnap, onCheckedChange = onAxisSnap)
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text("수평·수직 직선 보정", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "직선이나 화살표가 축에서 10° 이내면 자동으로 맞춥니다",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.outline,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Stroke stabilization $stabilization%",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                SkinSlider(
+                    value = stabilization.toFloat(),
+                    onValueChange = { onStabilization(it.roundToInt()) },
+                    valueRange = 0f..100f,
+                )
+                Text(
+                    "0%는 기본 필기, 100%는 가장 강한 흔들림 보정",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline,
+                )
                 Spacer(Modifier.height(10.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -2239,6 +2289,9 @@ private fun NoteScreen(
     var docked by remember { mutableStateOf(penStore.docked) }
     var prediction by remember { mutableStateOf(penStore.prediction) }
     var deferDetail by remember { mutableStateOf(penStore.deferDetail) }
+    var dimInactivePdfPages by remember { mutableStateOf(penStore.dimInactivePdfPages) }
+    var axisSnap by remember { mutableStateOf(penStore.axisSnap) }
+    var stabilization by remember { mutableIntStateOf(penStore.stabilization) }
     // Null until it is dragged: the bar sits centred at the top by default, and
     // there is no sensible centre to store before anything has been measured.
     var barOffset by remember { mutableStateOf<Offset?>(null) }
@@ -2674,6 +2727,9 @@ private fun NoteScreen(
                     view.predictionEnabled = prediction
                     view.latencyMonitoringEnabled = showLatency
                     view.deferDetail = deferDetail
+                    view.dimInactivePdfPages = dimInactivePdfPages
+                    view.axisSnapEnabled = axisSnap
+                    view.stabilizationPercent = stabilization
                     view.tool = tool
                     view.readMode = mode == EditMode.READ
                     view.shapeKind = when {
@@ -2865,6 +2921,21 @@ private fun NoteScreen(
                     deferDetail = it
                     penStore.deferDetail = it
                 },
+                dimInactivePdfPages = dimInactivePdfPages,
+                onDimInactivePdfPages = {
+                    dimInactivePdfPages = it
+                    penStore.dimInactivePdfPages = it
+                },
+                axisSnap = axisSnap,
+                onAxisSnap = {
+                    axisSnap = it
+                    penStore.axisSnap = it
+                },
+                stabilization = stabilization,
+                onStabilization = {
+                    stabilization = it
+                    penStore.stabilization = it
+                },
                 onDismiss = { editingPen = false },
                 onConfirm = { saved ->
                     settings = settings + (mode to saved)
@@ -2984,6 +3055,14 @@ private fun NoteScreen(
             PenDialog(mode = colorMode, pen = settings.getValue(colorMode),
                 prediction = prediction, onPrediction = { prediction = it; penStore.prediction = it },
                 deferDetail = deferDetail, onDeferDetail = { deferDetail = it; penStore.deferDetail = it },
+                dimInactivePdfPages = dimInactivePdfPages,
+                onDimInactivePdfPages = {
+                    dimInactivePdfPages = it; penStore.dimInactivePdfPages = it
+                },
+                axisSnap = axisSnap,
+                onAxisSnap = { axisSnap = it; penStore.axisSnap = it },
+                stabilization = stabilization,
+                onStabilization = { stabilization = it; penStore.stabilization = it },
                 onDismiss = { selectionColorMode = null }, onConfirm = {
                     settings = settings + (colorMode to it)
                     penStore.save(settings)
@@ -3095,6 +3174,9 @@ private fun NoteScreen(
                 straightLine = straightLine,
                 eraserWidth = eraserWidth,
                 deferDetail = deferDetail,
+                dimInactivePdfPages = dimInactivePdfPages,
+                axisSnap = axisSnap,
+                stabilization = stabilization,
                 offset = referenceOffset,
                 size = referenceSize,
                 stretch = referenceStretch,
@@ -3302,6 +3384,9 @@ private fun ReferencePanel(
     straightLine: Boolean,
     eraserWidth: Float,
     deferDetail: Boolean,
+    dimInactivePdfPages: Boolean,
+    axisSnap: Boolean,
+    stabilization: Int,
     offset: Offset,
     size: Size,
     /** What the whole panel is scaled by while a spread is in progress. */
@@ -3586,6 +3671,9 @@ private fun ReferencePanel(
                             v.prepareBrush()
                             v.eraserWidth = eraserWidth
                             v.deferDetail = deferDetail
+                            v.dimInactivePdfPages = dimInactivePdfPages
+                            v.axisSnapEnabled = axisSnap
+                            v.stabilizationPercent = stabilization
                         },
                     )
                     if (popupLassoCount > 0) {
