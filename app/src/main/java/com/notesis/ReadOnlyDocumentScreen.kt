@@ -43,7 +43,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -61,9 +60,8 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
-import java.io.File
+import java.io.ByteArrayOutputStream
 import java.util.Locale
-import java.util.UUID
 
 internal data class ViewerRequest(val uri: Uri, val name: String)
 
@@ -84,7 +82,7 @@ internal val SUPPORTED_DOCUMENT_MIME_TYPES = arrayOf(
     "application/octet-stream",
 )
 
-private const val MAX_LAYOUT_SOURCE_BYTES = 512L * 1024 * 1024
+private const val MAX_SOURCE_BYTES = 128 * 1024 * 1024
 private const val MAX_WORD_TABLE_ROWS_ON_SCREEN = 500
 
 internal fun viewerRequest(context: Context, uri: Uri): ViewerRequest {
@@ -116,7 +114,7 @@ internal fun viewerRequest(context: Context, uri: Uri): ViewerRequest {
 private sealed interface ViewerLoadState {
     data object Loading : ViewerLoadState
     data class Ready(val document: PreviewDocument) : ViewerLoadState
-    data class Layout(val file: File) : ViewerLoadState
+    data class Layout(val bytes: ByteArray) : ViewerLoadState
     data class Failed(val message: String) : ViewerLoadState
 }
 
@@ -131,15 +129,6 @@ internal fun ReadOnlyDocumentScreen(
     var sectionIndex by remember(request.uri) { mutableIntStateOf(0) }
     var textOnly by remember(request.uri) { mutableStateOf(false) }
     val hasLayout = supportsDocumentLayout(request.name)
-    val layoutFile = remember(request.uri) {
-        File(context.cacheDir, "document-viewer-${UUID.randomUUID()}.source")
-    }
-    DisposableEffect(layoutFile) {
-        onDispose {
-            layoutFile.delete()
-            File(layoutFile.path + ".tmp").delete()
-        }
-    }
     BackHandler(onBack = onBack)
 
     LaunchedEffect(request.uri, textOnly) {
@@ -147,23 +136,10 @@ internal fun ReadOnlyDocumentScreen(
         sectionIndex = 0
         state = withContext(Dispatchers.IO) {
             runCatching {
-                // Keep one bounded disk copy for both modes. This avoids holding
-                // the document in a ByteArray beside WebView/Wasm and gives the
-                // text parser an exact-size allocation instead of a growing buffer.
-                if (!layoutFile.isFile) {
-                    context.contentResolver.openInputStream(request.uri)?.use { input ->
-                        copyDocumentToFile(input, layoutFile)
-                    } ?: throw UnsupportedDocumentException("파일을 열 수 없습니다.")
-                }
-                if (hasLayout && !textOnly) {
-                    ViewerLoadState.Layout(layoutFile)
-                } else {
-                    val bytes = readDocumentBytes(
-                        layoutFile,
-                        RuntimeMemory.documentParseBytes(context),
-                    )
-                    ViewerLoadState.Ready(OfficeDocumentParser.parse(request.name, bytes))
-                }
+                val bytes = context.contentResolver.openInputStream(request.uri)?.use(::readDocumentBytes)
+                    ?: throw UnsupportedDocumentException("파일을 열 수 없습니다.")
+                if (hasLayout && !textOnly) ViewerLoadState.Layout(bytes)
+                else ViewerLoadState.Ready(OfficeDocumentParser.parse(request.name, bytes))
             }.getOrElse { error ->
                 if (error is CancellationException) throw error
                 ViewerLoadState.Failed(
@@ -232,7 +208,7 @@ internal fun ReadOnlyDocumentScreen(
             ViewerLoadState.Loading -> LoadingDocument(Modifier.padding(padding))
             is ViewerLoadState.Failed -> FailedDocument(current.message, Modifier.padding(padding))
             is ViewerLoadState.Layout -> DocumentLayoutView(
-                request.name, current.file, Modifier.padding(padding).fillMaxSize(),
+                request.name, current.bytes, Modifier.padding(padding).fillMaxSize(),
             )
             is ViewerLoadState.Ready -> {
                 val safeIndex = sectionIndex.coerceIn(0, current.document.sections.lastIndex)
@@ -457,40 +433,18 @@ private fun columnLabel(index: Int): String {
     return result.reverse().toString()
 }
 
-private fun readDocumentBytes(file: File, maximum: Int): ByteArray {
-    if (file.length() > maximum) {
-        val limitMiB = maximum / (1024 * 1024)
-        throw UnsupportedDocumentException(
-            "텍스트 미리보기는 이 기기에서 ${limitMiB}MB 이하 문서를 지원합니다.",
-        )
-    }
-    return file.readBytes()
-}
-
-private fun copyDocumentToFile(input: java.io.InputStream, target: File) {
-    val temporary = File(target.path + ".tmp")
-    temporary.delete()
-    try {
-        temporary.outputStream().buffered().use { output ->
-            val buffer = ByteArray(32 * 1024)
-            var total = 0L
-            while (true) {
-                val read = input.read(buffer)
-                if (read < 0) break
-                total += read
-                if (total > MAX_LAYOUT_SOURCE_BYTES) {
-                    throw UnsupportedDocumentException("512MB보다 큰 문서는 현재 미리보기에서 열 수 없습니다.")
-                }
-                output.write(buffer, 0, read)
-            }
+private fun readDocumentBytes(input: java.io.InputStream): ByteArray {
+    val output = ByteArrayOutputStream()
+    val buffer = ByteArray(32 * 1024)
+    while (true) {
+        val read = input.read(buffer)
+        if (read < 0) break
+        if (output.size() + read > MAX_SOURCE_BYTES) {
+            throw UnsupportedDocumentException("128MB보다 큰 문서는 현재 미리보기에서 열 수 없습니다.")
         }
-        if (!temporary.renameTo(target)) {
-            throw UnsupportedDocumentException("문서 임시 파일을 만들지 못했습니다.")
-        }
-    } catch (error: Throwable) {
-        temporary.delete()
-        throw error
+        output.write(buffer, 0, read)
     }
+    return output.toByteArray()
 }
 
 internal fun isSupportedDocumentName(name: String): Boolean =

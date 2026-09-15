@@ -31,12 +31,4 @@ class PageNavigationTest {
         assertEquals(true, shouldShowPageScrubber(3, 20))
         assertEquals(false, shouldShowPageScrubber(7, 1))
     }
-
-    @Test
-    fun `one finger pull beyond either end requests one new page`() {
-        assertEquals(PageCreationEdge.START, pageCreationEdge(80f, 72f, 1))
-        assertEquals(PageCreationEdge.END, pageCreationEdge(-80f, 72f, 1))
-        assertEquals(null, pageCreationEdge(60f, 72f, 1))
-        assertEquals(null, pageCreationEdge(100f, 72f, 2))
-    }
 }

@@ -23,21 +23,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import java.io.ByteArrayInputStream
-import java.io.File
 import java.util.Locale
 
 /** Offline renderer. No JavaScript bridge, file access, network access or source mutation. */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-internal fun DocumentLayoutView(name: String, file: File, modifier: Modifier = Modifier) {
-    var processFailed by remember(file.path, file.lastModified()) { mutableStateOf(false) }
+internal fun DocumentLayoutView(name: String, bytes: ByteArray, modifier: Modifier = Modifier) {
+    var processFailed by remember(bytes) { mutableStateOf(false) }
     if (processFailed) {
         Box(modifier.padding(24.dp), contentAlignment = Alignment.Center) {
             Text("문서를 표시할 메모리가 부족하거나 뷰어가 종료되었습니다. 다시 열거나 상단의 텍스트 보기를 이용해 주세요.")
         }
         return
     }
-    key(file.path, file.lastModified()) {
+    key(bytes) {
       AndroidView(
         modifier = modifier,
         factory = { context ->
@@ -59,7 +58,7 @@ internal fun DocumentLayoutView(name: String, file: File, modifier: Modifier = M
                     setSupportZoom(true)
                     useWideViewPort = true
                     loadWithOverviewMode = true
-                    cacheMode = WebSettings.LOAD_DEFAULT
+                    cacheMode = WebSettings.LOAD_NO_CACHE
                 }
                 webViewClient = object : WebViewClient() {
                     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = true
@@ -68,7 +67,7 @@ internal fun DocumentLayoutView(name: String, file: File, modifier: Modifier = M
                         val path = documentResourcePath(request.url.toString())
                         if (request.method != "GET" || path == null) return denied()
                         return try {
-                            val input = if (path == "document") file.inputStream().buffered()
+                            val input = if (path == "document") ByteArrayInputStream(bytes)
                             else context.assets.open(path)
                             val mime = when (path.substringAfterLast('.')) {
                                 "html" -> "text/html"
@@ -80,11 +79,7 @@ internal fun DocumentLayoutView(name: String, file: File, modifier: Modifier = M
                                 else -> "application/octet-stream"
                             }
                             WebResourceResponse(mime, "UTF-8", 200, "OK", mapOf(
-                                "Cache-Control" to if (path == "document") {
-                                    "no-store"
-                                } else {
-                                    "public, max-age=31536000, immutable"
-                                },
+                                "Cache-Control" to "no-store",
                                 "X-Content-Type-Options" to "nosniff",
                                 "Content-Security-Policy" to DOCUMENT_CSP,
                             ), input)

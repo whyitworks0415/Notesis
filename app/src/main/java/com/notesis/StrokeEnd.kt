@@ -14,10 +14,3 @@ internal fun unstableLift(dx: Float, dy: Float, lastDx: Float, lastDy: Float): B
     if (distance > maxOf(4f, previous * 2f)) return true
     return previous >= 0.5f && dx * lastDx + dy * lastDy < distance * previous * 0.5f
 }
-
-/** Restores erased values at their original z-order, even when indices arrive unsorted. */
-internal fun <T> restoreOrdered(target: MutableList<T>, values: List<T>, indices: List<Int>) {
-    values.zip(indices).sortedBy { it.second }.forEach { (value, index) ->
-        target.add(index.coerceIn(0, target.size), value)
-    }
-}

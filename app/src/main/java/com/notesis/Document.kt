@@ -69,20 +69,8 @@ class Page(
     val images: MutableList<PageImage> = mutableListOf(),
     /** Masking tape, drawn over everything, because covering is the job. */
     val masks: MutableList<PageMask> = mutableListOf(),
-    strokes: MutableList<Stroke> = mutableListOf(),
+    val strokes: MutableList<Stroke> = mutableListOf(),
 ) {
-    internal var inkStore = prepareInk(strokes)
-        private set
-    val strokes: MutableList<Stroke> get() = inkStore
-
-    /** The loader publishes a prepared list and index in one reference assignment. */
-    internal fun installInk(prepared: InkStrokeStore<Stroke>) {
-        inkStore.appendEditsTo(prepared)
-        inkStore = prepared
-    }
-
-    internal fun unloadInk() { inkStore = prepareInk(emptyList()) }
-
     /**
      * Whether this page's strokes differ from what is on disk. Autosave fires
      * on a timer while writing, and rewriting every page of a long note each
@@ -125,12 +113,6 @@ class Page(
     var revision: Long = 0L
 
     companion object {
-        internal fun prepareInk(strokes: Collection<Stroke>) = InkStrokeStore(strokes) { stroke ->
-            val box = stroke.shape.computeBoundingBox()
-            InkStrokeRecord(stroke, if (box == null) InkRect(0f, 0f, 0f, 0f)
-                else InkRect(box.xMin, box.yMin, box.xMax, box.yMax),
-                if (stroke.isHighlighterStroke()) InkLayer.HIGHLIGHTER else InkLayer.PEN)
-        }
         // A4 at 150dpi. Any consistent unit works; this one makes an imported
         // PDF and a blank page land at comparable sizes.
         const val A4_WIDTH = 1240f
@@ -270,7 +252,6 @@ class NoteStore(context: Context) {
 
     private val appContext = context.applicationContext
     private val root = File(context.filesDir, "notes").apply { mkdirs() }
-    private val searchIndex = NoteSearchIndex(appContext)
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
     /**
      * One exit save queue for the store. A note screen must be able to disappear
@@ -316,7 +297,7 @@ class NoteStore(context: Context) {
         File(root, "$id/pages").mkdirs()
         val document = Document(mutableListOf(Page()))
         writeMeta(id, title, document)
-        return readMeta(File(root, id)) ?: NoteMeta(id, title, System.currentTimeMillis(), 1, 0)
+        return NoteMeta(id, title, System.currentTimeMillis(), 1, 0)
     }
 
     fun createMarkdown(title: String, text: String = "", folder: String = ""): NoteMeta {
@@ -328,9 +309,7 @@ class NoteStore(context: Context) {
                 .put("title", title).put("kind", NoteKind.MARKDOWN.name)
                 .put("modified", System.currentTimeMillis()).put("folder", folder)
                 .put("pages", JSONArray()).toString())
-            val meta = readMeta(dir) ?: error("노트를 만들지 못했습니다")
-            runCatching { searchIndex.put(meta.id, meta.title, text, meta.modified) }
-            return meta
+            return readMeta(dir) ?: error("노트를 만들지 못했습니다")
         } catch (error: Exception) {
             dir.deleteRecursively()
             throw error
@@ -366,7 +345,6 @@ class NoteStore(context: Context) {
         atomicText(File(root, "$id/note.md"), text)
         meta.put("title", title).put("modified", System.currentTimeMillis())
         atomicText(metaFile, meta.toString())
-        runCatching { searchIndex.put(id, title, text, meta.optLong("modified")) }
     }
 
     private fun atomicText(file: File, text: String) {
@@ -420,9 +398,7 @@ class NoteStore(context: Context) {
         writeMeta(id, title, document)
         // Drawn now, so the card in the list is not blank until the first save.
         writeAutoThumbnail(id, document)
-        val meta = readMeta(File(root, id)) ?: NoteMeta(id, title, System.currentTimeMillis(), pages.size, 0)
-        runCatching { searchIndex.put(id, title, searchableText(id, meta.kind), meta.modified) }
-        return meta
+        return NoteMeta(id, title, System.currentTimeMillis(), pages.size, 0)
     }
 
     /**
@@ -432,33 +408,12 @@ class NoteStore(context: Context) {
     fun search(query: String): List<NoteMeta> {
         val needle = query.trim()
         if (needle.isEmpty()) return list()
-        val notes = list()
-        val matched = runCatching {
-            searchIndex.synchronize(notes) { meta ->
-                if (meta.kind == NoteKind.INK) ensureTextIndex(meta.id)
-                searchableText(meta.id, meta.kind)
-            }
-            searchIndex.match(needle)
-        }.getOrNull()
-        if (matched == null) return legacySearch(notes, needle)
-        return notes.filter { it.id in matched || it.title.contains(needle, ignoreCase = true) }
-    }
-
-    private fun legacySearch(notes: List<NoteMeta>, needle: String): List<NoteMeta> =
-        notes.filter { meta ->
+        return list().filter { meta ->
             if (meta.kind == NoteKind.MARKDOWN) return@filter meta.title.contains(needle, true) ||
                 runCatching { loadMarkdown(meta.id).contains(needle, true) }.getOrDefault(false)
             ensureTextIndex(meta.id)
             meta.title.contains(needle, ignoreCase = true) || textContains(meta.id, needle)
         }
-
-    private fun searchableText(id: String, kind: NoteKind): String {
-        if (kind == NoteKind.MARKDOWN) return runCatching { loadMarkdown(id) }.getOrDefault("")
-        return File(root, "$id/pages")
-            .listFiles { file -> file.name.endsWith(".txt") || file.name.endsWith(INK_INDEX) }
-            ?.sortedBy { it.name }
-            ?.joinToString("\n") { file -> runCatching { file.readText() }.getOrDefault("") }
-            .orEmpty()
     }
 
     /**
@@ -502,17 +457,11 @@ class NoteStore(context: Context) {
     fun writeInkIndex(id: String, pageId: String, text: String) {
         val file = inkIndexFile(id, pageId)
         file.parentFile?.mkdirs()
-        runCatching {
-            file.writeText(text)
-            readMeta(File(root, id))?.let { meta ->
-                searchIndex.put(id, meta.title, searchableText(id, meta.kind), meta.modified)
-            }
-        }
+        runCatching { file.writeText(text) }
     }
 
     fun delete(id: String) {
         File(root, id).deleteRecursively()
-        runCatching { searchIndex.remove(id) }
     }
 
     fun pdfFile(id: String): File = File(root, "$id/doc.pdf")
@@ -584,8 +533,7 @@ class NoteStore(context: Context) {
             }
             .toSet()
         dir.listFiles()?.forEach { if (it.name !in live) it.delete() }
-        val modified = writeMeta(id, title, document)
-        runCatching { searchIndex.updateMetadata(id, title, modified) }
+        writeMeta(id, title, document)
 
         // ponytail: rendering the first page costs a PDF decode, and autosave
         // runs every second or so while writing. The picture only has to be
@@ -734,7 +682,7 @@ class NoteStore(context: Context) {
      * the caller needs to place it, or null if it could not be read.
      */
     fun addImage(id: String, input: java.io.InputStream): Pair<String, Float>? {
-        val bitmap = decodeSampled(input, MAX_IMAGE_PX) ?: return null
+        val bitmap = runCatching { BitmapFactory.decodeStream(input) }.getOrNull() ?: return null
         return addImage(id, bitmap)
     }
 
@@ -773,7 +721,7 @@ class NoteStore(context: Context) {
      * way in, because a phone photo is many megabytes and this is a card.
      */
     fun setThumbnail(id: String, input: java.io.InputStream): Boolean = runCatching {
-        val source = decodeSampled(input, THUMB_WIDTH * 2) ?: return false
+        val source = BitmapFactory.decodeStream(input) ?: return false
         val scale = (THUMB_WIDTH.toFloat() / source.width).coerceAtMost(1f)
         val scaled = if (scale < 1f) {
             Bitmap.createScaledBitmap(
@@ -790,26 +738,6 @@ class NoteStore(context: Context) {
         }
         true
     }.getOrDefault(false)
-
-    /** Decodes camera-sized input near its final size instead of allocating it at full resolution. */
-    private fun decodeSampled(input: java.io.InputStream, longestTarget: Int): Bitmap? {
-        val temporary = File.createTempFile("notesis-image-", ".source", appContext.cacheDir)
-        return try {
-            temporary.outputStream().buffered().use { output -> input.copyTo(output) }
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeFile(temporary.path, bounds)
-            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-            var sample = 1
-            val longest = maxOf(bounds.outWidth, bounds.outHeight)
-            while (longest / (sample * 2) >= longestTarget) sample *= 2
-            BitmapFactory.decodeFile(
-                temporary.path,
-                BitmapFactory.Options().apply { inSampleSize = sample },
-            )
-        } finally {
-            temporary.delete()
-        }
-    }
 
     /** Drops the custom picture, so the note falls back to its first page. */
     fun clearThumbnail(id: String) {
@@ -890,14 +818,7 @@ class NoteStore(context: Context) {
                 zip.closeEntry()
             }
         }
-        if (!seen) 0 else {
-            for (id in remapped.values) {
-                readMeta(File(root, id))?.let { meta ->
-                    runCatching { searchIndex.put(id, meta.title, searchableText(id, meta.kind), meta.modified) }
-                }
-            }
-            remapped.size
-        }
+        if (!seen) 0 else remapped.size
     }.getOrDefault(0)
 
     /**
@@ -924,8 +845,8 @@ class NoteStore(context: Context) {
     }
 
     /**
-     * One page onto one canvas, in the order it is seen: paper, highlighter,
-     * pictures/text, opaque ink, tape. Shared by export and thumbnails, because
+     * One page onto one canvas, in the order it is seen: paper, imported page,
+     * pictures, ink, tape. Shared by the PDF export and the thumbnail, because
      * a thumbnail that disagrees with the export is a bug waiting to be filed.
      */
     private fun drawWholePage(
@@ -945,14 +866,6 @@ class NoteStore(context: Context) {
             }
         }
         val transform = Matrix().apply { setScale(scale, scale) }
-        val strokes = if (page.loaded) {
-            page.strokes
-        } else {
-            readStrokes(File(root, "$id/pages/${page.id}.bin"))
-        }
-        for (stroke in strokes) {
-            if (stroke.isHighlighterStroke()) renderer.draw(canvas, stroke, transform)
-        }
         for (image in page.images) {
             val bitmap = runCatching {
                 BitmapFactory.decodeFile(imageFile(id, image.id).path)
@@ -965,14 +878,17 @@ class NoteStore(context: Context) {
             )
             canvas.drawBitmap(bitmap, null, target, null)
         }
+        val strokes = if (page.loaded) {
+            page.strokes
+        } else {
+            readStrokes(File(root, "$id/pages/${page.id}.bin"))
+        }
         val masks = if (page.loaded) {
             page.masks.map { it.stroke }
         } else {
             readStrokes(File(root, "$id/pages/${page.id}.mask"))
         }
-        for (stroke in strokes) {
-            if (!stroke.isHighlighterStroke()) renderer.draw(canvas, stroke, transform)
-        }
+        for (stroke in strokes) renderer.draw(canvas, stroke, transform)
         for (stroke in masks) renderer.draw(canvas, stroke, transform)
     }
 
@@ -1010,12 +926,7 @@ class NoteStore(context: Context) {
                 readStrokes(File(root, "$id/pages/${page.id}.mask"))
             }
             val renderer = CanvasStrokeRenderer.create()
-            for (stroke in strokes) {
-                if (stroke.isHighlighterStroke()) renderer.draw(canvas, stroke, transform)
-            }
-            for (stroke in strokes) {
-                if (!stroke.isHighlighterStroke()) renderer.draw(canvas, stroke, transform)
-            }
+            for (stroke in strokes) renderer.draw(canvas, stroke, transform)
             for (stroke in masks) renderer.draw(canvas, stroke, transform)
             val tmp = File(root, "$id/$AUTO_THUMB.tmp")
             tmp.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 90, it) }
@@ -1023,7 +934,7 @@ class NoteStore(context: Context) {
         }
     }
 
-    private fun writeMeta(id: String, title: String, document: Document): Long {
+    private fun writeMeta(id: String, title: String, document: Document) {
         val pages = JSONArray()
         for (page in document.pages) {
             pages.put(
@@ -1037,20 +948,18 @@ class NoteStore(context: Context) {
                     .put("images", imagesToJson(page)),
             )
         }
-        val modified = System.currentTimeMillis()
         val json = JSONObject()
             .put("title", title)
             // Read back rather than passed in: saving a note happens on a timer
             // and knows nothing about where the note was filed.
             .put("folder", folderOf(id))
-            .put("modified", modified)
+            .put("modified", System.currentTimeMillis())
             .put(
                 "strokeCount",
                 document.pages.sumOf { if (it.loaded) it.strokes.size else it.savedStrokeCount },
             )
             .put("pages", pages)
         File(root, "$id/meta.json").writeText(json.toString())
-        return modified
     }
 
     private fun readMeta(dir: File): NoteMeta? {

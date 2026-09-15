@@ -2,6 +2,7 @@ package com.notesis
 
 import android.graphics.Bitmap
 import android.net.Uri
+import android.util.LruCache
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -57,7 +58,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -66,7 +66,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.NoteAdd
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
@@ -81,12 +80,11 @@ import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.Gesture
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material.icons.filled.PanToolAlt
+import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Archive
@@ -102,8 +100,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloseFullscreen
 import androidx.compose.material.icons.filled.AutoAwesomeMosaic
 import androidx.compose.material.icons.filled.BugReport
-import androidx.compose.material.icons.filled.Draw
-import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Create
 import androidx.compose.material.icons.filled.Highlight
 import androidx.compose.material.icons.filled.VerticalAlignTop
 import androidx.compose.material.icons.filled.Visibility
@@ -220,7 +217,6 @@ import kotlin.math.abs
 class MainActivity : ComponentActivity() {
 
     private var incomingViewerRequest: ViewerRequest? by mutableStateOf(null)
-    private var performanceMonitor: PerformanceMonitor? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -324,29 +320,12 @@ class MainActivity : ComponentActivity() {
             }
         }
         }
-        performanceMonitor = PerformanceMonitor.install(window)
-    }
-
-    override fun onDestroy() {
-        performanceMonitor?.close()
-        performanceMonitor = null
-        super.onDestroy()
     }
 
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         acceptDocumentIntent(intent)
-    }
-
-    override fun onTrimMemory(level: Int) {
-        super.onTrimMemory(level)
-        RuntimeMemory.trim(level)
-    }
-
-    override fun onLowMemory() {
-        super.onLowMemory()
-        RuntimeMemory.trim(android.content.ComponentCallbacks2.TRIM_MEMORY_COMPLETE)
     }
 
     private fun acceptDocumentIntent(intent: android.content.Intent?) {
@@ -394,14 +373,10 @@ private fun NoteListScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    // Re-read from disk whenever something changed it. Metadata parsing and
-    // sorting are file IO, so the UI keeps its last immutable snapshot while a
-    // worker produces the next one.
+    // Re-read from disk whenever something changed it, rather than keeping a
+    // second copy of the truth in memory and having to hold the two in sync.
     var revision by remember { mutableIntStateOf(0) }
-    var notes by remember { mutableStateOf<List<NoteMeta>?>(null) }
-    LaunchedEffect(revision) {
-        notes = withContext(Dispatchers.IO) { store.list() }
-    }
+    val notes = remember(revision) { store.list() }
     var pendingDelete by remember { mutableStateOf<NoteMeta?>(null) }
     var naming by remember { mutableStateOf(false) }
     var importing by remember { mutableStateOf(false) }
@@ -473,8 +448,8 @@ private fun NoteListScreen(
         }
     }
 
-    // The first search may populate the on-disk full-text cache, so all search
-    // work stays off the main thread and only starts after typing settles.
+    // Searching reads every note's text index off disk, so it runs off the main
+    // thread and only after typing settles.
     LaunchedEffect(query, revision) {
         if (query.isBlank()) {
             results = null
@@ -487,11 +462,8 @@ private fun NoteListScreen(
     // the point of searching is not knowing where a thing is.
     var folder by remember { mutableStateOf("") }
     var filing by remember { mutableStateOf<NoteMeta?>(null) }
-    val availableNotes = notes.orEmpty()
-    val folders = remember(availableNotes) {
-        availableNotes.asSequence().map { it.folder }.filter { it.isNotBlank() }.distinct().sorted().toList()
-    }
-    val shown = results ?: availableNotes.filter { it.folder == folder }
+    val folders = remember(revision) { store.folders() }
+    val shown = results ?: notes.filter { it.folder == folder }
 
     // The user picks where it goes, so a backup survives the app being removed.
     val saveArchive = rememberLauncherForActivityResult(
@@ -682,25 +654,25 @@ private fun NoteListScreen(
                 )
                 GlassFab(
                     onClick = { pickPdf.launch(arrayOf("application/pdf")) },
-                    icon = Icons.Default.PictureAsPdf,
+                    icon = Icons.Default.Description,
                     contentDescription = "PDF 가져오기",
                     modifier = Modifier.padding(top = 12.dp, bottom = 12.dp),
                 )
                 GlassFab(
                     onClick = { openDocument.launch(SUPPORTED_DOCUMENT_MIME_TYPES) },
-                    icon = Icons.Default.FileOpen,
+                    icon = Icons.Default.FolderOpen,
                     contentDescription = "문서 열기",
                     modifier = Modifier.padding(bottom = 12.dp),
                 )
                 GlassFab(
                     onClick = { importMarkdown.launch(arrayOf("text/markdown", "text/plain", "application/octet-stream")) },
-                    icon = Icons.Default.Code,
+                    icon = Icons.Default.Description,
                     contentDescription = "Markdown 가져오기",
                     modifier = Modifier.padding(bottom = 12.dp),
                 )
                 GlassFab(
                     onClick = { naming = true },
-                    icon = Icons.AutoMirrored.Filled.NoteAdd,
+                    icon = Icons.Default.Add,
                     contentDescription = "새 노트",
                 )
             }
@@ -726,11 +698,7 @@ private fun NoteListScreen(
                 .background(homeColor?.let { Color(it) } ?: MaterialTheme.colorScheme.surface),
         ) {
         HomeBackground(homePhoto)
-        if (notes == null) {
-            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
-            }
-        } else if (shown.isEmpty()) {
+        if (shown.isEmpty()) {
             Box(
                 Modifier
                     .fillMaxSize()
@@ -780,10 +748,8 @@ private fun NoteListScreen(
                             pickThumbnail.launch("image/*")
                         },
                         onClearThumbnail = {
-                            scope.launch {
-                                withContext(Dispatchers.IO) { store.clearThumbnail(note.id) }
-                                revision++
-                            }
+                            store.clearThumbnail(note.id)
+                            revision++
                         },
                         onExport = {
                             exporting = note.id to false
@@ -852,11 +818,9 @@ private fun NoteListScreen(
             folders = folders,
             onDismiss = { filing = null },
             onPick = { picked ->
+                store.setFolder(target.id, picked)
                 filing = null
-                scope.launch {
-                    withContext(Dispatchers.IO) { store.setFolder(target.id, picked) }
-                    revision++
-                }
+                revision++
             },
         )
     }
@@ -884,19 +848,11 @@ private fun NoteListScreen(
             onDismiss = { naming = false },
             onConfirm = { title, kind ->
                 naming = false
-                scope.launch {
-                    val created = withContext(Dispatchers.IO) {
-                        if (kind == NoteKind.MARKDOWN) {
-                            store.createMarkdown(
-                                title.ifBlank { "제목 없음" },
-                                "# ${title.ifBlank { "제목 없음" }}\n\n",
-                            )
-                        } else {
-                            store.create(title.ifBlank { "제목 없음" })
-                        }
-                    }
-                    onOpen(created)
-                }
+                onOpen(if (kind == NoteKind.MARKDOWN) {
+                    store.createMarkdown(title.ifBlank { "제목 없음" }, "# ${title.ifBlank { "제목 없음" }}\n\n")
+                } else {
+                    store.create(title.ifBlank { "제목 없음" })
+                })
             },
         )
     }
@@ -909,11 +865,9 @@ private fun NoteListScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
+                        store.delete(note.id)
                         pendingDelete = null
-                        scope.launch {
-                            withContext(Dispatchers.IO) { store.delete(note.id) }
-                            revision++
-                        }
+                        revision++
                     },
                 ) { Text("삭제") }
             },
@@ -952,13 +906,9 @@ private fun NoteCard(
     var menuOpen by remember { mutableStateOf(false) }
     // Keyed on the file's timestamp, so replacing the picture redraws the card
     // instead of showing the decoded copy of the old one.
-    val thumbnailKey = note.thumbnail?.let { it.path to it.lastModified() }
-    var preview by remember(thumbnailKey) { mutableStateOf<Bitmap?>(null) }
-    LaunchedEffect(thumbnailKey) {
-        preview = withContext(Dispatchers.IO) {
-            note.thumbnail?.let { file ->
-                runCatching { android.graphics.BitmapFactory.decodeFile(file.path) }.getOrNull()
-            }
+    val preview = remember(note.thumbnail?.path, note.thumbnail?.lastModified()) {
+        note.thumbnail?.let { file ->
+            runCatching { android.graphics.BitmapFactory.decodeFile(file.path) }.getOrNull()
         }
     }
     val skin = LocalSkin.current
@@ -1001,10 +951,9 @@ private fun NoteCard(
                     .background(Color(0xFFFDFCF8)),
                 contentAlignment = Alignment.Center,
             ) {
-                val thumbnail = preview
-                if (thumbnail != null) {
+                if (preview != null) {
                     Image(
-                        bitmap = thumbnail.asImageBitmap(),
+                        bitmap = preview.asImageBitmap(),
                         contentDescription = null,
                         // Crop, so a page taller than the card fills it from the
                         // top rather than sitting in a letterbox.
@@ -1307,19 +1256,12 @@ private fun GlassFab(
             containerColor = Color.Transparent,
             contentColor = MaterialTheme.colorScheme.onSurface,
             drawBorder = false,
-            // Small runtime-shader layers can expose their rectangular render
-            // bounds as a faint frame on some GPUs. The circular rim supplies
-            // enough separation here, so the external shadow is deliberately off.
-            glassShadowElevation = 0.dp,
+            glassShadowElevation = 3.dp,
         ) {
             Icon(icon, contentDescription = contentDescription)
         }
     } else {
-        SkinSurface(
-            modifier = modifier.size(side),
-            corner = if (small) 20.dp else 28.dp,
-            shadow = false,
-        ) {
+        SkinSurface(modifier = modifier.size(side), corner = 16.dp) {
             // Clickable inside the surface, so the ripple is clipped to the corner.
             Box(
                 Modifier.fillMaxSize().clickable(onClick = onClick),
@@ -1439,12 +1381,6 @@ private fun PenDialog(
     onPrediction: (Boolean) -> Unit,
     deferDetail: Boolean,
     onDeferDetail: (Boolean) -> Unit,
-    dimInactivePdfPages: Boolean,
-    onDimInactivePdfPages: (Boolean) -> Unit,
-    axisSnap: Boolean,
-    onAxisSnap: (Boolean) -> Unit,
-    stabilization: Int,
-    onStabilization: (Int) -> Unit,
     onDismiss: () -> Unit,
     onConfirm: (PenPreset) -> Unit,
 ) {
@@ -1529,59 +1465,15 @@ private fun PenDialog(
                     SkinSwitch(checked = deferDetail, onCheckedChange = onDeferDetail)
                     Spacer(Modifier.width(10.dp))
                     Column {
-                        Text("지연 상세 렌더링", style = MaterialTheme.typography.bodyMedium)
+                        Text("확대 후 선명하게", style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            "이동·확대 중에는 캐시 화면을 사용하고, 손을 떼면 상세 화질로 " +
-                                "갱신합니다. 복잡한 페이지가 버벅이면 켜두세요",
+                            "확대하는 동안은 있는 그대로 그리고, 손을 떼면 그때 다시 " +
+                                "선명하게 만듭니다. 글이 많은 페이지에서 확대가 버벅이면 켜두세요",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.outline,
                         )
                     }
                 }
-                Spacer(Modifier.height(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    SkinSwitch(
-                        checked = dimInactivePdfPages,
-                        onCheckedChange = onDimInactivePdfPages,
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Column {
-                        Text("다른 PDF 페이지 흐리게", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            "현재 보는 페이지 외에는 안정적인 반투명 막으로 낮춥니다",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.outline,
-                        )
-                    }
-                }
-                Spacer(Modifier.height(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    SkinSwitch(checked = axisSnap, onCheckedChange = onAxisSnap)
-                    Spacer(Modifier.width(10.dp))
-                    Column {
-                        Text("수평·수직 직선 보정", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            "직선이나 화살표가 축에서 10° 이내면 자동으로 맞춥니다",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.outline,
-                        )
-                    }
-                }
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "Stroke stabilization $stabilization%",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                SkinSlider(
-                    value = stabilization.toFloat(),
-                    onValueChange = { onStabilization(it.roundToInt()) },
-                    valueRange = 0f..100f,
-                )
-                Text(
-                    "0%는 기본 필기, 100%는 가장 강한 흔들림 보정",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.outline,
-                )
                 Spacer(Modifier.height(10.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -2274,10 +2166,12 @@ private fun NoteScreen(
     val imageCache = remember(note.id) {
         // Bounded by bytes, not by count: a handful of large pictures is what
         // would run the heap out, and counting entries cannot see that.
-        BitmapMemoryCache<String>(RuntimeMemory.imageCacheBytes(context))
+        object : LruCache<String, Bitmap>(IMAGE_CACHE_BYTES) {
+            override fun sizeOf(key: String, value: Bitmap) = value.byteCount
+        }
     }
     DisposableEffect(imageCache) {
-        onDispose { imageCache.close() }
+        onDispose { imageCache.evictAll() }
     }
     // Folded away, the bar becomes a handle that can be dragged; unfolding puts
     // it back wherever that handle was left, which is the point of moving it.
@@ -2289,17 +2183,21 @@ private fun NoteScreen(
     var docked by remember { mutableStateOf(penStore.docked) }
     var prediction by remember { mutableStateOf(penStore.prediction) }
     var deferDetail by remember { mutableStateOf(penStore.deferDetail) }
-    var dimInactivePdfPages by remember { mutableStateOf(penStore.dimInactivePdfPages) }
-    var axisSnap by remember { mutableStateOf(penStore.axisSnap) }
-    var stabilization by remember { mutableIntStateOf(penStore.stabilization) }
     // Null until it is dragged: the bar sits centred at the top by default, and
     // there is no sensible centre to store before anything has been measured.
     var barOffset by remember { mutableStateOf<Offset?>(null) }
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
     var barSize by remember { mutableStateOf(IntSize.Zero) }
     val density = LocalDensity.current
-    var otherNotes by remember(note.id) { mutableStateOf<List<NoteMeta>>(emptyList()) }
+    val otherNotes = remember(note.id) { store.list().filter { it.id != note.id } }
     val referenceNotes = remember(note, otherNotes) { listOf(note) + otherNotes }
+    val initialReferenceNoteId = remember(note.id, referenceNotes) {
+        penStore.referenceNote?.takeIf { saved -> referenceNotes.any { it.id == saved } } ?: note.id
+    }
+    val initialReferencePage = remember(initialReferenceNoteId, referenceNotes) {
+        val count = referenceNotes.first { it.id == initialReferenceNoteId }.pageCount
+        restoredPage(penStore.lastPage(initialReferenceNoteId), count)
+    }
 
     // The three-finger reference panel: a second, live InkCanvasView floating
     // over this one, on whichever note and page it is pointed at - any note,
@@ -2308,24 +2206,8 @@ private fun NoteScreen(
     // in preferences, so it is still the same one after a close, after leaving
     // the note, and after the app has been shut.
     var referenceOpen by remember { mutableStateOf(false) }
-    var referenceNoteId by remember(note.id) { mutableStateOf(note.id) }
-    var referencePage by remember(note.id) {
-        mutableIntStateOf(restoredPage(penStore.lastPage(note.id), note.pageCount))
-    }
-    LaunchedEffect(note.id) {
-        val loaded = withContext(Dispatchers.IO) { store.list().filter { it.id != note.id } }
-        otherNotes = loaded
-        // Preserve a panel the user already opened while the list was loading.
-        if (!referenceOpen) {
-            val all = listOf(note) + loaded
-            val restoredId = penStore.referenceNote
-                ?.takeIf { saved -> all.any { it.id == saved } }
-                ?: note.id
-            val count = all.first { it.id == restoredId }.pageCount
-            referenceNoteId = restoredId
-            referencePage = restoredPage(penStore.lastPage(restoredId), count)
-        }
-    }
+    var referenceNoteId by remember { mutableStateOf(initialReferenceNoteId) }
+    var referencePage by remember { mutableIntStateOf(initialReferencePage) }
     // Whether the page in the panel is fitted to the panel's width. Off, it
     // keeps whatever zoom it was put at.
     var referenceFit by remember { mutableStateOf(penStore.referenceFit) }
@@ -2727,9 +2609,6 @@ private fun NoteScreen(
                     view.predictionEnabled = prediction
                     view.latencyMonitoringEnabled = showLatency
                     view.deferDetail = deferDetail
-                    view.dimInactivePdfPages = dimInactivePdfPages
-                    view.axisSnapEnabled = axisSnap
-                    view.stabilizationPercent = stabilization
                     view.tool = tool
                     view.readMode = mode == EditMode.READ
                     view.shapeKind = when {
@@ -2921,21 +2800,6 @@ private fun NoteScreen(
                     deferDetail = it
                     penStore.deferDetail = it
                 },
-                dimInactivePdfPages = dimInactivePdfPages,
-                onDimInactivePdfPages = {
-                    dimInactivePdfPages = it
-                    penStore.dimInactivePdfPages = it
-                },
-                axisSnap = axisSnap,
-                onAxisSnap = {
-                    axisSnap = it
-                    penStore.axisSnap = it
-                },
-                stabilization = stabilization,
-                onStabilization = {
-                    stabilization = it
-                    penStore.stabilization = it
-                },
                 onDismiss = { editingPen = false },
                 onConfirm = { saved ->
                     settings = settings + (mode to saved)
@@ -2963,42 +2827,35 @@ private fun NoteScreen(
             CaptureDialog(
                 bitmap = bitmap,
                 onPaste = {
-                    captured = null
-                    scope.launch {
-                        val added = withContext(Dispatchers.IO) { store.addImage(note.id, bitmap) }
-                        if (added != null) {
-                            canvas?.insertImage(added.first, added.second)
-                            mode = EditMode.IMAGE
-                            edits++
-                        }
+                    val added = store.addImage(note.id, bitmap)
+                    if (added != null) {
+                        canvas?.insertImage(added.first, added.second)
+                        mode = EditMode.IMAGE
+                        edits++
                     }
+                    captured = null
                 },
                 onAttach = {
-                    captured = null
-                    scope.launch {
-                        val uri = withContext(Dispatchers.IO) { captureUri(context, bitmap) }
-                        if (uri == null) {
-                            Toast.makeText(context, "캡쳐를 저장하지 못했습니다", Toast.LENGTH_SHORT).show()
-                        } else {
-                            pendingAttachment.value = uri
-                            if (webUrl == null) webUrl = AI_SITES.first().second
-                            // Naming the two taps: the sheet behind "+" offers a
-                            // camera and a photo picker too, and neither of those
-                            // is the file chooser this capture is waiting for.
-                            Toast.makeText(
-                                context,
-                                "대화창의 + 를 누르고 \"파일\"을 고르세요",
-                                Toast.LENGTH_LONG,
-                            ).show()
-                        }
+                    val uri = captureUri(context, bitmap)
+                    if (uri == null) {
+                        Toast.makeText(context, "캡쳐를 저장하지 못했습니다", Toast.LENGTH_SHORT).show()
+                    } else {
+                        pendingAttachment.value = uri
+                        if (webUrl == null) webUrl = AI_SITES.first().second
+                        // Naming the two taps: the sheet behind "+" offers a
+                        // camera and a photo picker too, and neither of those
+                        // is the file chooser this capture is waiting for.
+                        Toast.makeText(
+                            context,
+                            "대화창의 + 를 누르고 \"파일\"을 고르세요",
+                            Toast.LENGTH_LONG,
+                        ).show()
                     }
+                    captured = null
                 },
                 onShare = {
+                    shareBitmap(context, bitmap)
                     captured = null
-                    scope.launch {
-                        val uri = withContext(Dispatchers.IO) { captureUri(context, bitmap) }
-                        if (uri != null) shareBitmap(context, uri)
-                    }
                 },
                 onDismiss = { captured = null },
             )
@@ -3055,14 +2912,6 @@ private fun NoteScreen(
             PenDialog(mode = colorMode, pen = settings.getValue(colorMode),
                 prediction = prediction, onPrediction = { prediction = it; penStore.prediction = it },
                 deferDetail = deferDetail, onDeferDetail = { deferDetail = it; penStore.deferDetail = it },
-                dimInactivePdfPages = dimInactivePdfPages,
-                onDimInactivePdfPages = {
-                    dimInactivePdfPages = it; penStore.dimInactivePdfPages = it
-                },
-                axisSnap = axisSnap,
-                onAxisSnap = { axisSnap = it; penStore.axisSnap = it },
-                stabilization = stabilization,
-                onStabilization = { stabilization = it; penStore.stabilization = it },
                 onDismiss = { selectionColorMode = null }, onConfirm = {
                     settings = settings + (colorMode to it)
                     penStore.save(settings)
@@ -3174,9 +3023,6 @@ private fun NoteScreen(
                 straightLine = straightLine,
                 eraserWidth = eraserWidth,
                 deferDetail = deferDetail,
-                dimInactivePdfPages = dimInactivePdfPages,
-                axisSnap = axisSnap,
-                stabilization = stabilization,
                 offset = referenceOffset,
                 size = referenceSize,
                 stretch = referenceStretch,
@@ -3353,7 +3199,8 @@ private fun captureUri(context: android.content.Context, bitmap: Bitmap): Uri? {
 }
 
 /** Hands the captured region to whatever the user picks in the share sheet. */
-private fun shareBitmap(context: android.content.Context, uri: Uri) {
+private fun shareBitmap(context: android.content.Context, bitmap: Bitmap) {
+    val uri = captureUri(context, bitmap) ?: return
     val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
         type = "image/png"
         putExtra(android.content.Intent.EXTRA_STREAM, uri)
@@ -3384,9 +3231,6 @@ private fun ReferencePanel(
     straightLine: Boolean,
     eraserWidth: Float,
     deferDetail: Boolean,
-    dimInactivePdfPages: Boolean,
-    axisSnap: Boolean,
-    stabilization: Int,
     offset: Offset,
     size: Size,
     /** What the whole panel is scaled by while a spread is in progress. */
@@ -3671,9 +3515,6 @@ private fun ReferencePanel(
                             v.prepareBrush()
                             v.eraserWidth = eraserWidth
                             v.deferDetail = deferDetail
-                            v.dimInactivePdfPages = dimInactivePdfPages
-                            v.axisSnapEnabled = axisSnap
-                            v.stabilizationPercent = stabilization
                         },
                     )
                     if (popupLassoCount > 0) {
@@ -3878,7 +3719,8 @@ private fun PageSidebar(
                 contentPadding = PaddingValues(10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                itemsIndexed(pages, key = { _, page -> page.id }) { index, page ->
+                items(pages) { page ->
+                    val index = pages.indexOf(page)
                     if (tab == 0) {
                         PageChip(
                             index = index,
@@ -4315,7 +4157,7 @@ private fun Toolbar(
                     }
                 }
                 ToolButton(
-                    Icons.Default.PanToolAlt,
+                    Icons.Default.TouchApp,
                     "읽기 모드",
                     mode == EditMode.READ,
                 ) { onMode(EditMode.READ) }
@@ -4324,7 +4166,7 @@ private fun Toolbar(
                 // The tools, in a fixed row. Each keeps its own colour and
                 // thickness, so picking one up is the whole of choosing what to
                 // write with - there is no tray of pens to curate.
-                ToolChip(Icons.Default.Draw, "펜", EditMode.PEN, mode, pen, onMode)
+                ToolChip(Icons.Default.Create, "펜", EditMode.PEN, mode, pen, onMode)
                 ToolChip(
                     Icons.Default.Highlight,
                     "형광펜",
@@ -4500,8 +4342,6 @@ private fun ToolButton(
             contentPadding = PaddingValues(0.dp),
             containerColor = Color.Transparent,
             contentColor = contentColor,
-            drawBorder = false,
-            glassShadowElevation = 0.dp,
         ) {
             Icon(icon, contentDescription = label)
         }
@@ -4550,6 +4390,8 @@ private const val PAGE_SCRUBBER_IDLE_MS = 1600L
 
 private const val CRASH_LOG = "crash.log"
 private const val CRASH_LOG_MAX = 256L * 1024
+
+private const val IMAGE_CACHE_BYTES = 48 * 1024 * 1024
 
 /** What the tool row needs. Past it a floating bar is empty space. */
 private val FLOATING_BAR_MAX = 940.dp

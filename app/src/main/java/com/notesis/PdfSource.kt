@@ -7,7 +7,6 @@ import android.graphics.Point
 import android.graphics.RectF
 import android.graphics.pdf.PdfRenderer
 import android.graphics.pdf.models.selection.SelectionBoundary
-import android.content.ComponentCallbacks2
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.util.LruCache
@@ -41,7 +40,7 @@ class PdfSource private constructor(
     private val descriptor: ParcelFileDescriptor,
     private val renderer: PdfRenderer,
     cacheBytes: Int,
-) : AutoCloseable, MemoryTrimmable {
+) : AutoCloseable {
 
     val pageCount: Int = renderer.pageCount
 
@@ -67,19 +66,10 @@ class PdfSource private constructor(
     @Volatile
     private var closed = false
 
-    // Keep the cheap whole-page floor small and reserve most of the budget for
-    // the visible detail tiles. A 2048px A4 bitmap alone is about 24 MiB: with
-    // the old 50/50 split it did not fit in the 12 MiB page half on a modest
-    // device and was rendered, immediately evicted, then rendered again. The
-    // tile half could hold only three 1024px tiles, so a six-tile viewport also
-    // evicted itself in a loop. Both loops appeared as text alternating between
-    // soft and sharp. 1024px page floors plus 512px tiles keep a complete
-    // viewport resident and make each quality promotion stable.
-    private val pageCacheBytes = (cacheBytes / 3).coerceIn(MIN_PAGE_CACHE_BYTES, MAX_PAGE_CACHE_BYTES)
-    private val tileCacheBytes = (cacheBytes - pageCacheBytes).coerceAtLeast(MIN_TILE_CACHE_BYTES)
-
-    private val cache = object : LruCache<Long, Bitmap>(pageCacheBytes) {
-        override fun sizeOf(key: Long, value: Bitmap) = value.allocationByteCount
+    // [cacheBytes] is one total budget. Half still fits one 2048px A4 page at
+    // the minimum budget; the other half keeps a screenful of sharp tiles.
+    private val cache = object : LruCache<Long, Bitmap>((cacheBytes / 2).coerceAtLeast(1)) {
+        override fun sizeOf(key: Long, value: Bitmap) = value.byteCount
     }
 
     private data class TileKey(
@@ -91,12 +81,8 @@ class PdfSource private constructor(
 
     private val pendingTiles = mutableMapOf<TileKey, Int>()
 
-    private val tileCache = object : LruCache<TileKey, Bitmap>(tileCacheBytes) {
-        override fun sizeOf(key: TileKey, value: Bitmap) = value.allocationByteCount
-    }
-
-    init {
-        RuntimeMemory.register(this)
+    private val tileCache = object : LruCache<TileKey, Bitmap>((cacheBytes - cacheBytes / 2).coerceAtLeast(1)) {
+        override fun sizeOf(key: TileKey, value: Bitmap) = value.byteCount
     }
 
     /** Called on the worker thread once a requested render has landed. */
@@ -279,16 +265,10 @@ class PdfSource private constructor(
         }
     }
 
-    /**
-     * Powers of two, so panning at one zoom keeps hitting the same tiles.
-     * A little headroom around each boundary prevents tiny scale rounding
-     * changes from swapping 2x and 4x tile sets on adjacent frames.
-     */
+    /** Powers of two, so panning at one zoom keeps hitting the same tiles. */
     private fun densityFor(pixelsPerUnit: Float): Float {
         var density = 1f
-        while (density * DENSITY_BUCKET_HEADROOM < pixelsPerUnit && density < MAX_TILE_DENSITY) {
-            density *= 2f
-        }
+        while (density < pixelsPerUnit && density < MAX_TILE_DENSITY) density *= 2f
         return density
     }
 
@@ -466,19 +446,6 @@ class PdfSource private constructor(
             setHasAlpha(false)
         }
 
-    override fun trimMemory(level: Int) {
-        when {
-            level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN -> {
-                cache.evictAll()
-                tileCache.evictAll()
-            }
-            level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW -> {
-                cache.trimToSize(cache.maxSize() / 2)
-                tileCache.trimToSize(tileCache.maxSize() / 2)
-            }
-        }
-    }
-
     override fun close() {
         synchronized(stateLock) {
             if (closed) return
@@ -487,7 +454,6 @@ class PdfSource private constructor(
             pendingTiles.clear()
         }
         onReady = null
-        RuntimeMemory.unregister(this)
         // PdfRenderer.render() cannot be interrupted. Do not make navigation
         // wait on its lock; discard queued tiles and finish native cleanup on a
         // single process-wide closer once the current render returns.
@@ -507,21 +473,18 @@ class PdfSource private constructor(
         const val POINTS_TO_WORLD = 150f / 72f
 
         private const val MIN_PAGE_WIDTH = 1024
-        // The whole-page image is only a stable floor. Detail comes from tiles;
-        // keeping this at 1024 avoids a single A4 bitmap consuming the cache.
-        private const val MAX_PAGE_WIDTH = 1024
+        /** 2048 x ~2900 x 4B is about 24MB - past this, crops are cheaper. */
+        private const val MAX_PAGE_WIDTH = 2048
         private const val MAX_CROP_PX = 4096
-        /** Small enough for a full tablet viewport to remain in the tile LRU. */
-        private const val TILE_PX = 512f
-        private const val DENSITY_BUCKET_HEADROOM = 1.12f
-        private const val MIN_PAGE_CACHE_BYTES = 8 * 1024 * 1024
-        private const val MAX_PAGE_CACHE_BYTES = 32 * 1024 * 1024
-        private const val MIN_TILE_CACHE_BYTES = 8 * 1024 * 1024
+        /** Tile edge in pixels. Big enough that a screen needs only a handful. */
+        private const val TILE_PX = 1024f
         // The canvas can reach 16 screen pixels per page unit. Matching that
         // ceiling keeps glyph edges one source pixel per display pixel even at
         // maximum zoom instead of magnifying the last tile bucket twofold.
         private const val MAX_TILE_DENSITY = MAX_CANVAS_SCALE
         private const val DETAIL_MARGIN = 0.25f
+        private const val MIN_CACHE_BYTES = 64 * 1024 * 1024
+        private const val MAX_CACHE_BYTES = 256 * 1024 * 1024
         private val closeWorker = Executors.newSingleThreadExecutor { runnable ->
             Thread(runnable, "notesis-pdf-close").apply { isDaemon = true }
         }
@@ -536,10 +499,12 @@ class PdfSource private constructor(
         fun baseWidthLimit(): Int = MAX_PAGE_WIDTH
 
         fun cacheBytesFor(context: android.content.Context): Int {
-            return RuntimeMemory.pdfCacheBytes(context)
+            val manager = context.getSystemService(android.app.ActivityManager::class.java)
+            val bytes = (manager?.largeMemoryClass ?: 128).toLong() * 1024 * 1024 / 2
+            return bytes.coerceIn(MIN_CACHE_BYTES.toLong(), MAX_CACHE_BYTES.toLong()).toInt()
         }
 
-        fun open(file: File, cacheBytes: Int = 32 * 1024 * 1024): PdfSource? {
+        fun open(file: File, cacheBytes: Int = MIN_CACHE_BYTES): PdfSource? {
             if (!file.isFile) return null
             return runCatching {
                 val descriptor =

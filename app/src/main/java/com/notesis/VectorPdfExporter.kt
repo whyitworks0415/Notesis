@@ -78,13 +78,8 @@ internal fun writeVectorPdf(
                 stream.saveGraphicsState()
                 stream.transform(displayToPdfMatrix(pdfPage, model))
                 drawPaper(stream, model, imported)
-                for (stroke in item.strokes) {
-                    if (stroke.isHighlighterStroke()) drawStroke(stream, stroke)
-                }
                 drawImages(result, stream, model, imageFile)
-                for (stroke in item.strokes) {
-                    if (!stroke.isHighlighterStroke()) drawStroke(stream, stroke)
-                }
+                for (stroke in item.strokes) drawStroke(stream, stroke)
                 for (stroke in item.masks) drawStroke(stream, stroke)
                 stream.restoreGraphicsState()
             }
