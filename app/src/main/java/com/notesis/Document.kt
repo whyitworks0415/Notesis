@@ -69,8 +69,20 @@ class Page(
     val images: MutableList<PageImage> = mutableListOf(),
     /** Masking tape, drawn over everything, because covering is the job. */
     val masks: MutableList<PageMask> = mutableListOf(),
-    val strokes: MutableList<Stroke> = mutableListOf(),
+    strokes: MutableList<Stroke> = mutableListOf(),
 ) {
+    internal var inkStore = prepareInk(strokes)
+        private set
+    val strokes: MutableList<Stroke> get() = inkStore
+
+    /** The loader publishes a prepared list and index in one reference assignment. */
+    internal fun installInk(prepared: InkStrokeStore<Stroke>) {
+        inkStore.appendEditsTo(prepared)
+        inkStore = prepared
+    }
+
+    internal fun unloadInk() { inkStore = prepareInk(emptyList()) }
+
     /**
      * Whether this page's strokes differ from what is on disk. Autosave fires
      * on a timer while writing, and rewriting every page of a long note each
@@ -113,6 +125,12 @@ class Page(
     var revision: Long = 0L
 
     companion object {
+        internal fun prepareInk(strokes: Collection<Stroke>) = InkStrokeStore(strokes) { stroke ->
+            val box = stroke.shape.computeBoundingBox()
+            InkStrokeRecord(stroke, if (box == null) InkRect(0f, 0f, 0f, 0f)
+                else InkRect(box.xMin, box.yMin, box.xMax, box.yMax),
+                if (stroke.isHighlighterStroke()) InkLayer.HIGHLIGHTER else InkLayer.PEN)
+        }
         // A4 at 150dpi. Any consistent unit works; this one makes an imported
         // PDF and a blank page land at comparable sizes.
         const val A4_WIDTH = 1240f

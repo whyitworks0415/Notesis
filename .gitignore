@@ -1,4 +1,8 @@
 .gradle/
+.gradle-verification/
+.codex-remote-attachments/
+verification-ink.log
+release-verification.log
 build/
 local.properties
 *.iml

@@ -23,6 +23,7 @@ class CustomizationInstrumentation : Instrumentation() {
     override fun onStart() {
         val output = Bundle()
         try {
+            InkRenderingRegression.run(this)
             val isolated = object : ContextWrapper(targetContext) {
                 override fun getFilesDir(): File = File(targetContext.cacheDir, "customization-test").apply { mkdirs() }
                 override fun getSharedPreferences(name: String, mode: Int) =
@@ -83,7 +84,7 @@ class CustomizationInstrumentation : Instrumentation() {
             store.delete(note.id)
             bitmap.recycle()
             changedBitmap.recycle()
-            output.putString("stream", "PASS preferences, text rendering, insertion/edit/undo/redo, autosave/reload, PDF export/preview\n")
+            output.putString("stream", "PASS ink coverage/layers/alpha/edit transitions, preferences, text rendering, insertion/edit/undo/redo, autosave/reload, PDF export/preview\n")
             finish(Activity.RESULT_OK, output)
         } catch (error: Throwable) {
             output.putString("stream", error.stackTraceToString())

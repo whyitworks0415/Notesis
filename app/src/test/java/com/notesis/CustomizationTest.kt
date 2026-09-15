@@ -33,6 +33,15 @@ class CustomizationTest {
         assertTrue(strokeEpsilon(5f, 0.1f) < 0.1f)
     }
 
+    @Test fun `deferred detail switch controls every viewport gesture`() {
+        assertTrue(shouldDeferDetail(true, zooming = true, viewportInteracting = false, flinging = false))
+        assertTrue(shouldDeferDetail(true, zooming = false, viewportInteracting = true, flinging = false))
+        assertTrue(shouldDeferDetail(true, zooming = false, viewportInteracting = false, flinging = true))
+        assertFalse(shouldDeferDetail(true, zooming = false, viewportInteracting = false, flinging = false))
+
+        assertFalse(shouldDeferDetail(false, zooming = true, viewportInteracting = true, flinging = true))
+    }
+
     @Test fun `erased strokes return to their original layer order in one undo`() {
         val remaining = mutableListOf("pen-1", "pen-3")
         restoreOrdered(remaining, listOf("highlighter", "pen-2"), listOf(0, 2))

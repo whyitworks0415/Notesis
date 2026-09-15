@@ -1529,10 +1529,10 @@ private fun PenDialog(
                     SkinSwitch(checked = deferDetail, onCheckedChange = onDeferDetail)
                     Spacer(Modifier.width(10.dp))
                     Column {
-                        Text("확대 후 선명하게", style = MaterialTheme.typography.bodyMedium)
+                        Text("지연 상세 렌더링", style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            "확대하는 동안은 있는 그대로 그리고, 손을 떼면 그때 다시 " +
-                                "선명하게 만듭니다. 글이 많은 페이지에서 확대가 버벅이면 켜두세요",
+                            "이동·확대 중에는 캐시 화면을 사용하고, 손을 떼면 상세 화질로 " +
+                                "갱신합니다. 복잡한 페이지가 버벅이면 켜두세요",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.outline,
                         )
