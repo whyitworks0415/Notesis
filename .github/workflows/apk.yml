@@ -25,6 +25,11 @@ jobs:
           java-version: "17"
 
       - uses: android-actions/setup-android@v3
+        with:
+          # SDK Tools (`tools`) was replaced by cmdline-tools and is no longer
+          # installable. The action's default still asks sdkmanager for it.
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
 
       - uses: gradle/actions/setup-gradle@v4
 
