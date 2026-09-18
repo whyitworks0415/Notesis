@@ -14,9 +14,8 @@ android {
         // dependable from Q onward, even though ink itself declares minSdk 23.
         minSdk = 29
         targetSdk = 36
-        // Rollback release: preserve the pre-performance app, but keep install upgrades working.
-        versionCode = 59
-        versionName = "0.30.3"
+        versionCode = 60
+        versionName = "0.30.4"
         testInstrumentationRunner = "com.notesis.CustomizationInstrumentation"
         // Galaxy Tab is arm64. Shipping one ABI keeps the native ink lib small.
         ndk { abiFilters += "arm64-v8a" }

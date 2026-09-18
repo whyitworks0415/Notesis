@@ -5,6 +5,7 @@ package com.notesis
 import android.os.Build
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BlendMode
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Matrix
@@ -14,6 +15,7 @@ import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
 import android.util.AttributeSet
+import android.util.LruCache
 import android.view.Choreographer
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
@@ -311,16 +313,34 @@ enum class Tool {
     }
 
     companion object {
-        private val pen by lazy { StockBrushes.marker() }
-        private val pressurePen by lazy { StockBrushes.pressurePen() }
+        @OptIn(ExperimentalInkCustomBrushApi::class)
+        private val pen by lazy {
+            val stock = StockBrushes.marker()
+            val coat = stock.coats.first()
+            stock.copy(coat = coat.copy(tip = coat.tip.copy(
+                scaleX = 1f, scaleY = 1f, cornerRounding = 1f,
+                slantDegrees = 0f, pinch = 0f, rotationDegrees = 0f,
+            )))
+        }
+        @OptIn(ExperimentalInkCustomBrushApi::class)
+        private val pressurePen by lazy {
+            val stock = StockBrushes.pressurePen()
+            val coat = stock.coats.first()
+            stock.copy(coat = coat.copy(tip = coat.tip.copy(
+                scaleX = 1f, scaleY = 1f, cornerRounding = 1f,
+                slantDegrees = 0f, pinch = 0f, rotationDegrees = 0f,
+            )))
+        }
 
         /**
-         * The stock highlighter has a chisel tip, which draws a slanted flat end.
-         * Only the tip is replaced with a circle.
+         * A centred round marker with merged self-overlap keeps a highlighter
+         * aligned to the pen and avoids dark seams where it crosses itself.
          */
         @OptIn(ExperimentalInkCustomBrushApi::class)
         private val highlighter by lazy {
-            val stock = StockBrushes.highlighter()
+            // The stock chisel brush carries an offset tip. A centred marker
+            // tip keeps the committed line under the stylus at every angle.
+            val stock = StockBrushes.marker()
             val coat = stock.coats.first()
             merged(
                 stock.copy(
@@ -388,6 +408,13 @@ class InkCanvasView @JvmOverloads constructor(
     var tool: Tool = Tool.PEN
     var colorArgb: Int = 0xFF000000.toInt()
     var strokeWidth: Float = 5f
+    var stabilizer: Int = 25
+    var highlighterAboveInk: Boolean = false
+        set(value) {
+            if (field == value) return
+            field = value
+            dry.invalidate()
+        }
 
     /** Diameter of the eraser tip, in page units, like [strokeWidth]. */
     var eraserWidth: Float = 24f
@@ -522,6 +549,14 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** Enables diagnostic sampling only while its HUD is actually visible. */
     var latencyMonitoringEnabled: Boolean = false
+        set(value) {
+            field = value
+            if (value && !frameClockRunning && isAttachedToWindow) {
+                frameClockRunning = true
+                lastFrameNanos = 0L
+                Choreographer.getInstance().postFrameCallback(frameCallback)
+            }
+        }
 
     /**
      * Whether detail work waits for the pinch to finish.
@@ -608,6 +643,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     private val undoStack = mutableListOf<Edit>()
     private val redoStack = mutableListOf<Edit>()
+    private var nextEditGroup = 1L
 
     /** Document coordinates -> screen. Its inverse maps touches back. */
     private val documentToScreen = Matrix()
@@ -718,7 +754,7 @@ class InkCanvasView @JvmOverloads constructor(
     private val longPress = Runnable { beginTextSelection() }
 
     /**
-     * Ticks once per display frame while a stroke is being drawn, so the HUD
+     * Ticks once per display frame while diagnostics are visible, so the HUD
      * reports the refresh rate the panel is actually running at rather than the
      * one it is capable of. The two differ, and that difference is the whole
      * reason prediction misjudges its distance on a 60Hz frame.
@@ -727,9 +763,8 @@ class InkCanvasView @JvmOverloads constructor(
     private var frameClockRunning = false
     private val frameCallback = object : Choreographer.FrameCallback {
         override fun doFrame(frameTimeNanos: Long) {
-            if (activeStylusPointer == null || !latencyMonitoringEnabled) {
-                // A pen down within a frame of the last pen up would otherwise
-                // start a second loop and halve every delta it measures.
+            if (!latencyMonitoringEnabled || !isAttachedToWindow) {
+                // Stop the diagnostic loop as soon as the HUD is hidden.
                 frameClockRunning = false
                 lastFrameNanos = 0L
                 return
@@ -756,7 +791,7 @@ class InkCanvasView @JvmOverloads constructor(
         // Rebuilding a page's geometry replaces every Stroke instance on it, so
         // history has to be able to follow the swap rather than keep pointing at
         // objects that are no longer in the page.
-        class Drawn(override val page: Page, var stroke: Stroke) : Edit
+        class Drawn(override val page: Page, var stroke: Stroke, val group: Long = 0L) : Edit
         class Erased(override val page: Page, var strokes: List<Stroke>) : Edit
 
         // Pictures are mutable and moving one is not undoable; adding and
@@ -772,7 +807,7 @@ class InkCanvasView @JvmOverloads constructor(
             var after: List<Stroke>,
         ) : Edit
 
-        class MaskAdded(override val page: Page, val mask: PageMask) : Edit
+        class MaskAdded(override val page: Page, val mask: PageMask, val group: Long = 0L) : Edit
         class MaskRemoved(override val page: Page, val mask: PageMask, val at: Int) : Edit
     }
 
@@ -957,6 +992,12 @@ class InkCanvasView @JvmOverloads constructor(
         clearImageSelection()
         applyInverse(edit)
         redoStack += edit
+        val group = edit.groupId()
+        if (group != 0L) while (undoStack.lastOrNull()?.groupId() == group) {
+            val part = undoStack.removeAt(undoStack.lastIndex)
+            applyInverse(part)
+            redoStack += part
+        }
         afterEdit(edit.page)
     }
 
@@ -964,6 +1005,25 @@ class InkCanvasView @JvmOverloads constructor(
         val edit = redoStack.removeLastOrNull() ?: return
         clearLassoSelection()
         clearImageSelection()
+        val parts = mutableListOf(edit)
+        val group = edit.groupId()
+        if (group != 0L) while (redoStack.lastOrNull()?.groupId() == group) {
+            parts += redoStack.removeAt(redoStack.lastIndex)
+        }
+        for (part in parts) {
+            applyForward(part)
+            undoStack += part
+        }
+        afterEdit(edit.page)
+    }
+
+    private fun Edit.groupId(): Long = when (this) {
+        is Edit.Drawn -> group
+        is Edit.MaskAdded -> group
+        else -> 0L
+    }
+
+    private fun applyForward(edit: Edit) {
         when (edit) {
             is Edit.Drawn -> edit.page.strokes += edit.stroke
             is Edit.Erased -> edit.page.strokes.removeAll(edit.strokes)
@@ -974,8 +1034,6 @@ class InkCanvasView @JvmOverloads constructor(
             is Edit.MaskRemoved -> edit.page.masks.remove(edit.mask)
             is Edit.Moved -> swapStrokes(edit.page, edit.before, edit.after)
         }
-        undoStack += edit
-        afterEdit(edit.page)
     }
 
     private fun applyInverse(edit: Edit) {
@@ -1042,6 +1100,8 @@ class InkCanvasView @JvmOverloads constructor(
     fun currentPageIndex(): Int = currentPage
 
     fun strokeCount(): Int = document.pages.sumOf { it.strokes.size }
+
+    fun debugDrawStats(): String = "화면 획 ${dry.lastVisibleStrokes}개   그리기 %.1fms".format(dry.lastDrawMs)
 
     fun currentScale(): Float {
         documentToScreen.getValues(matrixValues)
@@ -1890,11 +1950,9 @@ class InkCanvasView @JvmOverloads constructor(
             val top = viewport[1] - document.topOf(index) - margin
             val right = viewport[2] - document.leftOf(index) + margin
             val bottom = viewport[3] - document.topOf(index) + margin
-            val strokes = page.strokes.filter { stroke ->
+            val strokes = dry.strokesIn(page, left, top, right, bottom).filter { stroke ->
                 val wanted = strokeEpsilon(stroke.brush.size, epsilon)
-                if (abs(stroke.brush.epsilon - wanted) < EPSILON_SLOP) return@filter false
-                val box = stroke.shape.computeBoundingBox() ?: return@filter false
-                box.xMax >= left && box.xMin <= right && box.yMax >= top && box.yMin <= bottom
+                abs(stroke.brush.epsilon - wanted) >= EPSILON_SLOP
             }
             (page to strokes).takeIf { strokes.isNotEmpty() }
         }
@@ -1955,6 +2013,7 @@ class InkCanvasView @JvmOverloads constructor(
                     if (replaced == 0) continue
                     // Mixed fidelity is intentional at deep zoom.
                     page.tessellatedFor = if (replaced == page.strokes.size) target else 0f
+                    page.meshRevision++
                     remapHistory(replacements)
                     // Nothing about the saved file changed: same inputs, same
                     // brush, only the generated outline. Do not dirty the page.
@@ -2289,21 +2348,28 @@ class InkCanvasView @JvmOverloads constructor(
             dry.invalidate()
             return
         }
-        val inputs = MutableStrokeInputBatch()
-        for ((i, point) in points.withIndex()) {
-            inputs.add(InputToolType.STYLUS, point[0], point[1], i * SHAPE_STEP_MS)
-        }
-        val stroke = Stroke(currentBrush(), inputs.toImmutable())
+        val group = nextEditGroup++
+        // Corners must be separate strokes. Ink rounds/interpolates a single
+        // reversing path, distorting rectangle corners and arrow barbs.
+        val segments = if (kind == ShapeKind.LINE) listOf(points) else
+            points.zipWithNext { a, b -> listOf(a, b) }
         // A straight line drawn with the mask tool covers exactly like any
         // other strip of tape - it goes on the mask list, not the ink list, or
         // it could never be lifted to read what is underneath.
-        if (tool == Tool.MASK) {
-            val mask = PageMask(stroke)
-            page.masks += mask
-            undoStack += Edit.MaskAdded(page, mask)
-        } else {
-            page.strokes += stroke
-            undoStack += Edit.Drawn(page, stroke)
+        for (segment in segments) {
+            val inputs = MutableStrokeInputBatch()
+            for ((i, point) in segment.withIndex()) {
+                inputs.add(InputToolType.STYLUS, point[0], point[1], i * SHAPE_STEP_MS)
+            }
+            val stroke = Stroke(currentBrush(), inputs.toImmutable())
+            if (tool == Tool.MASK) {
+                val mask = PageMask(stroke)
+                page.masks += mask
+                undoStack += Edit.MaskAdded(page, mask, group)
+            } else {
+                page.strokes += stroke
+                undoStack += Edit.Drawn(page, stroke, group)
+            }
         }
         redoStack.clear()
         afterEdit(page)
@@ -2789,17 +2855,18 @@ class InkCanvasView @JvmOverloads constructor(
     override fun onStrokesFinished(finished: Map<InProgressStrokeId, Stroke>) {
         val page = activePage
         if (page != null) {
+            val group = nextEditGroup++
             for (stroke in finished.values) {
                 if (strokeIsMask) {
                     val mask = PageMask(stroke)
                     page.masks += mask
-                    undoStack += Edit.MaskAdded(page, mask)
+                    undoStack += Edit.MaskAdded(page, mask, group)
                 } else {
                     // 실시간 예측을 제거한 확정 입력에 가벼운 적응형 코너 보간을
                     // 적용합니다. 직선과 완만한 곡선은 건드리지 않고 급회전만 다듬습니다.
                     val committed = smoothFreehandStroke(stroke)
                     page.strokes += committed
-                    undoStack += Edit.Drawn(page, committed)
+                    undoStack += Edit.Drawn(page, committed, group)
                 }
             }
             redoStack.clear()
@@ -2811,6 +2878,7 @@ class InkCanvasView @JvmOverloads constructor(
     private fun smoothFreehandStroke(stroke: Stroke): Stroke {
         val strokeTool = Tool.ofBrushFamily(stroke.brush.family)
         if (strokeTool != Tool.PEN && strokeTool != Tool.PRESSURE_PEN) return stroke
+        if (stabilizer <= 0) return stroke
         if (stroke.inputs.size < 3) return stroke
 
         val inputs = MutableStrokeInputBatch()
@@ -2824,12 +2892,13 @@ class InkCanvasView @JvmOverloads constructor(
             } else {
                 val before = stroke.inputs.populate(i - 1, previous)
                 val after = stroke.inputs.populate(i + 1, next)
-                smoothingBlendForTurn(
+                val strength = stabilizer.coerceIn(0, 100) / 100f
+                (0.2f * strength + smoothingBlendForTurn(
                     at.x - before.x,
                     at.y - before.y,
                     after.x - at.x,
                     after.y - at.y,
-                )
+                ) * strength * 4f).coerceAtMost(0.5f)
             }
             val x = if (blend == 0f) at.x else {
                 at.x + ((previous.x + next.x) * 0.5f - at.x) * blend
@@ -2852,6 +2921,10 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** Committed ink and paper. Wet ink keeps its own front buffer above this. */
     private inner class DryLayer(context: Context) : android.view.View(context) {
+        var lastVisibleStrokes = 0
+            private set
+        var lastDrawMs = 0.0
+            private set
         private val renderer = ViewStrokeRenderer(CanvasStrokeRenderer.create(), this)
         private val viewport = FloatArray(4)
         private val pageRect = RectF()
@@ -2872,6 +2945,7 @@ class InkCanvasView @JvmOverloads constructor(
             isAntiAlias = true
             color = 0x553B7DDD
         }
+        private val highlighterMultiply = Paint().apply { blendMode = BlendMode.MULTIPLY }
         private val crop = RectF()
         private val destination = RectF()
         private val imageRect = RectF()
@@ -2910,10 +2984,18 @@ class InkCanvasView @JvmOverloads constructor(
 
         private val strokeIndexes = IdentityHashMap<Page, StrokeGrid>()
         private val textLayouts = java.util.WeakHashMap<PageImage, TextRender>()
+        private val inkBitmaps = object : LruCache<String, Bitmap>(48 * 1024 * 1024) {
+            override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
+        }
+        private val inkBitmapPending = HashSet<String>()
+        private var inkBitmapGeneration = 0
 
         fun clearStrokeIndexes() {
             strokeIndexes.clear()
             textLayouts.clear()
+            inkBitmaps.evictAll()
+            inkBitmapPending.clear()
+            inkBitmapGeneration++
         }
 
         fun dropStrokeIndex(page: Page) {
@@ -2927,8 +3009,50 @@ class InkCanvasView @JvmOverloads constructor(
             strokeIndexes[page]?.remove(page, strokes)
         }
 
+        private fun cachedInk(page: Page, visibleCount: Int): Bitmap? {
+            if (!page.loaded || visibleCount < 400 || page.strokes.size < 500 ||
+                activeStylusPointer != null || movingLasso
+            ) return null
+            val scale = tessellationBucket(currentScale())
+            val pixels = page.width.toDouble() * page.height * scale * scale
+            if (pixels > 8_000_000.0 || pixels <= 0.0) return null
+            val key = "${page.id}:${page.revision}:${page.meshRevision}:${page.strokes.size}:$scale"
+            inkBitmaps.get(key)?.let { return it }
+            if (!zooming && !flinging && inkBitmapPending.add(key)) {
+                val snapshot = page.strokes.toList()
+                val revision = page.revision
+                val meshRevision = page.meshRevision
+                val generation = inkBitmapGeneration
+                runCatching { refiner.execute {
+                    val bitmap = runCatching {
+                        val width = (page.width * scale).toInt().coerceAtLeast(1)
+                        val height = (page.height * scale).toInt().coerceAtLeast(1)
+                        Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { image ->
+                            val target = Canvas(image)
+                            val transform = Matrix().apply { setScale(scale, scale) }
+                            val strokeRenderer = CanvasStrokeRenderer.create()
+                            for (stroke in snapshot) strokeRenderer.draw(target, stroke, transform)
+                        }
+                    }.getOrNull()
+                    post {
+                        inkBitmapPending.remove(key)
+                        if (generation == inkBitmapGeneration && page.revision == revision &&
+                            page.meshRevision == meshRevision &&
+                            page.strokes.size == snapshot.size && bitmap != null
+                        ) {
+                            inkBitmaps.put(key, bitmap)
+                            invalidate()
+                        } else bitmap?.recycle()
+                    }
+                } }.onFailure { inkBitmapPending.remove(key) }
+            }
+            return null
+        }
+
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
+            val started = if (latencyMonitoringEnabled) System.nanoTime() else 0L
+            var visibleCount = 0
             visibleDocumentBounds(viewport)
 
             // The scope has to be obtained while the canvas is still untransformed.
@@ -2967,13 +3091,32 @@ class InkCanvasView @JvmOverloads constructor(
                     val visibleStrokes = strokeIndexes.getOrPut(page) { StrokeGrid() }.visible(
                         page, visibleLeft, visibleTop, visibleRight, visibleBottom,
                     )
-                    for (stroke in visibleStrokes) {
-                        // Held strokes are drawn again below, at the offset.
-                        if (lifted && stroke in lassoStrokes) continue
-                        // Draw against the real screen transform. Caching this
-                        // call in a 1x RenderNode magnifies its edge coverage at
-                        // high zoom and produces the blocky ink seen at 372%.
-                        scope.drawStroke(stroke)
+                    visibleCount += visibleStrokes.size
+                    val hasHighlighter = visibleStrokes.any {
+                        it.brush.family == Tool.HIGHLIGHTER.brushFamily()
+                    }
+                    val inkBitmap = if (!hasHighlighter && !lifted)
+                        cachedInk(page, visibleStrokes.size) else null
+                    // Put highlighter ink on the chosen side of handwriting.
+                    // Keep the source list in its original order within each
+                    // layer so overlapping strokes still look predictable.
+                    if (inkBitmap != null) {
+                        scoped.drawBitmap(inkBitmap, null, pageRect, bitmapPaint)
+                    } else if (!hasHighlighter) {
+                        for (stroke in visibleStrokes) {
+                            if (lifted && stroke in lassoStrokes) continue
+                            scope.drawStroke(stroke)
+                        }
+                    } else for (pass in 0..1) {
+                        val highlightPass = if (pass == 0) !highlighterAboveInk else highlighterAboveInk
+                        val layer = if (highlightPass)
+                            scoped.saveLayer(pageRect, highlighterMultiply) else -1
+                        for (stroke in visibleStrokes) {
+                            if (lifted && stroke in lassoStrokes) continue
+                            val highlight = stroke.brush.family == Tool.HIGHLIGHTER.brushFamily()
+                            if (highlight == highlightPass) scope.drawStroke(stroke)
+                        }
+                        if (layer >= 0) scoped.restoreToCount(layer)
                     }
                     if (lifted) {
                         scoped.save()
@@ -3002,6 +3145,10 @@ class InkCanvasView @JvmOverloads constructor(
                 canvas.drawCircle(eraserCursorX, eraserCursorY, radius, eraserCursorFill)
                 canvas.drawCircle(eraserCursorX, eraserCursorY, radius, eraserCursorOuter)
                 canvas.drawCircle(eraserCursorX, eraserCursorY, radius, eraserCursorInner)
+            }
+            if (started != 0L) {
+                lastVisibleStrokes = visibleCount
+                lastDrawMs = (System.nanoTime() - started) / 1e6
             }
         }
 

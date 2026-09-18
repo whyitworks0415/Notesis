@@ -171,6 +171,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -1381,6 +1382,10 @@ private fun PenDialog(
     onPrediction: (Boolean) -> Unit,
     deferDetail: Boolean,
     onDeferDetail: (Boolean) -> Unit,
+    stabilizer: Int,
+    onStabilizer: (Int) -> Unit,
+    highlighterAboveInk: Boolean,
+    onHighlighterAboveInk: (Boolean) -> Unit,
     onDismiss: () -> Unit,
     onConfirm: (PenPreset) -> Unit,
 ) {
@@ -1445,6 +1450,22 @@ private fun PenDialog(
                                 color = MaterialTheme.colorScheme.outline,
                             )
                         }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text("획 보정 $stabilizer%", style = MaterialTheme.typography.bodyMedium)
+                    SkinSlider(
+                        value = stabilizer.toFloat(),
+                        onValueChange = { onStabilizer(it.roundToInt()) },
+                        valueRange = 0f..100f,
+                    )
+                }
+                if (mode == EditMode.HIGHLIGHTER) {
+                    Spacer(Modifier.height(10.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SkinSwitch(checked = highlighterAboveInk,
+                            onCheckedChange = onHighlighterAboveInk)
+                        Spacer(Modifier.width(10.dp))
+                        Text(if (highlighterAboveInk) "필기 위에 표시" else "필기 아래에 표시")
                     }
                 }
                 Spacer(Modifier.height(10.dp))
@@ -2147,6 +2168,7 @@ private fun NoteScreen(
     // reopening paid the cold start and the login handshake all over again.
     val browser = remember { mutableStateOf<android.webkit.WebView?>(null) }
     var webWidth by remember { mutableStateOf(WEB_PANEL_WIDTH) }
+    var draftWebWidth by remember { mutableStateOf<Dp?>(null) }
     var webPopup by remember { mutableStateOf(false) }
     // Every AI site refuses to sign in to something that looks like a
     // WebView, so the panel can claim to be desktop Chrome instead.
@@ -2183,6 +2205,8 @@ private fun NoteScreen(
     var docked by remember { mutableStateOf(penStore.docked) }
     var prediction by remember { mutableStateOf(penStore.prediction) }
     var deferDetail by remember { mutableStateOf(penStore.deferDetail) }
+    var stabilizer by remember { mutableIntStateOf(penStore.stabilizer) }
+    var highlighterAboveInk by remember { mutableStateOf(penStore.highlighterAboveInk) }
     // Null until it is dragged: the bar sits centred at the top by default, and
     // there is no sensible centre to store before anything has been measured.
     var barOffset by remember { mutableStateOf<Offset?>(null) }
@@ -2504,7 +2528,18 @@ private fun NoteScreen(
         LocalBackdrop provides backdrop,
         LocalLiquidGlassBackdrop provides if (skin == Skin.LIQUID_GLASS) liquidBackdrop else null,
     ) {
-    Row(Modifier.fillMaxSize()) {
+    Row(Modifier.fillMaxSize().drawWithContent {
+        drawContent()
+        draftWebWidth?.let { draft ->
+            val left = size.width - draft.toPx()
+            drawRect(
+                color = Color(0x773B7DDD),
+                topLeft = Offset(left, 0f),
+                size = Size(draft.toPx(), size.height),
+                style = Stroke(width = 2.dp.toPx()),
+            )
+        }
+    }) {
     // The page's own ground, behind the bar as well as behind the page. Docked,
     // the bar takes its own room, and that room was the bare window underneath -
     // white above it where the status bar inset is and white in the seam below,
@@ -2609,6 +2644,8 @@ private fun NoteScreen(
                     view.predictionEnabled = prediction
                     view.latencyMonitoringEnabled = showLatency
                     view.deferDetail = deferDetail
+                    view.stabilizer = stabilizer
+                    view.highlighterAboveInk = highlighterAboveInk
                     view.tool = tool
                     view.readMode = mode == EditMode.READ
                     view.shapeKind = when {
@@ -2709,7 +2746,10 @@ private fun NoteScreen(
         if (showLatency) {
             LaunchedEffect(Unit) {
                 while (true) {
-                    latencyText = canvas?.let { it.latency.render(it.strokeCount()) }.orEmpty()
+                    latencyText = canvas?.let {
+                        it.latency.render(it.strokeCount()) + "\n" + it.debugDrawStats() +
+                            "   확대 ${"%.0f".format(zoom * 100)}%"
+                    }.orEmpty()
                     delay(500)
                 }
             }
@@ -2799,6 +2839,12 @@ private fun NoteScreen(
                 onDeferDetail = {
                     deferDetail = it
                     penStore.deferDetail = it
+                },
+                stabilizer = stabilizer,
+                onStabilizer = { stabilizer = it; penStore.stabilizer = it },
+                highlighterAboveInk = highlighterAboveInk,
+                onHighlighterAboveInk = {
+                    highlighterAboveInk = it; penStore.highlighterAboveInk = it
                 },
                 onDismiss = { editingPen = false },
                 onConfirm = { saved ->
@@ -2912,6 +2958,12 @@ private fun NoteScreen(
             PenDialog(mode = colorMode, pen = settings.getValue(colorMode),
                 prediction = prediction, onPrediction = { prediction = it; penStore.prediction = it },
                 deferDetail = deferDetail, onDeferDetail = { deferDetail = it; penStore.deferDetail = it },
+                stabilizer = stabilizer,
+                onStabilizer = { stabilizer = it; penStore.stabilizer = it },
+                highlighterAboveInk = highlighterAboveInk,
+                onHighlighterAboveInk = {
+                    highlighterAboveInk = it; penStore.highlighterAboveInk = it
+                },
                 onDismiss = { selectionColorMode = null }, onConfirm = {
                     settings = settings + (colorMode to it)
                     penStore.save(settings)
@@ -3023,6 +3075,8 @@ private fun NoteScreen(
                 straightLine = straightLine,
                 eraserWidth = eraserWidth,
                 deferDetail = deferDetail,
+                stabilizer = stabilizer,
+                highlighterAboveInk = highlighterAboveInk,
                 offset = referenceOffset,
                 size = referenceSize,
                 stretch = referenceStretch,
@@ -3080,9 +3134,17 @@ private fun NoteScreen(
                         .fillMaxHeight()
                         .width(10.dp)
                         .background(MaterialTheme.colorScheme.outlineVariant)
-                        .pointerInput(Unit) {
-                            detectDragGestures { _, drag ->
-                                webWidth = (webWidth - drag.x.toDp())
+                        .pointerInput(webWidth) {
+                            detectDragGestures(
+                                onDragStart = { draftWebWidth = webWidth },
+                                onDragEnd = {
+                                    draftWebWidth?.let { webWidth = it }
+                                    draftWebWidth = null
+                                },
+                                onDragCancel = { draftWebWidth = null },
+                            ) { change, drag ->
+                                change.consume()
+                                draftWebWidth = ((draftWebWidth ?: webWidth) - drag.x.toDp())
                                     .coerceIn(WEB_PANEL_MIN, WEB_PANEL_MAX)
                             }
                         },
@@ -3231,6 +3293,8 @@ private fun ReferencePanel(
     straightLine: Boolean,
     eraserWidth: Float,
     deferDetail: Boolean,
+    stabilizer: Int,
+    highlighterAboveInk: Boolean,
     offset: Offset,
     size: Size,
     /** What the whole panel is scaled by while a spread is in progress. */
@@ -3312,20 +3376,23 @@ private fun ReferencePanel(
         ),
     )
 
-    SkinSurface(
-        modifier = Modifier
+    Box(
+        Modifier
             .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
-            // Scaled from its own top-left, so the corner the offset placed
-            // stays where it was put and the panel grows away from it. This is
-            // a draw-time transform: nothing inside is measured again, which is
-            // what makes a spread smooth and keeps the page in step with the
-            // frame around it rather than resizing out from under it.
-            .graphicsLayer {
-                scaleX = stretch
-                scaleY = stretch
-                transformOrigin = TransformOrigin(0f, 0f)
-            }
             .size(with(density) { size.width.toDp() }, with(density) { size.height.toDp() })
+            .drawWithContent {
+                drawContent()
+                if (abs(stretch - 1f) > 0.001f) {
+                    drawRect(
+                        color = Color(0xFF3B7DDD),
+                        size = Size(this.size.width * stretch, this.size.height * stretch),
+                        style = Stroke(width = 2.dp.toPx()),
+                    )
+                }
+            },
+    ) {
+    SkinSurface(
+        modifier = Modifier.fillMaxSize()
             // 유리 표면이 밝은 페이지와 겹쳐도 팝업 외곽을 잃지 않도록 밝은 림과
             // 테마 윤곽색을 함께 사용합니다.
             .border(1.5.dp, panelBorder, panelShape),
@@ -3515,6 +3582,8 @@ private fun ReferencePanel(
                             v.prepareBrush()
                             v.eraserWidth = eraserWidth
                             v.deferDetail = deferDetail
+                            v.stabilizer = stabilizer
+                            v.highlighterAboveInk = highlighterAboveInk
                         },
                     )
                     if (popupLassoCount > 0) {
@@ -3528,6 +3597,7 @@ private fun ReferencePanel(
                 }
             }
         }
+    }
     }
 }
 

@@ -101,6 +101,14 @@ class PenStore(context: Context) {
         get() = prefs.getBoolean(DEFER_DETAIL, true)
         set(value) = prefs.edit().putBoolean(DEFER_DETAIL, value).apply()
 
+    var stabilizer: Int
+        get() = prefs.getInt("stabilizer", 25).coerceIn(0, 100)
+        set(value) = prefs.edit().putInt("stabilizer", value.coerceIn(0, 100)).apply()
+
+    var highlighterAboveInk: Boolean
+        get() = prefs.getBoolean("highlighterAboveInk", false)
+        set(value) = prefs.edit().putBoolean("highlighterAboveInk", value).apply()
+
     /**
      * The page a note was left on, so opening it again carries on from there
      * rather than from the top. Per note, and in preferences rather than in the

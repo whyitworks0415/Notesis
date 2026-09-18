@@ -89,6 +89,9 @@ class Page(
      */
     var tessellatedFor: Float = 0f
 
+    /** Changes when stroke meshes are rebuilt without changing saved ink. */
+    var meshRevision: Long = 0L
+
     /**
      * Whether this page's strokes have been read off disk yet. Opening a note
      * used to decode every page before anything could be drawn, which makes the

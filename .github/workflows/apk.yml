@@ -45,12 +45,14 @@ jobs:
         run: |
           VERSION=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=v$VERSION-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
-          cp app/build/outputs/apk/release/app-release.apk "Notesis-$VERSION-${{ github.run_number }}.apk"
+          CODE=$(grep -oP '^\s*versionCode = \K\d+' app/build.gradle.kts)
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION-$CODE" >> "$GITHUB_OUTPUT"
+          cp app/build/outputs/apk/release/app-release.apk "Notesis-$VERSION-$CODE.apk"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Notesis-${{ steps.name.outputs.version }}-${{ github.run_number }}
+          name: Notesis-${{ steps.name.outputs.version }}-${{ steps.name.outputs.code }}
           path: Notesis-*.apk
           if-no-files-found: error
 
@@ -58,10 +60,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.name.outputs.tag }}
-          name: Notesis ${{ steps.name.outputs.version }} (#${{ github.run_number }})
-          body: |
-            `${{ github.sha }}` · ${{ github.ref_name }}
-
-            아래 apk를 태블릿에서 바로 받아 설치하세요.
+          name: Notesis ${{ steps.name.outputs.version }} (${{ steps.name.outputs.code }})
+          body_path: docs/releases/${{ steps.name.outputs.version }}.md
           files: Notesis-*.apk
           fail_on_unmatched_files: true
