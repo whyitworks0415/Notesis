@@ -303,12 +303,14 @@ enum class Tool {
      * width. Kept as its own tool rather than changing what PEN means, so a
      * note written before this existed still draws the way it was written.
      */
-    PRESSURE_PEN;
+    PRESSURE_PEN,
+    PENCIL;
 
     fun brushFamily(): BrushFamily = when (this) {
         HIGHLIGHTER -> highlighter
         MASK -> masking
         PRESSURE_PEN -> pressurePen
+        PENCIL -> pencil
         else -> pen
     }
 
@@ -328,6 +330,15 @@ enum class Tool {
             val coat = stock.coats.first()
             stock.copy(coat = coat.copy(tip = coat.tip.copy(
                 scaleX = 1f, scaleY = 1f, cornerRounding = 1f,
+                slantDegrees = 0f, pinch = 0f, rotationDegrees = 0f,
+            )))
+        }
+        @OptIn(ExperimentalInkCustomBrushApi::class)
+        private val pencil by lazy {
+            val stock = StockBrushes.pressurePen()
+            val coat = stock.coats.first()
+            stock.copy(coat = coat.copy(tip = coat.tip.copy(
+                scaleX = 0.68f, scaleY = 0.68f, cornerRounding = 1f,
                 slantDegrees = 0f, pinch = 0f, rotationDegrees = 0f,
             )))
         }
@@ -381,6 +392,7 @@ enum class Tool {
             highlighter -> HIGHLIGHTER
             masking -> MASK
             pressurePen -> PRESSURE_PEN
+            pencil -> PENCIL
             else -> PEN
         }
     }
@@ -408,7 +420,31 @@ class InkCanvasView @JvmOverloads constructor(
     var tool: Tool = Tool.PEN
     var colorArgb: Int = 0xFF000000.toInt()
     var strokeWidth: Float = 5f
-    var stabilizer: Int = 25
+    var stabilizer: Int = 0
+    var autoShapeRecognitionEnabled: Boolean = false
+    var axisSnapEnabled: Boolean = true
+    var dottedPattern: Int = 0
+    private var playbackPage = -1
+    private var playbackStrokeCount: Int? = null
+
+    fun beginPagePlayback(pageIndex: Int): Int {
+        val page = document.pages.getOrNull(pageIndex) ?: return 0
+        playbackPage = pageIndex
+        playbackStrokeCount = 0
+        dry.invalidate()
+        return page.strokes.size
+    }
+
+    fun showPagePlayback(count: Int) {
+        playbackStrokeCount = count.coerceAtLeast(0)
+        dry.invalidate()
+    }
+
+    fun endPagePlayback() {
+        playbackStrokeCount = null
+        playbackPage = -1
+        dry.invalidate()
+    }
     var highlighterAboveInk: Boolean = false
         set(value) {
             if (field == value) return
@@ -462,6 +498,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** Reads a picture's bytes. Called on the UI thread, so it should cache. */
     var imageLoader: ((String) -> Bitmap?)? = null
+    var templateLoader: ((String) -> Bitmap?)? = null
 
     /** Handed a rendering of the captured region, on a background thread. */
     var onCaptured: ((Bitmap) -> Unit)? = null
@@ -899,7 +936,7 @@ class InkCanvasView @JvmOverloads constructor(
         pendingZoom = 0f
         if (!pendingFit) {
             // 팝업 폭이 바뀌면 최소 배율의 기준도 새 폭으로 함께 이동합니다.
-            fitScale = w * FIT_MARGIN / document.widestPage()
+            fitScale = w * FIT_MARGIN / document.fitWidth()
             zoomBy(pending)
             return
         }
@@ -928,13 +965,14 @@ class InkCanvasView @JvmOverloads constructor(
     fun fitWidth() {
         if (width == 0) return
         fitted = true
-        val scale = width * FIT_MARGIN / document.widestPage()
+        val scale = width * FIT_MARGIN / document.fitWidth()
         fitScale = scale
         val here = currentPage.coerceIn(document.pages.indices)
         documentToScreen.reset()
         documentToScreen.postScale(scale, scale)
         documentToScreen.getValues(matrixValues)
-        matrixValues[Matrix.MTRANS_X] = (width - document.widestPage() * scale) / 2f
+        matrixValues[Matrix.MTRANS_X] = -document.leftOf(here) * scale +
+            (width - document.pages[here].width * scale) / 2f
         matrixValues[Matrix.MTRANS_Y] = -document.topOf(here) * scale + PAGE_TOP_MARGIN_PX
         documentToScreen.setValues(matrixValues)
         onTransformChanged()
@@ -975,6 +1013,8 @@ class InkCanvasView @JvmOverloads constructor(
         if (index !in document.pages.indices) return
         val scale = currentScale()
         documentToScreen.getValues(matrixValues)
+        matrixValues[Matrix.MTRANS_X] = -document.leftOf(index) * scale +
+            (width - document.pages[index].width * scale) / 2f
         matrixValues[Matrix.MTRANS_Y] = -document.topOf(index) * scale + PAGE_TOP_MARGIN_PX
         documentToScreen.setValues(matrixValues)
         onTransformChanged()
@@ -1015,6 +1055,13 @@ class InkCanvasView @JvmOverloads constructor(
             undoStack += part
         }
         afterEdit(edit.page)
+    }
+
+    fun setPageLayout(mode: PageLayoutMode) {
+        if (document.layoutMode == mode) return
+        document.layoutMode = mode
+        fitWidth()
+        scrollToPage(currentPage.coerceIn(document.pages.indices))
     }
 
     private fun Edit.groupId(): Long = when (this) {
@@ -1072,6 +1119,7 @@ class InkCanvasView @JvmOverloads constructor(
             // second copy of a PDF page.
             background = template?.background?.takeIf { it != PageBackground.PDF }
                 ?: PageBackground.BLANK,
+            templateId = template?.templateId,
         )
         document.pages.add((after + 1).coerceIn(0, document.pages.size), page)
         document.invalidateLayout()
@@ -1094,7 +1142,30 @@ class InkCanvasView @JvmOverloads constructor(
         val page = document.pages.getOrNull(index) ?: return
         if (page.background == PageBackground.PDF) return
         page.background = background
+        page.height = if (background == PageBackground.INFINITE) Page.A4_HEIGHT * 12f
+            else if (page.height > Page.A4_HEIGHT * 2f) Page.A4_HEIGHT else page.height
+        if (background != PageBackground.CUSTOM) page.templateId = null
+        document.invalidateLayout()
         afterEdit()
+    }
+
+    fun movePage(index: Int, delta: Int) {
+        val to = index + delta
+        if (index !in document.pages.indices || to !in document.pages.indices) return
+        val page = document.pages.removeAt(index)
+        document.pages.add(to, page)
+        document.invalidateLayout()
+        currentPage = to
+        afterEdit()
+        scrollToPage(to)
+    }
+
+    fun setPageTemplate(index: Int, templateId: String) {
+        val page = document.pages.getOrNull(index) ?: return
+        if (page.background == PageBackground.PDF) return
+        page.background = PageBackground.CUSTOM
+        page.templateId = templateId
+        afterEdit(page)
     }
 
     fun currentPageIndex(): Int = currentPage
@@ -1179,7 +1250,8 @@ class InkCanvasView @JvmOverloads constructor(
         pageProbe[0] = width / 2f
         pageProbe[1] = height / 2f
         screenToDocument.mapPoints(pageProbe)
-        val index = document.pageIndexAt(pageProbe[1]).coerceAtLeast(0)
+        val index = document.pageAt(pageProbe[0], pageProbe[1]).takeIf { it >= 0 }
+            ?: document.nearestPage(pageProbe[0], pageProbe[1]).coerceAtLeast(0)
         if (index != currentPage) {
             lastPageDirection = if (index > currentPage) 1 else -1
             currentPage = index
@@ -1456,7 +1528,7 @@ class InkCanvasView @JvmOverloads constructor(
                 }
                 activeStrokeId?.let { strokeId ->
                     val pointerIndex = event.findPointerIndex(pointerId)
-                    val penStroke = tool == Tool.PEN || tool == Tool.PRESSURE_PEN
+                    val penStroke = tool == Tool.PEN || tool == Tool.PRESSURE_PEN || tool == Tool.PENCIL
                     val unstable = penStroke && pointerIndex >= 0 && lastStylusX.isFinite() &&
                         unstableLift(event.getX(pointerIndex) - lastStylusX,
                             event.getY(pointerIndex) - lastStylusY, lastStylusDx, lastStylusDy)
@@ -2349,19 +2421,10 @@ class InkCanvasView @JvmOverloads constructor(
             return
         }
         val group = nextEditGroup++
-        // Corners must be separate strokes. Ink rounds/interpolates a single
-        // reversing path, distorting rectangle corners and arrow barbs.
-        val segments = if (kind == ShapeKind.LINE) listOf(points) else
-            points.zipWithNext { a, b -> listOf(a, b) }
         // A straight line drawn with the mask tool covers exactly like any
         // other strip of tape - it goes on the mask list, not the ink list, or
         // it could never be lifted to read what is underneath.
-        for (segment in segments) {
-            val inputs = MutableStrokeInputBatch()
-            for ((i, point) in segment.withIndex()) {
-                inputs.add(InputToolType.STYLUS, point[0], point[1], i * SHAPE_STEP_MS)
-            }
-            val stroke = Stroke(currentBrush(), inputs.toImmutable())
+        for (stroke in shapeStrokes(kind, shapeStart, shapeEnd, currentBrush())) {
             if (tool == Tool.MASK) {
                 val mask = PageMask(stroke)
                 page.masks += mask
@@ -2375,6 +2438,19 @@ class InkCanvasView @JvmOverloads constructor(
         afterEdit(page)
     }
 
+    private fun shapeStrokes(kind: ShapeKind, from: FloatArray, to: FloatArray, brush: Brush): List<Stroke> {
+        val points = shapePoints(kind, from, to)
+        if (points.size < 2) return emptyList()
+        // Each corner is a separate Ink stroke; one reversing path would round
+        // a rectangle or fold an arrowhead into the shaft.
+        return points.zipWithNext { a, b ->
+            val inputs = MutableStrokeInputBatch()
+            inputs.add(InputToolType.STYLUS, a[0], a[1], 0L)
+            inputs.add(InputToolType.STYLUS, b[0], b[1], SHAPE_STEP_MS)
+            Stroke(brush, inputs.toImmutable())
+        }
+    }
+
     /** The outline of [kind], sampled densely enough that the brush follows it. */
     private fun shapePoints(
         kind: ShapeKind,
@@ -2386,7 +2462,17 @@ class InkCanvasView @JvmOverloads constructor(
         val x1 = to[0]
         val y1 = to[1]
         return when (kind) {
-            ShapeKind.LINE -> listOf(floatArrayOf(x0, y0), floatArrayOf(x1, y1))
+            ShapeKind.LINE -> {
+                val dx = x1 - x0
+                val dy = y1 - y0
+                val length = hypot(dx, dy)
+                val snap = axisSnapEnabled && length > 20f &&
+                    min(abs(dx), abs(dy)) / length < 0.14f
+                listOf(floatArrayOf(x0, y0), floatArrayOf(
+                    if (snap && abs(dx) < abs(dy)) x0 else x1,
+                    if (snap && abs(dy) < abs(dx)) y0 else y1,
+                ))
+            }
 
             ShapeKind.ARROW -> {
                 val angle = atan2(y1 - y0, x1 - x0)
@@ -2862,11 +2948,23 @@ class InkCanvasView @JvmOverloads constructor(
                     page.masks += mask
                     undoStack += Edit.MaskAdded(page, mask, group)
                 } else {
-                    // 실시간 예측을 제거한 확정 입력에 가벼운 적응형 코너 보간을
-                    // 적용합니다. 직선과 완만한 곡선은 건드리지 않고 급회전만 다듬습니다.
-                    val committed = smoothFreehandStroke(stroke)
-                    page.strokes += committed
-                    undoStack += Edit.Drawn(page, committed, group)
+                    val shape = if (autoShapeRecognitionEnabled &&
+                        Tool.ofBrushFamily(stroke.brush.family) in listOf(Tool.PEN, Tool.PRESSURE_PEN, Tool.PENCIL)
+                    ) recognizeStroke(stroke) else null
+                    val committed = when {
+                        shape != null -> shapeStrokes(
+                            shape.kind, floatArrayOf(shape.fromX, shape.fromY),
+                            floatArrayOf(shape.toX, shape.toY), stroke.brush,
+                        )
+                        dottedPattern != 0 && Tool.ofBrushFamily(stroke.brush.family) in
+                            listOf(Tool.PEN, Tool.PRESSURE_PEN, Tool.PENCIL) ->
+                            dottedStrokes(stroke, dottedPattern)
+                        else -> listOf(smoothFreehandStroke(stroke))
+                    }
+                    for (part in committed) {
+                        page.strokes += part
+                        undoStack += Edit.Drawn(page, part, group)
+                    }
                 }
             }
             redoStack.clear()
@@ -2875,9 +2973,76 @@ class InkCanvasView @JvmOverloads constructor(
         if (page != null) afterEdit(page) else afterEdit()
     }
 
+    /** Snapshot of handwriting enclosed by the current lasso for region OCR. */
+    fun selectedLassoStrokes(): List<Stroke> = lassoStrokes.toList()
+
+    private fun recognizeStroke(stroke: Stroke): RecognizedShape? {
+        val sample = StrokeInput()
+        val points = (0 until stroke.inputs.size).map { index ->
+            stroke.inputs.populate(index, sample)
+            floatArrayOf(sample.x, sample.y)
+        }
+        return recognizeShape(points)
+    }
+
+    private fun dottedStrokes(stroke: Stroke, pattern: Int): List<Stroke> {
+        val count = stroke.inputs.size
+        if (count < 2) return listOf(stroke)
+        val sample = StrokeInput()
+        val points = ArrayList<FloatArray>(count)
+        val distances = FloatArray(count)
+        for (i in 0 until count) {
+            stroke.inputs.populate(i, sample)
+            points += floatArrayOf(sample.x, sample.y)
+            if (i > 0) distances[i] = distances[i - 1] + hypot(
+                points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1],
+            )
+        }
+        val total = distances.last()
+        if (total < 0.1f) return listOf(stroke)
+        val unit = stroke.brush.size.coerceAtLeast(1f)
+        val marks = when (pattern) {
+            1 -> floatArrayOf(0.12f, 1.8f)
+            2 -> floatArrayOf(3f, 2f)
+            else -> floatArrayOf(3f, 1.6f, 0.12f, 1.6f)
+        }
+        fun pointAt(distance: Float): FloatArray {
+            var low = 1
+            var high = distances.lastIndex
+            while (low < high) {
+                val middle = (low + high).ushr(1)
+                if (distances[middle] < distance) low = middle + 1 else high = middle
+            }
+            val i = low
+            val span = (distances[i] - distances[i - 1]).coerceAtLeast(0.0001f)
+            val fraction = ((distance - distances[i - 1]) / span).coerceIn(0f, 1f)
+            return floatArrayOf(
+                points[i - 1][0] + (points[i][0] - points[i - 1][0]) * fraction,
+                points[i - 1][1] + (points[i][1] - points[i - 1][1]) * fraction,
+            )
+        }
+        val result = ArrayList<Stroke>()
+        var offset = 0f
+        var mark = 0
+        while (offset < total && result.size < 1024) {
+            val length = marks[mark % marks.size] * unit
+            if (mark % 2 == 0) {
+                val a = pointAt(offset)
+                val b = pointAt(min(total, offset + length))
+                val inputs = MutableStrokeInputBatch()
+                inputs.add(InputToolType.STYLUS, a[0], a[1], 0L)
+                inputs.add(InputToolType.STYLUS, b[0], b[1], SHAPE_STEP_MS)
+                result += Stroke(stroke.brush, inputs.toImmutable())
+            }
+            offset += length.coerceAtLeast(0.1f)
+            mark++
+        }
+        return result.ifEmpty { listOf(stroke) }
+    }
+
     private fun smoothFreehandStroke(stroke: Stroke): Stroke {
         val strokeTool = Tool.ofBrushFamily(stroke.brush.family)
-        if (strokeTool != Tool.PEN && strokeTool != Tool.PRESSURE_PEN) return stroke
+        if (strokeTool != Tool.PEN && strokeTool != Tool.PRESSURE_PEN && strokeTool != Tool.PENCIL) return stroke
         if (stabilizer <= 0) return stroke
         if (stroke.inputs.size < 3) return stroke
 
@@ -3088,14 +3253,18 @@ class InkCanvasView @JvmOverloads constructor(
                     val visibleTop = cullTop.coerceAtLeast(0f)
                     val visibleRight = cullRight.coerceAtMost(page.width)
                     val visibleBottom = cullBottom.coerceAtMost(page.height)
-                    val visibleStrokes = strokeIndexes.getOrPut(page) { StrokeGrid() }.visible(
+                    val indexedStrokes = strokeIndexes.getOrPut(page) { StrokeGrid() }.visible(
                         page, visibleLeft, visibleTop, visibleRight, visibleBottom,
                     )
+                    val visibleStrokes = if (i == playbackPage && playbackStrokeCount != null) {
+                        val allowed = page.strokes.take(playbackStrokeCount!!).toHashSet()
+                        indexedStrokes.filter { it in allowed }
+                    } else indexedStrokes
                     visibleCount += visibleStrokes.size
                     val hasHighlighter = visibleStrokes.any {
                         it.brush.family == Tool.HIGHLIGHTER.brushFamily()
                     }
-                    val inkBitmap = if (!hasHighlighter && !lifted)
+                    val inkBitmap = if (!hasHighlighter && !lifted && playbackStrokeCount == null)
                         cachedInk(page, visibleStrokes.size) else null
                     // Put highlighter ink on the chosen side of handwriting.
                     // Keep the source list in its original order within each
@@ -3343,6 +3512,7 @@ class InkCanvasView @JvmOverloads constructor(
             canvas.drawRect(pageRect, paper)
             when (page.background) {
                 PageBackground.BLANK -> Unit
+                PageBackground.INFINITE -> Unit
                 PageBackground.LINED -> {
                     var y = RULE_SPACING
                     while (y < page.height) {
@@ -3361,6 +3531,44 @@ class InkCanvasView @JvmOverloads constructor(
                     while (x < page.width) {
                         canvas.drawLine(x, 0f, x, page.height, rule)
                         x += RULE_SPACING
+                    }
+                }
+
+                PageBackground.DOT -> {
+                    var y = RULE_SPACING
+                    while (y < page.height) {
+                        var x = RULE_SPACING
+                        while (x < page.width) {
+                            canvas.drawCircle(x, y, 2.5f, rule)
+                            x += RULE_SPACING
+                        }
+                        y += RULE_SPACING
+                    }
+                }
+
+                PageBackground.NARROW_LINED -> {
+                    var y = RULE_SPACING / 2f
+                    while (y < page.height) {
+                        canvas.drawLine(0f, y, page.width, y, rule)
+                        y += RULE_SPACING / 2f
+                    }
+                }
+
+                PageBackground.CORNELL -> {
+                    canvas.drawLine(page.width * 0.30f, 0f,
+                        page.width * 0.30f, page.height * 0.82f, rule)
+                    canvas.drawLine(0f, page.height * 0.82f,
+                        page.width, page.height * 0.82f, rule)
+                    var y = RULE_SPACING
+                    while (y < page.height * 0.82f) {
+                        canvas.drawLine(0f, y, page.width, y, rule)
+                        y += RULE_SPACING
+                    }
+                }
+
+                PageBackground.CUSTOM -> {
+                    page.templateId?.let { id -> templateLoader?.invoke(id) }?.let { bitmap ->
+                        canvas.drawBitmap(bitmap, null, pageRect, bitmapPaint)
                     }
                 }
 

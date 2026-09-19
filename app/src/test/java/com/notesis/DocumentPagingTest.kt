@@ -34,4 +34,17 @@ class DocumentPagingTest {
         assertEquals(-1, document.pageAt(50f, 230f))
         assertEquals(1, document.pageAt(50f, 250f))
     }
+
+    @Test
+    fun `horizontal and grid layouts place pages in expected cells`() {
+        val horizontal = document(3).apply { layoutMode = PageLayoutMode.HORIZONTAL }
+        assertEquals(0f, horizontal.topOf(2))
+        assertEquals(2 * (100f + Document.PAGE_GAP), horizontal.leftOf(2))
+        assertEquals(2, horizontal.pageAt(horizontal.leftOf(2) + 10f, 10f))
+
+        val grid = document(4).apply { layoutMode = PageLayoutMode.GRID_2X2 }
+        assertEquals(100f + Document.PAGE_GAP, grid.leftOf(1))
+        assertEquals(200f + Document.PAGE_GAP, grid.topOf(2))
+        assertEquals(2, grid.pageAt(10f, grid.topOf(2) + 10f))
+    }
 }

@@ -3,6 +3,7 @@
 
     <!-- The side panel is a WebView; looking things up is the whole point. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <application
         android:label="Notesis"
         android:icon="@mipmap/ic_launcher"
@@ -25,6 +26,7 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:mimeType="text/plain" />
                 <data android:mimeType="text/markdown" />
+                <data android:mimeType="application/pdf" />
                 <data android:mimeType="application/msword" />
                 <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
                 <data android:mimeType="application/vnd.ms-powerpoint" />

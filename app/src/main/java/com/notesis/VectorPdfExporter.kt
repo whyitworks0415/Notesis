@@ -38,6 +38,7 @@ internal fun writeVectorPdf(
     pages: List<VectorPdfPage>,
     imageFile: (String) -> File,
     out: OutputStream,
+    rotation: Int = 0,
 ): Boolean = runCatching {
     PDFBoxResourceLoader.init(context.applicationContext)
     val source = if (sourceFile.isFile) {
@@ -78,11 +79,24 @@ internal fun writeVectorPdf(
                 stream.saveGraphicsState()
                 stream.transform(displayToPdfMatrix(pdfPage, model))
                 drawPaper(stream, model, imported)
+                if (model.background == PageBackground.CUSTOM) {
+                    model.templateId?.let { id ->
+                        val bitmap = BitmapFactory.decodeFile(imageFile("template:$id").path)
+                        if (bitmap != null) try {
+                            val image = LosslessFactory.createFromImage(result, bitmap)
+                            stream.drawImage(image, 0f, 0f,
+                                model.width / PdfSource.POINTS_TO_WORLD,
+                                model.height / PdfSource.POINTS_TO_WORLD)
+                        } finally { bitmap.recycle() }
+                    }
+                }
                 drawImages(result, stream, model, imageFile)
                 for (stroke in item.strokes) drawStroke(stream, stroke)
                 for (stroke in item.masks) drawStroke(stream, stroke)
                 stream.restoreGraphicsState()
             }
+            if (rotation != 0) pdfPage.rotation =
+                (((pdfPage.rotation + rotation) % 360) + 360) % 360
         }
         result.save(out)
     } finally {
@@ -117,7 +131,9 @@ private fun displayToPdfMatrix(pdfPage: PDPage, model: Page): Matrix {
 }
 
 private fun drawPaper(stream: PDPageContentStream, page: Page, imported: Boolean) {
-    if (imported || page.background == PageBackground.BLANK) return
+    if (imported || page.background == PageBackground.BLANK ||
+        page.background == PageBackground.INFINITE ||
+        page.background == PageBackground.CUSTOM) return
     val unit = PdfSource.POINTS_TO_WORLD
     val width = page.width / unit
     val height = page.height / unit
@@ -125,11 +141,25 @@ private fun drawPaper(stream: PDPageContentStream, page: Page, imported: Boolean
     stream.saveGraphicsState()
     stream.setStrokingColor(0xDA, 0xDA, 0xDA)
     stream.setLineWidth(0.55f)
-    var y = spacing
-    while (y < height) {
-        stream.moveTo(0f, y)
-        stream.lineTo(width, y)
-        y += spacing
+    if (page.background == PageBackground.DOT) {
+        var y = spacing
+        while (y < height) {
+            var x = spacing
+            while (x < width) {
+                stream.addRect(x - 0.45f, y - 0.45f, 0.9f, 0.9f)
+                x += spacing
+            }
+            y += spacing
+        }
+    } else {
+        val lineSpacing = if (page.background == PageBackground.NARROW_LINED) spacing / 2f else spacing
+        var y = lineSpacing
+        val lineEnd = if (page.background == PageBackground.CORNELL) height * 0.82f else height
+        while (y < lineEnd) {
+            stream.moveTo(0f, y)
+            stream.lineTo(width, y)
+            y += lineSpacing
+        }
     }
     if (page.background == PageBackground.GRID) {
         var x = spacing
@@ -138,6 +168,12 @@ private fun drawPaper(stream: PDPageContentStream, page: Page, imported: Boolean
             stream.lineTo(x, height)
             x += spacing
         }
+    }
+    if (page.background == PageBackground.CORNELL) {
+        stream.moveTo(width * 0.30f, height)
+        stream.lineTo(width * 0.30f, height * 0.18f)
+        stream.moveTo(0f, height * 0.18f)
+        stream.lineTo(width, height * 0.18f)
     }
     stream.stroke()
     stream.restoreGraphicsState()

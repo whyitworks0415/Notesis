@@ -102,8 +102,27 @@ class PenStore(context: Context) {
         set(value) = prefs.edit().putBoolean(DEFER_DETAIL, value).apply()
 
     var stabilizer: Int
-        get() = prefs.getInt("stabilizer", 25).coerceIn(0, 100)
+        get() = prefs.getInt("stabilizer", 0).coerceIn(0, 100)
         set(value) = prefs.edit().putInt("stabilizer", value.coerceIn(0, 100)).apply()
+
+    var autoShapes: Boolean
+        get() = prefs.getBoolean("autoShapes", false)
+        set(value) = prefs.edit().putBoolean("autoShapes", value).apply()
+
+    var axisSnap: Boolean
+        get() = prefs.getBoolean("axisSnap", true)
+        set(value) = prefs.edit().putBoolean("axisSnap", value).apply()
+
+    /** 0 solid, 1 dotted, 2 dashed, 3 dash-dot. */
+    var dottedPattern: Int
+        get() = prefs.getInt("dottedPattern", 0).coerceIn(0, 3)
+        set(value) = prefs.edit().putInt("dottedPattern", value.coerceIn(0, 3)).apply()
+
+    var pageLayout: PageLayoutMode
+        get() = runCatching { PageLayoutMode.valueOf(
+            prefs.getString("pageLayout", PageLayoutMode.VERTICAL.name)!!,
+        ) }.getOrDefault(PageLayoutMode.VERTICAL)
+        set(value) = prefs.edit().putString("pageLayout", value.name).apply()
 
     var highlighterAboveInk: Boolean
         get() = prefs.getBoolean("highlighterAboveInk", false)
@@ -213,6 +232,7 @@ class PenStore(context: Context) {
             // Pressure on by default: the stylus has been reporting it all
              // along, and a pen that ignores it reads as a marker.
             EditMode.PEN to PenPreset(Tool.PEN, 0xFF000000.toInt(), 5f, pressure = true),
+            EditMode.PENCIL to PenPreset(Tool.PENCIL, 0xCC404040.toInt(), 4f),
             EditMode.HIGHLIGHTER to PenPreset(Tool.HIGHLIGHTER, 0x66F9A825, 20f),
             EditMode.MASK to PenPreset(Tool.MASK, PageMask.DEFAULT_MASK_COLOR, 20f),
             EditMode.SHAPE to PenPreset(Tool.PEN, 0xFF1976D2.toInt(), 5f),

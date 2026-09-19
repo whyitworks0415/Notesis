@@ -10,6 +10,9 @@ import androidx.ink.brush.Brush
 import androidx.ink.rendering.android.canvas.CanvasStrokeRenderer
 import androidx.ink.storage.StrokeInputBatchSerialization
 import androidx.ink.strokes.Stroke
+import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
+import com.tom_roush.pdfbox.io.MemoryUsageSetting
+import com.tom_roush.pdfbox.pdmodel.PDDocument
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
@@ -51,7 +54,20 @@ class PageMask(val stroke: Stroke) {
 }
 
 /** What is printed under the ink. */
-enum class PageBackground { BLANK, LINED, GRID, PDF }
+enum class PageBackground { BLANK, LINED, GRID, PDF, DOT, NARROW_LINED, CORNELL, CUSTOM, INFINITE }
+
+data class UserPageTemplate(val id: String, val name: String)
+
+enum class ExportPageSize { ORIGINAL, A4, LETTER }
+
+data class PageExportOptions(
+    val first: Int,
+    val last: Int,
+    val size: ExportPageSize = ExportPageSize.ORIGINAL,
+    val rotation: Int = 0,
+)
+
+enum class PageLayoutMode { VERTICAL, HORIZONTAL, SPREAD_2X1, GRID_2X2 }
 
 /**
  * One page of a note. Strokes are kept in page-local coordinates, so a page can
@@ -63,6 +79,7 @@ class Page(
     var width: Float = A4_WIDTH,
     var height: Float = A4_HEIGHT,
     var background: PageBackground = PageBackground.BLANK,
+    var templateId: String? = null,
     /** Index into the note's imported PDF, or -1 when this page has no PDF. */
     var pdfPageIndex: Int = -1,
     /** Pictures, drawn over the background and under the ink. */
@@ -134,8 +151,14 @@ class Document(val pages: MutableList<Page>) {
     // them once per visible page - quadratic in page count, which a 200-page
     // PDF turns into real scroll lag. They are cached and rebuilt on change.
     private var tops = FloatArray(0)
+    private var lefts = FloatArray(0)
     private var widest = Page.A4_WIDTH
+    private var total = Page.A4_HEIGHT
     private var laidOutFor = -1
+    var layoutMode: PageLayoutMode = PageLayoutMode.VERTICAL
+        set(value) {
+            if (field != value) { field = value; invalidateLayout() }
+        }
 
     /** Call after inserting, removing, or resizing a page. */
     fun invalidateLayout() {
@@ -143,17 +166,35 @@ class Document(val pages: MutableList<Page>) {
     }
 
     private fun layout() {
-        if (laidOutFor == pages.size) return
+        val signature = pages.size * 10 + layoutMode.ordinal
+        if (laidOutFor == signature) return
         tops = FloatArray(pages.size)
-        var y = 0f
-        var maxWidth = 0f
-        for (i in pages.indices) {
-            tops[i] = y
-            y += pages[i].height + PAGE_GAP
-            if (pages[i].width > maxWidth) maxWidth = pages[i].width
+        lefts = FloatArray(pages.size)
+        val cellWidth = pages.maxOfOrNull { it.width } ?: Page.A4_WIDTH
+        val cellHeight = pages.maxOfOrNull { it.height } ?: Page.A4_HEIGHT
+        for (i in pages.indices) when (layoutMode) {
+            PageLayoutMode.VERTICAL -> {
+                tops[i] = i * (cellHeight + PAGE_GAP)
+                lefts[i] = (cellWidth - pages[i].width) / 2f
+            }
+            PageLayoutMode.HORIZONTAL -> {
+                lefts[i] = i * (cellWidth + PAGE_GAP)
+                tops[i] = 0f
+            }
+            PageLayoutMode.SPREAD_2X1 -> {
+                val spread = i / 2
+                lefts[i] = spread * (cellWidth * 2f + PAGE_GAP * 2f) +
+                    (i % 2) * (cellWidth + PAGE_GAP)
+                tops[i] = 0f
+            }
+            PageLayoutMode.GRID_2X2 -> {
+                lefts[i] = (i % 2) * (cellWidth + PAGE_GAP)
+                tops[i] = (i / 2) * (cellHeight + PAGE_GAP)
+            }
         }
-        widest = if (maxWidth > 0f) maxWidth else Page.A4_WIDTH
-        laidOutFor = pages.size
+        widest = pages.indices.maxOfOrNull { lefts[it] + pages[it].width } ?: Page.A4_WIDTH
+        total = pages.indices.maxOfOrNull { tops[it] + pages[it].height } ?: Page.A4_HEIGHT
+        laidOutFor = signature
     }
 
     fun topOf(index: Int): Float {
@@ -161,16 +202,24 @@ class Document(val pages: MutableList<Page>) {
         return tops.getOrElse(index) { 0f }
     }
 
-    fun totalHeight(): Float =
-        if (pages.isEmpty()) 0f else topOf(pages.size - 1) + pages.last().height
+    fun totalHeight(): Float { layout(); return if (pages.isEmpty()) 0f else total }
 
     fun widestPage(): Float {
         layout()
         return widest
     }
 
+    fun fitWidth(): Float {
+        val cell = pages.maxOfOrNull { it.width } ?: Page.A4_WIDTH
+        return when (layoutMode) {
+            PageLayoutMode.HORIZONTAL -> cell
+            PageLayoutMode.SPREAD_2X1 -> cell * 2f + PAGE_GAP
+            else -> widestPage()
+        }
+    }
+
     /** Pages are centred on the document's horizontal axis. */
-    fun leftOf(index: Int): Float = (widestPage() - pages[index].width) / 2f
+    fun leftOf(index: Int): Float { layout(); return lefts.getOrElse(index) { 0f } }
 
     /** Greatest page top at or above which [documentY] lies, found in O(log n). */
     fun pageIndexAt(documentY: Float): Int {
@@ -188,6 +237,12 @@ class Document(val pages: MutableList<Page>) {
     /** The few pages that can intersect a vertical viewport, without scanning all pages. */
     fun pagesIntersecting(top: Float, bottom: Float): IntRange {
         if (pages.isEmpty() || bottom < top) return IntRange.EMPTY
+        if (layoutMode != PageLayoutMode.VERTICAL) {
+            val hit = pages.indices.filter { i ->
+                topOf(i) <= bottom && topOf(i) + pages[i].height >= top
+            }
+            return if (hit.isEmpty()) IntRange.EMPTY else hit.first()..hit.last()
+        }
         val first = pageIndexAt(top).coerceAtLeast(0)
         var low = first
         var high = pages.lastIndex
@@ -200,20 +255,20 @@ class Document(val pages: MutableList<Page>) {
 
     /** The page under a document-space point, or the nearest one vertically. */
     fun pageAt(documentX: Float, documentY: Float): Int {
-        if (pages.isEmpty() || documentY < 0f) return -1
-        var index = pageIndexAt(documentY)
-        if (documentY > topOf(index) + pages[index].height + PAGE_GAP / 2f) {
-            if (index == pages.lastIndex) return -1
-            index++
-        }
-        val top = topOf(index)
-        if (documentY < top || documentY > top + pages[index].height) return -1
-        val left = leftOf(index)
-        // Ink outside the page edges is dropped rather than silently landing
-        // on a neighbour.
-        if (documentX < left || documentX > left + pages[index].width) return -1
-        return index
+        if (pages.isEmpty() || documentY < 0f || documentX < 0f) return -1
+        return pages.indices.firstOrNull { index ->
+            val page = pages[index]
+            documentX in leftOf(index)..(leftOf(index) + page.width) &&
+                documentY in topOf(index)..(topOf(index) + page.height)
+        } ?: -1
     }
+
+    fun nearestPage(documentX: Float, documentY: Float): Int = pages.indices.minByOrNull { index ->
+        val page = pages[index]
+        val dx = documentX - (leftOf(index) + page.width / 2f)
+        val dy = documentY - (topOf(index) + page.height / 2f)
+        dx * dx + dy * dy
+    } ?: -1
 
     companion object {
         const val PAGE_GAP = 48f
@@ -273,7 +328,65 @@ class NoteStore(context: Context) {
      * by typing a name.
      */
     fun folders(): List<String> =
-        list().map { it.folder }.filter { it.isNotBlank() }.distinct().sorted()
+        (savedFolders() + list().map { it.folder }).filter { it.isNotBlank() }.distinct().sorted()
+
+    private fun savedFolders(): List<String> = runCatching {
+        val array = JSONArray(File(root, "folders.json").readText())
+        (0 until array.length()).map { array.getString(it) }
+    }.getOrDefault(emptyList())
+
+    private fun writeFolders(names: Collection<String>) =
+        atomicText(File(root, "folders.json"), JSONArray(names.map { it.trim() }
+            .filter { it.isNotBlank() }.distinct().sorted()).toString())
+
+    fun createFolder(name: String): Boolean {
+        val clean = name.trim()
+        if (clean.isEmpty() || clean.contains('/')) return false
+        if (clean in folders()) return true
+        writeFolders(savedFolders() + clean)
+        return true
+    }
+
+    fun renameFolder(from: String, to: String): Boolean {
+        val clean = to.trim()
+        if (from.isBlank() || clean.isBlank() || clean.contains('/') ||
+            (clean != from && clean in folders())) return false
+        list().filter { it.folder == from }.forEach { setFolder(it.id, clean) }
+        writeFolders(savedFolders().filterNot { it == from } + clean)
+        return true
+    }
+
+    /** Deleting a folder keeps its notes at the top level. */
+    fun deleteFolder(name: String) {
+        list().filter { it.folder == name }.forEach { setFolder(it.id, "") }
+        writeFolders(savedFolders().filterNot { it == name })
+    }
+
+    fun pageTemplates(): List<UserPageTemplate> = runCatching {
+        val array = JSONArray(File(root, "templates.json").readText())
+        (0 until array.length()).map { i ->
+            val entry = array.getJSONObject(i)
+            UserPageTemplate(entry.getString("id"), entry.getString("name"))
+        }.filter { templateFile(it.id).isFile }
+    }.getOrDefault(emptyList())
+
+    fun templateFile(id: String): File = File(root, "templates/$id.png")
+
+    fun addPageTemplate(name: String, input: java.io.InputStream): UserPageTemplate? = runCatching {
+        val bitmap = BitmapFactory.decodeStream(input) ?: error("이미지를 읽을 수 없습니다")
+        val item = UserPageTemplate(UUID.randomUUID().toString(),
+            name.trim().ifBlank { "내 템플릿" })
+        val file = templateFile(item.id)
+        file.parentFile?.mkdirs()
+        try {
+            file.outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+            val entries = pageTemplates() + item
+            atomicText(File(root, "templates.json"), JSONArray(entries.map {
+                JSONObject().put("id", it.id).put("name", it.name)
+            }).toString())
+            item
+        } finally { bitmap.recycle() }
+    }.getOrNull()
 
     fun folderOf(id: String): String = runCatching {
         JSONObject(File(root, "$id/meta.json").readText()).optString("folder", "")
@@ -281,6 +394,7 @@ class NoteStore(context: Context) {
 
     /** Files a note. A blank name puts it back at the top level. */
     fun setFolder(id: String, folder: String) {
+        if (folder.isNotBlank()) createFolder(folder)
         val file = File(root, "$id/meta.json")
         runCatching {
             val json = JSONObject(file.readText())
@@ -295,10 +409,16 @@ class NoteStore(context: Context) {
             ?.sortedByDescending { it.modified }
             ?: emptyList()
 
-    fun create(title: String): NoteMeta {
+    fun create(
+        title: String, background: PageBackground = PageBackground.BLANK,
+        templateId: String? = null,
+    ): NoteMeta {
         val id = UUID.randomUUID().toString()
         File(root, "$id/pages").mkdirs()
-        val document = Document(mutableListOf(Page()))
+        val document = Document(mutableListOf(Page(
+            height = if (background == PageBackground.INFINITE) Page.A4_HEIGHT * 12f else Page.A4_HEIGHT,
+            background = background, templateId = templateId,
+        )))
         writeMeta(id, title, document)
         return NoteMeta(id, title, System.currentTimeMillis(), 1, 0)
     }
@@ -404,6 +524,71 @@ class NoteStore(context: Context) {
         return NoteMeta(id, title, System.currentTimeMillis(), pages.size, 0)
     }
 
+    /** Copies editable pages, ink, pictures and PDF backgrounds into one new note. */
+    fun mergeNotes(ids: List<String>, title: String): NoteMeta? = runCatching {
+        val sources = ids.distinct().mapNotNull { id ->
+            readMeta(File(root, id))?.takeIf { it.kind == NoteKind.INK }?.let { id to load(id) }
+        }
+        require(sources.size >= 2)
+        PDFBoxResourceLoader.init(appContext)
+        val newId = UUID.randomUUID().toString()
+        val target = File(root, newId).apply { mkdirs() }
+        val pagesDir = File(target, "pages").apply { mkdirs() }
+        val pdf = PDDocument(MemoryUsageSetting.setupTempFileOnly().setTempDir(appContext.cacheDir))
+        val pages = mutableListOf<Page>()
+        try {
+            for ((id, document) in sources) {
+                val oldPdf = pdfFile(id).takeIf { it.isFile }?.let {
+                    PDDocument.load(it, MemoryUsageSetting.setupTempFileOnly().setTempDir(appContext.cacheDir))
+                }
+                try {
+                    for (old in document.pages) {
+                        val pageId = UUID.randomUUID().toString()
+                        val pdfIndex = if (old.background == PageBackground.PDF) {
+                            require(oldPdf != null && old.pdfPageIndex in 0 until oldPdf.numberOfPages)
+                            val index = pdf.numberOfPages
+                            pdf.importPage(oldPdf.getPage(old.pdfPageIndex))
+                            index
+                        } else -1
+                        val images = old.images.map { image ->
+                            val imageId = UUID.randomUUID().toString()
+                            val source = imageFile(id, image.id)
+                            if (source.isFile) {
+                                imageFile(newId, imageId).also { it.parentFile?.mkdirs() }
+                                    .let { source.copyTo(it) }
+                            }
+                            PageImage(imageId, image.x, image.y, image.width, image.height,
+                                image.textContent)
+                        }.toMutableList()
+                        val page = Page(
+                            id = pageId, width = old.width, height = old.height,
+                            background = old.background, templateId = old.templateId,
+                            pdfPageIndex = pdfIndex, images = images,
+                        ).also {
+                            it.loaded = false
+                            it.dirty = false
+                            it.savedStrokeCount = old.savedStrokeCount
+                            it.savedOnDisk = old.savedStrokeCount
+                        }
+                        for (suffix in listOf(".bin", ".mask", ".txt", INK_INDEX)) {
+                            val source = File(root, "$id/pages/${old.id}$suffix")
+                            if (source.isFile) source.copyTo(File(pagesDir, "$pageId$suffix"))
+                        }
+                        pages += page
+                    }
+                } finally { oldPdf?.close() }
+            }
+            if (pdf.numberOfPages > 0) pdf.save(pdfFile(newId))
+            val merged = Document(pages)
+            writeMeta(newId, title.trim().ifBlank { "합친 노트" }, merged)
+            writeAutoThumbnail(newId, merged)
+            readMeta(target) ?: error("합친 노트를 읽을 수 없습니다")
+        } catch (error: Throwable) {
+            target.deleteRecursively()
+            throw error
+        } finally { pdf.close() }
+    }.getOrNull()
+
     /**
      * Notes whose title, extracted PDF text, or recognised handwriting contains
      * [query].
@@ -469,6 +654,14 @@ class NoteStore(context: Context) {
 
     fun pdfFile(id: String): File = File(root, "$id/doc.pdf")
 
+    fun recordings(id: String): List<File> =
+        File(root, "$id/recordings").listFiles { file -> file.isFile && file.extension == "m4a" }
+            ?.sortedByDescending { it.name } ?: emptyList()
+
+    fun newRecordingFile(id: String): File =
+        File(root, "$id/recordings/${System.currentTimeMillis()}.m4a")
+            .also { it.parentFile?.mkdirs() }
+
     fun load(id: String): Document {
         val meta = File(root, "$id/meta.json")
         if (!meta.isFile) return Document(mutableListOf(Page()))
@@ -485,6 +678,7 @@ class NoteStore(context: Context) {
                 background = runCatching {
                     PageBackground.valueOf(entry.optString("bg", "BLANK"))
                 }.getOrDefault(PageBackground.BLANK),
+                templateId = entry.optString("template", "").ifBlank { null },
                 pdfPageIndex = entry.optInt("pdf", -1),
             )
             page.images.addAll(imagesFrom(entry))
@@ -829,9 +1023,19 @@ class NoteStore(context: Context) {
      * A PDF exported here can therefore be imported into another note without
      * turning text or pen edges into a fixed-resolution page bitmap.
      */
-    fun exportPdf(id: String, out: java.io.OutputStream): Boolean {
+    fun exportPdf(
+        id: String, out: java.io.OutputStream, options: PageExportOptions? = null,
+    ): Boolean {
         val document = load(id)
-        val pages = document.pages.map { page ->
+        val first = options?.first ?: 1
+        val last = options?.last ?: document.pages.size
+        if (first < 1 || last < first || last > document.pages.size) return false
+        val selected = document.pages.subList(first - 1, last)
+        if (selected.isEmpty()) return false
+        if (options?.size != null && options.size != ExportPageSize.ORIGINAL) {
+            return exportSizedPdf(id, selected, out, options)
+        }
+        val pages = selected.map { page ->
             VectorPdfPage(
                 page = page,
                 strokes = readStrokes(File(root, "$id/pages/${page.id}.bin")),
@@ -842,9 +1046,105 @@ class NoteStore(context: Context) {
             context = appContext,
             sourceFile = pdfFile(id),
             pages = pages,
-            imageFile = { imageId -> imageFile(id, imageId) },
+            imageFile = { imageId ->
+                if (imageId.startsWith("template:")) templateFile(imageId.removePrefix("template:"))
+                else imageFile(id, imageId)
+            },
             out = out,
+            rotation = options?.rotation ?: 0,
         )
+    }
+
+    private fun exportSizedPdf(
+        id: String, pages: List<Page>, out: java.io.OutputStream, options: PageExportOptions,
+    ): Boolean = runCatching {
+        val pdf = android.graphics.pdf.PdfDocument()
+        val source = PdfSource.open(pdfFile(id))
+        val renderer = CanvasStrokeRenderer.create()
+        try {
+            for ((index, page) in pages.withIndex()) {
+                val bitmap = renderExportBitmap(id, page, source, renderer,
+                    options.size, options.rotation)
+                try {
+                    val pdfPage = pdf.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(
+                        (bitmap.width / 2).coerceAtLeast(1),
+                        (bitmap.height / 2).coerceAtLeast(1), index + 1,
+                    ).create())
+                    pdfPage.canvas.drawBitmap(bitmap, null, android.graphics.RectF(
+                        0f, 0f, pdfPage.canvas.width.toFloat(), pdfPage.canvas.height.toFloat(),
+                    ), android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG))
+                    pdf.finishPage(pdfPage)
+                } finally { bitmap.recycle() }
+            }
+            pdf.writeTo(out)
+        } finally {
+            pdf.close()
+            source?.close()
+        }
+        true
+    }.getOrDefault(false)
+
+    /** Exports one page as PNG, or a numbered PNG ZIP for a range. */
+    fun exportPng(
+        id: String, out: java.io.OutputStream, options: PageExportOptions,
+    ): Boolean = runCatching {
+        val document = load(id)
+        require(options.first >= 1 && options.last >= options.first &&
+            options.last <= document.pages.size)
+        val source = PdfSource.open(pdfFile(id))
+        val renderer = CanvasStrokeRenderer.create()
+        try {
+            if (options.first == options.last) {
+                val bitmap = renderExportBitmap(id, document.pages[options.first - 1],
+                    source, renderer, options.size, options.rotation)
+                try { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) }
+                finally { bitmap.recycle() }
+            } else {
+                java.util.zip.ZipOutputStream(out.buffered()).use { zip ->
+                    for (number in options.first..options.last) {
+                        val bitmap = renderExportBitmap(id, document.pages[number - 1],
+                            source, renderer, options.size, options.rotation)
+                        try {
+                            zip.putNextEntry(java.util.zip.ZipEntry(
+                                "page-${number.toString().padStart(3, '0')}.png"))
+                            check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, zip))
+                            zip.closeEntry()
+                        } finally { bitmap.recycle() }
+                    }
+                }
+            }
+        } finally { source?.close() }
+        true
+    }.getOrDefault(false)
+
+    private fun renderExportBitmap(
+        id: String, page: Page, source: PdfSource?, renderer: CanvasStrokeRenderer,
+        size: ExportPageSize, rotation: Int,
+    ): Bitmap {
+        val (width, height) = when (size) {
+            ExportPageSize.A4 -> 1240 to 1754
+            ExportPageSize.LETTER -> 1275 to 1650
+            ExportPageSize.ORIGINAL -> {
+                val fit = (4096f / maxOf(page.width, page.height)).coerceAtMost(1f)
+                (page.width * fit).toInt().coerceAtLeast(1) to
+                    (page.height * fit).toInt().coerceAtLeast(1)
+            }
+        }
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.WHITE)
+        val scale = minOf(width / page.width, height / page.height)
+        canvas.save()
+        canvas.translate((width - page.width * scale) / 2f,
+            (height - page.height * scale) / 2f)
+        drawWholePage(id, page, canvas, source, renderer, scale)
+        canvas.restore()
+        val degrees = ((rotation % 360) + 360) % 360
+        if (degrees == 0) return bitmap
+        val matrix = Matrix().apply { postRotate(degrees.toFloat()) }
+        return try {
+            Bitmap.createBitmap(bitmap, 0, 0, width, height, matrix, true)
+        } finally { bitmap.recycle() }
     }
 
     /**
@@ -867,6 +1167,56 @@ class NoteStore(context: Context) {
             source?.renderNow(page.pdfPageIndex, width)?.let {
                 canvas.drawBitmap(it, null, android.graphics.Rect(0, 0, width, height), null)
             }
+        }
+        if (page.background == PageBackground.CUSTOM) {
+            page.templateId?.let { BitmapFactory.decodeFile(templateFile(it).path) }?.let { bitmap ->
+                canvas.drawBitmap(bitmap, null,
+                    android.graphics.Rect(0, 0, width, height), null)
+                bitmap.recycle()
+            }
+        }
+        if (page.background !in listOf(PageBackground.BLANK, PageBackground.PDF,
+                PageBackground.CUSTOM)) {
+            val rule = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                color = 0xFFD8E2EC.toInt()
+                strokeWidth = 2f
+            }
+            canvas.save()
+            canvas.scale(scale, scale)
+            val spacing = if (page.background == PageBackground.NARROW_LINED) 30f else 60f
+            if (page.background == PageBackground.DOT) {
+                var y = spacing
+                while (y < page.height) {
+                    var x = spacing
+                    while (x < page.width) {
+                        canvas.drawCircle(x, y, 2.5f, rule)
+                        x += spacing
+                    }
+                    y += spacing
+                }
+            } else {
+                var y = spacing
+                val end = if (page.background == PageBackground.CORNELL)
+                    page.height * 0.82f else page.height
+                while (y < end) {
+                    canvas.drawLine(0f, y, page.width, y, rule)
+                    y += spacing
+                }
+                if (page.background == PageBackground.GRID) {
+                    var x = spacing
+                    while (x < page.width) {
+                        canvas.drawLine(x, 0f, x, page.height, rule)
+                        x += spacing
+                    }
+                }
+                if (page.background == PageBackground.CORNELL) {
+                    canvas.drawLine(page.width * 0.30f, 0f, page.width * 0.30f,
+                        page.height * 0.82f, rule)
+                    canvas.drawLine(0f, page.height * 0.82f, page.width,
+                        page.height * 0.82f, rule)
+                }
+            }
+            canvas.restore()
         }
         val transform = Matrix().apply { setScale(scale, scale) }
         for (image in page.images) {
@@ -946,6 +1296,7 @@ class NoteStore(context: Context) {
                     .put("w", page.width)
                     .put("h", page.height)
                     .put("bg", page.background.name)
+                    .put("template", page.templateId ?: "")
                     .put("pdf", page.pdfPageIndex)
                     .put("strokes", if (page.loaded) page.strokes.size else page.savedStrokeCount)
                     .put("images", imagesToJson(page)),
