@@ -1060,7 +1060,7 @@ class NoteStore(context: Context) {
     ): Boolean = runCatching {
         val pdf = android.graphics.pdf.PdfDocument()
         val source = PdfSource.open(pdfFile(id))
-        val renderer = CanvasStrokeRenderer.create()
+        val renderer = CanvasStrokeRenderer.create(PencilTextureStore)
         try {
             for ((index, page) in pages.withIndex()) {
                 val bitmap = renderExportBitmap(id, page, source, renderer,
@@ -1092,7 +1092,7 @@ class NoteStore(context: Context) {
         require(options.first >= 1 && options.last >= options.first &&
             options.last <= document.pages.size)
         val source = PdfSource.open(pdfFile(id))
-        val renderer = CanvasStrokeRenderer.create()
+        val renderer = CanvasStrokeRenderer.create(PencilTextureStore)
         try {
             if (options.first == options.last) {
                 val bitmap = renderExportBitmap(id, document.pages[options.first - 1],
@@ -1278,7 +1278,7 @@ class NoteStore(context: Context) {
             } else {
                 readStrokes(File(root, "$id/pages/${page.id}.mask"))
             }
-            val renderer = CanvasStrokeRenderer.create()
+            val renderer = CanvasStrokeRenderer.create(PencilTextureStore)
             for (stroke in strokes) renderer.draw(canvas, stroke, transform)
             for (stroke in masks) renderer.draw(canvas, stroke, transform)
             val tmp = File(root, "$id/$AUTO_THUMB.tmp")

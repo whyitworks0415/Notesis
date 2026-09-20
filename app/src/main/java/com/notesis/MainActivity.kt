@@ -94,6 +94,8 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -626,23 +628,31 @@ private fun NoteListScreen(
     DisposableEffect(Unit) { onDispose { indexer.close() } }
 
     val pickPdf = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument(),
-    ) { uri: Uri? ->
-        if (uri == null) return@rememberLauncherForActivityResult
+        ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris: List<Uri> ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
         importing = true
         scope.launch {
-            // Copying and parsing a large PDF is far too slow for the main
-            // thread, and the picker gives no size guarantee.
+            // Each picked stream is consumed serially off the UI thread. PDFBox
+            // is memory hungry, so parsing a batch in parallel would make a
+            // large selection less reliable rather than faster.
             val imported = withContext(Dispatchers.IO) {
-                runCatching {
-                    context.contentResolver.openInputStream(uri)?.use { input ->
-                        store.createFromPdf(displayName(context, uri), input)
-                    }
-                }.getOrNull()
+                uris.mapNotNull { uri ->
+                    runCatching {
+                        context.contentResolver.openInputStream(uri)?.use { input ->
+                            store.createFromPdf(displayName(context, uri), input)
+                        }
+                    }.getOrNull()
+                }
             }
             importing = false
             revision++
-            if (imported == null) importFailed = true else onOpen(imported)
+            when {
+                imported.isEmpty() -> importFailed = true
+                uris.size == 1 -> onOpen(imported.first())
+                else -> report = "PDF ${imported.size}개를 가져왔습니다" +
+                    if (imported.size < uris.size) " (${uris.size - imported.size}개 실패)" else ""
+            }
         }
     }
 
@@ -1691,7 +1701,7 @@ private fun PenDialog(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         SkinSwitch(checked = axisSnap, onCheckedChange = onAxisSnap)
                         Spacer(Modifier.width(10.dp))
-                        Text("수평·수직 근처 직선 자동 보정")
+                        Text("직선을 90° 간격으로 보정")
                     }
                 }
                 if (mode == EditMode.HIGHLIGHTER) {
@@ -2622,6 +2632,7 @@ private fun NoteScreen(
     var autoShapes by remember { mutableStateOf(penStore.autoShapes) }
     var axisSnap by remember { mutableStateOf(penStore.axisSnap) }
     var dottedPattern by remember { mutableIntStateOf(penStore.dottedPattern) }
+    var noteRotation by remember { mutableIntStateOf(penStore.noteRotation) }
     // Null until it is dragged: the bar sits centred at the top by default, and
     // there is no sensible centre to store before anything has been measured.
     var barOffset by remember { mutableStateOf<Offset?>(null) }
@@ -2936,6 +2947,13 @@ private fun NoteScreen(
             zoomLabel = "${(zoom * 100).roundToInt()}%",
             onToggleFullscreen = { fullscreen = !fullscreen },
             onToggleLatency = { showLatency = !showLatency },
+            recording = recorder != null,
+            onVoice = { showVoice = true },
+            noteRotation = noteRotation,
+            onRotate = {
+                noteRotation = (noteRotation + 90) % 360
+                penStore.noteRotation = noteRotation
+            },
             onTogglePages = { showPages = !showPages },
             onCollapse = { setToolbarSize((toolbarSize + 1).coerceAtMost(3)) },
             sizeLevel = toolbarSize,
@@ -3027,7 +3045,15 @@ private fun NoteScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     // AndroidView를 Backdrop 레이어에 안정적으로 합성합니다.
-                    .graphicsLayer { alpha = 0.999f },
+                    .graphicsLayer {
+                        alpha = 0.999f
+                        rotationZ = noteRotation.toFloat()
+                        if (noteRotation % 180 != 0 && size.width > 0f && size.height > 0f) {
+                            val fit = minOf(size.width / size.height, size.height / size.width)
+                            scaleX = fit
+                            scaleY = fit
+                        }
+                    },
                 factory = { viewContext ->
                     InkCanvasView(viewContext).apply {
                         pageLoader = { page, epsilon ->
@@ -3222,9 +3248,6 @@ private fun NoteScreen(
             corner = 14.dp,
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = { showVoice = true }) {
-                    Text(if (recorder != null) "● 녹음 중" else "음성")
-                }
                 TextButton(onClick = { playbackActive = !playbackActive }) {
                     Text(if (playbackActive) "필기 정지 $playbackProgress/$playbackTotal" else "필기 재생")
                 }
@@ -4734,6 +4757,10 @@ private fun Toolbar(
     zoomLabel: String,
     onToggleFullscreen: () -> Unit,
     onToggleLatency: () -> Unit,
+    recording: Boolean,
+    onVoice: () -> Unit,
+    noteRotation: Int,
+    onRotate: () -> Unit,
     onTogglePages: () -> Unit,
     onCollapse: () -> Unit,
     sizeLevel: Int,
@@ -4828,6 +4855,16 @@ private fun Toolbar(
                 }
                 IconButton(onClick = onRedo, enabled = canRedo) {
                     Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "다시실행")
+                }
+                IconButton(onClick = onVoice) {
+                    Icon(
+                        Icons.Default.Mic,
+                        contentDescription = if (recording) "녹음 중 · 녹음 패널 열기" else "녹음 패널 열기",
+                        tint = if (recording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+                IconButton(onClick = onRotate) {
+                    Icon(Icons.Default.ScreenRotation, contentDescription = "노트 회전 ${noteRotation}도")
                 }
                 // 확대 아이콘과 수치는 분리해 둘을 감싸는 강조 칸은 만들지 않고,
                 // 숫자는 행의 정중앙에 놓습니다.

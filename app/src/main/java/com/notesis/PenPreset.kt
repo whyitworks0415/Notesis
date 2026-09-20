@@ -124,6 +124,11 @@ class PenStore(context: Context) {
         ) }.getOrDefault(PageLayoutMode.VERTICAL)
         set(value) = prefs.edit().putString("pageLayout", value.name).apply()
 
+    /** Writing orientation of the page surface, independent of device rotation. */
+    var noteRotation: Int
+        get() = prefs.getInt("noteRotation", 0).let { ((it % 360) + 360) % 360 }
+        set(value) = prefs.edit().putInt("noteRotation", ((value % 360) + 360) % 360).apply()
+
     var highlighterAboveInk: Boolean
         get() = prefs.getBoolean("highlighterAboveInk", false)
         set(value) = prefs.edit().putBoolean("highlighterAboveInk", value).apply()

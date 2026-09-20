@@ -34,6 +34,7 @@ import androidx.ink.brush.BrushPaint
 import androidx.ink.brush.ExperimentalInkCustomBrushApi
 import androidx.ink.brush.SelfOverlap
 import androidx.ink.brush.StockBrushes
+import androidx.ink.brush.TextureBitmapStore
 import androidx.ink.geometry.ImmutableAffineTransform
 import androidx.ink.geometry.ImmutableBox
 import androidx.ink.geometry.ImmutableSegment
@@ -304,13 +305,21 @@ enum class Tool {
      * note written before this existed still draws the way it was written.
      */
     PRESSURE_PEN,
-    PENCIL;
+    PENCIL,
+
+    /** Patterned lines remain one Ink stroke instead of hundreds of marks. */
+    DOTTED,
+    DASHED,
+    DASH_DOT;
 
     fun brushFamily(): BrushFamily = when (this) {
         HIGHLIGHTER -> highlighter
         MASK -> masking
         PRESSURE_PEN -> pressurePen
         PENCIL -> pencil
+        DOTTED -> dotted
+        DASHED -> dashed
+        DASH_DOT -> dashDot
         else -> pen
     }
 
@@ -335,11 +344,38 @@ enum class Tool {
         }
         @OptIn(ExperimentalInkCustomBrushApi::class)
         private val pencil by lazy {
-            val stock = StockBrushes.pressurePen()
+            // This stock brush carries graphite grain and pressure/tilt
+            // variation. The old pressure-pen copy was still a smooth ballpen.
+            StockBrushes.pencilUnstable
+        }
+
+        @OptIn(ExperimentalInkCustomBrushApi::class)
+        private val dashed by lazy { StockBrushes.dashedLine() }
+
+        @OptIn(ExperimentalInkCustomBrushApi::class)
+        private val dotted by lazy {
+            val stock = StockBrushes.dashedLine()
             val coat = stock.coats.first()
             stock.copy(coat = coat.copy(tip = coat.tip.copy(
-                scaleX = 0.68f, scaleY = 0.68f, cornerRounding = 1f,
-                slantDegrees = 0f, pinch = 0f, rotationDegrees = 0f,
+                scaleX = 0.34f,
+                scaleY = 0.34f,
+                cornerRounding = 1f,
+                particleGapDistanceScale = 1.65f,
+            )))
+        }
+
+        @OptIn(ExperimentalInkCustomBrushApi::class)
+        private val dashDot by lazy {
+            val stock = StockBrushes.dashedLine()
+            val coat = stock.coats.first()
+            // A tighter, shorter secondary rhythm keeps this visibly distinct
+            // from both round dots and the regular long-dash stock brush while
+            // retaining one mesh/one history entry.
+            stock.copy(coat = coat.copy(tip = coat.tip.copy(
+                scaleX = 0.62f,
+                scaleY = 0.62f,
+                cornerRounding = 1f,
+                particleGapDistanceScale = 2.8f,
             )))
         }
 
@@ -393,6 +429,9 @@ enum class Tool {
             masking -> MASK
             pressurePen -> PRESSURE_PEN
             pencil -> PENCIL
+            dotted -> DOTTED
+            dashed -> DASHED
+            dashDot -> DASH_DOT
             else -> PEN
         }
     }
@@ -694,6 +733,7 @@ class InkCanvasView @JvmOverloads constructor(
     private var cachedBrushColor = 0
     private var cachedBrushSize = Float.NaN
     private var cachedBrushEpsilon = Float.NaN
+    private var cachedBrushPattern = -1
     private var cachedBrush: Brush? = null
 
     private var activeStylusPointer: Int? = null
@@ -704,6 +744,9 @@ class InkCanvasView @JvmOverloads constructor(
     private var lastStylusDx = 0f
     private var lastStylusDy = 0f
     private var erasing = false
+    /** Every removal between pen-down and pen-up is one undoable erase. */
+    private var activeEraseGroup = 0L
+    private var eraseChanged = false
     private var lastErasePoint: FloatArray? = null
     private var eraserCursorVisible = false
     private var eraserCursorX = 0f
@@ -829,7 +872,11 @@ class InkCanvasView @JvmOverloads constructor(
         // history has to be able to follow the swap rather than keep pointing at
         // objects that are no longer in the page.
         class Drawn(override val page: Page, var stroke: Stroke, val group: Long = 0L) : Edit
-        class Erased(override val page: Page, var strokes: List<Stroke>) : Edit
+        class Erased(
+            override val page: Page,
+            var strokes: List<Stroke>,
+            val group: Long = 0L,
+        ) : Edit
 
         // Pictures are mutable and moving one is not undoable; adding and
         // removing are, because those are the ones that lose work.
@@ -845,7 +892,12 @@ class InkCanvasView @JvmOverloads constructor(
         ) : Edit
 
         class MaskAdded(override val page: Page, val mask: PageMask, val group: Long = 0L) : Edit
-        class MaskRemoved(override val page: Page, val mask: PageMask, val at: Int) : Edit
+        class MaskRemoved(
+            override val page: Page,
+            val mask: PageMask,
+            val at: Int,
+            val group: Long = 0L,
+        ) : Edit
     }
 
     private val scaleDetector = ScaleGestureDetector(
@@ -870,6 +922,7 @@ class InkCanvasView @JvmOverloads constructor(
         isClickable = true
         addView(dry, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(wet, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        wet.textureBitmapStore = PencilTextureStore
         wet.eagerInit()
         wet.addFinishedStrokesListener(this)
         wet.setLatencyDataCallback(object : LatencyDataCallback {
@@ -1066,7 +1119,9 @@ class InkCanvasView @JvmOverloads constructor(
 
     private fun Edit.groupId(): Long = when (this) {
         is Edit.Drawn -> group
+        is Edit.Erased -> group
         is Edit.MaskAdded -> group
+        is Edit.MaskRemoved -> group
         else -> 0L
     }
 
@@ -1375,6 +1430,8 @@ class InkCanvasView @JvmOverloads constructor(
                 if (erasing) {
                     onDrawingChanged?.invoke(true)
                     lastErasePoint = null
+                    activeEraseGroup = nextEditGroup++
+                    eraseChanged = false
                     eraseAlong(event, event.actionIndex)
                 } else {
                     lastStylusX = event.x
@@ -1526,6 +1583,11 @@ class InkCanvasView @JvmOverloads constructor(
                     endStylus()
                     return true
                 }
+                if (erasing) {
+                    finishEraseGesture()
+                    endStylus()
+                    return true
+                }
                 activeStrokeId?.let { strokeId ->
                     val pointerIndex = event.findPointerIndex(pointerId)
                     val penStroke = tool == Tool.PEN || tool == Tool.PRESSURE_PEN || tool == Tool.PENCIL
@@ -1544,6 +1606,7 @@ class InkCanvasView @JvmOverloads constructor(
 
             MotionEvent.ACTION_CANCEL -> {
                 activeStrokeId?.let { wet.cancelStroke(it, event) }
+                if (erasing) finishEraseGesture()
                 endStylus()
                 return true
             }
@@ -1612,6 +1675,8 @@ class InkCanvasView @JvmOverloads constructor(
         lastStylusDx = 0f
         lastStylusDy = 0f
         erasing = false
+        eraseChanged = false
+        activeEraseGroup = 0L
         lastErasePoint = null
         eraserCursorVisible = false
         dry.invalidate()
@@ -1959,14 +2024,23 @@ class InkCanvasView @JvmOverloads constructor(
 
     private fun currentBrush(): Brush {
         val epsilon = strokeEpsilon(strokeWidth, epsilonFor(currentScale()))
+        val brushTool = if (tool in listOf(Tool.PEN, Tool.PRESSURE_PEN, Tool.PENCIL)) {
+            when (dottedPattern) {
+                1 -> Tool.DOTTED
+                2 -> Tool.DASHED
+                3 -> Tool.DASH_DOT
+                else -> tool
+            }
+        } else tool
         cachedBrush?.takeIf {
-            cachedBrushTool == tool &&
+            cachedBrushTool == brushTool &&
                 cachedBrushColor == colorArgb &&
                 cachedBrushSize == strokeWidth &&
-                cachedBrushEpsilon == epsilon
+                cachedBrushEpsilon == epsilon &&
+                cachedBrushPattern == dottedPattern
         }?.let { return it }
         return Brush.createWithColorIntArgb(
-            family = tool.brushFamily(),
+            family = brushTool.brushFamily(),
             // Alpha included: a highlighter is a saved pen that happens to be
             // translucent and wide, not a tool with its own hidden rules.
             colorIntArgb = colorArgb,
@@ -1977,10 +2051,11 @@ class InkCanvasView @JvmOverloads constructor(
             // already fine enough and never needs rebuilding.
             epsilon = epsilon,
         ).also {
-            cachedBrushTool = tool
+            cachedBrushTool = brushTool
             cachedBrushColor = colorArgb
             cachedBrushSize = strokeWidth
             cachedBrushEpsilon = epsilon
+            cachedBrushPattern = dottedPattern
             cachedBrush = it
         }
     }
@@ -2441,14 +2516,16 @@ class InkCanvasView @JvmOverloads constructor(
     private fun shapeStrokes(kind: ShapeKind, from: FloatArray, to: FloatArray, brush: Brush): List<Stroke> {
         val points = shapePoints(kind, from, to)
         if (points.size < 2) return emptyList()
-        // Each corner is a separate Ink stroke; one reversing path would round
-        // a rectangle or fold an arrowhead into the shaft.
-        return points.zipWithNext { a, b ->
-            val inputs = MutableStrokeInputBatch()
-            inputs.add(InputToolType.STYLUS, a[0], a[1], 0L)
-            inputs.add(InputToolType.STYLUS, b[0], b[1], SHAPE_STEP_MS)
-            Stroke(brush, inputs.toImmutable())
+        val inputs = MutableStrokeInputBatch()
+        points.forEachIndexed { index, point ->
+            inputs.add(
+                InputToolType.STYLUS,
+                point[0],
+                point[1],
+                index * SHAPE_STEP_MS,
+            )
         }
+        return listOf(Stroke(brush, inputs.toImmutable()))
     }
 
     /** The outline of [kind], sampled densely enough that the brush follows it. */
@@ -2863,7 +2940,7 @@ class InkCanvasView @JvmOverloads constructor(
                 null,
             )
         }
-        val renderer = CanvasStrokeRenderer.create()
+        val renderer = CanvasStrokeRenderer.create(PencilTextureStore)
         val transform = Matrix()
         for (stroke in strokes) renderer.draw(canvas, stroke, transform)
         bitmap
@@ -2927,15 +3004,25 @@ class InkCanvasView @JvmOverloads constructor(
             val at = page.masks.indexOfFirst { it === mask }
             if (at < 0) continue
             page.masks.removeAt(at)
-            undoStack += Edit.MaskRemoved(page, mask, at)
+            undoStack += Edit.MaskRemoved(page, mask, at, activeEraseGroup)
         }
         if (hit.isNotEmpty()) {
             page.strokes.removeAll { stroke -> hit.any { it === stroke } }
-            undoStack += Edit.Erased(page, hit)
+            undoStack += Edit.Erased(page, hit, activeEraseGroup)
         }
         redoStack.clear()
-        afterEdit(page)
+        // Keep the hot eraser loop local to the View. A Compose state write,
+        // autosave restart and mesh-refine request for every 240 Hz sample was
+        // the dominant pause on dense pages; commit the gesture once at lift.
+        eraseChanged = true
+        page.dirty = true
+        dry.invalidate()
         if (hit.isNotEmpty()) dry.removeStrokesFromIndex(page, hit)
+    }
+
+    private fun finishEraseGesture() {
+        if (!eraseChanged) return
+        activePage?.let { afterEdit(it) }
     }
 
     override fun onStrokesFinished(finished: Map<InProgressStrokeId, Stroke>) {
@@ -2956,10 +3043,7 @@ class InkCanvasView @JvmOverloads constructor(
                             shape.kind, floatArrayOf(shape.fromX, shape.fromY),
                             floatArrayOf(shape.toX, shape.toY), stroke.brush,
                         )
-                        dottedPattern != 0 && Tool.ofBrushFamily(stroke.brush.family) in
-                            listOf(Tool.PEN, Tool.PRESSURE_PEN, Tool.PENCIL) ->
-                            dottedStrokes(stroke, dottedPattern)
-                        else -> listOf(smoothFreehandStroke(stroke))
+                        else -> listOf(smoothFreehandStroke(correctStrokeStart(stroke)))
                     }
                     for (part in committed) {
                         page.strokes += part
@@ -2985,59 +3069,39 @@ class InkCanvasView @JvmOverloads constructor(
         return recognizeShape(points)
     }
 
-    private fun dottedStrokes(stroke: Stroke, pattern: Int): List<Stroke> {
-        val count = stroke.inputs.size
-        if (count < 2) return listOf(stroke)
+    /**
+     * Some digitizers report the contact sample a few pixels behind the first
+     * deliberate movement. Remove only that clearly reversing seed sample;
+     * ordinary short strokes and dots retain their original beginning.
+     */
+    private fun correctStrokeStart(stroke: Stroke): Stroke {
+        if (stroke.inputs.size < 4) return stroke
+        val a = StrokeInput()
+        val b = StrokeInput()
+        val c = StrokeInput()
+        stroke.inputs.populate(0, a)
+        stroke.inputs.populate(1, b)
+        stroke.inputs.populate(2, c)
+        val firstDx = b.x - a.x
+        val firstDy = b.y - a.y
+        val nextDx = c.x - b.x
+        val nextDy = c.y - b.y
+        val first = hypot(firstDx, firstDy)
+        val next = hypot(nextDx, nextDy)
+        val reverses = firstDx * nextDx + firstDy * nextDy < 0f
+        if (!reverses || first < max(1.5f, next * 1.8f)) return stroke
+        val inputs = MutableStrokeInputBatch()
         val sample = StrokeInput()
-        val points = ArrayList<FloatArray>(count)
-        val distances = FloatArray(count)
-        for (i in 0 until count) {
-            stroke.inputs.populate(i, sample)
-            points += floatArrayOf(sample.x, sample.y)
-            if (i > 0) distances[i] = distances[i - 1] + hypot(
-                points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1],
+        val time0 = stroke.inputs.populate(1, sample).elapsedTimeMillis
+        for (i in 1 until stroke.inputs.size) {
+            val at = stroke.inputs.populate(i, sample)
+            inputs.add(
+                at.toolType, at.x, at.y,
+                (at.elapsedTimeMillis - time0).coerceAtLeast(0L),
+                at.pressure, at.tiltRadians, at.orientationRadians,
             )
         }
-        val total = distances.last()
-        if (total < 0.1f) return listOf(stroke)
-        val unit = stroke.brush.size.coerceAtLeast(1f)
-        val marks = when (pattern) {
-            1 -> floatArrayOf(0.12f, 1.8f)
-            2 -> floatArrayOf(3f, 2f)
-            else -> floatArrayOf(3f, 1.6f, 0.12f, 1.6f)
-        }
-        fun pointAt(distance: Float): FloatArray {
-            var low = 1
-            var high = distances.lastIndex
-            while (low < high) {
-                val middle = (low + high).ushr(1)
-                if (distances[middle] < distance) low = middle + 1 else high = middle
-            }
-            val i = low
-            val span = (distances[i] - distances[i - 1]).coerceAtLeast(0.0001f)
-            val fraction = ((distance - distances[i - 1]) / span).coerceIn(0f, 1f)
-            return floatArrayOf(
-                points[i - 1][0] + (points[i][0] - points[i - 1][0]) * fraction,
-                points[i - 1][1] + (points[i][1] - points[i - 1][1]) * fraction,
-            )
-        }
-        val result = ArrayList<Stroke>()
-        var offset = 0f
-        var mark = 0
-        while (offset < total && result.size < 1024) {
-            val length = marks[mark % marks.size] * unit
-            if (mark % 2 == 0) {
-                val a = pointAt(offset)
-                val b = pointAt(min(total, offset + length))
-                val inputs = MutableStrokeInputBatch()
-                inputs.add(InputToolType.STYLUS, a[0], a[1], 0L)
-                inputs.add(InputToolType.STYLUS, b[0], b[1], SHAPE_STEP_MS)
-                result += Stroke(stroke.brush, inputs.toImmutable())
-            }
-            offset += length.coerceAtLeast(0.1f)
-            mark++
-        }
-        return result.ifEmpty { listOf(stroke) }
+        return Stroke(stroke.brush, inputs.toImmutable())
     }
 
     private fun smoothFreehandStroke(stroke: Stroke): Stroke {
@@ -3090,7 +3154,10 @@ class InkCanvasView @JvmOverloads constructor(
             private set
         var lastDrawMs = 0.0
             private set
-        private val renderer = ViewStrokeRenderer(CanvasStrokeRenderer.create(), this)
+        private val renderer = ViewStrokeRenderer(
+            CanvasStrokeRenderer.create(PencilTextureStore),
+            this,
+        )
         private val viewport = FloatArray(4)
         private val pageRect = RectF()
         private val paper = Paint().apply { color = Color.WHITE; isAntiAlias = true }
@@ -3175,15 +3242,13 @@ class InkCanvasView @JvmOverloads constructor(
         }
 
         private fun cachedInk(page: Page, visibleCount: Int): Bitmap? {
-            if (!page.loaded || visibleCount < 400 || page.strokes.size < 500 ||
-                activeStylusPointer != null || movingLasso
-            ) return null
+            if (!page.loaded || visibleCount < 250 || page.strokes.size < 300 || movingLasso) return null
             val scale = tessellationBucket(currentScale())
             val pixels = page.width.toDouble() * page.height * scale * scale
             if (pixels > 8_000_000.0 || pixels <= 0.0) return null
             val key = "${page.id}:${page.revision}:${page.meshRevision}:${page.strokes.size}:$scale"
             inkBitmaps.get(key)?.let { return it }
-            if (!zooming && !flinging && inkBitmapPending.add(key)) {
+            if (activeStylusPointer == null && !zooming && !flinging && inkBitmapPending.add(key)) {
                 val snapshot = page.strokes.toList()
                 val revision = page.revision
                 val meshRevision = page.meshRevision
@@ -3195,7 +3260,7 @@ class InkCanvasView @JvmOverloads constructor(
                         Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { image ->
                             val target = Canvas(image)
                             val transform = Matrix().apply { setScale(scale, scale) }
-                            val strokeRenderer = CanvasStrokeRenderer.create()
+                            val strokeRenderer = CanvasStrokeRenderer.create(PencilTextureStore)
                             for (stroke in snapshot) strokeRenderer.draw(target, stroke, transform)
                         }
                     }.getOrNull()
