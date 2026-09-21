@@ -20,11 +20,14 @@ raw MotionEvent + historical samples
 
 - 안정화는 digitizer noise와 같은 좌표계인 screen pixel 단위로 처리하고 AndroidX Ink가 기존 transform으로 page 좌표로 변환한다.
 - 속도(`distance / Δt`)가 빠르면 raw 좌표를 더 빠르게 따라가고, 느리고 작은 움직임에는 smoothing을 더 적용한다.
+- 이동 거리 자체도 smoothing 계수에 반영해 큰 의도적 이동은 속도가 낮더라도 과도하게 줄이지 않는다.
+- 0%는 정확한 bypass이며, 5~30%는 perceptual curve를 사용해 낮은 구간에서도 단계별 차이가 드러난다.
 - 방향 cosine으로 corner/cusp를 검출해 90도 전환과 빠른 반전에서는 raw 좌표를 92% 이상 따라간다.
 - 첫 8 sample의 큰 역방향 excursion은 outgoing 이동을 완화하고 복귀 sample을 빠르게 따라 start hook을 줄인다.
 - prediction은 최소 4 sample과 두 번의 안정된 방향이 확인된 뒤에만 허용하며 corner/start reversal에서는 잠시 중단한다.
-- lift hook/jump는 마지막 안정 좌표에서 끝내고 정상적인 마지막 이동은 endpoint를 88% 이상 따라간다.
+- lift hook/jump는 마지막 안정 좌표에서 끝내고 정상적인 마지막 이동은 endpoint를 88% 이상 따라간다. `ACTION_UP`에 묶인 historical sample도 commit 전에 같은 판정을 거친다.
 - `ACTION_MOVE`와 `ACTION_UP`에 묶인 historical samples도 순서대로 동일한 filter에 전달한다.
+- pressure는 위치·corner 판정과 독립된 adaptive filter에서 처리한다. 작은 pressure 진동은 줄이고 의도적인 press/release와 마지막 pressure는 빠르게 따라간다.
 - 0%에서는 MotionEvent를 재구성하지 않고 원본 입력을 그대로 wet ink와 commit에 전달한다.
 - 좌표 배열은 재사용하며 안정화가 꺼진 기본 경로에는 새 hot-path allocation이 없다.
 
@@ -46,9 +49,10 @@ raw MotionEvent + historical samples
 - 첫 8 sample 안의 reverse spike
 - pen-lift hook/jump 및 정상 continuation
 - 빠른 필기가 느린 필기보다 raw를 더 가깝게 추종하는지
-- 0/10/30/100%에서 0% exact pass-through와 단계적인 jitter 감소
+- 0/5/10/20/30/100%에서 0% exact pass-through와 단계적인 jitter 감소
 - prediction 시작 지연과 cusp suppression
 - NaN/Infinity driver sample 격리
+- pressure 0% exact pass-through, jitter 감소, intentional ramp 및 invalid sample 격리
 
 ## 기기 테스트
 

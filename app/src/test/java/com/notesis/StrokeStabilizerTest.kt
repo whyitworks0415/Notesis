@@ -51,6 +51,20 @@ class StrokeStabilizerTest {
     }
 
     @Test
+    fun `five through thirty percent have distinct useful strength`() {
+        val raw = (0..28).map { it * 1.5f to if (it % 2 == 0) 0.9f else -0.9f }
+        val e0 = yEnergy(run(0, raw))
+        val e5 = yEnergy(run(5, raw))
+        val e10 = yEnergy(run(10, raw))
+        val e20 = yEnergy(run(20, raw))
+        val e30 = yEnergy(run(30, raw))
+        assertTrue(e5 < e0)
+        assertTrue(e10 < e5)
+        assertTrue(e20 < e10)
+        assertTrue(e30 < e20)
+    }
+
+    @Test
     fun `curve direction and endpoint are retained`() {
         val raw = listOf(0f to 10f, 3f to 9.5f, 6f to 8f, 8f to 6f, 9.5f to 3f, 10f to 0f)
         val output = run(30, raw)
@@ -130,5 +144,54 @@ class StrokeStabilizerTest {
         assertTrue(filter.predictionAllowed)
         filter.add(6f, 3f, 32L)
         assertFalse(filter.predictionAllowed)
+    }
+
+    @Test
+    fun `pressure smoothing is independent and zero percent is raw`() {
+        val raw = listOf(0.45f, 0.56f, 0.44f, 0.55f, 0.43f)
+        val bypass = AdaptivePressureStabilizer()
+        bypass.reset(0, raw.first(), 0L)
+        val bypassed = raw.drop(1).mapIndexed { index, value ->
+            bypass.add(value, (index + 1L) * 8L)
+        }
+        assertEquals(raw.drop(1), bypassed)
+
+        val smooth = AdaptivePressureStabilizer()
+        smooth.reset(30, raw.first(), 0L)
+        val filtered = raw.drop(1).mapIndexed { index, value ->
+            smooth.add(value, (index + 1L) * 8L)
+        }
+        val rawVariation = raw.zipWithNext().sumOf { (a, b) ->
+            kotlin.math.abs(b - a).toDouble()
+        }
+        val filteredWithStart = listOf(raw.first()) + filtered
+        val filteredVariation = filteredWithStart.zipWithNext().sumOf { (a, b) ->
+            kotlin.math.abs(b - a).toDouble()
+        }
+        assertTrue(filteredVariation < rawVariation)
+    }
+
+    @Test
+    fun `intentional pressure change and final pressure are preserved`() {
+        val filter = AdaptivePressureStabilizer()
+        filter.reset(100, 0.2f, 0L)
+        val p1 = filter.add(0.35f, 8L)
+        val p2 = filter.add(0.55f, 16L)
+        val p3 = filter.add(0.8f, 24L, finalSample = true)
+        assertTrue(p1 > 0.2f)
+        assertTrue(p2 > p1)
+        assertTrue(p3 > p2)
+        assertTrue(p3 > 0.72f)
+    }
+
+    @Test
+    fun `invalid pressure cannot poison following samples`() {
+        val filter = AdaptivePressureStabilizer()
+        filter.reset(30, 0.5f, 0L)
+        val invalid = filter.add(Float.NaN, 8L)
+        assertTrue(invalid.isFinite())
+        val next = filter.add(0.7f, 16L)
+        assertTrue(next.isFinite())
+        assertTrue(next > invalid)
     }
 }

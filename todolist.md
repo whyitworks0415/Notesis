@@ -57,34 +57,36 @@ raw stylus input
 
 ### 분석 및 설계
 
-- [ ] `correctStrokeStart()`와 `smoothFreehandStroke()`가 wet/final geometry 차이, 시작점 보정, pen-up 지연에 미치는 영향을 측정한다.
-- [ ] Xournal++의 deadzone, velocity-aware Gaussian, cusp preservation 아이디어를 참고하되 Android/S Pen 입력 특성에 맞게 설계한다.
-- [ ] sanitizer, 위치 안정화, pressure 안정화, prediction, commit 단계를 독립적으로 테스트할 수 있게 분리한다.
+- [x] `correctStrokeStart()`와 `smoothFreehandStroke()`가 wet/final geometry 차이, 시작점 보정, pen-up 지연에 미치는 영향을 분석한다.
+- [x] Xournal++의 deadzone, velocity-aware Gaussian, cusp preservation 아이디어를 참고하되 Android/S Pen 입력 특성에 맞게 설계한다.
+- [x] sanitizer, 위치 안정화, pressure 안정화, prediction, commit 단계를 독립적으로 테스트할 수 있게 분리한다.
 
 ### 구현
 
-- [ ] 작은 고주파 jitter를 제거한다.
-- [ ] 의도적인 corner와 급회전을 보존한다.
-- [ ] 속도, 이동 거리, `Δt` 기반 adaptive smoothing을 적용한다.
-- [ ] 첫 4~8 sample에서 start spike/outlier를 판정하고 안전하게 보정한다.
-- [ ] pen-lift 직전 hook/jump를 판정하고 처리한다.
-- [ ] 작은 글씨, dot, 짧은 stroke를 보존한다.
-- [ ] stabilization 0%는 거의 raw 입력과 동일하게 유지한다.
-- [ ] 5~30% 구간에서도 차이를 느낄 수 있도록 strength mapping을 개선한다.
-- [ ] wet stroke와 pen-up 후 committed stroke 모양의 차이를 최소화한다.
-- [ ] auto-shape recognition이 stabilized trajectory를 기준으로 동작하는 편이 적절한지 검토하고 회귀 테스트한다.
-- [ ] pressure smoothing을 위치 smoothing과 별도 정책으로 처리한다.
+- [x] 작은 고주파 jitter를 제거한다.
+- [x] 의도적인 corner와 급회전을 보존한다.
+- [x] 속도, 이동 거리, `Δt` 기반 adaptive smoothing을 적용한다.
+- [x] 첫 4~8 sample에서 start spike/outlier를 판정하고 안전하게 보정한다.
+- [x] pen-lift 직전 hook/jump를 판정하고 처리한다.
+- [x] 작은 글씨, dot, 짧은 stroke를 보존한다.
+- [x] stabilization 0%는 raw 입력과 동일하게 유지한다.
+- [x] 5~30% 구간에서도 차이를 느낄 수 있도록 strength mapping을 개선한다.
+- [x] wet stroke와 pen-up 후 committed stroke 모양의 차이를 최소화한다.
+- [x] auto-shape recognition이 stabilized trajectory를 기준으로 동작하도록 검토하고 회귀 테스트한다.
+- [x] pressure smoothing을 위치 smoothing과 별도 정책으로 처리한다.
 
 ### 테스트
 
-- [ ] 직선 및 jitter 직선
-- [ ] 곡선
-- [ ] 90도 corner 및 빠른 방향 전환
-- [ ] 짧은 stroke 및 dot
-- [ ] start spike/outlier
-- [ ] lift spike/hook/jump
-- [ ] 빠른 필기 및 느린 필기
-- [ ] stabilization 0/5/10/20/30/100%
+- [x] 직선 및 jitter 직선
+- [x] 곡선
+- [x] 90도 corner 및 빠른 방향 전환
+- [x] 짧은 stroke 및 dot
+- [x] start spike/outlier
+- [x] lift spike/hook/jump
+- [x] 빠른 필기 및 느린 필기
+- [x] stabilization 0/5/10/20/30/100%
+
+자동 테스트는 완료했으며, S Pen 실기기에서 wet/final 시각 비교와 작은 글씨 감각 확인은 릴리스 머신에 연결된 Android 기기가 없어 후속 검증으로 남긴다.
 
 ---
 

@@ -1,6 +1,22 @@
 package com.notesis
 
+import kotlin.math.abs
 import kotlin.math.hypot
+import kotlin.math.pow
+
+/**
+ * Perceptual strength mapping for both position and pressure filters.
+ *
+ * A linear percentage made 5-15% practically indistinguishable from raw input.
+ * Zero remains an exact bypass; non-zero values get a small base response and
+ * then grow smoothly so 5/10/20/30% are useful rather than decorative.
+ */
+internal fun stabilizationAmount(strength: Int): Float {
+    val normalized = strength.coerceIn(0, 100) / 100f
+    if (normalized == 0f) return 0f
+    return (0.10f + 0.90f * normalized.toDouble().pow(0.72).toFloat())
+        .coerceIn(0f, 1f)
+}
 
 /**
  * Allocation-free streaming stabilizer for screen-space stylus samples.
@@ -28,7 +44,7 @@ internal class AdaptiveStrokeStabilizer {
     private var stableDirections = 0
 
     fun reset(strength: Int, rawX: Float, rawY: Float, timeMillis: Long) {
-        amount = strength.coerceIn(0, 100) / 100f
+        amount = stabilizationAmount(strength)
         x = rawX
         y = rawY
         lastRawX = rawX
@@ -76,9 +92,14 @@ internal class AdaptiveStrokeStabilizer {
             val dt = (timeMillis - lastTimeMillis).coerceIn(1L, MAX_SAMPLE_DT_MS).toFloat()
             val speed = distance / dt
             val speedResponse = (speed / FAST_SPEED_PX_PER_MS).coerceIn(0f, 1f)
+            val distanceResponse = (distance / INTENTIONAL_DISTANCE_PX).coerceIn(0f, 1f)
             // Slow, tiny motion is most likely digitizer noise. Fast writing
-            // follows the pen closely so smoothing does not turn into lag.
-            var alpha = 1f - amount * (MAX_SMOOTHING * (1f - speedResponse * 0.76f))
+            // and a clearly intentional long step follow the pen closely so
+            // smoothing does not turn into lag or shrink small handwriting.
+            val adaptiveSmoothing = MAX_SMOOTHING *
+                (1f - speedResponse * SPEED_RELEASE) *
+                (1f - distanceResponse * DISTANCE_RELEASE)
+            var alpha = 1f - amount * adaptiveSmoothing
             if (corner) alpha = maxOf(alpha, CORNER_ALPHA)
             // A reversal in the first 4-8 samples is the classic contact spike.
             // The outgoing excursion was already damped; follow the returning
@@ -117,6 +138,9 @@ internal class AdaptiveStrokeStabilizer {
         const val START_RETURN_ALPHA = 0.90f
         const val FINAL_ALPHA = 0.88f
         const val FAST_SPEED_PX_PER_MS = 1.25f
+        const val INTENTIONAL_DISTANCE_PX = 7f
+        const val SPEED_RELEASE = 0.76f
+        const val DISTANCE_RELEASE = 0.34f
         const val MIN_DIRECTION_DISTANCE = 0.45f
         const val MIN_START_SPIKE_DISTANCE = 1.5f
         const val CORNER_COSINE = 0.57f
@@ -125,6 +149,64 @@ internal class AdaptiveStrokeStabilizer {
         const val START_WINDOW_SAMPLES = 8
         const val MIN_PREDICTION_SAMPLES = 4
         const val MIN_STABLE_DIRECTIONS = 2
+        const val MAX_SAMPLE_DT_MS = 32L
+    }
+}
+
+/**
+ * Pressure is filtered independently from position.
+ *
+ * Small pressure oscillations get a gentle low-pass filter while a deliberate
+ * press/release follows quickly. Keeping this state separate prevents pressure
+ * noise from changing the position alpha or corner classification.
+ */
+internal class AdaptivePressureStabilizer {
+    var pressure: Float = 0f
+        private set
+
+    private var amount = 0f
+    private var lastRaw = 0f
+    private var lastTimeMillis = 0L
+    private var initialized = false
+
+    fun reset(strength: Int, rawPressure: Float, timeMillis: Long) {
+        amount = stabilizationAmount(strength)
+        pressure = sanitize(rawPressure, 0f)
+        lastRaw = pressure
+        lastTimeMillis = timeMillis
+        initialized = true
+    }
+
+    fun add(rawPressure: Float, timeMillis: Long, finalSample: Boolean = false): Float {
+        if (!initialized) {
+            reset(0, rawPressure, timeMillis)
+            return pressure
+        }
+        val raw = sanitize(rawPressure, lastRaw)
+        if (amount == 0f) {
+            pressure = raw
+        } else {
+            val dt = (timeMillis - lastTimeMillis).coerceIn(1L, MAX_SAMPLE_DT_MS).toFloat()
+            val velocity = abs(raw - lastRaw) / dt
+            val intent = (velocity / INTENTIONAL_PRESSURE_PER_MS).coerceIn(0f, 1f)
+            var alpha = 1f - amount * MAX_PRESSURE_SMOOTHING * (1f - intent * INTENT_RELEASE)
+            if (finalSample) alpha = maxOf(alpha, FINAL_PRESSURE_ALPHA)
+            pressure += (raw - pressure) * alpha.coerceIn(MIN_PRESSURE_ALPHA, 1f)
+        }
+        lastRaw = raw
+        lastTimeMillis = maxOf(lastTimeMillis, timeMillis)
+        return pressure
+    }
+
+    private fun sanitize(value: Float, fallback: Float): Float =
+        if (value.isFinite()) value.coerceIn(0f, 1f) else fallback
+
+    private companion object {
+        const val MAX_PRESSURE_SMOOTHING = 0.58f
+        const val MIN_PRESSURE_ALPHA = 0.28f
+        const val FINAL_PRESSURE_ALPHA = 0.86f
+        const val INTENTIONAL_PRESSURE_PER_MS = 0.035f
+        const val INTENT_RELEASE = 0.82f
         const val MAX_SAMPLE_DT_MS = 32L
     }
 }

@@ -874,6 +874,7 @@ class InkCanvasView @JvmOverloads constructor(
     private val predictedPointerCoordinates = arrayOf(MotionEvent.PointerCoords())
     private val predictionPolicy = InkPredictionPolicy()
     private val streamingStabilizer = AdaptiveStrokeStabilizer()
+    private val pressureStabilizer = AdaptivePressureStabilizer()
     private var stabilizingStroke = false
     private var stabilizedPointerProperties = arrayOf(MotionEvent.PointerProperties())
     private var stabilizedPointerCoordinates = arrayOf(MotionEvent.PointerCoords())
@@ -1647,6 +1648,11 @@ class InkCanvasView @JvmOverloads constructor(
                     stabilizingStroke = tool.isFreehandPen() && stabilizer > 0
                     streamingStabilizer.reset(stabilizer, event.getX(event.actionIndex),
                         event.getY(event.actionIndex), event.eventTime)
+                    pressureStabilizer.reset(
+                        stabilizer,
+                        event.getPressure(event.actionIndex),
+                        event.eventTime,
+                    )
                     predictionPolicy.reset(
                         event.getX(event.actionIndex),
                         event.getY(event.actionIndex),
@@ -1830,7 +1836,7 @@ class InkCanvasView @JvmOverloads constructor(
                     val pointerIndex = event.findPointerIndex(pointerId)
                     val penStroke = tool.isFreehandPen()
                     if (stabilizingStroke) {
-                        stabilizedHistoryEvent(event, pointerId)?.let { history ->
+                        stabilizedHistoryEvent(event, pointerId, endingStroke = true)?.let { history ->
                             try {
                                 if (predictionEnabled) predictor.record(history)
                                 wet.addToStroke(history, pointerId, strokeId, null)
@@ -1846,9 +1852,11 @@ class InkCanvasView @JvmOverloads constructor(
                             event.getY(pointerIndex) - lastStylusY, lastStylusDx, lastStylusDy)
                     }
                     val end = when {
-                        stabilizingStroke && unstable -> eventWithActivePoint(
-                            event, pointerId, streamingStabilizer.x, streamingStabilizer.y)
-                        stabilizingStroke -> stabilizedFinalEvent(event, pointerId)
+                        stabilizingStroke -> stabilizedFinalEvent(
+                            event,
+                            pointerId,
+                            rejectPosition = unstable,
+                        )
                         unstable -> eventWithActivePoint(event, pointerId, lastStylusX, lastStylusY)
                         else -> event
                     }
@@ -1886,6 +1894,7 @@ class InkCanvasView @JvmOverloads constructor(
         pointerId: Int,
         x: Float,
         y: Float,
+        pressure: Float? = null,
     ): MotionEvent {
         ensureStabilizedPointerCapacity(event.pointerCount)
         for (i in 0 until event.pointerCount) {
@@ -1894,6 +1903,7 @@ class InkCanvasView @JvmOverloads constructor(
             if (event.getPointerId(i) == pointerId) {
                 stabilizedPointerCoordinates[i].x = x
                 stabilizedPointerCoordinates[i].y = y
+                if (pressure != null) stabilizedPointerCoordinates[i].pressure = pressure
             }
         }
         return MotionEvent.obtain(
@@ -1922,22 +1932,31 @@ class InkCanvasView @JvmOverloads constructor(
         if (result == null) {
             streamingStabilizer.add(
                 event.getX(activeIndex), event.getY(activeIndex), event.eventTime)
+            val pressure = pressureStabilizer.add(
+                event.getPressure(activeIndex), event.eventTime)
             return eventWithActivePoint(
-                event, pointerId, streamingStabilizer.x, streamingStabilizer.y)
+                event, pointerId, streamingStabilizer.x, streamingStabilizer.y, pressure)
         }
 
         for (i in 0 until event.pointerCount) {
             event.getPointerCoords(i, stabilizedPointerCoordinates[i])
         }
         streamingStabilizer.add(event.getX(activeIndex), event.getY(activeIndex), event.eventTime)
+        val pressure = pressureStabilizer.add(
+            event.getPressure(activeIndex), event.eventTime)
         stabilizedPointerCoordinates[activeIndex].x = streamingStabilizer.x
         stabilizedPointerCoordinates[activeIndex].y = streamingStabilizer.y
+        stabilizedPointerCoordinates[activeIndex].pressure = pressure
         result.addBatch(event.eventTime, stabilizedPointerCoordinates, event.metaState)
         return result
     }
 
     /** Converts only history; ACTION_UP's current sample is finalized separately. */
-    private fun stabilizedHistoryEvent(event: MotionEvent, pointerId: Int): MotionEvent? {
+    private fun stabilizedHistoryEvent(
+        event: MotionEvent,
+        pointerId: Int,
+        endingStroke: Boolean = false,
+    ): MotionEvent? {
         if (event.historySize == 0) return null
         val activeIndex = event.findPointerIndex(pointerId)
         if (activeIndex < 0) return null
@@ -1946,13 +1965,26 @@ class InkCanvasView @JvmOverloads constructor(
             event.getPointerProperties(i, stabilizedPointerProperties[i])
             event.getHistoricalPointerCoords(i, 0, stabilizedPointerCoordinates[i])
         }
-        streamingStabilizer.add(
-            event.getHistoricalX(activeIndex, 0),
-            event.getHistoricalY(activeIndex, 0),
-            event.getHistoricalEventTime(0),
+        val firstX = event.getHistoricalX(activeIndex, 0)
+        val firstY = event.getHistoricalY(activeIndex, 0)
+        val firstTime = event.getHistoricalEventTime(0)
+        val rejectFirst = endingStroke && streamingStabilizer.shouldRejectLift(firstX, firstY)
+        if (!rejectFirst) {
+            streamingStabilizer.add(
+                firstX,
+                firstY,
+                firstTime,
+                finalSample = endingStroke && event.historySize == 1,
+            )
+        }
+        val firstPressure = pressureStabilizer.add(
+            event.getHistoricalPressure(activeIndex, 0),
+            firstTime,
+            finalSample = endingStroke && event.historySize == 1,
         )
         stabilizedPointerCoordinates[activeIndex].x = streamingStabilizer.x
         stabilizedPointerCoordinates[activeIndex].y = streamingStabilizer.y
+        stabilizedPointerCoordinates[activeIndex].pressure = firstPressure
         val result = MotionEvent.obtain(
             event.downTime,
             event.getHistoricalEventTime(0),
@@ -1973,25 +2005,52 @@ class InkCanvasView @JvmOverloads constructor(
             for (i in 0 until event.pointerCount) {
                 event.getHistoricalPointerCoords(i, history, stabilizedPointerCoordinates[i])
             }
-            streamingStabilizer.add(
-                event.getHistoricalX(activeIndex, history),
-                event.getHistoricalY(activeIndex, history),
-                event.getHistoricalEventTime(history),
+            val rawX = event.getHistoricalX(activeIndex, history)
+            val rawY = event.getHistoricalY(activeIndex, history)
+            val time = event.getHistoricalEventTime(history)
+            val reject = endingStroke && streamingStabilizer.shouldRejectLift(rawX, rawY)
+            if (!reject) {
+                streamingStabilizer.add(
+                    rawX,
+                    rawY,
+                    time,
+                    finalSample = endingStroke && history == event.historySize - 1,
+                )
+            }
+            val pressure = pressureStabilizer.add(
+                event.getHistoricalPressure(activeIndex, history),
+                time,
+                finalSample = endingStroke && history == event.historySize - 1,
             )
             stabilizedPointerCoordinates[activeIndex].x = streamingStabilizer.x
             stabilizedPointerCoordinates[activeIndex].y = streamingStabilizer.y
+            stabilizedPointerCoordinates[activeIndex].pressure = pressure
             result.addBatch(
-                event.getHistoricalEventTime(history), stabilizedPointerCoordinates, event.metaState)
+                time, stabilizedPointerCoordinates, event.metaState)
         }
         return result
     }
 
-    private fun stabilizedFinalEvent(event: MotionEvent, pointerId: Int): MotionEvent {
+    private fun stabilizedFinalEvent(
+        event: MotionEvent,
+        pointerId: Int,
+        rejectPosition: Boolean,
+    ): MotionEvent {
         val index = event.findPointerIndex(pointerId)
         if (index < 0) return MotionEvent.obtainNoHistory(event)
-        streamingStabilizer.add(
-            event.getX(index), event.getY(index), event.eventTime, finalSample = true)
-        return eventWithActivePoint(event, pointerId, streamingStabilizer.x, streamingStabilizer.y)
+        if (!rejectPosition) {
+            streamingStabilizer.add(
+                event.getX(index), event.getY(index), event.eventTime, finalSample = true)
+        }
+        val pressure = pressureStabilizer.add(
+            event.getPressure(index), event.eventTime, finalSample = true)
+        return eventWithActivePoint(
+            event,
+            pointerId,
+            streamingStabilizer.x,
+            streamingStabilizer.y,
+            pressure,
+        )
     }
 
     /** Feeds every real historical sample to the common raw/stabilized gate. */
