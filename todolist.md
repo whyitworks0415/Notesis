@@ -66,7 +66,7 @@ Notesis의 stroke/PDF rendering과 refinement 파이프라인을 최적화한다
 
 ---
 
-## ✅ 4단계 — 긴 문서 / PDF 메모리 최적화
+## 4단계 — 긴 문서 / PDF 메모리 최적화 ⏭️ 건너뜀
 
 긴 노트와 큰 PDF에서 메모리 사용량과 스크롤 성능을 최적화한다.
 
@@ -86,7 +86,7 @@ Notesis의 stroke/PDF rendering과 refinement 파이프라인을 최적화한다
 
 ---
 
-## 5단계 — 저장 / 편집 작업 최적화
+## 5단계 — 저장 / 편집 작업 최적화 ✅
 
 Notesis의 편집 후 저장 경로를 분석하고 UI thread 부하를 줄인다.
 

@@ -66,21 +66,14 @@ class PdfSource private constructor(
 
     @Volatile private var viewportGeneration = 0
     @Volatile private var wantedPages: Set<Int> = emptySet()
-    @Volatile private var wantedFullResolutionPages: Set<Int> = emptySet()
     @Volatile private var wantedWidthBucket = 0
 
     @Volatile
     private var closed = false
 
-    private val cacheBudget = splitPdfCacheBudget(cacheBytes)
-
-    /** Small whole-page previews for the current page's short navigation halo. */
-    private val previewCache = object : LruCache<Long, Bitmap>(cacheBudget.previewBytes) {
-        override fun sizeOf(key: Long, value: Bitmap) = value.byteCount
-    }
-
-    /** Full whole-page renders are retained only for pages actually on screen. */
-    private val fullPageCache = object : LruCache<Long, Bitmap>(cacheBudget.fullPageBytes) {
+    // [cacheBytes] is one total budget. Half still fits one 2048px A4 page at
+    // the minimum budget; the other half keeps a screenful of sharp tiles.
+    private val cache = object : LruCache<Long, Bitmap>((cacheBytes / 2).coerceAtLeast(1)) {
         override fun sizeOf(key: Long, value: Bitmap) = value.byteCount
     }
 
@@ -93,7 +86,7 @@ class PdfSource private constructor(
 
     private val pendingTiles = mutableMapOf<TileKey, Int>()
 
-    private val tileCache = object : LruCache<TileKey, Bitmap>(cacheBudget.tileBytes) {
+    private val tileCache = object : LruCache<TileKey, Bitmap>((cacheBytes - cacheBytes / 2).coerceAtLeast(1)) {
         override fun sizeOf(key: TileKey, value: Bitmap) = value.byteCount
     }
 
@@ -106,35 +99,17 @@ class PdfSource private constructor(
      * opening PdfRenderer, so a fast scroll does not have to render every page
      * passed on the way to the one where the user stopped.
      */
-    fun prioritizePages(
-        pageIndices: List<Int>,
-        widthPx: Int,
-        fullResolutionPageIndices: List<Int>,
-    ) {
+    fun prioritizePages(pageIndices: List<Int>, widthPx: Int) {
         val ordered = pageIndices.filter { it in 0 until pageCount }.distinct()
         if (ordered.isEmpty()) return
         val wanted = ordered.toSet()
-        val fullResolution = fullResolutionPageIndices
-            .filter { it in wanted }
-            .toSet()
         val widthBucket = bucketFor(widthPx)
-        var changed = false
         synchronized(stateLock) {
             if (closed) return
-            if (pdfViewportCacheChanged(
-                    wantedPages,
-                    wanted,
-                    wantedFullResolutionPages,
-                    fullResolution,
-                    wantedWidthBucket,
-                    widthBucket,
-                )
-            ) {
+            if (wanted != wantedPages || widthBucket != wantedWidthBucket) {
                 wantedPages = wanted
-                wantedFullResolutionPages = fullResolution
                 wantedWidthBucket = widthBucket
                 viewportGeneration++
-                changed = true
                 // Work that has not opened PdfRenderer yet is disposable. A
                 // queue reset is what makes the stopped-at page genuinely jump
                 // ahead instead of merely waiting for old no-op jobs to drain.
@@ -143,14 +118,7 @@ class PdfSource private constructor(
                 pendingTiles.clear()
             }
         }
-        if (changed) retainActivePages(wanted, fullResolution)
-        for (page in ordered) {
-            bitmap(
-                page,
-                pdfRenderWidthForPage(page, fullResolution, widthPx, MIN_PAGE_WIDTH),
-                request = true,
-            )
-        }
+        for (page in ordered) bitmap(page, widthPx, request = true)
     }
 
     /** Page size in world units, or null if the page is out of range. */
@@ -171,7 +139,7 @@ class PdfSource private constructor(
     fun bitmap(index: Int, wantPx: Int, request: Boolean = true): Bitmap? {
         val width = bucketFor(wantPx)
         val key = keyOf(index, width)
-        cacheFor(width).get(key)?.let { return it }
+        cache.get(key)?.let { return it }
         // A coarser render of the same page is a better thing to show than blank
         // paper while the sharper one is still being made.
         val fallback = coarserThan(index, width)
@@ -373,26 +341,10 @@ class PdfSource private constructor(
     private fun coarserThan(index: Int, width: Int): Bitmap? {
         var candidate = width / 2
         while (candidate >= MIN_PAGE_WIDTH) {
-            cacheFor(candidate).get(keyOf(index, candidate))?.let { return it }
+            cache.get(keyOf(index, candidate))?.let { return it }
             candidate /= 2
         }
         return null
-    }
-
-    private fun cacheFor(width: Int): LruCache<Long, Bitmap> =
-        if (width <= MIN_PAGE_WIDTH) previewCache else fullPageCache
-
-    /** Drop strong references for pages outside the active viewport halo. */
-    private fun retainActivePages(previewPages: Set<Int>, fullResolutionPages: Set<Int>) {
-        for (key in previewCache.snapshot().keys) {
-            if ((key shr 32).toInt() !in previewPages) previewCache.remove(key)
-        }
-        for (key in fullPageCache.snapshot().keys) {
-            if ((key shr 32).toInt() !in fullResolutionPages) fullPageCache.remove(key)
-        }
-        for (key in tileCache.snapshot().keys) {
-            if (key.pageIndex !in fullResolutionPages) tileCache.remove(key)
-        }
     }
 
     private fun request(key: Long, render: () -> Bitmap?) {
@@ -406,9 +358,7 @@ class PdfSource private constructor(
         }
         val accepted = runCatching { worker.execute {
             val page = (key shr 32).toInt()
-            val width = key.toInt()
-            val targetCache = cacheFor(width)
-            val bitmap = if (targetCache.get(key) == null && isRelevant(page, generation)) {
+            val bitmap = if (cache.get(key) == null && isRelevant(page, generation)) {
                 runCatching { render() }.getOrNull()
             } else null
             synchronized(stateLock) {
@@ -417,7 +367,7 @@ class PdfSource private constructor(
             if (bitmap != null) {
                 val keep = synchronized(stateLock) {
                     if (shouldPublishRender(generation, viewportGeneration, closed)) {
-                        targetCache.put(key, bitmap)
+                        if (key >= 0) cache.put(key, bitmap)
                         true
                     } else false
                 }
@@ -542,8 +492,7 @@ class PdfSource private constructor(
         // wait on its lock; discard queued tiles and finish native cleanup on a
         // single process-wide closer once the current render returns.
         worker.shutdownNow()
-        previewCache.evictAll()
-        fullPageCache.evictAll()
+        cache.evictAll()
         tileCache.evictAll()
         closeWorker.execute {
             synchronized(renderLock) {
@@ -568,6 +517,8 @@ class PdfSource private constructor(
         // maximum zoom instead of magnifying the last tile bucket twofold.
         private const val MAX_TILE_DENSITY = MAX_CANVAS_SCALE
         private const val DETAIL_MARGIN = 0.25f
+        private const val MIN_CACHE_BYTES = 64 * 1024 * 1024
+        private const val MAX_CACHE_BYTES = 256 * 1024 * 1024
         private const val TRACE_PDF_RENDER = "Notesis PDF render"
         private val closeWorker = Executors.newSingleThreadExecutor { runnable ->
             Thread(runnable, "notesis-pdf-close").apply { isDaemon = true }
@@ -584,13 +535,11 @@ class PdfSource private constructor(
 
         fun cacheBytesFor(context: android.content.Context): Int {
             val manager = context.getSystemService(android.app.ActivityManager::class.java)
-            return pdfCacheBytesForMemoryClass(
-                manager?.memoryClass ?: 128,
-                manager?.isLowRamDevice == true,
-            )
+            val bytes = (manager?.largeMemoryClass ?: 128).toLong() * 1024 * 1024 / 2
+            return bytes.coerceIn(MIN_CACHE_BYTES.toLong(), MAX_CACHE_BYTES.toLong()).toInt()
         }
 
-        fun open(file: File, cacheBytes: Int = PDF_CACHE_MIN_BYTES): PdfSource? {
+        fun open(file: File, cacheBytes: Int = MIN_CACHE_BYTES): PdfSource? {
             if (!file.isFile) return null
             return runCatching {
                 val descriptor =

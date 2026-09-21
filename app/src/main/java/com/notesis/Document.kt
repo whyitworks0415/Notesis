@@ -21,6 +21,7 @@ import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * A picture placed on a page, in page-local units like everything else on it.
@@ -154,6 +155,15 @@ class Page(
  */
 class Document(val pages: MutableList<Page>) {
 
+    /** Runtime-only generation for save coalescing; never written to disk. */
+    internal val saveSessionId: Long = nextSaveSession.getAndIncrement()
+    internal var editRevision: Long = 0L
+        private set
+
+    internal fun markEdited() {
+        editRevision++
+    }
+
     // Page offsets used to be summed on every call, and every frame asks for
     // them once per visible page - quadratic in page count, which a 200-page
     // PDF turns into real scroll lag. They are cached and rebuilt on change.
@@ -279,6 +289,37 @@ class Document(val pages: MutableList<Page>) {
 
     companion object {
         const val PAGE_GAP = 48f
+        private val nextSaveSession = AtomicLong(1L)
+    }
+}
+
+internal data class SaveGeneration(
+    val sessionId: Long,
+    val editRevision: Long,
+    val title: String,
+)
+
+/** Tracks generations before a potentially large immutable snapshot is made. */
+internal class SaveRequestLedger {
+    private val pending = mutableMapOf<String, SaveGeneration>()
+    private val active = mutableMapOf<String, SaveGeneration>()
+    private val completed = mutableMapOf<String, SaveGeneration>()
+
+    fun contains(id: String, generation: SaveGeneration): Boolean =
+        pending[id] == generation || active[id] == generation || completed[id] == generation
+
+    fun queued(id: String, generation: SaveGeneration) {
+        pending[id] = generation
+    }
+
+    fun started(id: String, generation: SaveGeneration) {
+        if (pending[id] == generation) pending.remove(id)
+        active[id] = generation
+    }
+
+    fun finished(id: String, generation: SaveGeneration, successful: Boolean) {
+        if (active[id] == generation) active.remove(id)
+        if (successful) completed[id] = generation
     }
 }
 
@@ -327,6 +368,7 @@ class NoteStore(context: Context) {
     private val saveQueueLock = Any()
     private val pendingInkSaves = mutableMapOf<String, PendingSave>()
     private val drainingInkSaves = mutableSetOf<String>()
+    private val saveLedger = SaveRequestLedger()
 
     /**
      * Every folder that has a note in it. Folders are not objects with their own
@@ -761,6 +803,7 @@ class NoteStore(context: Context) {
     private data class PendingSave(
         val title: String,
         val snapshot: SaveSnapshot,
+        val generation: SaveGeneration,
     )
 
     /**
@@ -809,9 +852,28 @@ class NoteStore(context: Context) {
      * large, avoidable heap spike and made leaving a dense note crash-prone.
      */
     fun saveLater(id: String, title: String, document: Document) {
+        enqueueSave(id, title, document)
+    }
+
+    /**
+     * Bypasses the UI debounce when a note closes or the app enters the
+     * background. Duplicate lifecycle events are rejected before snapshotting.
+     */
+    fun flushSave(id: String, title: String, document: Document) {
+        enqueueSave(id, title, document)
+    }
+
+    private fun enqueueSave(id: String, title: String, document: Document) {
+        val generation = SaveGeneration(document.saveSessionId, document.editRevision, title)
+        if (synchronized(saveQueueLock) { saveLedger.contains(id, generation) }) return
+
+        // The snapshot is the only potentially sizeable main-thread allocation.
+        // Checking on both sides keeps ON_STOP + dispose duplicates cheap.
         val snapshot = snapshotForSave(document)
         val startDrain = synchronized(saveQueueLock) {
-            pendingInkSaves[id] = PendingSave(title, snapshot)
+            if (saveLedger.contains(id, generation)) return@synchronized false
+            pendingInkSaves[id] = PendingSave(title, snapshot, generation)
+            saveLedger.queued(id, generation)
             drainingInkSaves.add(id)
         }
         if (startDrain) saveWorker.execute { drainInkSaves(id) }
@@ -820,13 +882,26 @@ class NoteStore(context: Context) {
     private fun drainInkSaves(id: String) {
         while (true) {
             val pending = synchronized(saveQueueLock) {
-                pendingInkSaves.remove(id) ?: run {
+                val next = pendingInkSaves.remove(id) ?: run {
                     drainingInkSaves.remove(id)
                     return
                 }
+                saveLedger.started(id, next.generation)
+                next
             }
             val snapshot = pending.snapshot
-            val saved = runCatching { save(id, pending.title, snapshot.document) }.isSuccess
+            var saved = false
+            var attempt = 0
+            while (!saved && attempt < SAVE_ATTEMPTS) {
+                attempt++
+                saved = runCatching { save(id, pending.title, snapshot.document) }.isSuccess
+            }
+            synchronized(saveQueueLock) {
+                saveLedger.finished(id, pending.generation, saved)
+            }
+            if (!saved) {
+                android.util.Log.e("NoteStore", "Failed to save note $id after $attempt attempts")
+            }
             if (!saved) continue
             mainHandler.post {
                 // Do not mark newer work clean. A page only adopts the worker's
@@ -1447,6 +1522,7 @@ class NoteStore(context: Context) {
         const val ARCHIVE_MARK = "notesis.json"
         const val ARCHIVE_VERSION = 1
         const val THUMB_INTERVAL_MS = 20_000L
+        private const val SAVE_ATTEMPTS = 3
         const val VERSION = 1
     }
 }

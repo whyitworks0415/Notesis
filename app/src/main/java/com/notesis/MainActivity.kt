@@ -207,6 +207,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -2482,6 +2485,7 @@ private fun NoteScreen(
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = context as? LifecycleOwner
     val scope = rememberCoroutineScope()
     var showVoice by remember { mutableStateOf(false) }
     var voiceRevision by remember { mutableIntStateOf(0) }
@@ -2610,14 +2614,12 @@ private fun NoteScreen(
     val imageCache = remember(note.id) {
         // Bounded by bytes, not by count: a handful of large pictures is what
         // would run the heap out, and counting entries cannot see that.
-        byteSizedBitmapCache(IMAGE_CACHE_BYTES)
-    }
-    val templateCache = remember(note.id) { byteSizedBitmapCache(TEMPLATE_CACHE_BYTES) }
-    DisposableEffect(imageCache, templateCache) {
-        onDispose {
-            imageCache.evictAll()
-            templateCache.evictAll()
+        object : LruCache<String, Bitmap>(IMAGE_CACHE_BYTES) {
+            override fun sizeOf(key: String, value: Bitmap) = value.byteCount
         }
+    }
+    DisposableEffect(imageCache) {
+        onDispose { imageCache.evictAll() }
     }
     // Folded away, the bar becomes a handle that can be dragged; unfolding puts
     // it back wherever that handle was left, which is the point of moving it.
@@ -3099,11 +3101,8 @@ private fun NoteScreen(
                             }.getOrNull()?.also { imageCache.put(imageId, it) }
                         }
                         templateLoader = { templateId ->
-                            templateCache.get(templateId) ?: runCatching {
-                                android.graphics.BitmapFactory.decodeFile(
-                                    store.templateFile(templateId).path,
-                                )
-                            }.getOrNull()?.also { templateCache.put(templateId, it) }
+                            runCatching { android.graphics.BitmapFactory.decodeFile(
+                                store.templateFile(templateId).path) }.getOrNull()
                         }
                         // Rendered on a worker; the dialog is a UI thing.
                         onCaptured = { bitmap -> post { captured = bitmap } }
@@ -3211,15 +3210,21 @@ private fun NoteScreen(
         // Anything still unsaved when the screen goes away gets written now. If
         // the note was closed before it finished opening, the canvas never took
         // ownership of the PdfSource, so close it here instead of leaking it.
-        DisposableEffect(Unit) {
+        DisposableEffect(note.id, lifecycleOwner) {
+            fun flushLatest() {
+                val view = canvas ?: return
+                penStore.setLastPage(note.id, view.currentPageIndex())
+                store.flushSave(note.id, note.title, view.document)
+            }
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_STOP) flushLatest()
+            }
+            lifecycleOwner?.lifecycle?.addObserver(observer)
             onDispose {
+                lifecycleOwner?.lifecycle?.removeObserver(observer)
                 val view = canvas
                 if (view != null) {
-                    penStore.setLastPage(note.id, view.currentPageIndex())
-                    // A synchronous final save here blocked the UI thread while
-                    // the note was disappearing. The store owns a serial worker
-                    // that outlives this composable, so leaving stays immediate.
-                    store.saveLater(note.id, note.title, view.document)
+                    flushLatest()
                 } else {
                     opened?.second?.close()
                 }
@@ -3942,6 +3947,7 @@ private fun ReferencePanel(
     onClose: () -> Unit,
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = context as? LifecycleOwner
     val density = LocalDensity.current
     var opened by remember { mutableStateOf<Pair<Document, PdfSource?>?>(null) }
     var view by remember { mutableStateOf<InkCanvasView?>(null) }
@@ -3949,8 +3955,7 @@ private fun ReferencePanel(
     var popupLassoCount by remember { mutableIntStateOf(0) }
     var noteMenu by remember { mutableStateOf(false) }
     var pageMenu by remember { mutableStateOf(false) }
-    val imageCache = remember(noteId) { byteSizedBitmapCache(REFERENCE_IMAGE_CACHE_BYTES) }
-    val templateCache = remember(noteId) { byteSizedBitmapCache(TEMPLATE_CACHE_BYTES) }
+    val title = notes.find { it.id == noteId }?.title ?: noteId
     // What has been typed into the picker's search box. Cleared with the menu,
     // so opening it again offers everything rather than the last hunt.
     var noteQuery by remember { mutableStateOf("") }
@@ -3964,13 +3969,20 @@ private fun ReferencePanel(
             store.load(noteId) to PdfSource.open(store.pdfFile(noteId), PdfSource.cacheBytesFor(context))
         }
     }
-    // This panel's own PdfSource, closed here - the note underneath opened a
-    // different one, or none, and does not know this one exists.
-    DisposableEffect(noteId) {
+    // The panel owns both its PDF source and its pending edits. Flush on app
+    // background as well as close; the generation guard makes both events safe.
+    DisposableEffect(noteId, lifecycleOwner) {
+        fun flushLatest() {
+            view?.let { store.flushSave(noteId, title, it.document) }
+        }
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) flushLatest()
+        }
+        lifecycleOwner?.lifecycle?.addObserver(observer)
         onDispose {
+            lifecycleOwner?.lifecycle?.removeObserver(observer)
+            flushLatest()
             opened?.second?.close()
-            imageCache.evictAll()
-            templateCache.evictAll()
         }
     }
     // A note or a page change refits the page to the panel, when that is asked
@@ -3988,17 +4000,15 @@ private fun ReferencePanel(
         }
     }
 
-    // No debounce: a stroke made here and lost to a quick close is worse than
-    // the occasional extra write, and NoteStore only ever writes dirty pages
-    // anyway - see the comment on the note's own autosave.
+    // Match the main note's quiet-period save. Closing or backgrounding bypasses
+    // this delay through flushSave above, so debounce does not risk data loss.
     LaunchedEffect(popupEdits) {
         if (popupEdits == 0) return@LaunchedEffect
+        delay(AUTOSAVE_DELAY_MS)
         val v = view ?: return@LaunchedEffect
-        val title = notes.find { it.id == noteId }?.title ?: return@LaunchedEffect
         store.saveLater(noteId, title, v.document)
     }
 
-    val title = notes.find { it.id == noteId }?.title ?: noteId
     val pageCount = opened?.first?.pages?.size ?: 0
     val panelShape = RoundedCornerShape(16.dp)
     val panelBorder = Brush.linearGradient(
@@ -4172,17 +4182,14 @@ private fun ReferencePanel(
                                 pageLoader = { p, epsilon -> store.loadPage(noteId, p, epsilon) }
                                 maskLoader = { p, epsilon -> store.loadMasks(noteId, p, epsilon) }
                                 imageLoader = { imageId ->
-                                    imageCache.get(imageId) ?: runCatching {
+                                    runCatching {
                                         android.graphics.BitmapFactory
                                             .decodeFile(store.imageFile(noteId, imageId).path)
-                                    }.getOrNull()?.also { imageCache.put(imageId, it) }
+                                    }.getOrNull()
                                 }
                                 templateLoader = { templateId ->
-                                    templateCache.get(templateId) ?: runCatching {
-                                        android.graphics.BitmapFactory.decodeFile(
-                                            store.templateFile(templateId).path,
-                                        )
-                                    }.getOrNull()?.also { templateCache.put(templateId, it) }
+                                    runCatching { android.graphics.BitmapFactory.decodeFile(
+                                        store.templateFile(templateId).path) }.getOrNull()
                                 }
                                 open(ready.first, ready.second, initialPage = page)
                                 onStrokesChanged = { popupEdits++ }
@@ -5176,11 +5183,6 @@ private fun ToolbarDivider() {
     )
 }
 
-private fun byteSizedBitmapCache(maxBytes: Int): LruCache<String, Bitmap> =
-    object : LruCache<String, Bitmap>(maxBytes) {
-        override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
-    }
-
 private const val AUTOSAVE_DELAY_MS = 1200L
 private const val INK_INDEX_IDLE_MS = 8000L
 private const val SEARCH_DEBOUNCE_MS = 220L
@@ -5195,8 +5197,6 @@ private const val CRASH_LOG = "crash.log"
 private const val CRASH_LOG_MAX = 256L * 1024
 
 private const val IMAGE_CACHE_BYTES = 48 * 1024 * 1024
-private const val REFERENCE_IMAGE_CACHE_BYTES = 24 * 1024 * 1024
-private const val TEMPLATE_CACHE_BYTES = 16 * 1024 * 1024
 
 /** What the tool row needs. Past it a floating bar is empty space. */
 private val FLOATING_BAR_MAX = 940.dp
