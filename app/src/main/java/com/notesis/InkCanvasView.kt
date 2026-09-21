@@ -339,6 +339,14 @@ internal class FloatPointBuffer(initialCapacity: Int = 2048) {
     }
 }
 
+private data class InkBitmapKey(
+    val pageId: String,
+    val revision: Long,
+    val meshRevision: Long,
+    val strokeCount: Int,
+    val scale: Float,
+)
+
 private class TextRender(
     val layout: StaticLayout,
     val logicalWidth: Float,
@@ -1415,6 +1423,9 @@ class InkCanvasView @JvmOverloads constructor(
         if (index != currentPage) {
             lastPageDirection = if (index > currentPage) 1 else -1
             currentPage = index
+            dry.retainInkBitmaps(
+                nearbyPageIndices(INK_CACHE_RADIUS).mapTo(HashSet()) { document.pages[it].id },
+            )
             val radius = if (flinging || viewportSpeedPxPerSecond > FAST_VIEWPORT_PX_PER_SECOND) {
                 0
             } else {
@@ -2450,10 +2461,13 @@ class InkCanvasView @JvmOverloads constructor(
             document.pages[index].pdfPageIndex.takeIf { it >= 0 }
         }
         if (pages.isEmpty()) return
+        val visiblePdfPages = visiblePages().mapNotNull { page ->
+            page.pdfPageIndex.takeIf { it >= 0 }
+        }
         val center = document.pages[currentPage.coerceIn(document.pages.indices)]
         val width = (center.width * currentScale())
             .toInt().coerceIn(PDF_PREFETCH_MIN_WIDTH, PdfSource.baseWidthLimit())
-        source.prioritizePages(pages, width)
+        source.prioritizePages(pages, width, visiblePdfPages)
     }
 
     /**
@@ -3471,10 +3485,10 @@ class InkCanvasView @JvmOverloads constructor(
 
         private val strokeIndexes = IdentityHashMap<Page, StrokeGrid>()
         private val textLayouts = java.util.WeakHashMap<PageImage, TextRender>()
-        private val inkBitmaps = object : LruCache<String, Bitmap>(48 * 1024 * 1024) {
-            override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
+        private val inkBitmaps = object : LruCache<InkBitmapKey, Bitmap>(INK_CACHE_BYTES) {
+            override fun sizeOf(key: InkBitmapKey, value: Bitmap): Int = value.byteCount
         }
-        private val inkBitmapPending = HashSet<String>()
+        private val inkBitmapPending = HashSet<InkBitmapKey>()
         private var inkBitmapGeneration = 0
 
         fun clearStrokeIndexes() {
@@ -3488,6 +3502,15 @@ class InkCanvasView @JvmOverloads constructor(
 
         fun dropStrokeIndex(page: Page) {
             strokeIndexes.remove(page)
+            for (key in inkBitmaps.snapshot().keys) {
+                if (key.pageId == page.id) inkBitmaps.remove(key)
+            }
+        }
+
+        fun retainInkBitmaps(pageIds: Set<String>) {
+            for (key in inkBitmaps.snapshot().keys) {
+                if (key.pageId !in pageIds) inkBitmaps.remove(key)
+            }
         }
 
         fun strokesIn(page: Page, left: Float, top: Float, right: Float, bottom: Float): List<Stroke> =
@@ -3502,7 +3525,13 @@ class InkCanvasView @JvmOverloads constructor(
             val scale = tessellationBucket(currentScale())
             val pixels = page.width.toDouble() * page.height * scale * scale
             if (pixels > 8_000_000.0 || pixels <= 0.0) return null
-            val key = "${page.id}:${page.revision}:${page.meshRevision}:${page.strokes.size}:$scale"
+            val key = InkBitmapKey(
+                page.id,
+                page.revision,
+                page.meshRevision,
+                page.strokes.size,
+                scale,
+            )
             inkBitmaps.get(key)?.let { return it }
             if (activeStylusPointer == null && !viewportInteracting && !zooming && !flinging &&
                 inkBitmapPending.add(key)
@@ -4009,7 +4038,8 @@ class InkCanvasView @JvmOverloads constructor(
         const val EPSILON_SLOP = 0.00001f
         const val PREFETCH_SETTLE_MS = 280L
         const val PREFETCH_SLOW_RADIUS = 1
-        const val PREFETCH_STOP_RADIUS = 3
+        /** Current page plus one neighbor in each direction fits the preview budget. */
+        const val PREFETCH_STOP_RADIUS = 1
         const val FAST_VIEWPORT_PX_PER_SECOND = 2200f
         const val PDF_PREFETCH_MIN_WIDTH = 1024
         const val LONG_PRESS_MS = 350L
@@ -4032,7 +4062,10 @@ class InkCanvasView @JvmOverloads constructor(
         const val LASSO_PADDING = 10f
         const val LASSO_SAMPLE_DISTANCE_PX = 2f
         /** Pages this far either side of the screen stay in memory. */
-        const val KEEP_PAGES = 3
+        const val KEEP_PAGES = 2
+        const val INK_CACHE_RADIUS = 1
+        /** One maximum-size dense-page raster plus a little LRU headroom. */
+        const val INK_CACHE_BYTES = 36 * 1024 * 1024
         /** What every LatencyData field holds until it is filled in. */
         const val LATENCY_UNSET = Long.MIN_VALUE
         const val MIN_REPORT_MS = 2

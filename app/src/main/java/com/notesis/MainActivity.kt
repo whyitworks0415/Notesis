@@ -2610,12 +2610,14 @@ private fun NoteScreen(
     val imageCache = remember(note.id) {
         // Bounded by bytes, not by count: a handful of large pictures is what
         // would run the heap out, and counting entries cannot see that.
-        object : LruCache<String, Bitmap>(IMAGE_CACHE_BYTES) {
-            override fun sizeOf(key: String, value: Bitmap) = value.byteCount
-        }
+        byteSizedBitmapCache(IMAGE_CACHE_BYTES)
     }
-    DisposableEffect(imageCache) {
-        onDispose { imageCache.evictAll() }
+    val templateCache = remember(note.id) { byteSizedBitmapCache(TEMPLATE_CACHE_BYTES) }
+    DisposableEffect(imageCache, templateCache) {
+        onDispose {
+            imageCache.evictAll()
+            templateCache.evictAll()
+        }
     }
     // Folded away, the bar becomes a handle that can be dragged; unfolding puts
     // it back wherever that handle was left, which is the point of moving it.
@@ -3097,8 +3099,11 @@ private fun NoteScreen(
                             }.getOrNull()?.also { imageCache.put(imageId, it) }
                         }
                         templateLoader = { templateId ->
-                            runCatching { android.graphics.BitmapFactory.decodeFile(
-                                store.templateFile(templateId).path) }.getOrNull()
+                            templateCache.get(templateId) ?: runCatching {
+                                android.graphics.BitmapFactory.decodeFile(
+                                    store.templateFile(templateId).path,
+                                )
+                            }.getOrNull()?.also { templateCache.put(templateId, it) }
                         }
                         // Rendered on a worker; the dialog is a UI thing.
                         onCaptured = { bitmap -> post { captured = bitmap } }
@@ -3944,6 +3949,8 @@ private fun ReferencePanel(
     var popupLassoCount by remember { mutableIntStateOf(0) }
     var noteMenu by remember { mutableStateOf(false) }
     var pageMenu by remember { mutableStateOf(false) }
+    val imageCache = remember(noteId) { byteSizedBitmapCache(REFERENCE_IMAGE_CACHE_BYTES) }
+    val templateCache = remember(noteId) { byteSizedBitmapCache(TEMPLATE_CACHE_BYTES) }
     // What has been typed into the picker's search box. Cleared with the menu,
     // so opening it again offers everything rather than the last hunt.
     var noteQuery by remember { mutableStateOf("") }
@@ -3960,7 +3967,11 @@ private fun ReferencePanel(
     // This panel's own PdfSource, closed here - the note underneath opened a
     // different one, or none, and does not know this one exists.
     DisposableEffect(noteId) {
-        onDispose { opened?.second?.close() }
+        onDispose {
+            opened?.second?.close()
+            imageCache.evictAll()
+            templateCache.evictAll()
+        }
     }
     // A note or a page change refits the page to the panel, when that is asked
     // for. Not a resize: a resize now scales the page along with its frame, and
@@ -4161,14 +4172,17 @@ private fun ReferencePanel(
                                 pageLoader = { p, epsilon -> store.loadPage(noteId, p, epsilon) }
                                 maskLoader = { p, epsilon -> store.loadMasks(noteId, p, epsilon) }
                                 imageLoader = { imageId ->
-                                    runCatching {
+                                    imageCache.get(imageId) ?: runCatching {
                                         android.graphics.BitmapFactory
                                             .decodeFile(store.imageFile(noteId, imageId).path)
-                                    }.getOrNull()
+                                    }.getOrNull()?.also { imageCache.put(imageId, it) }
                                 }
                                 templateLoader = { templateId ->
-                                    runCatching { android.graphics.BitmapFactory.decodeFile(
-                                        store.templateFile(templateId).path) }.getOrNull()
+                                    templateCache.get(templateId) ?: runCatching {
+                                        android.graphics.BitmapFactory.decodeFile(
+                                            store.templateFile(templateId).path,
+                                        )
+                                    }.getOrNull()?.also { templateCache.put(templateId, it) }
                                 }
                                 open(ready.first, ready.second, initialPage = page)
                                 onStrokesChanged = { popupEdits++ }
@@ -5162,6 +5176,11 @@ private fun ToolbarDivider() {
     )
 }
 
+private fun byteSizedBitmapCache(maxBytes: Int): LruCache<String, Bitmap> =
+    object : LruCache<String, Bitmap>(maxBytes) {
+        override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
+    }
+
 private const val AUTOSAVE_DELAY_MS = 1200L
 private const val INK_INDEX_IDLE_MS = 8000L
 private const val SEARCH_DEBOUNCE_MS = 220L
@@ -5176,6 +5195,8 @@ private const val CRASH_LOG = "crash.log"
 private const val CRASH_LOG_MAX = 256L * 1024
 
 private const val IMAGE_CACHE_BYTES = 48 * 1024 * 1024
+private const val REFERENCE_IMAGE_CACHE_BYTES = 24 * 1024 * 1024
+private const val TEMPLATE_CACHE_BYTES = 16 * 1024 * 1024
 
 /** What the tool row needs. Past it a floating bar is empty space. */
 private val FLOATING_BAR_MAX = 940.dp

@@ -27,6 +27,14 @@ class DocumentPagingTest {
     }
 
     @Test
+    fun `thousand page viewport lookup remains bounded to visible pages`() {
+        val document = document(1_000)
+        val pitch = 200f + Document.PAGE_GAP
+
+        assertEquals(500..502, document.pagesIntersecting(500 * pitch + 20f, 502 * pitch + 10f))
+    }
+
+    @Test
     fun `ink in a page gap is rejected`() {
         val document = document(2)
 
