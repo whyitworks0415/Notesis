@@ -96,6 +96,16 @@ class PenStore(context: Context) {
         get() = prefs.getBoolean(PREDICTION, true)
         set(value) = prefs.edit().putBoolean(PREDICTION, value).apply()
 
+    /** Zero follows display refresh; 4/6/9 are fixed diagnostic comparison points. */
+    var predictionLeadMs: Int
+        get() = prefs.getInt(PREDICTION_LEAD_MS, 0).let {
+            if (it == 4 || it == 6 || it == 9) it else 0
+        }
+        set(value) = prefs.edit().putInt(
+            PREDICTION_LEAD_MS,
+            if (value == 4 || value == 6 || value == 9) value else 0,
+        ).apply()
+
     /** Whether sharpening waits for the pinch to end. See InkCanvasView. */
     var deferDetail: Boolean
         get() = prefs.getBoolean(DEFER_DETAIL, true)
@@ -195,6 +205,7 @@ class PenStore(context: Context) {
         private const val KEY = "tools"
         private const val DOCKED = "docked"
         private const val PREDICTION = "prediction"
+        private const val PREDICTION_LEAD_MS = "predictionLeadMs"
         private const val DEFER_DETAIL = "deferDetail"
         private const val SKIN = "skin"
         private const val LAST_PAGE = "lastPage:"

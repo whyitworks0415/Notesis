@@ -22,6 +22,7 @@ import android.view.Choreographer
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.VelocityTracker
+import android.view.View
 import android.view.ViewConfiguration
 import android.widget.FrameLayout
 import androidx.ink.authoring.ExperimentalLatencyDataApi
@@ -486,6 +487,100 @@ private fun Tool.isFreehandPen(): Boolean =
     this == Tool.PEN || this == Tool.PRESSURE_PEN || this == Tool.PENCIL
 
 /**
+ * A tiny, allocation-free visual cap over the platform's transient prediction.
+ *
+ * The predicted geometry itself still belongs to [InProgressStrokesView] and
+ * is replaced by the next real event. This view only softens the last few
+ * pixels of a fast predicted tip with two translucent antialiased strokes. It
+ * never uses a blur mask and never participates in committed stroke geometry.
+ */
+private class PredictionHeadView(context: Context) : View(context) {
+    private val outer = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val inner = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+    private var startX = 0f
+    private var startY = 0f
+    private var endX = 0f
+    private var endY = 0f
+    private var visibleHead = false
+    private val hide = Runnable {
+        if (visibleHead) {
+            visibleHead = false
+            postInvalidateOnAnimation()
+        }
+    }
+
+    init {
+        setWillNotDraw(false)
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+    }
+
+    fun show(
+        realX: Float,
+        realY: Float,
+        predictedX: Float,
+        predictedY: Float,
+        colorArgb: Int,
+        widthPx: Float,
+    ) {
+        val dx = predictedX - realX
+        val dy = predictedY - realY
+        val length = hypot(dx, dy)
+        if (length < MIN_LENGTH_PX || !length.isFinite()) {
+            clear()
+            return
+        }
+        val density = resources.displayMetrics.density
+        val cap = maxOf(widthPx * 2.2f, density * MIN_CAP_DP)
+            .coerceAtMost(density * MAX_LENGTH_DP)
+        val shown = minOf(length, cap)
+        startX = predictedX - dx * shown / length
+        startY = predictedY - dy * shown / length
+        endX = predictedX
+        endY = predictedY
+
+        val sourceAlpha = Color.alpha(colorArgb)
+        outer.color = Color.argb(sourceAlpha * OUTER_ALPHA / 255,
+            Color.red(colorArgb), Color.green(colorArgb), Color.blue(colorArgb))
+        inner.color = Color.argb(sourceAlpha * INNER_ALPHA / 255,
+            Color.red(colorArgb), Color.green(colorArgb), Color.blue(colorArgb))
+        outer.strokeWidth = maxOf(1f, widthPx * 1.45f)
+        inner.strokeWidth = maxOf(1f, widthPx * 0.72f)
+        visibleHead = true
+        removeCallbacks(hide)
+        postDelayed(hide, MAX_LIFETIME_MS)
+        postInvalidateOnAnimation()
+    }
+
+    fun clear() {
+        removeCallbacks(hide)
+        if (!visibleHead) return
+        visibleHead = false
+        postInvalidateOnAnimation()
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        if (!visibleHead) return
+        canvas.drawLine(startX, startY, endX, endY, outer)
+        canvas.drawLine(startX, startY, endX, endY, inner)
+    }
+
+    private companion object {
+        const val MIN_LENGTH_PX = 1.25f
+        const val MIN_CAP_DP = 4f
+        const val MAX_LENGTH_DP = 12f
+        const val MAX_LIFETIME_MS = 24L
+        const val OUTER_ALPHA = 28
+        const val INNER_ALPHA = 48
+    }
+}
+
+/**
  * The note surface: pages stacked down a document, committed ink drawn beneath a
  * front-buffered wet-ink layer, one transform mapping document space to screen.
  *
@@ -671,6 +766,9 @@ class InkCanvasView @JvmOverloads constructor(
      */
     var predictionEnabled: Boolean = true
 
+    /** Zero is automatic; fixed 4/6/9ms values make A/B comparison repeatable. */
+    var predictionLeadMs: Int = 0
+
     /** Enables diagnostic sampling only while its HUD is actually visible. */
     var latencyMonitoringEnabled: Boolean = false
         set(value) {
@@ -767,12 +865,14 @@ class InkCanvasView @JvmOverloads constructor(
     private var pdf: PdfSource? = null
 
     private val wet = InProgressStrokesView(context)
+    private val predictionHead = PredictionHeadView(context)
     private val dry = DryLayer(context)
-    /** Android chooses its own horizon, so an overlong result is clipped to 9ms. */
+    /** Android chooses its own horizon, so an overlong result is clipped locally. */
     private val predictor: MotionEventPredictor
     /** The common one-pen prediction path reuses these instead of feeding the GC every sample. */
     private val predictedPointerProperties = arrayOf(MotionEvent.PointerProperties())
     private val predictedPointerCoordinates = arrayOf(MotionEvent.PointerCoords())
+    private val predictionPolicy = InkPredictionPolicy()
     private val streamingStabilizer = AdaptiveStrokeStabilizer()
     private var stabilizingStroke = false
     private var stabilizedPointerProperties = arrayOf(MotionEvent.PointerProperties())
@@ -996,7 +1096,11 @@ class InkCanvasView @JvmOverloads constructor(
         isClickable = true
         addView(dry, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(wet, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        addView(predictionHead, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         wet.textureBitmapStore = PencilTextureStore
+        // InProgressStrokesView chooses its front-buffer implementation for
+        // supported hardware. Do not force the deprecated high-latency helper;
+        // eager initialization below removes its first-contact setup cost.
         wet.eagerInit()
         wet.addFinishedStrokesListener(this)
         wet.setLatencyDataCallback(object : LatencyDataCallback {
@@ -1087,6 +1191,7 @@ class InkCanvasView @JvmOverloads constructor(
         refineFuture = null
         refiningPages = emptyList()
         refiner.shutdownNow()
+        predictionHead.clear()
         pdf?.diagnostics = null
         pdf?.close()
         pdf = null
@@ -1542,6 +1647,12 @@ class InkCanvasView @JvmOverloads constructor(
                     stabilizingStroke = tool.isFreehandPen() && stabilizer > 0
                     streamingStabilizer.reset(stabilizer, event.getX(event.actionIndex),
                         event.getY(event.actionIndex), event.eventTime)
+                    predictionPolicy.reset(
+                        event.getX(event.actionIndex),
+                        event.getY(event.actionIndex),
+                        event.eventTime,
+                    )
+                    predictionHead.clear()
                     // MotionEventPredictor is useful only for wet freehand ink.
                     // Recording eraser/lasso/shape gestures ran its filter at
                     // full S Pen rate even though those tools never call predict().
@@ -1623,7 +1734,7 @@ class InkCanvasView @JvmOverloads constructor(
                     stabilizedMoveEvent(event, pointerId)
                 } else event
                 val sharpTurn = if (stabilizingStroke) {
-                    !streamingStabilizer.predictionAllowed
+                    false
                 } else {
                     val x = event.getX(index)
                     val y = event.getY(index)
@@ -1638,9 +1749,17 @@ class InkCanvasView @JvmOverloads constructor(
                     }
                     turn
                 }
+                val maximumLeadMs = predictionLeadForRefresh(
+                    predictionLeadMs,
+                    display?.refreshRate ?: 60f,
+                )
+                var leadMs = predictionLeadForEvent(inkEvent, pointerId, maximumLeadMs)
+                if (sharpTurn || (stabilizingStroke && !streamingStabilizer.predictionAllowed)) {
+                    leadMs = 0
+                }
                 if (predictionEnabled) predictor.record(inkEvent)
-                val rawPrediction = if (predictionEnabled && !sharpTurn) predictor.predict() else null
-                val predicted = rawPrediction?.let { predictionAtLead(inkEvent, it) }
+                val rawPrediction = if (predictionEnabled && leadMs > 0) predictor.predict() else null
+                val predicted = rawPrediction?.let { predictionAtLead(inkEvent, it, leadMs.toLong()) }
                 try {
                     if (latencyMonitoringEnabled && predicted != null) {
                         // Ground truth for the tip's steadiness: the distance
@@ -1650,6 +1769,7 @@ class InkCanvasView @JvmOverloads constructor(
                         )
                     }
                     wet.addToStroke(inkEvent, pointerId, strokeId, predicted)
+                    updatePredictionHead(inkEvent, predicted, pointerId, leadMs)
                 } finally {
                     if (predicted !== rawPrediction) predicted?.recycle()
                     rawPrediction?.recycle()
@@ -1662,6 +1782,7 @@ class InkCanvasView @JvmOverloads constructor(
                 val pointerId = activeStylusPointer ?: return false
                 // A palm/finger lifting must not finish the stylus stroke.
                 if (event.getPointerId(event.actionIndex) != pointerId) return true
+                predictionHead.clear()
                 pendingTextPlacement?.let { position ->
                     endStylus()
                     onTextRequested?.invoke(position.first, position.second, position.third)
@@ -1743,6 +1864,7 @@ class InkCanvasView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_CANCEL -> {
+                predictionHead.clear()
                 if (predictionEnabled && activeStrokeId != null) predictor.record(event)
                 activeStrokeId?.let { wet.cancelStroke(it, event) }
                 if (erasing) finishEraseGesture()
@@ -1872,12 +1994,71 @@ class InkCanvasView @JvmOverloads constructor(
         return eventWithActivePoint(event, pointerId, streamingStabilizer.x, streamingStabilizer.y)
     }
 
+    /** Feeds every real historical sample to the common raw/stabilized gate. */
+    private fun predictionLeadForEvent(
+        event: MotionEvent,
+        pointerId: Int,
+        maximumLeadMs: Int,
+    ): Int {
+        val index = event.findPointerIndex(pointerId)
+        if (index < 0) return 0
+        for (history in 0 until event.historySize) {
+            predictionPolicy.add(
+                event.getHistoricalX(index, history),
+                event.getHistoricalY(index, history),
+                event.getHistoricalEventTime(history),
+                maximumLeadMs,
+            )
+        }
+        return predictionPolicy.add(
+            event.getX(index),
+            event.getY(index),
+            event.eventTime,
+            maximumLeadMs,
+        )
+    }
+
+    private fun updatePredictionHead(
+        real: MotionEvent,
+        predicted: MotionEvent?,
+        pointerId: Int,
+        leadMs: Int,
+    ) {
+        if (predicted == null || !predictionPolicy.shouldShowSoftHead(leadMs) ||
+            !tool.isFreehandPen() || dottedPattern != 0
+        ) {
+            predictionHead.clear()
+            return
+        }
+        val realIndex = real.findPointerIndex(pointerId)
+        val predictedIndex = predicted.findPointerIndex(pointerId)
+        if (realIndex < 0 || predictedIndex < 0) {
+            predictionHead.clear()
+            return
+        }
+        val pressureScale = if (tool == Tool.PRESSURE_PEN) {
+            0.35f + real.getPressure(realIndex).coerceIn(0f, 1f) * 0.65f
+        } else 1f
+        predictionHead.show(
+            real.getX(realIndex),
+            real.getY(realIndex),
+            predicted.getX(predictedIndex),
+            predicted.getY(predictedIndex),
+            colorArgb,
+            strokeWidth * currentScale() * pressureScale,
+        )
+    }
+
     /**
      * MotionEventPredictor has no horizon argument. Keep its filtered direction,
-     * but interpolate an overlong result back to a fixed 9ms lead.
+     * but interpolate an overlong result back to the selected adaptive lead.
      */
-    private fun predictionAtLead(real: MotionEvent, predicted: MotionEvent): MotionEvent {
-        val fraction = predictionLeadFraction(real.eventTime, predicted.eventTime, PREDICTION_LEAD_MS)
+    private fun predictionAtLead(
+        real: MotionEvent,
+        predicted: MotionEvent,
+        leadMs: Long,
+    ): MotionEvent {
+        val fraction = predictionLeadFraction(real.eventTime, predicted.eventTime, leadMs)
         if (fraction >= 1f) return predicted
         val properties = if (predicted.pointerCount == 1) {
             predictedPointerProperties
@@ -1901,7 +2082,7 @@ class InkCanvasView @JvmOverloads constructor(
         }
         return MotionEvent.obtain(
             real.downTime,
-            real.eventTime + PREDICTION_LEAD_MS,
+            real.eventTime + leadMs,
             MotionEvent.ACTION_MOVE,
             predicted.pointerCount,
             properties,
@@ -1922,6 +2103,7 @@ class InkCanvasView @JvmOverloads constructor(
         removeCallbacks(longPress)
         selectingText = false
         if (activeStylusPointer != null) onDrawingChanged?.invoke(false)
+        predictionHead.clear()
         activeStylusPointer = null
         if (Build.VERSION.SDK_INT >= 35) {
             // Let an idle note fall back to the display's normal adaptive rate.
@@ -4100,7 +4282,6 @@ class InkCanvasView @JvmOverloads constructor(
         const val LATENCY_UNSET = Long.MIN_VALUE
         const val MIN_REPORT_MS = 2
         const val MAX_REPORT_MS = 40
-        const val PREDICTION_LEAD_MS = 9L
         const val MASK_TAP_PX = 6f
         const val MASK_OUTLINE_PX = 2f
         const val MASK_OPAQUE = 0xFF000000.toInt()

@@ -1599,6 +1599,8 @@ private fun PenDialog(
     /** Global rather than per tool, but this is where a hand is being set up. */
     prediction: Boolean,
     onPrediction: (Boolean) -> Unit,
+    predictionLeadMs: Int,
+    onPredictionLeadMs: (Int) -> Unit,
     deferDetail: Boolean,
     onDeferDetail: (Boolean) -> Unit,
     stabilizer: Int,
@@ -1728,6 +1730,25 @@ private fun PenDialog(
                             color = MaterialTheme.colorScheme.outline,
                         )
                     }
+                }
+                if (prediction) {
+                    Text("예측 거리", style = MaterialTheme.typography.bodyMedium)
+                    Row(Modifier.horizontalScroll(rememberScrollState())) {
+                        listOf(0 to "자동", 4 to "4 ms", 6 to "6 ms", 9 to "9 ms")
+                            .forEach { (lead, label) ->
+                                FilterChip(
+                                    selected = predictionLeadMs == lead,
+                                    onClick = { onPredictionLeadMs(lead) },
+                                    label = { Text(label) },
+                                    modifier = Modifier.padding(end = 6.dp),
+                                )
+                            }
+                    }
+                    Text(
+                        "자동은 60Hz에서 9ms, 90Hz 이상에서 6ms를 상한으로 사용합니다",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline,
+                    )
                 }
                 Spacer(Modifier.height(10.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2630,6 +2651,7 @@ private fun NoteScreen(
     // preferences: where the toolbar sits is a habit, not a per-note choice.
     var docked by remember { mutableStateOf(penStore.docked) }
     var prediction by remember { mutableStateOf(penStore.prediction) }
+    var predictionLeadMs by remember { mutableIntStateOf(penStore.predictionLeadMs) }
     var deferDetail by remember { mutableStateOf(penStore.deferDetail) }
     var stabilizer by remember { mutableIntStateOf(penStore.stabilizer) }
     var highlighterAboveInk by remember { mutableStateOf(penStore.highlighterAboveInk) }
@@ -3120,6 +3142,7 @@ private fun NoteScreen(
                         backdrop.paused = moving || drawingPage
                     }
                     view.predictionEnabled = prediction
+                    view.predictionLeadMs = predictionLeadMs
                     view.latencyMonitoringEnabled = showLatency
                     view.deferDetail = deferDetail
                     view.stabilizer = stabilizer
@@ -3411,6 +3434,11 @@ private fun NoteScreen(
                     prediction = it
                     penStore.prediction = it
                 },
+                predictionLeadMs = predictionLeadMs,
+                onPredictionLeadMs = {
+                    predictionLeadMs = it
+                    penStore.predictionLeadMs = it
+                },
                 deferDetail = deferDetail,
                 onDeferDetail = {
                     deferDetail = it
@@ -3567,6 +3595,10 @@ private fun NoteScreen(
         selectionColorMode?.let { colorMode ->
             PenDialog(mode = colorMode, pen = settings.getValue(colorMode),
                 prediction = prediction, onPrediction = { prediction = it; penStore.prediction = it },
+                predictionLeadMs = predictionLeadMs,
+                onPredictionLeadMs = {
+                    predictionLeadMs = it; penStore.predictionLeadMs = it
+                },
                 deferDetail = deferDetail, onDeferDetail = { deferDetail = it; penStore.deferDetail = it },
                 stabilizer = stabilizer,
                 onStabilizer = { stabilizer = it; penStore.stabilizer = it },
