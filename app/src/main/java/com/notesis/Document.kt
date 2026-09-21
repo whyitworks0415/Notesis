@@ -109,12 +109,19 @@ class Page(
     /** Changes when stroke meshes are rebuilt without changing saved ink. */
     var meshRevision: Long = 0L
 
+    /** Generated geometry only; this is deliberately absent from the saved format. */
+    @Volatile var renderState: RenderState = RenderState.Complete
+
     /**
      * Whether this page's strokes have been read off disk yet. Opening a note
      * used to decode every page before anything could be drawn, which makes the
      * wait grow with the note rather than with what is on screen.
      */
     var loaded: Boolean = true
+        set(value) {
+            field = value
+            if (!value) renderState = RenderState.Dirty
+        }
 
     /** Stroke count from the last save, for pages not loaded this session. */
     var savedStrokeCount: Int = 0

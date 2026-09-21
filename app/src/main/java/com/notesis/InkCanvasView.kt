@@ -54,6 +54,7 @@ import androidx.input.motionprediction.MotionEventPredictor
 import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.exp
@@ -718,11 +719,18 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** True between the second finger going down and the pinch ending. */
     private var zooming = false
+    /** True while fingers own the viewport, including a one-finger pan. */
+    private var viewportInteracting = false
     /** A three-finger panel gesture must never leak into the two-finger scaler. */
     private var suppressScaleUntilGestureEnd = false
 
     /** Whether detail work should be held off right now. */
-    private fun holdingDetail(): Boolean = deferDetail && zooming
+    private fun holdingDetail(): Boolean = shouldDeferDetail(
+        deferDetail,
+        viewportInteracting,
+        zooming,
+        flinging,
+    )
 
     /** 팝업 노트는 아무리 축소해도 페이지 폭이 패널 폭보다 작아지지 않습니다. */
     var minimumScaleIsFitWidth: Boolean = false
@@ -938,6 +946,9 @@ class InkCanvasView @JvmOverloads constructor(
         prefetchNearbyPages(PREFETCH_STOP_RADIUS)
     }
     @Volatile private var refineRequestSerial = 0
+    @Volatile private var viewportRenderGeneration = 0
+    private var refineFuture: Future<*>? = null
+    private var refiningPages: List<Page> = emptyList()
     @Volatile private var disposed = false
 
     private sealed interface Edit {
@@ -1037,7 +1048,10 @@ class InkCanvasView @JvmOverloads constructor(
         dry.clearStrokeIndexes()
         pdfPriorityInitialized = false
         document.invalidateLayout()
-        for (page in document.pages) page.tessellatedFor = 0f
+        for (page in document.pages) {
+            page.tessellatedFor = 0f
+            page.renderState = RenderState.Dirty
+        }
         scheduleRefine()
         this.pdf = pdf
         pdf?.diagnostics = latency
@@ -1075,11 +1089,15 @@ class InkCanvasView @JvmOverloads constructor(
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
-        stopFling()
+        stopFling(resumeDetail = false)
         removeCallbacks(refineRunnable)
         removeCallbacks(prefetchRunnable)
         disposed = true
         refineRequestSerial++
+        viewportRenderGeneration++
+        refineFuture?.cancel(true)
+        refineFuture = null
+        refiningPages = emptyList()
         refiner.shutdownNow()
         pdf?.diagnostics = null
         pdf?.close()
@@ -1235,6 +1253,7 @@ class InkCanvasView @JvmOverloads constructor(
         for (page in changed) {
             page.dirty = true
             page.revision++
+            page.renderState = RenderState.Dirty
         }
         dry.invalidate()
         onStrokesChanged?.invoke()
@@ -1320,6 +1339,7 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun onTransformChanged() {
+        viewportRenderGeneration++
         clampTransform()
         documentToScreen.invert(screenToDocument)
         // Input can arrive several times inside one display interval. Ask for
@@ -1451,7 +1471,7 @@ class InkCanvasView @JvmOverloads constructor(
                 // frame. Freeze the page before capturing screenToPage; if the
                 // page moves afterwards, wet ink and the physical tip no longer
                 // share the same coordinate system for the rest of the stroke.
-                stopFling()
+                stopFling(resumeDetail = false)
                 releaseVelocity()
                 zooming = false
                 // Unbuffered dispatch is what gets the S Pen's full sample rate
@@ -1801,7 +1821,11 @@ class InkCanvasView @JvmOverloads constructor(
         trackVelocity(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                stopFling()
+                stopFling(resumeDetail = false)
+                viewportInteracting = true
+                // A delayed idle refine may still be waiting from the previous
+                // viewport. Cancel it as soon as a new interaction begins.
+                scheduleRefine()
                 onViewportInteractionChanged?.invoke(true)
                 val focus = focusOf(event, skipPointerIndex = -1)
                 lastFocusX = focus[0]
@@ -1821,7 +1845,7 @@ class InkCanvasView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_POINTER_UP -> {
-                stopFling()
+                stopFling(resumeDetail = false)
                 gestureMaxPointers = maxOf(gestureMaxPointers, event.pointerCount)
                 // A second finger is the start of a pinch, and from here until
                 // the hand lifts the page is drawn from what is already in hand.
@@ -1926,12 +1950,15 @@ class InkCanvasView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_UP -> {
+                val endedZoom = zooming
                 startFling()
+                viewportInteracting = false
                 viewportSpeedPxPerSecond = 0f
                 viewportWasFast = false
                 releaseVelocity()
                 maybeHandleTap()
                 endZoom()
+                if (!endedZoom && !flinging) resumeViewportDetail()
                 // A real fling keeps moving the page after the hand lifts, so
                 // keep the expensive live glass recording paused until it ends.
                 if (!flinging) onViewportInteractionChanged?.invoke(false)
@@ -1940,10 +1967,13 @@ class InkCanvasView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_CANCEL -> {
+                val endedZoom = zooming
+                viewportInteracting = false
                 viewportSpeedPxPerSecond = 0f
                 viewportWasFast = false
                 releaseVelocity()
                 endZoom()
+                if (!endedZoom) resumeViewportDetail()
                 onViewportInteractionChanged?.invoke(false)
                 suppressScaleUntilGestureEnd = false
                 return true
@@ -1967,11 +1997,17 @@ class InkCanvasView @JvmOverloads constructor(
         }
         if (!zooming) return
         zooming = false
-        dry.postInvalidateOnAnimation()
         // Run the work suppressed during the gesture once, from its final
-        // viewport and scale, and publish the exact final toolbar value.
-        scheduleStoppedPrefetch()
+        // viewport and scale, and publish the exact final toolbar value. A
+        // fling remains interactive until its last animation frame.
         reportZoom(force = true)
+        if (!flinging) resumeViewportDetail()
+    }
+
+    private fun resumeViewportDetail() {
+        if (disposed) return
+        dry.postInvalidateOnAnimation()
+        scheduleStoppedPrefetch()
         scheduleRefine()
     }
 
@@ -2047,10 +2083,12 @@ class InkCanvasView @JvmOverloads constructor(
         }
     }
 
-    private fun stopFling() {
+    private fun stopFling(resumeDetail: Boolean = true) {
+        val wasFlinging = flinging
         flinging = false
         removeCallbacks(flingStep)
         onViewportInteractionChanged?.invoke(false)
+        if (wasFlinging && resumeDetail && !viewportInteracting) resumeViewportDetail()
     }
 
     private val flingStep = object : Runnable {
@@ -2201,11 +2239,24 @@ class InkCanvasView @JvmOverloads constructor(
             }
             (page to strokes).takeIf { strokes.isNotEmpty() }
         }
-        if (toLoad.isEmpty() && work.isEmpty()) return
+        if (toLoad.isEmpty() && work.isEmpty()) {
+            for (page in visible) {
+                page.renderState = completedRenderState(
+                    page.loaded,
+                    page.strokes.isEmpty() || abs(page.tessellatedFor - target) < EPSILON_SLOP,
+                )
+            }
+            return
+        }
 
         val loader = pageLoader
-        runCatching { refiner.execute {
-            if (serial != refineRequestSerial) return@execute
+        val pages = (toLoad + work.map { it.first }).distinct()
+        pages.forEach { it.renderState = RenderState.Rendering }
+        refiningPages = pages
+        val future = runCatching { refiner.submit {
+            fun obsolete(): Boolean = disposed || serial != refineRequestSerial ||
+                Thread.currentThread().isInterrupted
+            if (obsolete()) return@submit
             val refineStarted = if (latency.enabled) System.nanoTime() else 0L
             if (refineStarted != 0L) Trace.beginSection(TRACE_MESH_REFINE)
             val masksLoader = maskLoader
@@ -2213,33 +2264,42 @@ class InkCanvasView @JvmOverloads constructor(
             // geometry for ink that may be far off screen. Establish a modest,
             // crisp base mesh first and refine only the visible part below.
             val loadEpsilon = epsilonFor(minOf(target, BASE_TESSELLATION_SCALE))
-            val loaded: List<Pair<Page, List<Stroke>>>
-            val loadedMasks: List<Pair<Page, List<PageMask>>>
-            val built: List<Triple<Page, List<Stroke>, List<Stroke>>>
+            val loaded = ArrayList<Pair<Page, List<Stroke>>>(toLoad.size)
+            val loadedMasks = ArrayList<Pair<Page, List<PageMask>>>(toLoad.size)
+            val built = ArrayList<Triple<Page, List<Stroke>, List<Stroke>>>(work.size)
+            var refinedCount = 0
             try {
-                loaded = toLoad.mapNotNull { page ->
-                    loader?.let { page to it(page, loadEpsilon) }
+                for (page in toLoad) {
+                    if (obsolete()) return@submit
+                    loader?.let {
+                        val strokes = it(page, loadEpsilon)
+                        loaded += page to strokes
+                        refinedCount += strokes.size
+                    }
+                    if (obsolete()) return@submit
+                    masksLoader?.let { loadedMasks += page to it(page, loadEpsilon) }
                 }
-                loadedMasks = toLoad.mapNotNull { page ->
-                    masksLoader?.let { page to it(page, loadEpsilon) }
-                }
-                built = work.map { (page, snapshot) ->
-                    Triple(
-                        page,
-                        snapshot,
-                        snapshot.map {
-                            Stroke(it.brush.copy(epsilon = strokeEpsilon(it.brush.size, epsilon)), it.inputs)
-                        },
-                    )
+                for ((page, snapshot) in work) {
+                    if (obsolete()) return@submit
+                    val rebuilt = ArrayList<Stroke>(snapshot.size)
+                    for (stroke in snapshot) {
+                        if (obsolete()) return@submit
+                        rebuilt += Stroke(
+                            stroke.brush.copy(epsilon = strokeEpsilon(stroke.brush.size, epsilon)),
+                            stroke.inputs,
+                        )
+                        refinedCount++
+                    }
+                    built += Triple(page, snapshot, rebuilt)
                 }
             } finally {
                 if (refineStarted != 0L) {
                     val elapsed = System.nanoTime() - refineStarted
                     Trace.endSection()
-                    latency.addRefine(elapsed,
-                        toLoad.sumOf { it.strokes.size } + work.sumOf { it.second.size })
+                    latency.addRefine(elapsed, refinedCount)
                 }
             }
+            if (obsolete()) return@submit
             post {
                 if (disposed || serial != refineRequestSerial ||
                     tessellationBucket(currentScale()) != target
@@ -2260,6 +2320,7 @@ class InkCanvasView @JvmOverloads constructor(
                     }
                     page.loaded = true
                     page.tessellatedFor = minOf(target, BASE_TESSELLATION_SCALE)
+                    page.renderState = RenderState.ViewportCached
                 }
                 for ((page, snapshot, rebuilt) in built) {
                     val replacements = IdentityHashMap<Stroke, Stroke>()
@@ -2279,10 +2340,24 @@ class InkCanvasView @JvmOverloads constructor(
                     // Nothing about the saved file changed: same inputs, same
                     // brush, only the generated outline. Do not dirty the page.
                 }
-                dry.invalidate()
+                for (page in pages) {
+                    page.renderState = completedRenderState(
+                        page.loaded,
+                        page.strokes.isEmpty() || abs(page.tessellatedFor - target) < EPSILON_SLOP,
+                    )
+                }
+                refiningPages = emptyList()
+                refineFuture = null
+                dry.postInvalidateOnAnimation()
                 if (loaded.isNotEmpty()) scheduleRefine()
             }
-        } }
+        } }.getOrNull()
+        if (future == null) {
+            pages.forEach { if (it.renderState == RenderState.Rendering) it.renderState = RenderState.Dirty }
+            refiningPages = emptyList()
+        } else {
+            refineFuture = future
+        }
     }
 
     /**
@@ -2421,6 +2496,7 @@ class InkCanvasView @JvmOverloads constructor(
                     }
                     page.loaded = true
                     page.tessellatedFor = BASE_TESSELLATION_SCALE
+                    page.renderState = RenderState.ViewportCached
                     changed = true
                 }
                 if (changed) dry.invalidate()
@@ -2438,6 +2514,12 @@ class InkCanvasView @JvmOverloads constructor(
         if (disposed) return
         removeCallbacks(refineRunnable)
         refineRequestSerial++
+        refineFuture?.cancel(true)
+        refineFuture = null
+        for (page in refiningPages) {
+            if (page.renderState == RenderState.Rendering) page.renderState = RenderState.Dirty
+        }
+        refiningPages = emptyList()
         // Nothing at all while the pinch is on. The zero-delay path below exists
         // so a page that has never been read does not wait to appear, and during
         // a pinch that path fires on every page scrolled into view - a full read
@@ -3401,6 +3483,7 @@ class InkCanvasView @JvmOverloads constructor(
             inkBitmaps.evictAll()
             inkBitmapPending.clear()
             inkBitmapGeneration++
+            viewportRenderGeneration++
         }
 
         fun dropStrokeIndex(page: Page) {
@@ -3421,25 +3504,39 @@ class InkCanvasView @JvmOverloads constructor(
             if (pixels > 8_000_000.0 || pixels <= 0.0) return null
             val key = "${page.id}:${page.revision}:${page.meshRevision}:${page.strokes.size}:$scale"
             inkBitmaps.get(key)?.let { return it }
-            if (activeStylusPointer == null && !zooming && !flinging && inkBitmapPending.add(key)) {
+            if (activeStylusPointer == null && !viewportInteracting && !zooming && !flinging &&
+                inkBitmapPending.add(key)
+            ) {
                 val snapshot = page.strokes.toList()
                 val revision = page.revision
                 val meshRevision = page.meshRevision
                 val generation = inkBitmapGeneration
+                val viewportGeneration = viewportRenderGeneration
                 runCatching { refiner.execute {
                     val bitmap = runCatching {
+                        if (viewportGeneration != viewportRenderGeneration) return@runCatching null
                         val width = (page.width * scale).toInt().coerceAtLeast(1)
                         val height = (page.height * scale).toInt().coerceAtLeast(1)
                         Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { image ->
                             val target = Canvas(image)
                             val transform = Matrix().apply { setScale(scale, scale) }
                             val strokeRenderer = CanvasStrokeRenderer.create(PencilTextureStore)
-                            for (stroke in snapshot) strokeRenderer.draw(target, stroke, transform)
+                            for (stroke in snapshot) {
+                                if (Thread.currentThread().isInterrupted ||
+                                    viewportGeneration != viewportRenderGeneration
+                                ) {
+                                    image.recycle()
+                                    return@runCatching null
+                                }
+                                strokeRenderer.draw(target, stroke, transform)
+                            }
                         }
                     }.getOrNull()
                     post {
                         inkBitmapPending.remove(key)
-                        if (generation == inkBitmapGeneration && page.revision == revision &&
+                        val visible = visiblePages().any { it === page }
+                        if (viewportGeneration == viewportRenderGeneration && visible &&
+                            generation == inkBitmapGeneration && page.revision == revision &&
                             page.meshRevision == meshRevision &&
                             page.strokes.size == snapshot.size && bitmap != null
                         ) {

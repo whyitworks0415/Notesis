@@ -45,7 +45,7 @@ Notesis의 stylus 입력 경로를 최적화한다.
 
 ---
 
-## 3단계 — Render / Refine 파이프라인 최적화
+## ✅ 3단계 — Render / Refine 파이프라인 최적화
 
 Notesis의 stroke/PDF rendering과 refinement 파이프라인을 최적화한다.
 

@@ -66,6 +66,7 @@ class PdfSource private constructor(
 
     @Volatile private var viewportGeneration = 0
     @Volatile private var wantedPages: Set<Int> = emptySet()
+    @Volatile private var wantedWidthBucket = 0
 
     @Volatile
     private var closed = false
@@ -102,10 +103,12 @@ class PdfSource private constructor(
         val ordered = pageIndices.filter { it in 0 until pageCount }.distinct()
         if (ordered.isEmpty()) return
         val wanted = ordered.toSet()
+        val widthBucket = bucketFor(widthPx)
         synchronized(stateLock) {
             if (closed) return
-            if (wanted != wantedPages) {
+            if (wanted != wantedPages || widthBucket != wantedWidthBucket) {
                 wantedPages = wanted
+                wantedWidthBucket = widthBucket
                 viewportGeneration++
                 // Work that has not opened PdfRenderer yet is disposable. A
                 // queue reset is what makes the stopped-at page genuinely jump
@@ -207,9 +210,7 @@ class PdfSource private constructor(
             if (closed) return
             generation = viewportGeneration
             keys.filter { key ->
-                if (pendingTiles[key] == generation ||
-                    pendingTiles.containsKey(key) && index in wantedPages
-                ) false
+                if (!shouldEnqueueRender(pendingTiles[key], generation)) false
                 else { pendingTiles[key] = generation; true }
             }
         }
@@ -252,9 +253,13 @@ class PdfSource private constructor(
                             }
                             // close() may have won while PdfRenderer was inside
                             // its non-interruptible render call.
-                            synchronized(stateLock) {
-                                if (!closed) tileCache.put(key, bitmap)
+                            val keep = synchronized(stateLock) {
+                                if (shouldPublishRender(generation, viewportGeneration, closed)) {
+                                    tileCache.put(key, bitmap)
+                                    true
+                                } else false
                             }
+                            if (!keep) bitmap.recycle()
                         }
                     }
                 }
@@ -348,7 +353,7 @@ class PdfSource private constructor(
             if (closed) return
             generation = viewportGeneration
             val page = (key shr 32).toInt()
-            if (pending[key] == generation || pending.containsKey(key) && page in wantedPages) return
+            if (!shouldEnqueueRender(pending[key], generation)) return
             pending[key] = generation
         }
         val accepted = runCatching { worker.execute {
@@ -361,12 +366,12 @@ class PdfSource private constructor(
             }
             if (bitmap != null) {
                 val keep = synchronized(stateLock) {
-                    if (closed) false else {
+                    if (shouldPublishRender(generation, viewportGeneration, closed)) {
                         if (key >= 0) cache.put(key, bitmap)
                         true
-                    }
+                    } else false
                 }
-                if (keep) onReady?.invoke((key shr 32).toInt())
+                if (keep) onReady?.invoke((key shr 32).toInt()) else bitmap.recycle()
             }
         } }.isSuccess
         if (!accepted) synchronized(stateLock) {
@@ -375,7 +380,8 @@ class PdfSource private constructor(
     }
 
     private fun isRelevant(page: Int, generation: Int): Boolean =
-        !closed && (generation == viewportGeneration || page in wantedPages)
+        page in 0 until pageCount &&
+            shouldPublishRender(generation, viewportGeneration, closed)
 
     /** Blocking render, for callers off the UI thread that need the page now. */
     fun renderNow(index: Int, widthPx: Int): Bitmap? = renderWholePage(index, widthPx)
