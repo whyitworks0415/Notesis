@@ -107,7 +107,7 @@ Notesis의 편집 후 저장 경로를 분석하고 UI thread 부하를 줄인�
 
 ---
 
-## 6단계 — Stroke Stabilization 재설계
+## 6단계 — Stroke Stabilization 재설계 ✅
 
 현재 `correctStrokeStart()`와 pen-up 후 `smoothFreehandStroke()` 방식의 문제를 먼저 분석하고, 가능하면 하나의 실시간 입력 안정화 pipeline으로 통합한다.
 

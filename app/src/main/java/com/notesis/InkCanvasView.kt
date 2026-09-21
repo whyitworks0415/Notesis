@@ -103,22 +103,6 @@ fun tessellationBucket(scale: Float): Float {
     return bucket.coerceAtMost(MAX_CANVAS_SCALE)
 }
 
-/** 두 연속 이동 벡터가 만드는 회전량에 따라 코너를 둥글게 할 혼합 비율입니다. */
-internal fun smoothingBlendForTurn(
-    previousDx: Float,
-    previousDy: Float,
-    nextDx: Float,
-    nextDy: Float,
-): Float {
-    val previousLength = hypot(previousDx, previousDy)
-    val nextLength = hypot(nextDx, nextDy)
-    if (previousLength < 1e-3f || nextLength < 1e-3f) return 0f
-    val cosine = ((previousDx * nextDx + previousDy * nextDy) /
-        (previousLength * nextLength)).coerceIn(-1f, 1f)
-    // 직선은 0, 90도는 약 0.16, 완전한 반전도 0.24를 넘지 않아 필체를 보존합니다.
-    return (((1f - cosine) * 0.5f) * 0.32f).coerceIn(0f, 0.24f)
-}
-
 /** 급회전 한 프레임에서는 예측점이 코너 바깥으로 튀지 않게 합니다. */
 internal fun shouldSuppressPrediction(
     previousDx: Float,
@@ -789,6 +773,10 @@ class InkCanvasView @JvmOverloads constructor(
     /** The common one-pen prediction path reuses these instead of feeding the GC every sample. */
     private val predictedPointerProperties = arrayOf(MotionEvent.PointerProperties())
     private val predictedPointerCoordinates = arrayOf(MotionEvent.PointerCoords())
+    private val streamingStabilizer = AdaptiveStrokeStabilizer()
+    private var stabilizingStroke = false
+    private var stabilizedPointerProperties = arrayOf(MotionEvent.PointerProperties())
+    private var stabilizedPointerCoordinates = arrayOf(MotionEvent.PointerCoords())
 
     private val undoStack = mutableListOf<Edit>()
     private val redoStack = mutableListOf<Edit>()
@@ -1551,6 +1539,9 @@ class InkCanvasView @JvmOverloads constructor(
                     lastStylusY = event.y
                     lastStylusDx = 0f
                     lastStylusDy = 0f
+                    stabilizingStroke = tool.isFreehandPen() && stabilizer > 0
+                    streamingStabilizer.reset(stabilizer, event.getX(event.actionIndex),
+                        event.getY(event.actionIndex), event.eventTime)
                     // MotionEventPredictor is useful only for wet freehand ink.
                     // Recording eraser/lasso/shape gestures ran its filter at
                     // full S Pen rate even though those tools never call predict().
@@ -1628,20 +1619,28 @@ class InkCanvasView @JvmOverloads constructor(
                 }
                 val strokeId = activeStrokeId ?: return false
                 if (latencyMonitoringEnabled) latency.addSamples(1 + event.historySize)
-                val x = event.getX(index)
-                val y = event.getY(index)
-                val dx = if (lastStylusX.isFinite()) x - lastStylusX else 0f
-                val dy = if (lastStylusY.isFinite()) y - lastStylusY else 0f
-                val sharpTurn = shouldSuppressPrediction(lastStylusDx, lastStylusDy, dx, dy)
-                if (hypot(dx, dy) >= 0.5f) {
-                    lastStylusDx = dx
-                    lastStylusDy = dy
-                    lastStylusX = x
-                    lastStylusY = y
+                val inkEvent = if (stabilizingStroke) {
+                    stabilizedMoveEvent(event, pointerId)
+                } else event
+                val sharpTurn = if (stabilizingStroke) {
+                    !streamingStabilizer.predictionAllowed
+                } else {
+                    val x = event.getX(index)
+                    val y = event.getY(index)
+                    val dx = if (lastStylusX.isFinite()) x - lastStylusX else 0f
+                    val dy = if (lastStylusY.isFinite()) y - lastStylusY else 0f
+                    val turn = shouldSuppressPrediction(lastStylusDx, lastStylusDy, dx, dy)
+                    if (hypot(dx, dy) >= 0.5f) {
+                        lastStylusDx = dx
+                        lastStylusDy = dy
+                        lastStylusX = x
+                        lastStylusY = y
+                    }
+                    turn
                 }
-                if (predictionEnabled) predictor.record(event)
+                if (predictionEnabled) predictor.record(inkEvent)
                 val rawPrediction = if (predictionEnabled && !sharpTurn) predictor.predict() else null
-                val predicted = rawPrediction?.let { predictionAtLead(event, it) }
+                val predicted = rawPrediction?.let { predictionAtLead(inkEvent, it) }
                 try {
                     if (latencyMonitoringEnabled && predicted != null) {
                         // Ground truth for the tip's steadiness: the distance
@@ -1650,10 +1649,11 @@ class InkCanvasView @JvmOverloads constructor(
                             (predicted.eventTime - event.eventTime).toDouble(),
                         )
                     }
-                    wet.addToStroke(event, pointerId, strokeId, predicted)
+                    wet.addToStroke(inkEvent, pointerId, strokeId, predicted)
                 } finally {
                     if (predicted !== rawPrediction) predicted?.recycle()
                     rawPrediction?.recycle()
+                    if (inkEvent !== event) inkEvent.recycle()
                 }
                 return true
             }
@@ -1705,18 +1705,38 @@ class InkCanvasView @JvmOverloads constructor(
                     return true
                 }
                 activeStrokeId?.let { strokeId ->
-                    if (predictionEnabled) predictor.record(event)
                     penFinalizeStartedNanos = if (latency.enabled) System.nanoTime() else 0L
                     val pointerIndex = event.findPointerIndex(pointerId)
                     val penStroke = tool.isFreehandPen()
-                    val unstable = penStroke && pointerIndex >= 0 && lastStylusX.isFinite() &&
-                        unstableLift(event.getX(pointerIndex) - lastStylusX,
+                    if (stabilizingStroke) {
+                        stabilizedHistoryEvent(event, pointerId)?.let { history ->
+                            try {
+                                if (predictionEnabled) predictor.record(history)
+                                wet.addToStroke(history, pointerId, strokeId, null)
+                            } finally { history.recycle() }
+                        }
+                    }
+                    val unstable = penStroke && pointerIndex >= 0 && if (stabilizingStroke) {
+                        streamingStabilizer.shouldRejectLift(
+                            event.getX(pointerIndex), event.getY(pointerIndex))
+                    } else {
+                        lastStylusX.isFinite() && unstableLift(
+                            event.getX(pointerIndex) - lastStylusX,
                             event.getY(pointerIndex) - lastStylusY, lastStylusDx, lastStylusDy)
-                    if (unstable) {
-                        val end = MotionEvent.obtainNoHistory(event)
-                        end.offsetLocation(lastStylusX - event.getX(pointerIndex), lastStylusY - event.getY(pointerIndex))
-                        try { wet.finishStroke(end, pointerId, strokeId) } finally { end.recycle() }
-                    } else wet.finishStroke(event, pointerId, strokeId)
+                    }
+                    val end = when {
+                        stabilizingStroke && unstable -> eventWithActivePoint(
+                            event, pointerId, streamingStabilizer.x, streamingStabilizer.y)
+                        stabilizingStroke -> stabilizedFinalEvent(event, pointerId)
+                        unstable -> eventWithActivePoint(event, pointerId, lastStylusX, lastStylusY)
+                        else -> event
+                    }
+                    try {
+                        if (predictionEnabled) predictor.record(end)
+                        wet.finishStroke(end, pointerId, strokeId)
+                    } finally {
+                        if (end !== event) end.recycle()
+                    }
                 }
                 endStylus()
                 return true
@@ -1731,6 +1751,125 @@ class InkCanvasView @JvmOverloads constructor(
             }
         }
         return false
+    }
+
+    private fun ensureStabilizedPointerCapacity(count: Int) {
+        if (stabilizedPointerProperties.size >= count) return
+        stabilizedPointerProperties = Array(count) { MotionEvent.PointerProperties() }
+        stabilizedPointerCoordinates = Array(count) { MotionEvent.PointerCoords() }
+    }
+
+    private fun eventWithActivePoint(
+        event: MotionEvent,
+        pointerId: Int,
+        x: Float,
+        y: Float,
+    ): MotionEvent {
+        ensureStabilizedPointerCapacity(event.pointerCount)
+        for (i in 0 until event.pointerCount) {
+            event.getPointerProperties(i, stabilizedPointerProperties[i])
+            event.getPointerCoords(i, stabilizedPointerCoordinates[i])
+            if (event.getPointerId(i) == pointerId) {
+                stabilizedPointerCoordinates[i].x = x
+                stabilizedPointerCoordinates[i].y = y
+            }
+        }
+        return MotionEvent.obtain(
+            event.downTime,
+            event.eventTime,
+            event.action,
+            event.pointerCount,
+            stabilizedPointerProperties,
+            stabilizedPointerCoordinates,
+            event.metaState,
+            event.buttonState,
+            event.xPrecision,
+            event.yPrecision,
+            event.deviceId,
+            event.edgeFlags,
+            event.source,
+            event.flags,
+        )
+    }
+
+    /** Rebuilds one MOVE while preserving every historical S Pen sample. */
+    private fun stabilizedMoveEvent(event: MotionEvent, pointerId: Int): MotionEvent {
+        val activeIndex = event.findPointerIndex(pointerId)
+        if (activeIndex < 0) return MotionEvent.obtain(event)
+        val result = stabilizedHistoryEvent(event, pointerId)
+        if (result == null) {
+            streamingStabilizer.add(
+                event.getX(activeIndex), event.getY(activeIndex), event.eventTime)
+            return eventWithActivePoint(
+                event, pointerId, streamingStabilizer.x, streamingStabilizer.y)
+        }
+
+        for (i in 0 until event.pointerCount) {
+            event.getPointerCoords(i, stabilizedPointerCoordinates[i])
+        }
+        streamingStabilizer.add(event.getX(activeIndex), event.getY(activeIndex), event.eventTime)
+        stabilizedPointerCoordinates[activeIndex].x = streamingStabilizer.x
+        stabilizedPointerCoordinates[activeIndex].y = streamingStabilizer.y
+        result.addBatch(event.eventTime, stabilizedPointerCoordinates, event.metaState)
+        return result
+    }
+
+    /** Converts only history; ACTION_UP's current sample is finalized separately. */
+    private fun stabilizedHistoryEvent(event: MotionEvent, pointerId: Int): MotionEvent? {
+        if (event.historySize == 0) return null
+        val activeIndex = event.findPointerIndex(pointerId)
+        if (activeIndex < 0) return null
+        ensureStabilizedPointerCapacity(event.pointerCount)
+        for (i in 0 until event.pointerCount) {
+            event.getPointerProperties(i, stabilizedPointerProperties[i])
+            event.getHistoricalPointerCoords(i, 0, stabilizedPointerCoordinates[i])
+        }
+        streamingStabilizer.add(
+            event.getHistoricalX(activeIndex, 0),
+            event.getHistoricalY(activeIndex, 0),
+            event.getHistoricalEventTime(0),
+        )
+        stabilizedPointerCoordinates[activeIndex].x = streamingStabilizer.x
+        stabilizedPointerCoordinates[activeIndex].y = streamingStabilizer.y
+        val result = MotionEvent.obtain(
+            event.downTime,
+            event.getHistoricalEventTime(0),
+            MotionEvent.ACTION_MOVE,
+            event.pointerCount,
+            stabilizedPointerProperties,
+            stabilizedPointerCoordinates,
+            event.metaState,
+            event.buttonState,
+            event.xPrecision,
+            event.yPrecision,
+            event.deviceId,
+            event.edgeFlags,
+            event.source,
+            event.flags,
+        )
+        for (history in 1 until event.historySize) {
+            for (i in 0 until event.pointerCount) {
+                event.getHistoricalPointerCoords(i, history, stabilizedPointerCoordinates[i])
+            }
+            streamingStabilizer.add(
+                event.getHistoricalX(activeIndex, history),
+                event.getHistoricalY(activeIndex, history),
+                event.getHistoricalEventTime(history),
+            )
+            stabilizedPointerCoordinates[activeIndex].x = streamingStabilizer.x
+            stabilizedPointerCoordinates[activeIndex].y = streamingStabilizer.y
+            result.addBatch(
+                event.getHistoricalEventTime(history), stabilizedPointerCoordinates, event.metaState)
+        }
+        return result
+    }
+
+    private fun stabilizedFinalEvent(event: MotionEvent, pointerId: Int): MotionEvent {
+        val index = event.findPointerIndex(pointerId)
+        if (index < 0) return MotionEvent.obtainNoHistory(event)
+        streamingStabilizer.add(
+            event.getX(index), event.getY(index), event.eventTime, finalSample = true)
+        return eventWithActivePoint(event, pointerId, streamingStabilizer.x, streamingStabilizer.y)
     }
 
     /**
@@ -1789,6 +1928,7 @@ class InkCanvasView @JvmOverloads constructor(
             requestedFrameRate = REQUESTED_FRAME_RATE_CATEGORY_NO_PREFERENCE
         }
         activeStrokeId = null
+        stabilizingStroke = false
         lastStylusX = Float.NaN
         lastStylusY = Float.NaN
         lastStylusDx = 0f
@@ -3296,9 +3436,10 @@ class InkCanvasView @JvmOverloads constructor(
                             undoStack += Edit.Drawn(page, part, group)
                         }
                     } else {
-                        val committed = smoothFreehandStroke(correctStrokeStart(stroke))
-                        page.strokes += committed
-                        undoStack += Edit.Drawn(page, committed, group)
+                        // Wet ink, shape recognition and the saved stroke now
+                        // share the same stabilized streaming trajectory.
+                        page.strokes += stroke
+                        undoStack += Edit.Drawn(page, stroke, group)
                     }
                 }
             }
@@ -3321,85 +3462,6 @@ class InkCanvasView @JvmOverloads constructor(
             floatArrayOf(sample.x, sample.y)
         }
         return recognizeShape(points)
-    }
-
-    /**
-     * Some digitizers report the contact sample a few pixels behind the first
-     * deliberate movement. Remove only that clearly reversing seed sample;
-     * ordinary short strokes and dots retain their original beginning.
-     */
-    private fun correctStrokeStart(stroke: Stroke): Stroke {
-        if (stroke.inputs.size < 4) return stroke
-        val a = StrokeInput()
-        val b = StrokeInput()
-        val c = StrokeInput()
-        stroke.inputs.populate(0, a)
-        stroke.inputs.populate(1, b)
-        stroke.inputs.populate(2, c)
-        val firstDx = b.x - a.x
-        val firstDy = b.y - a.y
-        val nextDx = c.x - b.x
-        val nextDy = c.y - b.y
-        val first = hypot(firstDx, firstDy)
-        val next = hypot(nextDx, nextDy)
-        val reverses = firstDx * nextDx + firstDy * nextDy < 0f
-        if (!reverses || first < max(1.5f, next * 1.8f)) return stroke
-        val inputs = MutableStrokeInputBatch()
-        val sample = StrokeInput()
-        val time0 = stroke.inputs.populate(1, sample).elapsedTimeMillis
-        for (i in 1 until stroke.inputs.size) {
-            val at = stroke.inputs.populate(i, sample)
-            inputs.add(
-                at.toolType, at.x, at.y,
-                (at.elapsedTimeMillis - time0).coerceAtLeast(0L),
-                at.pressure, at.tiltRadians, at.orientationRadians,
-            )
-        }
-        return Stroke(stroke.brush, inputs.toImmutable())
-    }
-
-    private fun smoothFreehandStroke(stroke: Stroke): Stroke {
-        val strokeTool = Tool.ofBrushFamily(stroke.brush.family)
-        if (!strokeTool.isFreehandPen()) return stroke
-        if (stabilizer <= 0) return stroke
-        if (stroke.inputs.size < 3) return stroke
-
-        val inputs = MutableStrokeInputBatch()
-        val previous = StrokeInput()
-        val current = StrokeInput()
-        val next = StrokeInput()
-        for (i in 0 until stroke.inputs.size) {
-            val at = stroke.inputs.populate(i, current)
-            val blend = if (i == 0 || i == stroke.inputs.size - 1) {
-                0f
-            } else {
-                val before = stroke.inputs.populate(i - 1, previous)
-                val after = stroke.inputs.populate(i + 1, next)
-                val strength = stabilizer.coerceIn(0, 100) / 100f
-                (0.2f * strength + smoothingBlendForTurn(
-                    at.x - before.x,
-                    at.y - before.y,
-                    after.x - at.x,
-                    after.y - at.y,
-                ) * strength * 4f).coerceAtMost(0.5f)
-            }
-            val x = if (blend == 0f) at.x else {
-                at.x + ((previous.x + next.x) * 0.5f - at.x) * blend
-            }
-            val y = if (blend == 0f) at.y else {
-                at.y + ((previous.y + next.y) * 0.5f - at.y) * blend
-            }
-            inputs.add(
-                type = at.toolType,
-                x = x,
-                y = y,
-                elapsedTimeMillis = at.elapsedTimeMillis,
-                pressure = at.pressure,
-                tiltRadians = at.tiltRadians,
-                orientationRadians = at.orientationRadians,
-            )
-        }
-        return Stroke(stroke.brush, inputs.toImmutable())
     }
 
     /** Committed ink and paper. Wet ink keeps its own front buffer above this. */
