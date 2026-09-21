@@ -3,6 +3,8 @@
 package com.notesis
 
 import android.os.Build
+import android.os.Debug
+import android.os.Trace
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BlendMode
@@ -626,7 +628,9 @@ class InkCanvasView @JvmOverloads constructor(
     /** Enables diagnostic sampling only while its HUD is actually visible. */
     var latencyMonitoringEnabled: Boolean = false
         set(value) {
+            if (field == value) return
             field = value
+            latency.setEnabled(value)
             if (value && !frameClockRunning && isAttachedToWindow) {
                 frameClockRunning = true
                 lastFrameNanos = 0L
@@ -739,6 +743,8 @@ class InkCanvasView @JvmOverloads constructor(
     private var activeStylusPointer: Int? = null
     private var activeStrokeId: InProgressStrokeId? = null
     private var activePage: Page? = null
+    /** Dispatch of ACTION_UP to the committed stroke becoming visible to the model. */
+    @Volatile private var penFinalizeStartedNanos = 0L
     private var lastStylusX = Float.NaN
     private var lastStylusY = Float.NaN
     private var lastStylusDx = 0f
@@ -956,6 +962,7 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     fun open(document: Document, pdf: PdfSource?, initialPage: Int = 0) {
+        this.pdf?.diagnostics = null
         this.pdf?.close()
         this.document = document
         dry.clearStrokeIndexes()
@@ -964,6 +971,7 @@ class InkCanvasView @JvmOverloads constructor(
         for (page in document.pages) page.tessellatedFor = 0f
         scheduleRefine()
         this.pdf = pdf
+        pdf?.diagnostics = latency
         // Has to be the layer that draws the pages: invalidating this ViewGroup
         // leaves the child's cached display list alone, so nothing repaints.
         pdf?.onReady = { dry.postInvalidate() }
@@ -1004,6 +1012,7 @@ class InkCanvasView @JvmOverloads constructor(
         disposed = true
         refineRequestSerial++
         refiner.shutdownNow()
+        pdf?.diagnostics = null
         pdf?.close()
         pdf = null
     }
@@ -1227,7 +1236,14 @@ class InkCanvasView @JvmOverloads constructor(
 
     fun strokeCount(): Int = document.pages.sumOf { it.strokes.size }
 
-    fun debugDrawStats(): String = "화면 획 ${dry.lastVisibleStrokes}개   그리기 %.1fms".format(dry.lastDrawMs)
+    fun debugPerformanceReport(): String {
+        if (latency.enabled) {
+            val allocated = Debug.getRuntimeStat("art.gc.bytes-allocated")?.toLongOrNull() ?: -1L
+            val collections = Debug.getRuntimeStat("art.gc.gc-count")?.toLongOrNull() ?: -1L
+            latency.addRuntimeSample(allocated, collections, System.nanoTime())
+        }
+        return latency.render(strokeCount())
+    }
 
     fun currentScale(): Float {
         documentToScreen.getValues(matrixValues)
@@ -1322,7 +1338,15 @@ class InkCanvasView @JvmOverloads constructor(
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val stylus = event.getToolType(event.actionIndex) == MotionEvent.TOOL_TYPE_STYLUS
-        return if (stylus || activeStylusPointer != null) onStylus(event) else onFingers(event)
+        if (!stylus && activeStylusPointer == null) return onFingers(event)
+        if (!latencyMonitoringEnabled) return onStylus(event)
+        Trace.beginSection(when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> TRACE_STYLUS_DOWN
+            MotionEvent.ACTION_MOVE -> TRACE_STYLUS_MOVE
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> TRACE_STYLUS_UP
+            else -> TRACE_STYLUS_OTHER
+        })
+        return try { onStylus(event) } finally { Trace.endSection() }
     }
 
     override fun onHoverEvent(event: MotionEvent): Boolean {
@@ -1356,6 +1380,7 @@ class InkCanvasView @JvmOverloads constructor(
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 if (activeStylusPointer != null) return true
+                penFinalizeStartedNanos = 0L
                 // A pen may land while a finger fling still owns an animation
                 // frame. Freeze the page before capturing screenToPage; if the
                 // page moves afterwards, wet ink and the physical tip no longer
@@ -1589,6 +1614,7 @@ class InkCanvasView @JvmOverloads constructor(
                     return true
                 }
                 activeStrokeId?.let { strokeId ->
+                    penFinalizeStartedNanos = if (latency.enabled) System.nanoTime() else 0L
                     val pointerIndex = event.findPointerIndex(pointerId)
                     val penStroke = tool == Tool.PEN || tool == Tool.PRESSURE_PEN || tool == Tool.PENCIL
                     val unstable = penStroke && pointerIndex >= 0 && lastStylusX.isFinite() &&
@@ -2108,23 +2134,39 @@ class InkCanvasView @JvmOverloads constructor(
         val loader = pageLoader
         runCatching { refiner.execute {
             if (serial != refineRequestSerial) return@execute
+            val refineStarted = if (latency.enabled) System.nanoTime() else 0L
+            if (refineStarted != 0L) Trace.beginSection(TRACE_MESH_REFINE)
             val masksLoader = maskLoader
             // Loading a full dense page at maximum zoom creates maximum-detail
             // geometry for ink that may be far off screen. Establish a modest,
             // crisp base mesh first and refine only the visible part below.
             val loadEpsilon = epsilonFor(minOf(target, BASE_TESSELLATION_SCALE))
-            val loaded = toLoad.mapNotNull { page ->
-                loader?.let { page to it(page, loadEpsilon) }
-            }
-            val loadedMasks = toLoad.mapNotNull { page ->
-                masksLoader?.let { page to it(page, loadEpsilon) }
-            }
-            val built = work.map { (page, snapshot) ->
-                Triple(
-                    page,
-                    snapshot,
-                    snapshot.map { Stroke(it.brush.copy(epsilon = strokeEpsilon(it.brush.size, epsilon)), it.inputs) },
-                )
+            val loaded: List<Pair<Page, List<Stroke>>>
+            val loadedMasks: List<Pair<Page, List<PageMask>>>
+            val built: List<Triple<Page, List<Stroke>, List<Stroke>>>
+            try {
+                loaded = toLoad.mapNotNull { page ->
+                    loader?.let { page to it(page, loadEpsilon) }
+                }
+                loadedMasks = toLoad.mapNotNull { page ->
+                    masksLoader?.let { page to it(page, loadEpsilon) }
+                }
+                built = work.map { (page, snapshot) ->
+                    Triple(
+                        page,
+                        snapshot,
+                        snapshot.map {
+                            Stroke(it.brush.copy(epsilon = strokeEpsilon(it.brush.size, epsilon)), it.inputs)
+                        },
+                    )
+                }
+            } finally {
+                if (refineStarted != 0L) {
+                    val elapsed = System.nanoTime() - refineStarted
+                    Trace.endSection()
+                    latency.addRefine(elapsed,
+                        toLoad.sumOf { it.strokes.size } + work.sumOf { it.second.size })
+                }
             }
             post {
                 if (disposed || serial != refineRequestSerial ||
@@ -3026,6 +3068,8 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     override fun onStrokesFinished(finished: Map<InProgressStrokeId, Stroke>) {
+        val finalizeStarted = penFinalizeStartedNanos
+        penFinalizeStartedNanos = 0L
         val page = activePage
         if (page != null) {
             val group = nextEditGroup++
@@ -3055,6 +3099,9 @@ class InkCanvasView @JvmOverloads constructor(
         }
         wet.removeFinishedStrokes(finished.keys)
         if (page != null) afterEdit(page) else afterEdit()
+        if (finalizeStarted != 0L) {
+            latency.addPenFinalize(System.nanoTime() - finalizeStarted)
+        }
     }
 
     /** Snapshot of handwriting enclosed by the current lasso for region OCR. */
@@ -3383,6 +3430,7 @@ class InkCanvasView @JvmOverloads constructor(
             if (started != 0L) {
                 lastVisibleStrokes = visibleCount
                 lastDrawMs = (System.nanoTime() - started) / 1e6
+                latency.addDraw((lastDrawMs * 1e6).toLong(), visibleCount)
             }
         }
 
@@ -3764,6 +3812,12 @@ class InkCanvasView @JvmOverloads constructor(
         const val MASK_OUTLINE_PX = 2f
         const val MASK_OPAQUE = 0xFF000000.toInt()
         const val MASK_SELECTION_HEIGHT = 1.15f
+
+        const val TRACE_STYLUS_DOWN = "Notesis stylus DOWN"
+        const val TRACE_STYLUS_MOVE = "Notesis stylus MOVE"
+        const val TRACE_STYLUS_UP = "Notesis stylus UP"
+        const val TRACE_STYLUS_OTHER = "Notesis stylus other"
+        const val TRACE_MESH_REFINE = "Notesis mesh/refine"
 
         /** A tap this fast, moved this little, is a tap and not the start of a pan. */
         const val TAP_MAX_MS = 250L

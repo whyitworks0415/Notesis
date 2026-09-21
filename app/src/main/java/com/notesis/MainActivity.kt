@@ -3225,8 +3225,8 @@ private fun NoteScreen(
             LaunchedEffect(Unit) {
                 while (true) {
                     latencyText = canvas?.let {
-                        it.latency.render(it.strokeCount()) + "\n" + it.debugDrawStats() +
-                            "   확대 ${"%.0f".format(zoom * 100)}%"
+                        it.debugPerformanceReport() +
+                            "\nzoom ${"%.0f".format(zoom * 100)}%"
                     }.orEmpty()
                     delay(500)
                 }

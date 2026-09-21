@@ -9,6 +9,7 @@ import android.graphics.pdf.PdfRenderer
 import android.graphics.pdf.models.selection.SelectionBoundary
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.os.Trace
 import android.util.LruCache
 import java.io.File
 import java.util.concurrent.LinkedBlockingQueue
@@ -43,6 +44,9 @@ class PdfSource private constructor(
 ) : AutoCloseable {
 
     val pageCount: Int = renderer.pageCount
+
+    /** Set by the active canvas; null for exports, thumbnails, and normal use. */
+    @Volatile var diagnostics: LatencyStats? = null
 
     /**
      * Held for the whole of a PdfRenderer call, which takes tens of milliseconds.
@@ -238,12 +242,14 @@ class PdfSource private constructor(
                                 )
                             }
                             val bitmap = newBitmap(widthPx, heightPx)
-                            page.render(
-                                bitmap,
-                                null,
-                                transform,
-                                PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY,
-                            )
+                            measuredRender(widthPx.toLong() * heightPx) {
+                                page.render(
+                                    bitmap,
+                                    null,
+                                    transform,
+                                    PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY,
+                                )
+                            }
                             // close() may have won while PdfRenderer was inside
                             // its non-interruptible render call.
                             synchronized(stateLock) {
@@ -391,7 +397,9 @@ class PdfSource private constructor(
                     setScale(scale * POINTS_TO_WORLD, scale * POINTS_TO_WORLD)
                     postTranslate(-bounds.left * scale, -bounds.top * scale)
                 }
-                page.render(bitmap, null, transform, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                measuredRender(bitmap.width.toLong() * bitmap.height) {
+                    page.render(bitmap, null, transform, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                }
             }
             bitmap
         }.getOrNull()
@@ -404,7 +412,9 @@ class PdfSource private constructor(
                 val height = (widthPx * page.height.toFloat() / page.width)
                     .toInt().coerceAtLeast(1)
                 newBitmap(widthPx, height).also {
-                    page.render(it, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    measuredRender(it.width.toLong() * it.height) {
+                        page.render(it, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    }
                 }
             }
         }.getOrNull()
@@ -426,16 +436,34 @@ class PdfSource private constructor(
                         preTranslate(-left, -top)
                     }
                     newBitmap(widthPx, heightPx).also {
-                        page.render(
-                            it,
-                            null,
-                            transform,
-                            PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY,
-                        )
+                        measuredRender(it.width.toLong() * it.height) {
+                            page.render(
+                                it,
+                                null,
+                                transform,
+                                PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY,
+                            )
+                        }
                     }
                 }
             }.getOrNull()
         }
+
+    /** The lambda is inline, so diagnostics add no allocation to normal renders. */
+    private inline fun measuredRender(pixelCount: Long, render: () -> Unit) {
+        val stats = diagnostics
+        val started = if (stats?.enabled == true) System.nanoTime() else 0L
+        if (started != 0L) Trace.beginSection(TRACE_PDF_RENDER)
+        try {
+            render()
+        } finally {
+            if (started != 0L) {
+                val elapsed = System.nanoTime() - started
+                Trace.endSection()
+                stats?.addPdfRender(elapsed, pixelCount)
+            }
+        }
+    }
 
     /** PDF pages are transparent where nothing is drawn; paper is white. */
     private fun newBitmap(width: Int, height: Int): Bitmap =
@@ -485,6 +513,7 @@ class PdfSource private constructor(
         private const val DETAIL_MARGIN = 0.25f
         private const val MIN_CACHE_BYTES = 64 * 1024 * 1024
         private const val MAX_CACHE_BYTES = 256 * 1024 * 1024
+        private const val TRACE_PDF_RENDER = "Notesis PDF render"
         private val closeWorker = Executors.newSingleThreadExecutor { runnable ->
             Thread(runnable, "notesis-pdf-close").apply { isDaemon = true }
         }

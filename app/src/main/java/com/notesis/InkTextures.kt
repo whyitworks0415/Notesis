@@ -1,3 +1,5 @@
+@file:Suppress("RestrictedApi")
+
 package com.notesis
 
 import android.graphics.Bitmap
