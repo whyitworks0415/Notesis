@@ -23,7 +23,7 @@ Notesis 프로젝트의 성능 최적화를 시작하기 전에 현재 병목을
 
 ---
 
-## 2단계 — Stylus 입력 Hot Path 최적화
+## 2단계 — Stylus 입력 Hot Path 최적화 ✅
 
 Notesis의 stylus 입력 경로를 최적화한다.
 

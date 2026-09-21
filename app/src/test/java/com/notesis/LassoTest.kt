@@ -1,5 +1,6 @@
 package com.notesis
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -38,5 +39,35 @@ class LassoTest {
     fun `too few points catch nothing`() {
         assertFalse(insidePolygon(listOf(0f, 0f, 10f, 10f), 5f, 5f))
         assertFalse(insidePolygon(emptyList(), 0f, 0f))
+    }
+
+    @Test
+    fun `primitive path drops nearby samples without changing its last point`() {
+        val path = FloatPointBuffer(2)
+        assertTrue(path.addIfFarEnough(0f, 0f, 2f))
+        assertFalse(path.addIfFarEnough(1f, 0f, 2f))
+        assertTrue(path.addIfFarEnough(2f, 0f, 2f))
+
+        assertEquals(4, path.size)
+        assertEquals(2f, path[2])
+    }
+
+    @Test
+    fun `primitive path keeps polygon selection semantics`() {
+        val path = FloatPointBuffer(2)
+        path.add(0f, 0f)
+        path.add(100f, 0f)
+        path.add(100f, 100f)
+        path.add(0f, 100f)
+
+        assertTrue(path.contains(50f, 50f))
+        assertFalse(path.contains(150f, 50f))
+    }
+
+    @Test
+    fun `eraser skips covered sub-tip moves but always accepts the final sample`() {
+        assertFalse(shouldProcessEraserMove(1f, 0f, eraserWidth = 24f, force = false))
+        assertTrue(shouldProcessEraserMove(2f, 0f, eraserWidth = 24f, force = false))
+        assertTrue(shouldProcessEraserMove(0f, 0f, eraserWidth = 24f, force = true))
     }
 }

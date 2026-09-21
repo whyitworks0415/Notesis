@@ -147,6 +147,8 @@ const val STROKE_EPSILON = TESSELLATION_TARGET_PX
 
 private const val STROKE_GRID_CELL = 256f
 private const val MAX_GRID_CELLS_PER_STROKE = 64
+/** Below this fraction of the tip width, the previous eraser tip still covers the move. */
+private const val ERASER_SAMPLE_DISTANCE_FRACTION = 0.08f
 
 /** A page-local spatial index used by both dense-page drawing and culling. */
 private class StrokeGrid {
@@ -278,6 +280,62 @@ private class StrokeGrid {
 
     private fun cell(value: Float): Int = kotlin.math.floor(value / STROKE_GRID_CELL).toInt()
     private fun key(x: Int, y: Int): Long = (x.toLong() shl 32) xor (y.toLong() and 0xFFFFFFFFL)
+}
+
+/** Primitive lasso storage: no boxed Float is created for every stylus sample. */
+internal class FloatPointBuffer(initialCapacity: Int = 2048) {
+    private var values = FloatArray(initialCapacity.coerceAtLeast(2))
+    var size: Int = 0
+        private set
+
+    operator fun get(index: Int): Float {
+        require(index in 0 until size)
+        return values[index]
+    }
+
+    fun clear() {
+        size = 0
+    }
+
+    fun add(x: Float, y: Float) {
+        ensureCapacity(size + 2)
+        values[size++] = x
+        values[size++] = y
+    }
+
+    /** Keeps enough geometry for the loop while discarding sub-pixel input noise. */
+    fun addIfFarEnough(x: Float, y: Float, minimumDistance: Float): Boolean {
+        if (size >= 2) {
+            val dx = x - values[size - 2]
+            val dy = y - values[size - 1]
+            if (dx * dx + dy * dy < minimumDistance * minimumDistance) return false
+        }
+        add(x, y)
+        return true
+    }
+
+    fun contains(x: Float, y: Float): Boolean {
+        val count = size / 2
+        if (count < 3) return false
+        var inside = false
+        var j = count - 1
+        for (i in 0 until count) {
+            val xi = values[i * 2]
+            val yi = values[i * 2 + 1]
+            val xj = values[j * 2]
+            val yj = values[j * 2 + 1]
+            if ((yi > y) != (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) {
+                inside = !inside
+            }
+            j = i
+        }
+        return inside
+    }
+
+    private fun ensureCapacity(wanted: Int) {
+        if (wanted <= values.size) return
+        values = values.copyOf(maxOf(wanted, values.size * 2))
+    }
 }
 
 private class TextRender(
@@ -438,6 +496,9 @@ enum class Tool {
         }
     }
 }
+
+private fun Tool.isFreehandPen(): Boolean =
+    this == Tool.PEN || this == Tool.PRESSURE_PEN || this == Tool.PENCIL
 
 /**
  * The note surface: pages stacked down a document, committed ink drawn beneath a
@@ -753,7 +814,14 @@ class InkCanvasView @JvmOverloads constructor(
     /** Every removal between pen-down and pen-up is one undoable erase. */
     private var activeEraseGroup = 0L
     private var eraseChanged = false
-    private var lastErasePoint: FloatArray? = null
+    private val erasePagePoint = FloatArray(2)
+    private var lastEraseX = 0f
+    private var lastEraseY = 0f
+    private var hasLastErasePoint = false
+    private val eraseStrokeHits = ArrayList<Stroke>()
+    private val eraseStrokeHitSet: MutableSet<Stroke> =
+        Collections.newSetFromMap(IdentityHashMap())
+    private val eraseMaskHits = ArrayList<PageMask>()
     private var eraserCursorVisible = false
     private var eraserCursorX = 0f
     private var eraserCursorY = 0f
@@ -818,7 +886,7 @@ class InkCanvasView @JvmOverloads constructor(
     private var strokeIsMask = false
 
     private var lassoPage = -1
-    private val lassoPath = mutableListOf<Float>()
+    private val lassoPath = FloatPointBuffer()
     private var drawingLasso = false
     /** Identity, not equality: two strokes can be equal and still be two strokes. */
     private val lassoStrokes: MutableSet<Stroke> =
@@ -834,6 +902,7 @@ class InkCanvasView @JvmOverloads constructor(
     private var movingImage = false
     private var resizingImage = false
     private val imageGrab = floatArrayOf(0f, 0f)
+    private val imagePoint = FloatArray(2)
     private val maskProbe = floatArrayOf(0f, 0f)
     private var pressX = 0f
     private var pressY = 0f
@@ -1362,21 +1431,18 @@ class InkCanvasView @JvmOverloads constructor(
                     eraserCursorX = event.x
                     eraserCursorY = event.y
                 }
-                if (changed) dry.invalidate()
+                if (changed) dry.postInvalidateOnAnimation()
             }
             MotionEvent.ACTION_HOVER_EXIT -> {
                 val changed = eraserCursorVisible
                 eraserCursorVisible = false
-                if (changed) dry.invalidate()
+                if (changed) dry.postInvalidateOnAnimation()
             }
         }
         return true
     }
 
     private fun onStylus(event: MotionEvent): Boolean {
-        // Recording runs the predictor's filter even when its output is never
-        // consumed. Prediction-off is intended to be the lean raw-input path.
-        if (predictionEnabled) predictor.record(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 if (activeStylusPointer != null) return true
@@ -1406,7 +1472,8 @@ class InkCanvasView @JvmOverloads constructor(
                     Choreographer.getInstance().postFrameCallback(frameCallback)
                 }
                 activePage = document.pages[index]
-                if (captureMode && !event.isEraserGesture()) {
+                val eraserGesture = event.isEraserGesture()
+                if (captureMode && !eraserGesture) {
                     onDrawingChanged?.invoke(true)
                     capturePage = index
                     capturing = true
@@ -1415,18 +1482,18 @@ class InkCanvasView @JvmOverloads constructor(
                     dry.invalidate()
                     return true
                 }
-                if (lassoMode && !event.isEraserGesture()) {
+                if (lassoMode && !eraserGesture) {
                     onDrawingChanged?.invoke(true)
                     beginLasso(event, index)
                     return true
                 }
-                if (imageMode && !event.isEraserGesture()) {
+                if (imageMode && !eraserGesture) {
                     onDrawingChanged?.invoke(true)
                     beginImageGesture(event, index)
                     return true
                 }
                 val shape = shapeKind
-                if (shape != null && !readMode && !event.isEraserGesture() &&
+                if (shape != null && !readMode && !eraserGesture &&
                     tool != Tool.ERASER
                 ) {
                     onDrawingChanged?.invoke(true)
@@ -1438,7 +1505,7 @@ class InkCanvasView @JvmOverloads constructor(
                     dry.invalidate()
                     return true
                 }
-                if (readMode && !event.isEraserGesture()) {
+                if (readMode && !eraserGesture) {
                     onDrawingChanged?.invoke(true)
                     // Reading is where a covered answer gets looked at.
                     if (toggleMaskAt(event.x, event.y, index)) return true
@@ -1451,18 +1518,22 @@ class InkCanvasView @JvmOverloads constructor(
                     return true
                 }
                 strokeIsMask = maskMode
-                erasing = tool == Tool.ERASER || event.isEraserGesture()
+                erasing = tool == Tool.ERASER || eraserGesture
                 if (erasing) {
                     onDrawingChanged?.invoke(true)
-                    lastErasePoint = null
+                    hasLastErasePoint = false
                     activeEraseGroup = nextEditGroup++
                     eraseChanged = false
-                    eraseAlong(event, event.actionIndex)
+                    eraseAlong(event, event.actionIndex, force = true)
                 } else {
                     lastStylusX = event.x
                     lastStylusY = event.y
                     lastStylusDx = 0f
                     lastStylusDy = 0f
+                    // MotionEventPredictor is useful only for wet freehand ink.
+                    // Recording eraser/lasso/shape gestures ran its filter at
+                    // full S Pen rate even though those tools never call predict().
+                    if (predictionEnabled) predictor.record(event)
                     activeStrokeId = wet.startStroke(
                         event = event,
                         pointerId = pointerId,
@@ -1500,26 +1571,23 @@ class InkCanvasView @JvmOverloads constructor(
                         max(shapeStart[0], shapeEnd[0]),
                         max(shapeStart[1], shapeEnd[1]),
                     )
-                    dry.invalidate()
+                    dry.postInvalidateOnAnimation()
                     return true
                 }
                 if (movingLasso) {
                     pageLocalInto(event.getX(index), event.getY(index), lassoPage, shapeEnd)
                     lassoDx = shapeEnd[0] - lassoGrab[0]
                     lassoDy = shapeEnd[1] - lassoGrab[1]
-                    dry.invalidate()
+                    dry.postInvalidateOnAnimation()
                     return true
                 }
                 if (drawingLasso) {
-                    pageLocalInto(event.getX(index), event.getY(index), lassoPage, shapeEnd)
-                    lassoPath += shapeEnd[0]
-                    lassoPath += shapeEnd[1]
-                    dry.invalidate()
+                    appendLassoSamples(event, index)
                     return true
                 }
                 if (drawingShape) {
                     pageLocalInto(event.getX(index), event.getY(index), shapePage, shapeEnd)
-                    dry.invalidate()
+                    dry.postInvalidateOnAnimation()
                     return true
                 }
                 if (movingImage || resizingImage) {
@@ -1550,10 +1618,11 @@ class InkCanvasView @JvmOverloads constructor(
                     lastStylusX = x
                     lastStylusY = y
                 }
+                if (predictionEnabled) predictor.record(event)
                 val rawPrediction = if (predictionEnabled && !sharpTurn) predictor.predict() else null
                 val predicted = rawPrediction?.let { predictionAtLead(event, it) }
                 try {
-                    if (predicted != null) {
+                    if (latencyMonitoringEnabled && predicted != null) {
                         // Ground truth for the tip's steadiness: the distance
                         // the prediction reaches past the newest real sample.
                         latency.addPredictionLead(
@@ -1609,14 +1678,16 @@ class InkCanvasView @JvmOverloads constructor(
                     return true
                 }
                 if (erasing) {
+                    eraseAlong(event, event.actionIndex, force = true)
                     finishEraseGesture()
                     endStylus()
                     return true
                 }
                 activeStrokeId?.let { strokeId ->
+                    if (predictionEnabled) predictor.record(event)
                     penFinalizeStartedNanos = if (latency.enabled) System.nanoTime() else 0L
                     val pointerIndex = event.findPointerIndex(pointerId)
-                    val penStroke = tool == Tool.PEN || tool == Tool.PRESSURE_PEN || tool == Tool.PENCIL
+                    val penStroke = tool.isFreehandPen()
                     val unstable = penStroke && pointerIndex >= 0 && lastStylusX.isFinite() &&
                         unstableLift(event.getX(pointerIndex) - lastStylusX,
                             event.getY(pointerIndex) - lastStylusY, lastStylusDx, lastStylusDy)
@@ -1631,6 +1702,7 @@ class InkCanvasView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_CANCEL -> {
+                if (predictionEnabled && activeStrokeId != null) predictor.record(event)
                 activeStrokeId?.let { wet.cancelStroke(it, event) }
                 if (erasing) finishEraseGesture()
                 endStylus()
@@ -1703,9 +1775,9 @@ class InkCanvasView @JvmOverloads constructor(
         erasing = false
         eraseChanged = false
         activeEraseGroup = 0L
-        lastErasePoint = null
+        hasLastErasePoint = false
         eraserCursorVisible = false
-        dry.invalidate()
+        dry.postInvalidateOnAnimation()
     }
 
     private fun onFingers(event: MotionEvent): Boolean {
@@ -2050,7 +2122,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     private fun currentBrush(): Brush {
         val epsilon = strokeEpsilon(strokeWidth, epsilonFor(currentScale()))
-        val brushTool = if (tool in listOf(Tool.PEN, Tool.PRESSURE_PEN, Tool.PENCIL)) {
+        val brushTool = if (tool.isFreehandPen()) {
             when (dottedPattern) {
                 1 -> Tool.DOTTED
                 2 -> Tool.DASHED
@@ -2648,9 +2720,34 @@ class InkCanvasView @JvmOverloads constructor(
         lassoPage = index
         drawingLasso = true
         lassoPath.clear()
-        lassoPath += shapeStart[0]
-        lassoPath += shapeStart[1]
+        lassoPath.add(shapeStart[0], shapeStart[1])
         dry.invalidate()
+    }
+
+    /**
+     * AndroidX Ink consumes every historical sample from the original event.
+     * Lasso is app-owned, so retain its useful history here as primitive points
+     * while dropping samples closer than two screen pixels.
+     */
+    private fun appendLassoSamples(event: MotionEvent, pointerIndex: Int) {
+        val minimumDistance = LASSO_SAMPLE_DISTANCE_PX / currentScale().coerceAtLeast(0.01f)
+        var changed = false
+        for (historyIndex in 0 until event.historySize) {
+            pageLocalInto(
+                event.getHistoricalX(pointerIndex, historyIndex),
+                event.getHistoricalY(pointerIndex, historyIndex),
+                lassoPage,
+                shapeEnd,
+            )
+            changed = lassoPath.addIfFarEnough(
+                shapeEnd[0], shapeEnd[1], minimumDistance,
+            ) || changed
+        }
+        pageLocalInto(event.getX(pointerIndex), event.getY(pointerIndex), lassoPage, shapeEnd)
+        changed = lassoPath.addIfFarEnough(
+            shapeEnd[0], shapeEnd[1], minimumDistance,
+        ) || changed
+        if (changed) dry.postInvalidateOnAnimation()
     }
 
     private fun finishLasso() {
@@ -2668,7 +2765,9 @@ class InkCanvasView @JvmOverloads constructor(
             val box = stroke.shape.computeBoundingBox() ?: continue
             // The centre decides. Requiring every corner inside makes a lasso
             // that is hard to satisfy; the centre is what people aim at.
-            if (!insidePolygon(lassoPath,(box.xMin + box.xMax) / 2f, (box.yMin + box.yMax) / 2f)) continue
+            if (!lassoPath.contains((box.xMin + box.xMax) / 2f,
+                    (box.yMin + box.yMax) / 2f)
+            ) continue
             lassoStrokes += stroke
             if (lassoBounds.isEmpty) {
                 lassoBounds.set(box.xMin, box.yMin, box.xMax, box.yMax)
@@ -2905,21 +3004,20 @@ class InkCanvasView @JvmOverloads constructor(
         val page = selectedImagePage ?: return
         val index = document.pages.indexOf(page)
         if (index < 0) return
-        val point = floatArrayOf(event.getX(pointerIndex), event.getY(pointerIndex))
-        screenToPage(index).mapPoints(point)
+        pageLocalInto(event.getX(pointerIndex), event.getY(pointerIndex), index, imagePoint)
         if (resizingImage) {
             val aspect = if (image.height > 0f) image.width / image.height else 1f
             // Width leads and height follows, so a picture never gets squashed.
-            val width = (point[0] - image.x).coerceAtLeast(IMAGE_MIN_SIZE)
+            val width = (imagePoint[0] - image.x).coerceAtLeast(IMAGE_MIN_SIZE)
             image.width = width
             image.height = if (aspect > 0f) width / aspect else width
         } else {
-            image.x += point[0] - imageGrab[0]
-            image.y += point[1] - imageGrab[1]
-            imageGrab[0] = point[0]
-            imageGrab[1] = point[1]
+            image.x += imagePoint[0] - imageGrab[0]
+            image.y += imagePoint[1] - imageGrab[1]
+            imageGrab[0] = imagePoint[0]
+            imageGrab[1] = imagePoint[1]
         }
-        dry.invalidate()
+        dry.postInvalidateOnAnimation()
     }
 
     private fun finishCapture() {
@@ -2988,37 +3086,50 @@ class InkCanvasView @JvmOverloads constructor(
         bitmap
     }.getOrNull()
 
-    private fun eraseAlong(event: MotionEvent, pointerIndex: Int) {
+    private fun eraseAlong(event: MotionEvent, pointerIndex: Int, force: Boolean = false) {
         val page = activePage ?: return
         val index = document.pages.indexOf(page)
         if (index < 0) return
         eraserCursorVisible = true
         eraserCursorX = event.getX(pointerIndex)
         eraserCursorY = event.getY(pointerIndex)
-        dry.invalidate()
-        val point = floatArrayOf(event.getX(pointerIndex), event.getY(pointerIndex))
-        screenToPage(index).mapPoints(point)
-        val previous = lastErasePoint
-        lastErasePoint = point
-        val segment = previous?.let {
-            ImmutableSegment(
-                ImmutableVec(it[0], it[1]),
-                ImmutableVec(point[0], point[1]),
-            )
+        dry.postInvalidateOnAnimation()
+        pageLocalInto(eraserCursorX, eraserCursorY, index, erasePagePoint)
+        val x = erasePagePoint[0]
+        val y = erasePagePoint[1]
+        if (hasLastErasePoint) {
+            val dx = x - lastEraseX
+            val dy = y - lastEraseY
+            // The previous square tip already covers this movement. Waiting for
+            // a useful distance avoids dense-page intersection work at 240 Hz;
+            // the next segment, or the forced UP sample, covers the whole gap.
+            if (!shouldProcessEraserMove(dx, dy, eraserWidth, force)) return
         }
+        val hadPrevious = hasLastErasePoint
+        val previousX = lastEraseX
+        val previousY = lastEraseY
+        lastEraseX = x
+        lastEraseY = y
+        hasLastErasePoint = true
+        val segment = if (hadPrevious) {
+            ImmutableSegment(
+                ImmutableVec(previousX, previousY),
+                ImmutableVec(x, y),
+            )
+        } else null
         // The tip is a square of eraserWidth around where the pen is now; the
         // segment covers the gap to the previous sample, so a fast swipe still
         // erases along its whole path instead of leaving holes between samples.
         val tip = ImmutableBox.fromCenterAndDimensions(
-            ImmutableVec(point[0], point[1]),
+            ImmutableVec(x, y),
             eraserWidth,
             eraserWidth,
         )
         val radius = eraserWidth / 2f
-        val candidateLeft = min(previous?.get(0) ?: point[0], point[0]) - radius
-        val candidateTop = min(previous?.get(1) ?: point[1], point[1]) - radius
-        val candidateRight = max(previous?.get(0) ?: point[0], point[0]) + radius
-        val candidateBottom = max(previous?.get(1) ?: point[1], point[1]) + radius
+        val candidateLeft = min(if (hadPrevious) previousX else x, x) - radius
+        val candidateTop = min(if (hadPrevious) previousY else y, y) - radius
+        val candidateRight = max(if (hadPrevious) previousX else x, x) + radius
+        val candidateBottom = max(if (hadPrevious) previousY else y, y) + radius
         val candidates = dry.strokesIn(
             page, candidateLeft, candidateTop, candidateRight, candidateBottom,
         )
@@ -3028,29 +3139,39 @@ class InkCanvasView @JvmOverloads constructor(
         //
         // intersects() is a member extension on the Intersection object, so it
         // only resolves inside its scope.
-        val hit = with(Intersection) {
-            candidates.filter {
-                (segment?.intersects(it.shape, IDENTITY) == true) ||
-                    tip.intersects(it.shape, IDENTITY)
+        eraseStrokeHits.clear()
+        eraseStrokeHitSet.clear()
+        with(Intersection) {
+            for (candidate in candidates) {
+                if ((segment?.intersects(candidate.shape, IDENTITY) == true) ||
+                    tip.intersects(candidate.shape, IDENTITY)
+                ) {
+                    eraseStrokeHits += candidate
+                    eraseStrokeHitSet += candidate
+                }
             }
         }
-        val maskHits = with(Intersection) {
-            page.masks.filter {
-                (segment?.intersects(it.stroke.shape, IDENTITY) == true) ||
-                    tip.intersects(it.stroke.shape, IDENTITY)
+        eraseMaskHits.clear()
+        with(Intersection) {
+            for (mask in page.masks) {
+                if ((segment?.intersects(mask.stroke.shape, IDENTITY) == true) ||
+                    tip.intersects(mask.stroke.shape, IDENTITY)
+                ) eraseMaskHits += mask
             }
         }
-        if (hit.isEmpty() && maskHits.isEmpty()) return
+        if (eraseStrokeHits.isEmpty() && eraseMaskHits.isEmpty()) return
         // Backwards, so each recorded index is still where it goes back.
-        for (mask in maskHits.reversed()) {
+        for (i in eraseMaskHits.lastIndex downTo 0) {
+            val mask = eraseMaskHits[i]
             val at = page.masks.indexOfFirst { it === mask }
             if (at < 0) continue
             page.masks.removeAt(at)
             undoStack += Edit.MaskRemoved(page, mask, at, activeEraseGroup)
         }
-        if (hit.isNotEmpty()) {
-            page.strokes.removeAll { stroke -> hit.any { it === stroke } }
-            undoStack += Edit.Erased(page, hit, activeEraseGroup)
+        val erased = if (eraseStrokeHits.isEmpty()) null else ArrayList(eraseStrokeHits)
+        if (erased != null) {
+            page.strokes.removeAll(eraseStrokeHitSet::contains)
+            undoStack += Edit.Erased(page, erased, activeEraseGroup)
         }
         redoStack.clear()
         // Keep the hot eraser loop local to the View. A Compose state write,
@@ -3058,8 +3179,8 @@ class InkCanvasView @JvmOverloads constructor(
         // the dominant pause on dense pages; commit the gesture once at lift.
         eraseChanged = true
         page.dirty = true
-        dry.invalidate()
-        if (hit.isNotEmpty()) dry.removeStrokesFromIndex(page, hit)
+        dry.postInvalidateOnAnimation()
+        if (erased != null) dry.removeStrokesFromIndex(page, erased)
     }
 
     private fun finishEraseGesture() {
@@ -3080,18 +3201,21 @@ class InkCanvasView @JvmOverloads constructor(
                     undoStack += Edit.MaskAdded(page, mask, group)
                 } else {
                     val shape = if (autoShapeRecognitionEnabled &&
-                        Tool.ofBrushFamily(stroke.brush.family) in listOf(Tool.PEN, Tool.PRESSURE_PEN, Tool.PENCIL)
+                        Tool.ofBrushFamily(stroke.brush.family).isFreehandPen()
                     ) recognizeStroke(stroke) else null
-                    val committed = when {
-                        shape != null -> shapeStrokes(
+                    if (shape != null) {
+                        val committed = shapeStrokes(
                             shape.kind, floatArrayOf(shape.fromX, shape.fromY),
                             floatArrayOf(shape.toX, shape.toY), stroke.brush,
                         )
-                        else -> listOf(smoothFreehandStroke(correctStrokeStart(stroke)))
-                    }
-                    for (part in committed) {
-                        page.strokes += part
-                        undoStack += Edit.Drawn(page, part, group)
+                        for (part in committed) {
+                            page.strokes += part
+                            undoStack += Edit.Drawn(page, part, group)
+                        }
+                    } else {
+                        val committed = smoothFreehandStroke(correctStrokeStart(stroke))
+                        page.strokes += committed
+                        undoStack += Edit.Drawn(page, committed, group)
                     }
                 }
             }
@@ -3153,7 +3277,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     private fun smoothFreehandStroke(stroke: Stroke): Stroke {
         val strokeTool = Tool.ofBrushFamily(stroke.brush.family)
-        if (strokeTool != Tool.PEN && strokeTool != Tool.PRESSURE_PEN && strokeTool != Tool.PENCIL) return stroke
+        if (!strokeTool.isFreehandPen()) return stroke
         if (stabilizer <= 0) return stroke
         if (stroke.inputs.size < 3) return stroke
 
@@ -3242,6 +3366,8 @@ class InkCanvasView @JvmOverloads constructor(
         private val outlines = java.util.WeakHashMap<Stroke, android.graphics.Path>()
         private val outlinePoint = MutableVec()
         private val selectionBox = RectF()
+        private var lassoDashScale = Float.NaN
+        private var lassoDashEffect: android.graphics.DashPathEffect? = null
         private val handle = Paint().apply { isAntiAlias = true; color = 0xFF3B7DDD.toInt() }
         private val eraserCursorFill = Paint().apply {
             isAntiAlias = true
@@ -3515,8 +3641,14 @@ class InkCanvasView @JvmOverloads constructor(
             overlay.pathEffect = null
         }
 
-        private fun lassoDashes(scale: Float) =
-            android.graphics.DashPathEffect(floatArrayOf(8f / scale, 6f / scale), 0f)
+        private fun lassoDashes(scale: Float): android.graphics.DashPathEffect {
+            lassoDashEffect?.takeIf { lassoDashScale == scale }?.let { return it }
+            return android.graphics.DashPathEffect(floatArrayOf(8f / scale, 6f / scale), 0f)
+                .also {
+                    lassoDashScale = scale
+                    lassoDashEffect = it
+                }
+        }
 
         private fun drawMasks(
             canvas: Canvas,
@@ -3801,6 +3933,7 @@ class InkCanvasView @JvmOverloads constructor(
         const val CAPTURE_MAX_SCALE = 4f
         const val LASSO_MIN_POINTS = 6
         const val LASSO_PADDING = 10f
+        const val LASSO_SAMPLE_DISTANCE_PX = 2f
         /** Pages this far either side of the screen stay in memory. */
         const val KEEP_PAGES = 3
         /** What every LatencyData field holds until it is filled in. */
@@ -3856,6 +3989,17 @@ internal fun insidePolygon(path: List<Float>, x: Float, y: Float): Boolean {
         j = i
     }
     return inside
+}
+
+internal fun shouldProcessEraserMove(
+    dx: Float,
+    dy: Float,
+    eraserWidth: Float,
+    force: Boolean,
+): Boolean {
+    if (force) return true
+    val minimumDistance = eraserWidth * ERASER_SAMPLE_DISTANCE_FRACTION
+    return dx * dx + dy * dy >= minimumDistance * minimumDistance
 }
 
 /** True while the barrel button is held, or the pen is flipped to its eraser end. */
