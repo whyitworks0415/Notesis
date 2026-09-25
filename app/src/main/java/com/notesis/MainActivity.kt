@@ -3692,6 +3692,14 @@ private fun NoteScreen(
                     canvas?.setPageTemplate(index, templateId)
                     edits++
                 },
+                onSetToc = { index, title ->
+                    canvas?.setPageToc(index, title)
+                    edits++
+                },
+                onHighlightToc = { index, highlighted ->
+                    canvas?.setPageTocHighlighted(index, highlighted)
+                    edits++
+                },
             )
         }
 
@@ -4473,21 +4481,51 @@ private fun PageSidebar(
     onMove: (Int, Int) -> Unit,
     onBackground: (Int, PageBackground) -> Unit,
     onTemplate: (Int, String) -> Unit,
+    onSetToc: (Int, String?) -> Unit,
+    onHighlightToc: (Int, Boolean) -> Unit,
 ) {
     val pages = document?.pages ?: return
     var tab by remember { mutableIntStateOf(0) }
+    var editingPage by remember { mutableStateOf<Page?>(null) }
+    var tocName by remember { mutableStateOf("") }
+    fun editToc(page: Page) {
+        editingPage = page
+        tocName = page.tocTitle.orEmpty()
+    }
+    editingPage?.let { page ->
+        val index = pages.indexOf(page)
+        if (index >= 0) AlertDialog(
+            onDismissRequest = { editingPage = null },
+            title = { Text("${index + 1}쪽 목차") },
+            text = {
+                OutlinedTextField(
+                    value = tocName,
+                    onValueChange = { tocName = it },
+                    label = { Text("목차 이름") },
+                    singleLine = true,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onSetToc(index, tocName)
+                    editingPage = null
+                }, enabled = tocName.isNotBlank()) { Text("저장") }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingPage = null }) { Text("취소") }
+            },
+        )
+    }
     SkinSurface(
         modifier = Modifier
             .windowInsetsPadding(ChromeInsets)
             .padding(12.dp)
-            // Wide enough for both tab labels on one line; the page column
-            // was sized before there were tabs over it.
-            .width(190.dp)
+            .width(240.dp)
             .fillMaxHeight(0.8f),
     ) {
         Column {
             LiquidSegmentedControl(
-                segments = listOf("페이지", "마스킹"),
+                segments = listOf("페이지", "목차", "마스킹"),
                 selectedIndex = tab,
                 onSelected = { tab = it },
                 useLiquidGlass = LocalSkin.current == Skin.LIQUID_GLASS,
@@ -4500,7 +4538,20 @@ private fun PageSidebar(
                 contentPadding = PaddingValues(10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                items(pages) { page ->
+                if (tab == 1 && pages.none { it.tocTitle != null }) {
+                    item {
+                        Text(
+                            "등록된 목차가 없습니다. 현재 쪽을 추가하거나 페이지를 길게 눌러 설정하세요.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.outline,
+                            modifier = Modifier.padding(8.dp),
+                        )
+                    }
+                }
+                items(
+                    if (tab == 1) pages.filter { it.tocTitle != null } else pages,
+                    key = { it.id },
+                ) { page ->
                     val index = pages.indexOf(page)
                     if (tab == 0) {
                         PageChip(
@@ -4514,6 +4565,17 @@ private fun PageSidebar(
                             onBackground = { onBackground(index, it) },
                             userTemplates = userTemplates,
                             onTemplate = { onTemplate(index, it) },
+                            onEditToc = { editToc(page) },
+                        )
+                    } else if (tab == 1) {
+                        TocChip(
+                            index = index,
+                            page = page,
+                            selected = index == currentPage,
+                            onJump = { onJump(index) },
+                            onEdit = { editToc(page) },
+                            onHighlight = { onHighlightToc(index, !page.tocHighlighted) },
+                            onDelete = { onSetToc(index, null) },
                         )
                     } else {
                         MaskChip(
@@ -4540,6 +4602,14 @@ private fun PageSidebar(
                 ) {
                     Icon(Icons.Default.Add, contentDescription = null)
                     Text(" 페이지")
+                }
+            } else if (tab == 1) {
+                TextButton(
+                    onClick = { pages.getOrNull(currentPage)?.let(::editToc) },
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null)
+                    Text(" 현재 쪽 목차 설정")
                 }
             } else {
                 // Whole-note switches, which is how a page of covered answers
@@ -4569,6 +4639,63 @@ private fun chipFill(selected: Boolean): Color = when {
     selected -> MaterialTheme.colorScheme.primaryContainer
     LocalSkin.current == Skin.MATERIAL -> MaterialTheme.colorScheme.surfaceContainerLowest
     else -> Color.White.copy(alpha = 0.34f)
+}
+
+@Composable
+private fun TocChip(
+    index: Int,
+    page: Page,
+    selected: Boolean,
+    onJump: () -> Unit,
+    onEdit: () -> Unit,
+    onHighlight: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val highlighted = page.tocHighlighted
+    val colors = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (highlighted) colors.tertiaryContainer else chipFill(selected))
+            .border(
+                if (selected) 2.dp else 1.dp,
+                if (selected) colors.primary else colors.outlineVariant,
+                RoundedCornerShape(8.dp),
+            )
+            .clickable(onClick = onJump)
+            .padding(start = 10.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(page.tocTitle.orEmpty(), style = MaterialTheme.typography.titleSmall,
+                color = if (highlighted) colors.onTertiaryContainer else colors.onSurface,
+                maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text("${index + 1}쪽", style = MaterialTheme.typography.labelSmall,
+                color = if (highlighted) colors.onTertiaryContainer else colors.outline)
+        }
+        IconButton(onClick = onHighlight, modifier = Modifier.size(32.dp)) {
+            Icon(Icons.Default.Highlight,
+                contentDescription = if (highlighted) "강조 해제" else "목차 강조",
+                tint = if (highlighted) colors.onTertiaryContainer else colors.outline,
+                modifier = Modifier.size(18.dp))
+        }
+        var menu by remember { mutableStateOf(false) }
+        Box {
+            IconButton(onClick = { menu = true }, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Default.MoreVert, contentDescription = "목차 옵션",
+                    modifier = Modifier.size(18.dp))
+            }
+            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                DropdownMenuItem(text = { Text("이름 변경") }, onClick = {
+                    menu = false; onEdit()
+                })
+                DropdownMenuItem(text = { Text("목차 삭제") }, onClick = {
+                    menu = false; onDelete()
+                })
+            }
+        }
+    }
 }
 
 /**
@@ -4681,6 +4808,7 @@ private fun PageChip(
     onBackground: (PageBackground) -> Unit,
     userTemplates: List<UserPageTemplate>,
     onTemplate: (String) -> Unit,
+    onEditToc: () -> Unit,
 ) {
     var menu by remember { mutableStateOf(false) }
     Box {
@@ -4723,8 +4851,18 @@ private fun PageChip(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.outline,
             )
+            page.tocTitle?.let { title ->
+                Text(title, style = MaterialTheme.typography.labelSmall,
+                    color = if (page.tocHighlighted) MaterialTheme.colorScheme.tertiary
+                        else MaterialTheme.colorScheme.primary,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            DropdownMenuItem(
+                text = { Text(if (page.tocTitle == null) "목차 설정" else "목차 이름 변경") },
+                onClick = { menu = false; onEditToc() },
+            )
             DropdownMenuItem(
                 text = { Text("앞 페이지로") }, enabled = index > 0,
                 onClick = { onMove(-1); menu = false },

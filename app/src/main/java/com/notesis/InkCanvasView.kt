@@ -1385,6 +1385,22 @@ class InkCanvasView @JvmOverloads constructor(
         afterEdit()
     }
 
+    fun setPageToc(index: Int, title: String?) {
+        val page = document.pages.getOrNull(index) ?: return
+        val normalized = title?.trim()?.takeIf { it.isNotEmpty() }
+        if (page.tocTitle == normalized) return
+        page.tocTitle = normalized
+        if (normalized == null) page.tocHighlighted = false
+        afterEdit()
+    }
+
+    fun setPageTocHighlighted(index: Int, highlighted: Boolean) {
+        val page = document.pages.getOrNull(index) ?: return
+        if (page.tocTitle == null || page.tocHighlighted == highlighted) return
+        page.tocHighlighted = highlighted
+        afterEdit()
+    }
+
     fun setBackground(index: Int, background: PageBackground) {
         val page = document.pages.getOrNull(index) ?: return
         if (page.background == PageBackground.PDF) return
@@ -3658,7 +3674,10 @@ class InkCanvasView @JvmOverloads constructor(
         val page = activePage
         if (page != null) {
             val group = nextEditGroup++
-            for (stroke in finished.values) {
+            for (finishedStroke in finished.values) {
+                val stroke = if (Tool.ofBrushFamily(finishedStroke.brush.family).isFreehandPen()) {
+                    withoutContactSpurs(finishedStroke)
+                } else finishedStroke
                 if (strokeIsMask) {
                     val mask = PageMask(stroke)
                     page.masks += mask

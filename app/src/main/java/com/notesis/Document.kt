@@ -83,6 +83,9 @@ class Page(
     var templateId: String? = null,
     /** Index into the note's imported PDF, or -1 when this page has no PDF. */
     var pdfPageIndex: Int = -1,
+    /** Optional table-of-contents entry attached to this page's stable ID. */
+    var tocTitle: String? = null,
+    var tocHighlighted: Boolean = false,
     /** Pictures, drawn over the background and under the ink. */
     val images: MutableList<PageImage> = mutableListOf(),
     /** Masking tape, drawn over everything, because covering is the job. */
@@ -612,7 +615,8 @@ class NoteStore(context: Context) {
                         val page = Page(
                             id = pageId, width = old.width, height = old.height,
                             background = old.background, templateId = old.templateId,
-                            pdfPageIndex = pdfIndex, images = images,
+                            pdfPageIndex = pdfIndex, tocTitle = old.tocTitle,
+                            tocHighlighted = old.tocHighlighted, images = images,
                         ).also {
                             it.loaded = false
                             it.dirty = false
@@ -729,6 +733,8 @@ class NoteStore(context: Context) {
                 }.getOrDefault(PageBackground.BLANK),
                 templateId = entry.optString("template", "").ifBlank { null },
                 pdfPageIndex = entry.optInt("pdf", -1),
+                tocTitle = entry.optString("tocTitle", "").ifBlank { null },
+                tocHighlighted = entry.optBoolean("tocHighlighted", false),
             )
             page.images.addAll(imagesFrom(entry))
             // Strokes are left on disk until the page is actually needed.
@@ -823,7 +829,10 @@ class NoteStore(context: Context) {
                 width = live.width,
                 height = live.height,
                 background = live.background,
+                templateId = live.templateId,
                 pdfPageIndex = live.pdfPageIndex,
+                tocTitle = live.tocTitle,
+                tocHighlighted = live.tocHighlighted,
                 images = live.images.map { image ->
                     PageImage(image.id, image.x, image.y, image.width, image.height, image.textContent)
                 }.toMutableList(),
@@ -1120,8 +1129,8 @@ class NoteStore(context: Context) {
         val pages = selected.map { page ->
             VectorPdfPage(
                 page = page,
-                strokes = readStrokes(File(root, "$id/pages/${page.id}.bin")),
-                masks = readStrokes(File(root, "$id/pages/${page.id}.mask")),
+                strokes = readStrokes(File(root, "$id/pages/${page.id}.bin"), PDF_EXPORT_EPSILON),
+                masks = readStrokes(File(root, "$id/pages/${page.id}.mask"), PDF_EXPORT_EPSILON),
             )
         }
         return writeVectorPdf(
@@ -1380,6 +1389,8 @@ class NoteStore(context: Context) {
                     .put("bg", page.background.name)
                     .put("template", page.templateId ?: "")
                     .put("pdf", page.pdfPageIndex)
+                    .put("tocTitle", page.tocTitle ?: "")
+                    .put("tocHighlighted", page.tocHighlighted)
                     .put("strokes", if (page.loaded) page.strokes.size else page.savedStrokeCount)
                     .put("images", imagesToJson(page)),
             )
@@ -1522,6 +1533,8 @@ class NoteStore(context: Context) {
         const val ARCHIVE_MARK = "notesis.json"
         const val ARCHIVE_VERSION = 1
         const val THUMB_INTERVAL_MS = 20_000L
+        /** Finer outlines than the live viewport, where PDF zoom has no fixed limit. */
+        private const val PDF_EXPORT_EPSILON = 0.02f
         private const val SAVE_ATTEMPTS = 3
         const val VERSION = 1
     }

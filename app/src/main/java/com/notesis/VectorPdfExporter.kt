@@ -218,8 +218,8 @@ private fun drawStroke(stream: PDPageContentStream, stroke: Stroke) {
     val shape = stroke.shape
     val point = MutableVec()
     val unit = PdfSource.POINTS_TO_WORLD
-    var hasPath = false
     for (group in 0 until shape.getRenderGroupCount()) {
+        var hasPath = false
         for (outline in 0 until shape.getOutlineCount(group)) {
             val count = shape.getOutlineVertexCount(group, outline)
             if (count < 3) continue
@@ -232,7 +232,10 @@ private fun drawStroke(stream: PDPageContentStream, stroke: Stroke) {
             stream.closePath()
             hasPath = true
         }
+        // Ink's Canvas path renderer uses the nonzero winding rule for each
+        // render group. Even-odd turns overlapping outlines into empty holes,
+        // particularly at short pen caps and where masking/highlighter loops.
+        if (hasPath) stream.fill()
     }
-    if (hasPath) stream.fillEvenOdd()
     stream.restoreGraphicsState()
 }
