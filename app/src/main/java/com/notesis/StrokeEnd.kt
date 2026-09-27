@@ -94,3 +94,44 @@ internal fun withoutContactSpurs(stroke: Stroke): Stroke {
     }
     return Stroke(stroke.brush, clean.toImmutable())
 }
+
+/**
+ * A fixed-width pen can receive dozens of nearly stationary digitizer samples
+ * before the tip actually moves. Their tiny reversals make Ink's start outline
+ * fold over itself, leaving a corner even with a circular brush tip. Keep the
+ * contact point and the first real movement, but omit that stationary cluster.
+ */
+internal fun withoutStationaryStart(stroke: Stroke): Stroke {
+    val inputs = stroke.inputs
+    if (inputs.size < 5) return stroke
+    val first = StrokeInput()
+    val sample = StrokeInput()
+    inputs.populate(0, first)
+    val threshold = (stroke.brush.size * 0.15f).coerceIn(0.04f, 0.3f)
+    var firstMovement = -1
+    for (index in 1 until inputs.size) {
+        inputs.populate(index, sample)
+        if (sample.elapsedTimeMillis - first.elapsedTimeMillis > 100L) break
+        if (hypot(sample.x - first.x, sample.y - first.y) >= threshold) {
+            firstMovement = index
+            break
+        }
+    }
+    if (firstMovement < 4) return stroke
+
+    val clean = MutableStrokeInputBatch()
+    for (index in 0 until inputs.size) {
+        if (index in 1 until firstMovement) continue
+        inputs.populate(index, sample)
+        clean.add(
+            type = sample.toolType,
+            x = sample.x,
+            y = sample.y,
+            elapsedTimeMillis = sample.elapsedTimeMillis,
+            pressure = sample.pressure,
+            tiltRadians = sample.tiltRadians,
+            orientationRadians = sample.orientationRadians,
+        )
+    }
+    return Stroke(stroke.brush, clean.toImmutable())
+}

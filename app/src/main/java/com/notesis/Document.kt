@@ -1505,7 +1505,7 @@ class NoteStore(context: Context) {
                     // Only raw inputs are stored; the mesh is rebuilt here. That
                     // is what keeps saved notes readable across ink versions.
                     val inputs = StrokeInputBatchSerialization.decode(ByteArrayInputStream(bytes))
-                    strokes += Stroke(
+                    val stroke = Stroke(
                         Brush.createWithColorIntArgb(
                             tool.brushFamily(),
                             color,
@@ -1514,6 +1514,7 @@ class NoteStore(context: Context) {
                         ),
                         inputs,
                     )
+                    strokes += if (tool == Tool.PEN) withoutStationaryStart(stroke) else stroke
                 }
             }
         }

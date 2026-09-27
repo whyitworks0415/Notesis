@@ -76,8 +76,8 @@ import kotlin.math.atan2
  */
 const val MAX_CANVAS_SCALE = 16f
 
-/** Ink's recommended mesh fidelity, in physical pixels. */
-const val TESSELLATION_TARGET_PX = 0.1f
+/** Keep the pen outline well below one screen pixel before path antialiasing. */
+const val TESSELLATION_TARGET_PX = 0.05f
 
 /**
  * Mesh fidelity for a stroke about to be shown at [scale] screen pixels per page
@@ -374,19 +374,23 @@ enum class Tool {
         private val pen by lazy {
             val stock = StockBrushes.marker()
             val coat = stock.coats.first()
-            stock.copy(coat = coat.copy(tip = coat.tip.copy(
+            // A filled path uses the same outline rule as the PDF exporter and
+            // CanvasPathRenderer antialiases both wet and committed ink.
+            val rounded = stock.copy(coat = coat.copy(tip = coat.tip.copy(
                 scaleX = 1f, scaleY = 1f, cornerRounding = 1f,
                 slantDegrees = 0f, pinch = 0f, rotationDegrees = 0f,
             )))
+            merged(rounded)
         }
         @OptIn(ExperimentalInkCustomBrushApi::class)
         private val pressurePen by lazy {
             val stock = StockBrushes.pressurePen()
             val coat = stock.coats.first()
-            stock.copy(coat = coat.copy(tip = coat.tip.copy(
+            val rounded = stock.copy(coat = coat.copy(tip = coat.tip.copy(
                 scaleX = 1f, scaleY = 1f, cornerRounding = 1f,
                 slantDegrees = 0f, pinch = 0f, rotationDegrees = 0f,
             )))
+            merged(rounded)
         }
         @OptIn(ExperimentalInkCustomBrushApi::class)
         private val pencil by lazy {
@@ -3675,9 +3679,13 @@ class InkCanvasView @JvmOverloads constructor(
         if (page != null) {
             val group = nextEditGroup++
             for (finishedStroke in finished.values) {
-                val stroke = if (Tool.ofBrushFamily(finishedStroke.brush.family).isFreehandPen()) {
-                    withoutContactSpurs(finishedStroke)
-                } else finishedStroke
+                val finishedTool = Tool.ofBrushFamily(finishedStroke.brush.family)
+                val stroke = when {
+                    finishedTool == Tool.PEN ->
+                        withoutStationaryStart(withoutContactSpurs(finishedStroke))
+                    finishedTool.isFreehandPen() -> withoutContactSpurs(finishedStroke)
+                    else -> finishedStroke
+                }
                 if (strokeIsMask) {
                     val mask = PageMask(stroke)
                     page.masks += mask

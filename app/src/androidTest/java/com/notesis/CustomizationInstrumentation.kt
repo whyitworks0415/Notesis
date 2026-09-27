@@ -5,13 +5,18 @@ import android.app.Instrumentation
 import android.content.Context
 import android.content.ContextWrapper
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Matrix
 import android.graphics.RectF
 import android.graphics.pdf.PdfRenderer
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import androidx.ink.brush.Brush
+import androidx.ink.brush.ExperimentalInkCustomBrushApi
 import androidx.ink.brush.InputToolType
+import androidx.ink.brush.SelfOverlap
+import androidx.ink.rendering.android.canvas.CanvasStrokeRenderer
 import androidx.ink.strokes.MutableStrokeInputBatch
 import androidx.ink.strokes.Stroke
 import androidx.ink.strokes.StrokeInput
@@ -89,11 +94,13 @@ class CustomizationInstrumentation : Instrumentation() {
                 preview.recycle()
             } ?: error("PDF roundtrip")
             verifyIntermittentContactSpurs()
+            verifyStationaryPenStarts()
+            verifyPenAntialiasing()
             verifyVectorStrokeOverlap(store, isolated)
             store.delete(note.id)
             bitmap.recycle()
             changedBitmap.recycle()
-            output.putString("stream", "PASS preferences, text rendering, insertion/edit/undo/redo, autosave/reload, intermittent pen contact, PDF export/preview and stroke overlap\n")
+            output.putString("stream", "PASS preferences, text rendering, insertion/edit/undo/redo, autosave/reload, intermittent pen contact, stationary pen starts, pen antialiasing, PDF export/preview and stroke overlap\n")
             finish(Activity.RESULT_OK, output)
         } catch (error: Throwable) {
             output.putString("stream", error.stackTraceToString())
@@ -145,6 +152,67 @@ class CustomizationInstrumentation : Instrumentation() {
         check(withoutContactSpurs(intentionalCorner) === intentionalCorner)
         val slowReversal = stroke(early, 50L)
         check(withoutContactSpurs(slowReversal) === slowReversal)
+    }
+
+    private fun verifyStationaryPenStarts() {
+        val brush = Brush.createWithColorIntArgb(Tool.PEN.brushFamily(), Color.BLUE, 1.4f, 0.00625f)
+        for (stationaryCount in listOf(12, 28)) {
+            val inputs = MutableStrokeInputBatch()
+            inputs.add(InputToolType.STYLUS, 100f, 100f, 0L)
+            for (index in 1 until stationaryCount) {
+                inputs.add(
+                    InputToolType.STYLUS,
+                    100f + (index % 3 - 1) * 0.015f,
+                    100f + (index % 4 - 2) * 0.012f,
+                    index * 2L,
+                )
+            }
+            inputs.add(InputToolType.STYLUS, 100.25f, 100f, stationaryCount * 2L)
+            inputs.add(InputToolType.STYLUS, 101f, 100.3f, (stationaryCount + 1) * 2L)
+            val original = Stroke(brush, inputs.toImmutable())
+            val clean = withoutStationaryStart(original)
+            check(clean.inputs.size == 3)
+            val point = StrokeInput()
+            clean.inputs.populate(0, point)
+            check(point.x == 100f && point.y == 100f && point.elapsedTimeMillis == 0L)
+            clean.inputs.populate(1, point)
+            check(point.x == 100.25f && point.elapsedTimeMillis == stationaryCount * 2L)
+            check(withoutStationaryStart(clean) === clean)
+        }
+    }
+
+    @OptIn(ExperimentalInkCustomBrushApi::class)
+    private fun verifyPenAntialiasing() {
+        for (tool in listOf(Tool.PEN, Tool.PRESSURE_PEN)) {
+            val family = tool.brushFamily()
+            val paints = family.coats.first().paintPreferences
+            check(paints.isNotEmpty() && paints.all {
+                it.selfOverlap == SelfOverlap.DISCARD
+            })
+            val brush = Brush.createWithColorIntArgb(family, Color.BLACK, 3f, 0.02f)
+            val inputs = MutableStrokeInputBatch().apply {
+                add(InputToolType.STYLUS, 15.4f, 20.6f, 0L)
+                add(InputToolType.STYLUS, 70.5f, 59.2f, 12L)
+                add(InputToolType.STYLUS, 105.3f, 94.7f, 24L)
+            }
+            val bitmap = Bitmap.createBitmap(128, 128, Bitmap.Config.ARGB_8888)
+            try {
+                CanvasStrokeRenderer.create(PencilTextureStore).draw(
+                    Canvas(bitmap), Stroke(brush, inputs.toImmutable()), Matrix(),
+                )
+                var solid = false
+                var antialiased = false
+                for (y in 0 until bitmap.height) for (x in 0 until bitmap.width) {
+                    when (Color.alpha(bitmap.getPixel(x, y))) {
+                        255 -> solid = true
+                        in 1..254 -> antialiased = true
+                    }
+                }
+                check(solid && antialiased) { "$tool did not produce an antialiased edge" }
+            } finally {
+                bitmap.recycle()
+            }
+        }
     }
 
     private fun verifyVectorStrokeOverlap(store: NoteStore, context: Context) {
