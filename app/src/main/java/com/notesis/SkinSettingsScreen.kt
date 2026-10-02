@@ -23,6 +23,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -76,7 +80,7 @@ fun SkinSettingsScreen(
     val liquidBackdrop = rememberLiquidGlassBackdrop()
     CompositionLocalProvider(
         LocalBackdrop provides backdrop,
-        LocalLiquidGlassBackdrop provides if (skin == Skin.LIQUID_GLASS) liquidBackdrop else null,
+        LocalLiquidGlassBackdrop provides if (skin.isRefractive) liquidBackdrop else null,
     ) {
     Scaffold(
         topBar = {
@@ -108,7 +112,7 @@ fun SkinSettingsScreen(
                 .fillMaxSize()
                 .recordBackdrop(backdrop)
                 .then(
-                    if (skin == Skin.LIQUID_GLASS) {
+                    if (skin.isRefractive) {
                         Modifier.captureLiquidGlassBackdrop(liquidBackdrop)
                     } else {
                         Modifier
@@ -182,6 +186,22 @@ fun SkinSettingsScreen(
 
             item {
                 SectionLabel("배경")
+                if (skin == Skin.SPOTIGLASS) {
+                    Setting(
+                        "유리 투명도",
+                        "%.0f%%".format(settings.spotiglassClarity * 100),
+                        settings.spotiglassClarity,
+                        0f..1f,
+                        note = "0%는 불투명, 100%는 맑은 유리. 아래 바를 눌러 옆으로 밀어보세요",
+                    ) { onChange(settings.copy(spotiglassClarity = it)) }
+                    Setting(
+                        "인터랙션 강도",
+                        "%.0f%%".format(settings.spotiglassResponse * 100),
+                        settings.spotiglassResponse,
+                        0f..1f,
+                        note = "누름과 슬라이드에서 렌즈가 늘어나고 들리는 정도입니다",
+                    ) { onChange(settings.copy(spotiglassResponse = it)) }
+                }
                 Setting(
                     "블러 반경",
                     "%.0fdp".format(settings.blur),
@@ -195,7 +215,7 @@ fun SkinSettingsScreen(
                     settings.vibrancy,
                     SkinSettings.VIBRANCY_RANGE,
                 ) { onChange(settings.copy(vibrancy = it)) }
-                if (skin == Skin.LIQUID_GLASS) {
+                if (skin.isRefractive) {
                     Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
                         Text("굴절 방향", style = MaterialTheme.typography.bodyLarge)
                         Text(
@@ -243,7 +263,7 @@ fun SkinSettingsScreen(
                     ) { onChange(settings.copy(dispersion = it)) }
                 }
                 Setting(
-                    "모서리",
+                    "모서리 곡률",
                     "%.0fdp".format(settings.corner),
                     settings.corner,
                     SkinSettings.CORNER_RANGE,
@@ -315,6 +335,7 @@ enum class ColorSlot(val label: String) {
 private fun Preview() {
     var amount by remember { androidx.compose.runtime.mutableFloatStateOf(0.58f) }
     var enabled by remember { mutableStateOf(true) }
+    var tab by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     Box(
         Modifier
             .fillMaxWidth()
@@ -359,13 +380,33 @@ private fun Preview() {
             LocalBackdrop provides backdrop,
             LocalLiquidGlassBackdrop provides liquidBackdrop,
         ) {
+            if (LocalSkin.current == Skin.SPOTIGLASS) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("탭하거나 바를 옆으로 밀어보세요", color = Color.White,
+                        style = MaterialTheme.typography.labelLarge)
+                    SpotiGlassBar(
+                        items = listOf(
+                            SpotiGlassItem("노트", Icons.Default.Description),
+                            SpotiGlassItem("검색", Icons.Default.Search),
+                            SpotiGlassItem("도구", Icons.Default.Edit),
+                            SpotiGlassItem("설정", Icons.Default.Settings),
+                        ),
+                        selectedIndex = tab,
+                        onSelected = { tab = it },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    SkinSlider(amount, { amount = it }, 0f..1f, Modifier.fillMaxWidth(0.8f))
+                }
+            } else {
             SkinSurface(Modifier.fillMaxWidth(0.76f).height(138.dp)) {
                 Column(
                     Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 14.dp),
                     verticalArrangement = Arrangement.Center,
                 ) {
                     Text(
-                        if (LocalSkin.current == Skin.LIQUID_GLASS) {
+                        if (LocalSkin.current.isRefractive) {
                             "빛을 품고, 손끝에서 형태가 변하는 렌즈"
                         } else {
                             "뒤가 흐려지고 색은 살아 있어야 유리입니다"
@@ -390,6 +431,7 @@ private fun Preview() {
                         SkinSwitch(enabled) { enabled = it }
                     }
                 }
+            }
             }
         }
     }

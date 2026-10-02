@@ -51,6 +51,10 @@ fun LiquidSegmentedControl(
     useLiquidGlass: Boolean = true,
 ) {
     require(segments.size in 2..4) { "LiquidSegmentedControl은 2~4개 세그먼트를 지원합니다." }
+    if (useLiquidGlass && LocalSkin.current == Skin.SPOTIGLASS) {
+        SpotiGlassBar(segments.map { SpotiGlassItem(it) }, selectedIndex, onSelected, modifier)
+        return
+    }
     val selected = selectedIndex.coerceIn(segments.indices)
     val latestSelect by rememberUpdatedState(onSelected)
     val effectsAllowed = rememberLiquidGlassEffectsAllowed()

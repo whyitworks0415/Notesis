@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -94,29 +95,38 @@ fun Modifier.liquidGlass(
     shadowElevation: Dp = LiquidGlassTokens.fallbackShadow,
     drawBorder: Boolean = true,
 ): Modifier {
+    val spoti = LocalSkin.current == Skin.SPOTIGLASS
+    val clarity = if (spoti) settings.spotiglassClarity.coerceIn(0f, 1f) else 1f
     val amount = intensity.coerceIn(0f, 1f)
     val backdrop = LocalLiquidGlassBackdrop.current
     val effectsAllowed = rememberLiquidGlassEffectsAllowed() && !settings.highContrast
     val density = LocalDensity.current
-    val blurPx = with(density) { settings.blur.dp.toPx() } * amount
+    val blurPx = with(density) { settings.blur.dp.toPx() } * amount *
+        if (spoti) (1f - clarity * 0.65f) else 1f
     val depthPx = with(density) { settings.depth.dp.toPx() } * amount
     val refractionPx = with(density) { settings.refraction.dp.toPx() } * amount
-    val tint = surfaceColor.copy(
+    val body = if (spoti) {
+        // Dark glass retains the theme's dark ground instead of an opaque white coat.
+        surfaceColor.copy(alpha = surfaceColor.alpha * clarity)
+            .compositeOver(MaterialTheme.colorScheme.surface.copy(alpha = 1f - clarity))
+    } else surfaceColor
+    val tint = body.copy(
         alpha = if (settings.highContrast) {
-            maxOf(surfaceColor.alpha, 0.94f)
-        } else if (surfaceColor.alpha <= 0f) {
+            maxOf(body.alpha, 0.94f)
+        } else if (body.alpha <= 0f) {
             // 완전 투명 렌즈를 요청한 손잡이/버튼에 최소 흰색 알파를 강제로
             // 넣으면 전환 중 중앙에 흰 점이 생깁니다. 0은 그대로 보존합니다.
             0f
         } else {
-            (surfaceColor.alpha * (0.72f + amount * 0.28f)).coerceIn(0f, 0.72f)
+            (body.alpha * (0.72f + amount * 0.28f)).coerceIn(0f, if (spoti) 1f else 0.72f)
         },
     )
     val borderColor = Color(settings.border).copy(
-        alpha = (0.30f + settings.dispersion.coerceIn(0f, 1f) * 0.38f) * amount,
+        alpha = (if (spoti) Color(settings.border).alpha * 0.32f
+            else 0.30f + settings.dispersion.coerceIn(0f, 1f) * 0.38f) * amount,
     )
 
-    if (enabled && amount > 0.001f && effectsAllowed && backdrop != null) {
+    if (enabled && amount > 0.001f && effectsAllowed && backdrop != null && clarity > 0f) {
         var result = this
             .shadow(shadowElevation, shape, clip = false)
             .drawBackdrop(
@@ -167,7 +177,7 @@ fun Modifier.liquidGlass(
     // 시스템 효과가 줄어든 경우에는 불투명하게, 구형 API에서는 반투명하게
     // 처리합니다. 어느 경우에도 RuntimeShader를 생성하지 않아 크래시가 없습니다.
     val fallbackAlpha = if (!effectsAllowed && Build.VERSION.SDK_INT >= 33) 0.96f else 0.84f
-    val fallback = surfaceColor.copy(alpha = maxOf(surfaceColor.alpha, fallbackAlpha))
+    val fallback = body.copy(alpha = maxOf(body.alpha, fallbackAlpha))
     var result = this
         .shadow(shadowElevation.coerceAtMost(LiquidGlassTokens.fallbackShadow), shape, clip = false)
         .clip(shape)

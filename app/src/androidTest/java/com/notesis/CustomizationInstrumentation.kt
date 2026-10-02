@@ -51,6 +51,15 @@ class CustomizationInstrumentation : Instrumentation() {
             check(reloaded.favoriteWidths(EditMode.PEN) == listOf(0.25f, 1.5f, 3f))
             check(reloaded.colorTemplates().single().second == listOf(Color.BLUE, Color.RED))
             check(reloaded.toolbarSize == 2 && reloaded.homeColor == Color.BLUE)
+            pens.skin = Skin.SPOTIGLASS
+            val glassLook = SkinSettings(spotiglassClarity = 0.43f, spotiglassResponse = 0.25f,
+                corner = 32f, themeMode = AppThemeMode.DARK)
+            SkinSettingsStore(isolated).save(glassLook)
+            check(PenStore(isolated).skin == Skin.SPOTIGLASS)
+            check(SkinSettingsStore(isolated).load() == glassLook)
+            check(SkinSettings.fromJson("{}").spotiglassClarity == SkinSettings().spotiglassClarity)
+            check(SkinSettings.fromJson("{\"spotiglassClarity\":2,\"spotiglassResponse\":-1}")
+                .let { it.spotiglassClarity == 1f && it.spotiglassResponse == 0f })
             val content = TextBoxContent("한글 텍스트\n수식 x² + y² = 1", 32f, Color.BLUE)
             val bitmap = renderTextBox(content)
             check(bitmap.width > 20 && bitmap.height > 20)

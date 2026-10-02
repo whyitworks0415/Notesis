@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -67,9 +68,13 @@ fun LiquidGlassButton(
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val effectsAllowed = rememberLiquidGlassEffectsAllowed() && !LocalSkinSettings.current.highContrast
+    val look = LocalSkinSettings.current
+    val spoti = LocalSkin.current == Skin.SPOTIGLASS
+    val response = if (spoti) look.spotiglassResponse else 1f
+    val shape = if (spoti) RoundedCornerShape(look.corner.coerceIn(SkinSettings.CORNER_RANGE).dp) else CircleShape
     var expanded by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(
-        targetValue = if (pressed && enabled && effectsAllowed) 0.96f else 1f,
+        targetValue = if (pressed && enabled && effectsAllowed) 1f - 0.04f * response else 1f,
         animationSpec = if (effectsAllowed) spring(dampingRatio = 0.82f, stiffness = 620f) else snap(),
         label = "버튼 눌림 크기",
     )
@@ -84,7 +89,7 @@ fun LiquidGlassButton(
     )
     val haloScale by animateFloatAsState(
         // Apple식 버튼은 손가락 아래에서 살짝 퍼지되 터치 영역은 바꾸지 않습니다.
-        targetValue = if (pressed && enabled && useLiquidGlass) 1.08f else 1f,
+        targetValue = if (pressed && enabled && useLiquidGlass && effectsAllowed) 1f + 0.08f * response else 1f,
         animationSpec = if (effectsAllowed) tween(190) else snap(),
         label = "버튼 유리 확장",
     )
@@ -125,7 +130,7 @@ fun LiquidGlassButton(
                     .scale(haloScale)
                     .liquidGlass(
                         intensity = glassAmount,
-                        shape = CircleShape,
+                        shape = shape,
                         // 아주 얇은 흰 코팅만 남기고 배경이 버튼 몸체가 되게 합니다.
                         surfaceColor = Color.White.copy(alpha = 0.20f),
                         shadowElevation = glassShadowElevation,
@@ -138,8 +143,8 @@ fun LiquidGlassButton(
             Box(
                 Modifier
                     .matchParentSize()
-                    .shadow(1.dp, CircleShape, clip = false)
-                    .clip(CircleShape)
+                    .shadow(1.dp, shape, clip = false)
+                    .clip(shape)
                     .background(containerColor.copy(alpha = if (enabled) 1f else 0.52f)),
             )
         }

@@ -58,6 +58,14 @@ private fun PreviewGlass() = ChromeSample(Skin.GLASSMORPHISM, SkinSettings())
 @Composable
 private fun PreviewLiquidGlass() = ChromeSample(Skin.LIQUID_GLASS, SkinSettings())
 
+@Preview(name = "컨트롤 · Spotiglass", widthDp = 420, heightDp = 340)
+@Composable
+private fun PreviewSpotiGlass() = ChromeSample(Skin.SPOTIGLASS, SkinSettings())
+
+@Preview(name = "컨트롤 · Spotiglass 다크", widthDp = 420, heightDp = 340)
+@Composable
+private fun PreviewSpotiGlassDark() = ChromeSample(Skin.SPOTIGLASS, SkinSettings(themeMode = AppThemeMode.DARK))
+
 @Preview(name = "컨트롤 · 글래스 고대비", widthDp = 420, heightDp = 340)
 @Composable
 private fun PreviewHighContrast() =

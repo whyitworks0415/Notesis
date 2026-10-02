@@ -85,7 +85,14 @@ enum class Skin(val label: String, val blurb: String) {
         "리퀴드 글래스",
         "빛을 굴절시키는 얇은 렌즈. 누르고 움직이면 형태와 광택이 살아납니다.",
     ),
+    SPOTIGLASS(
+        "Spotiglass",
+        "SpotiFLAC 스타일. 둥근 유리 바에서 선택 렌즈가 손끝을 따라 미끄러집니다.",
+    ),
 }
+
+val Skin.isRefractive: Boolean
+    get() = this == Skin.LIQUID_GLASS || this == Skin.SPOTIGLASS
 
 /**
  * What a skin actually changes. Plain numbers rather than a pile of composables,
@@ -225,6 +232,23 @@ fun Skin.tokens(): SkinTokens = when (this) {
             tonalElevation = 0.dp,
         )
     }
+
+    Skin.SPOTIGLASS -> LocalSkinSettings.current.let { look ->
+        SkinTokens(
+            corner = look.corner.dp,
+            fillAlpha = 1f,
+            fill = Color(look.tint).copy(alpha = Color(look.tint).alpha * 0.6f),
+            rim = Brush.linearGradient(
+                listOf(Color(look.border).copy(alpha = 0.34f), Color.Transparent,
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f)),
+            ),
+            rimWidth = if (look.highContrast) 2.dp else 0.75.dp,
+            bevel = null,
+            glows = emptyList(),
+            shadow = 8.dp,
+            tonalElevation = 0.dp,
+        )
+    }
 }
 
 /**
@@ -323,7 +347,7 @@ fun SkinSurface(
         )
         return
     }
-    val surfaceModifier = if (skin == Skin.LIQUID_GLASS) {
+    val surfaceModifier = if (skin.isRefractive) {
         // API 33+에서는 Kyant Backdrop의 실제 AGSL 렌즈를 사용합니다. 고정 바도
         // 같은 경로를 타므로 유리 효과가 빠지지 않고, 창 가장자리에는 불필요한
         // 외곽 그림자/테두리를 그리지 않아 위아래 회색 틈이 생기지 않습니다.
@@ -376,7 +400,7 @@ private fun Modifier.frost(): Modifier {
     val backdrop = LocalBackdrop.current
     val layer = backdrop.layer ?: return this
     val settings = LocalSkinSettings.current
-    val liquid = LocalSkin.current == Skin.LIQUID_GLASS
+    val liquid = LocalSkin.current.isRefractive
     // The pane's own layer, and the reason it exists: a RenderEffect belongs to
     // the layer it is set on, and the backdrop layer is also what draws the page
     // itself. Hanging the blur and the bend on it put them on the page - the PDF
@@ -546,7 +570,7 @@ fun SkinSlider(
     modifier: Modifier = Modifier,
 ) {
     val skin = LocalSkin.current
-    if (skin == Skin.LIQUID_GLASS) {
+    if (skin.isRefractive) {
         LiquidGlassSlider(
             value = value,
             onValueChange = onValueChange,
@@ -557,7 +581,7 @@ fun SkinSlider(
         return
     }
     val tokens = skin.tokens()
-    val liquid = skin == Skin.LIQUID_GLASS
+    val liquid = skin.isRefractive
     val scheme = MaterialTheme.colorScheme
     val trackAlpha = if (LocalSkinSettings.current.highContrast) 0.34f else 0.14f
     val density = LocalDensity.current
@@ -740,7 +764,7 @@ fun SkinSlider(
 fun SkinSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     val skin = LocalSkin.current
     val tokens = skin.tokens()
-    val liquid = skin == Skin.LIQUID_GLASS
+    val liquid = skin.isRefractive
     val scheme = MaterialTheme.colorScheme
     val trackAlpha = if (LocalSkinSettings.current.highContrast) 0.34f else 0.14f
     val interaction = remember { MutableInteractionSource() }
@@ -855,7 +879,7 @@ private fun Thumb(
     glow: Color,
     energized: Boolean = false,
 ) {
-    val liquid = LocalSkin.current == Skin.LIQUID_GLASS
+    val liquid = LocalSkin.current.isRefractive
     val shadow = if (liquid) {
         if (energized) LIQUID_THUMB_SHADOW_HELD else LIQUID_THUMB_SHADOW
     } else {
@@ -954,7 +978,7 @@ private val LIQUID_THUMB_SHADOW_HELD = 12.dp
 @Composable
 fun skinShapes(skin: Skin): Shapes = if (skin == Skin.MATERIAL) {
     Shapes()
-} else if (skin == Skin.LIQUID_GLASS) {
+} else if (skin.isRefractive) {
     // Concentric, generous curves: controls nest rather than presenting a
     // stack of unrelated corner radii.
     Shapes(
@@ -1009,7 +1033,7 @@ fun skinColors(base: ColorScheme, skin: Skin, look: SkinSettings): ColorScheme {
     // chrome without looking like a Material slab dropped in.
     val alpha = when {
         look.highContrast -> 0.98f
-        skin == Skin.LIQUID_GLASS -> LIQUID_POPUP_ALPHA
+        skin.isRefractive -> LIQUID_POPUP_ALPHA
         else -> POPUP_ALPHA
     }
     fun glassy(container: Color): Color =

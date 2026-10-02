@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -73,6 +74,10 @@ fun LiquidGlassSlider(
     val density = LocalDensity.current
     val scheme = MaterialTheme.colorScheme
     val effectsAllowed = rememberLiquidGlassEffectsAllowed() && !LocalSkinSettings.current.highContrast
+    val look = LocalSkinSettings.current
+    val spoti = LocalSkin.current == Skin.SPOTIGLASS
+    val response = if (spoti) look.spotiglassResponse else 1f
+    val thumbShape = if (spoti) RoundedCornerShape((look.corner - 4f).coerceIn(0f, 48f).dp) else CircleShape
     // 손잡이가 페이지가 아니라 바로 아래 트랙을 굴절시키도록 트랙 전용 레이어를 둡니다.
     val trackBackdrop = rememberLiquidGlassBackdrop()
     var trackWidth by remember { mutableIntStateOf(0) }
@@ -92,7 +97,7 @@ fun LiquidGlassSlider(
         label = "슬라이더 유리 전환",
     )
     val thumbWidth by androidx.compose.animation.core.animateDpAsState(
-        targetValue = if (dragging && enabled && useLiquidGlass) 44.dp else 36.dp,
+        targetValue = if (dragging && enabled && useLiquidGlass && effectsAllowed) 36.dp + 8.dp * response else 36.dp,
         animationSpec = if (effectsAllowed) {
             spring(dampingRatio = 0.78f, stiffness = 520f)
         } else {
@@ -197,7 +202,7 @@ fun LiquidGlassSlider(
                 Box(
                     thumbModifier.liquidGlass(
                         intensity = glassAmount,
-                        shape = CircleShape,
+                        shape = thumbShape,
                         surfaceColor = Color.White.copy(alpha = 0.22f),
                         shadowElevation = 5.dp,
                     ),

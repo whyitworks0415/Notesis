@@ -671,7 +671,7 @@ private fun NoteListScreen(
     val liquidBackdrop = rememberLiquidGlassBackdrop()
     CompositionLocalProvider(
         LocalBackdrop provides backdrop,
-        LocalLiquidGlassBackdrop provides if (currentSkin == Skin.LIQUID_GLASS) liquidBackdrop else null,
+        LocalLiquidGlassBackdrop provides if (currentSkin.isRefractive) liquidBackdrop else null,
     ) {
     Scaffold(
         topBar = {
@@ -791,7 +791,7 @@ private fun NoteListScreen(
                 .fillMaxSize()
                 .recordBackdrop(backdrop)
                 .then(
-                    if (currentSkin == Skin.LIQUID_GLASS) {
+                    if (currentSkin.isRefractive) {
                         Modifier.captureLiquidGlassBackdrop(liquidBackdrop)
                     } else {
                         Modifier
@@ -1140,7 +1140,7 @@ private fun NoteCard(
         ),
         colors = if (skin == Skin.MATERIAL) {
             CardDefaults.cardColors()
-        } else if (skin == Skin.LIQUID_GLASS) {
+        } else if (skin.isRefractive) {
             // Cards are themselves inside the backdrop recording and must not
             // sample that recording recursively. Asking for a liquid lens here
             // therefore entered its opaque fallback and drew the thick grey
@@ -1468,7 +1468,7 @@ private fun GlassFab(
         }
         return
     }
-    if (LocalSkin.current == Skin.LIQUID_GLASS) {
+    if (LocalSkin.current.isRefractive) {
         LiquidGlassButton(
             onClick = onClick,
             modifier = modifier.size(side),
@@ -3013,7 +3013,7 @@ private fun NoteScreen(
     var movingPage by remember { mutableStateOf(false) }
     CompositionLocalProvider(
         LocalBackdrop provides backdrop,
-        LocalLiquidGlassBackdrop provides if (skin == Skin.LIQUID_GLASS) liquidBackdrop else null,
+        LocalLiquidGlassBackdrop provides if (skin.isRefractive) liquidBackdrop else null,
     ) {
     Row(Modifier.fillMaxSize().drawWithContent {
         drawContent()
@@ -3054,7 +3054,7 @@ private fun NoteScreen(
                 .fillMaxSize()
                 .recordBackdrop(backdrop)
                 .then(
-                    if (skin == Skin.LIQUID_GLASS) {
+                    if (skin.isRefractive) {
                         Modifier.captureLiquidGlassBackdrop(liquidBackdrop)
                     } else {
                         Modifier
@@ -4388,7 +4388,7 @@ private fun PageScrubber(
     val fraction = page.toFloat() / (pageCount - 1).toFloat()
     val density = LocalDensity.current
     val scheme = MaterialTheme.colorScheme
-    val liquid = LocalSkin.current == Skin.LIQUID_GLASS
+    val liquid = LocalSkin.current.isRefractive
     val thumbHeight = 52.dp
     val thumbHeightPx = with(density) { thumbHeight.toPx() }
     var trackHeight by remember { mutableIntStateOf(0) }
@@ -4528,7 +4528,7 @@ private fun PageSidebar(
                 segments = listOf("페이지", "목차", "마스킹"),
                 selectedIndex = tab,
                 onSelected = { tab = it },
-                useLiquidGlass = LocalSkin.current == Skin.LIQUID_GLASS,
+                useLiquidGlass = LocalSkin.current.isRefractive,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(8.dp),
@@ -5130,6 +5130,40 @@ private fun Toolbar(
                         Icon(Icons.AutoMirrored.Filled.Redo, "다시실행")
                     }
                 }
+                if (skin == Skin.SPOTIGLASS) {
+                    val tools = buildList {
+                        add(EditMode.READ to SpotiGlassItem("읽기", Icons.Default.TouchApp))
+                        add(EditMode.PEN to SpotiGlassItem("펜", Icons.Default.Create))
+                        add(EditMode.PENCIL to SpotiGlassItem("연필", Icons.Outlined.Brush))
+                        add(EditMode.HIGHLIGHTER to SpotiGlassItem("형광펜", Icons.Default.Highlight))
+                        add(EditMode.MASK to SpotiGlassItem("마스킹", Icons.Default.VisibilityOff))
+                        if (sizeLevel < 2) {
+                            add(EditMode.LASSO to SpotiGlassItem("올가미", Icons.Default.Gesture))
+                            add(EditMode.SHAPE to SpotiGlassItem("도형", Icons.Default.Category))
+                            add(EditMode.TEXT to SpotiGlassItem("텍스트", Icons.Default.TextFields))
+                            add(EditMode.IMAGE to SpotiGlassItem("사진", Icons.Default.AddPhotoAlternate))
+                        }
+                        add(EditMode.ERASE to SpotiGlassItem("지우개", Icons.Default.Delete))
+                    }
+                    SpotiGlassBar(
+                        items = tools.map { it.second },
+                        selectedIndex = tools.indexOfFirst { it.first == mode },
+                        onSelected = { index ->
+                            when (val tool = tools[index].first) {
+                                EditMode.SHAPE -> onShape(shapeKind)
+                                EditMode.TEXT -> onText()
+                                EditMode.IMAGE -> onPickImage()
+                                else -> onMode(tool)
+                            }
+                        },
+                        modifier = Modifier.width((tools.size * 56 + 8).dp).padding(vertical = 4.dp),
+                        selectedContentColor = if (mode.tints) Color(pen.colorArgb.or(0xFF000000.toInt())) else null,
+                    )
+                    if (sizeLevel < 2) {
+                        ShapeButton(mode == EditMode.SHAPE, shapeKind, onShape)
+                        if (mode == EditMode.TEXT) TextButton(onClick = onAddText) { Text("+ 텍스트") }
+                    }
+                } else {
                 ToolButton(
                     Icons.Default.TouchApp,
                     "읽기 모드",
@@ -5175,6 +5209,7 @@ private fun Toolbar(
                     "지우개",
                     mode == EditMode.ERASE,
                 ) { onMode(EditMode.ERASE) }
+                }
                 ToolbarDivider()
 
                 // The colour of whatever is in hand. Tapping it opens the
@@ -5310,7 +5345,7 @@ private fun ToolButton(
         selected -> MaterialTheme.colorScheme.primary
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
-    if (selected && LocalSkin.current == Skin.LIQUID_GLASS) {
+    if (selected && LocalSkin.current.isRefractive) {
         LiquidGlassButton(
             onClick = onClick,
             modifier = Modifier.size(40.dp),
