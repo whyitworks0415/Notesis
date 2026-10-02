@@ -157,6 +157,21 @@ class Page(
  * band of it, and [topOf] is the only thing that decides where.
  */
 class Document(val pages: MutableList<Page>) {
+    /** Runtime ownership only; simultaneous canvases share edited page objects. */
+    var liveCanvasCount: Int = 0
+        private set
+    private val canvasListeners = mutableSetOf<() -> Unit>()
+    internal fun attachCanvas(onChanged: (() -> Unit)? = null) {
+        liveCanvasCount++
+        onChanged?.let(canvasListeners::add)
+    }
+    internal fun detachCanvas(onChanged: (() -> Unit)? = null) {
+        liveCanvasCount = (liveCanvasCount - 1).coerceAtLeast(0)
+        onChanged?.let(canvasListeners::remove)
+    }
+    internal fun notifyOtherCanvases(source: () -> Unit) {
+        canvasListeners.forEach { if (it !== source) it() }
+    }
 
     /** Runtime-only generation for save coalescing; never written to disk. */
     internal val saveSessionId: Long = nextSaveSession.getAndIncrement()

@@ -1102,11 +1102,20 @@ class InkCanvasView @JvmOverloads constructor(
                 val minimum = if (minimumScaleIsFitWidth && fitScale > 0f) fitScale else MIN_SCALE
                 val factor = (current * detector.scaleFactor)
                     .coerceIn(minimum, maxScale()) / current
-                documentToScreen.postScale(factor, factor, detector.focusX, detector.focusY)
+                // Scale around the old centroid; MOVE translates it to the
+                // new centroid once. Scaling around the new point first adds
+                // a small extra drift on every moving pinch sample.
+                documentToScreen.postScale(factor, factor,
+                    if (viewportInteracting) lastFocusX else detector.focusX,
+                    if (viewportInteracting) lastFocusY else detector.focusY)
                 return true
             }
         },
-    )
+    ).apply {
+        isQuickScaleEnabled = false
+        isStylusScaleEnabled = false
+    }
+    private val referenceDismissGesture = ReferenceDismissGesture(touchSlop * 2f)
 
     init {
         // A ViewGroup only gets onTouchEvent once no child has taken the event;
@@ -1151,7 +1160,54 @@ class InkCanvasView @JvmOverloads constructor(
         onTransformChanged()
     }
 
+    private var registeredDocument: Document? = null
+    private val sharedInkChanged: () -> Unit = {
+        if (!disposed) {
+            inkCacheWorkGeneration++
+            dry.postInvalidateOnAnimation()
+        }
+    }
+    private var pendingClose: (() -> Unit)? = null
+    private val pendingStrokeCommits = HashSet<InProgressStrokeId>()
+
+    /** Finger contact may close immediately; a pen stroke finishes before saving/removal. */
+    fun requestSafeClose(onReady: () -> Unit) {
+        if (activeStylusPointer != null || pendingStrokeCommits.isNotEmpty() || wet.hasUnfinishedStrokes()) pendingClose = onReady
+        else onReady()
+    }
+
+    private fun completePendingClose() {
+        if (activeStylusPointer != null || pendingStrokeCommits.isNotEmpty() || wet.hasUnfinishedStrokes()) return
+        val ready = pendingClose ?: return
+        pendingClose = null
+        ready()
+    }
+
+    /** A second canvas must not replace geometry referenced by this canvas's undo history. */
+    fun suspendSharedDetail() {
+        if (disposed) return
+        removeCallbacks(refineRunnable)
+        refineRunnablePosted = false
+        refineRequestSerial++
+        refineFuture?.cancel(true)
+        refineFuture = null
+        for (page in refiningPages) {
+            if (page.renderState == RenderState.Rendering) page.renderState = RenderState.Dirty
+        }
+        refiningPages = emptyList()
+    }
+
+    fun refreshSharedInk() {
+        if (disposed) return
+        dry.postInvalidateOnAnimation()
+        onStrokesChanged?.invoke()
+        scheduleRefine()
+    }
+
     fun open(document: Document, pdf: PdfSource?, initialPage: Int = 0) {
+        registeredDocument?.detachCanvas(sharedInkChanged)
+        registeredDocument = document
+        document.attachCanvas(sharedInkChanged)
         this.pdf?.diagnostics = null
         this.pdf?.close()
         this.document = document
@@ -1199,6 +1255,8 @@ class InkCanvasView @JvmOverloads constructor(
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
+        registeredDocument?.detachCanvas(sharedInkChanged)
+        registeredDocument = null
         stopFling(resumeDetail = false)
         removeCallbacks(refineRunnable)
         removeCallbacks(prefetchRunnable)
@@ -1373,6 +1431,7 @@ class InkCanvasView @JvmOverloads constructor(
             page.renderState = RenderState.Dirty
         }
         dry.invalidate()
+        document.notifyOtherCanvases(sharedInkChanged)
         onStrokesChanged?.invoke()
         // An undone erase puts back strokes built at whatever zoom they were
         // erased at, so history changes need a refine too.
@@ -1901,6 +1960,7 @@ class InkCanvasView @JvmOverloads constructor(
                     }
                     try {
                         if (predictionEnabled) predictor.record(end)
+                        pendingStrokeCommits.add(strokeId)
                         wet.finishStroke(end, pointerId, strokeId)
                     } finally {
                         if (end !== event) end.recycle()
@@ -2219,11 +2279,13 @@ class InkCanvasView @JvmOverloads constructor(
         hasLastErasePoint = false
         eraserCursorVisible = false
         dry.postInvalidateOnAnimation()
+        if (pendingClose != null) completePendingClose()
     }
 
     private fun onFingers(event: MotionEvent): Boolean {
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
             suppressScaleUntilGestureEnd = false
+            referenceDismissGesture.reset()
         }
         if (event.pointerCount >= 3 && !suppressScaleUntilGestureEnd) {
             // ScaleGestureDetector otherwise zooms the page with its first two
@@ -2277,7 +2339,9 @@ class InkCanvasView @JvmOverloads constructor(
                 val focus = focusOf(event, skipPointerIndex = leavingIndex(event))
                 lastFocusX = focus[0]
                 lastFocusY = focus[1]
-                if (event.pointerCount < 3) have3Fingers = false
+                // A pointer-count change is a fresh anchor; never compare its
+                // centroid/spread with the previous set of fingers.
+                have3Fingers = false
                 return true
             }
 
@@ -2297,15 +2361,17 @@ class InkCanvasView @JvmOverloads constructor(
                 // never pan or zoom it - they only ever move the reference
                 // panel, or, held still, redo.
                 if (event.pointerCount >= 3) {
-                    val spread = averageSpread(event)
+                    val rawFocus = rawFingerFocus(event)
+                    val spread = rawFingerSpread(event, rawFocus[0], rawFocus[1])
                     if (!have3Fingers) {
                         have3Fingers = true
-                        gestureStart3fX = focus[0]
-                        gestureStart3fY = focus[1]
+                        referenceDismissGesture.reset()
+                        gestureStart3fX = rawFocus[0]
+                        gestureStart3fY = rawFocus[1]
                         gestureStart3fSpread = spread
                     } else if (referenceOpen && onReferenceDrag != null) {
-                        val totalX = focus[0] - gestureStart3fX
-                        val totalY = focus[1] - gestureStart3fY
+                        val totalX = rawFocus[0] - gestureStart3fX
+                        val totalY = rawFocus[1] - gestureStart3fY
                         val factor = if (prev3fSpread > MIN_SPREAD_PX) {
                             spread / prev3fSpread
                         } else {
@@ -2316,18 +2382,16 @@ class InkCanvasView @JvmOverloads constructor(
                         } else {
                             1f
                         }
-                        val isResizing = kotlin.math.abs(totalSpreadFactor - 1f) > 0.06f
                         val tracksDismissDirection = closeReferenceOnDownwardDrag &&
-                            !isResizing && totalY > 0f &&
-                            totalY > kotlin.math.abs(totalX) * 1.15f
+                            referenceDismissGesture.tracks(totalX, totalY, totalSpreadFactor)
                         val isDownwardDismiss = tracksDismissDirection && totalY > OPEN_DRAG_PX
                         if (isDownwardDismiss && !closed3fThisGesture) {
                             onCloseReference?.invoke()
                             closed3fThisGesture = true
                         } else if (!closed3fThisGesture && !tracksDismissDirection) {
                             onReferenceDrag?.invoke(
-                                focus[0] - prev3fX,
-                                focus[1] - prev3fY,
+                                rawFocus[0] - prev3fX,
+                                rawFocus[1] - prev3fY,
                                 factor,
                             )
                             draggedReference = true
@@ -2337,22 +2401,27 @@ class InkCanvasView @JvmOverloads constructor(
                         // already open: the same drag that opened it, the other
                         // way up, puts it away. Nothing else here has a use for
                         // three fingers going down.
-                        if (!closed3fThisGesture && focus[1] - gestureStart3fY > OPEN_DRAG_PX) {
+                        if (!closed3fThisGesture && rawFocus[1] - gestureStart3fY > OPEN_DRAG_PX) {
                             onCloseReference?.invoke()
                             closed3fThisGesture = true
                         }
-                    } else if (!opened3fThisGesture && gestureStart3fY - focus[1] > OPEN_DRAG_PX) {
+                    } else if (!opened3fThisGesture && gestureStart3fY - rawFocus[1] > OPEN_DRAG_PX) {
                         onOpenReference?.invoke(focus[0], focus[1])
                         opened3fThisGesture = true
                     }
-                    prev3fX = focus[0]
-                    prev3fY = focus[1]
+                    prev3fX = rawFocus[0]
+                    prev3fY = rawFocus[1]
                     prev3fSpread = spread
                     lastFocusX = focus[0]
                     lastFocusY = focus[1]
                     return true
                 }
 
+                if (suppressScaleUntilGestureEnd) {
+                    lastFocusX = focus[0]
+                    lastFocusY = focus[1]
+                    return true
+                }
                 if (!scaleDetector.isInProgress || event.pointerCount > 1) {
                     val multiplier = if (event.pointerCount == 1) {
                         viewportPanMultiplier.coerceIn(0.5f, 3f)
@@ -2548,7 +2617,28 @@ class InkCanvasView @JvmOverloads constructor(
         if (event.actionMasked == MotionEvent.ACTION_POINTER_UP) event.actionIndex else -1
 
     private val focus = FloatArray(2)
+    private val rawFocus = FloatArray(2)
     private val scratch = FloatArray(2)
+
+    private fun rawFingerFocus(event: MotionEvent): FloatArray {
+        var x = 0f
+        var y = 0f
+        for (i in 0 until event.pointerCount) {
+            x += event.getRawX(i)
+            y += event.getRawY(i)
+        }
+        rawFocus[0] = x / event.pointerCount
+        rawFocus[1] = y / event.pointerCount
+        return rawFocus
+    }
+
+    private fun rawFingerSpread(event: MotionEvent, x: Float, y: Float): Float {
+        var total = 0f
+        for (i in 0 until event.pointerCount) {
+            total += hypot(event.getRawX(i) - x, event.getRawY(i) - y)
+        }
+        return total / event.pointerCount
+    }
 
     private fun focusOf(event: MotionEvent, skipPointerIndex: Int): FloatArray {
         var x = 0f
@@ -2630,7 +2720,7 @@ class InkCanvasView @JvmOverloads constructor(
         // Never while a stroke is being drawn: the page list would be swapped
         // out from under the stroke that is about to land on it.
         if (activeStylusPointer != null) return
-        val loadOnly = holdingDetail()
+        val loadOnly = holdingDetail() || document.liveCanvasCount > 1
         val target = tessellationBucket(currentScale())
         val epsilon = epsilonFor(target)
         val serial = refineRequestSerial
@@ -2792,6 +2882,7 @@ class InkCanvasView @JvmOverloads constructor(
      * whose strokes were dropped would duplicate it when the page reloads.
      */
     private fun releaseDistantPages() {
+        if (document.liveCanvasCount > 1) return
         if (document.pages.size <= KEEP_PAGES * 2 + 1) return
         val visible = visiblePages()
         if (visible.isEmpty()) return
@@ -3694,6 +3785,7 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     override fun onStrokesFinished(finished: Map<InProgressStrokeId, Stroke>) {
+        pendingStrokeCommits.removeAll(finished.keys)
         val finalizeStarted = penFinalizeStartedNanos
         penFinalizeStartedNanos = 0L
         val page = activePage
@@ -3707,6 +3799,7 @@ class InkCanvasView @JvmOverloads constructor(
                     finishedTool.isFreehandPen() -> withoutContactSpurs(finishedStroke)
                     else -> finishedStroke
                 }
+
                 if (strokeIsMask) {
                     val mask = PageMask(stroke)
                     page.masks += mask
@@ -3739,6 +3832,7 @@ class InkCanvasView @JvmOverloads constructor(
         if (finalizeStarted != 0L) {
             latency.addPenFinalize(System.nanoTime() - finalizeStarted)
         }
+        if (pendingClose != null) completePendingClose()
     }
 
     /** Snapshot of handwriting enclosed by the current lasso for region OCR. */

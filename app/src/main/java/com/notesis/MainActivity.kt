@@ -50,6 +50,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.displayCutout
@@ -57,6 +59,7 @@ import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -672,7 +675,7 @@ private fun NoteListScreen(
         active = currentSkin == Skin.GLASSMORPHISM &&
             (look.blur > 0.1f || look.vibrancy > 0.01f),
     )
-    val liquidBackdrop = rememberLiquidGlassBackdrop()
+    val liquidBackdrop = if (currentSkin.isRefractive) rememberLiquidGlassBackdrop() else null
     CompositionLocalProvider(
         LocalBackdrop provides backdrop,
         LocalLiquidGlassBackdrop provides if (currentSkin.isRefractive) liquidBackdrop else null,
@@ -796,7 +799,7 @@ private fun NoteListScreen(
                 .recordBackdrop(backdrop)
                 .then(
                     if (currentSkin.isRefractive) {
-                        Modifier.captureLiquidGlassBackdrop(liquidBackdrop)
+                        Modifier.captureLiquidGlassBackdrop(requireNotNull(liquidBackdrop))
                     } else {
                         Modifier
                     },
@@ -2080,6 +2083,8 @@ private fun CaptureDialog(
 private fun WebPanel(
     url: String,
     holder: MutableState<android.webkit.WebView?>,
+    rendererGeneration: Int,
+    onRendererGone: (android.webkit.WebView) -> Unit,
     popup: Boolean,
     onTogglePopup: () -> Unit,
     desktop: Boolean,
@@ -2093,6 +2098,15 @@ private fun WebPanel(
 ) {
     val web = holder.value
     var address by remember(url) { mutableStateOf(url) }
+    val context = LocalContext.current
+    val userAgent = remember(context, desktop) {
+        uaFor(android.webkit.WebSettings.getDefaultUserAgent(context), desktop)
+    }
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    DisposableEffect(web) {
+        web?.onResume()
+        onDispose { if (holder.value === web) web?.onPause() }
+    }
 
     SkinSurface(modifier = modifier, corner = 0.dp) {
         // The whole panel keeps clear of the system bars, not just its header: a
@@ -2103,7 +2117,8 @@ private fun WebPanel(
                 .fillMaxHeight()
                 // 시스템 바 inset도 패널의 실제 표면색으로 칠해 상단 회색 띠를 없앱니다.
                 .background(MaterialTheme.colorScheme.surface)
-                .windowInsetsPadding(ChromeInsets),
+                .windowInsetsPadding(ChromeInsets)
+                .imePadding(),
         ) {
             Row(
                 Modifier
@@ -2154,11 +2169,11 @@ private fun WebPanel(
                         contentDescription = if (popup) "붙이기" else "팝업",
                     )
                 }
-                IconButton(onClick = onClose) {
+                IconButton(onClick = { web?.clearFocus(); keyboard?.hide(); onClose() }) {
                     Icon(Icons.Default.Close, contentDescription = "닫기")
                 }
             }
-            AndroidView(
+            key(rendererGeneration) { AndroidView(
                 // weight, not fillMaxSize: a Column measures an unweighted child
                 // with an unbounded height, AndroidView passes that on as an
                 // UNSPECIFIED MeasureSpec, and Chromium then resolves vh units
@@ -2174,16 +2189,13 @@ private fun WebPanel(
                         (existing.parent as? android.view.ViewGroup)?.removeView(existing)
                         existing
                     } else {
-                        newBrowser(viewContext, onFile, log).also { holder.value = it }
+                        newBrowser(viewContext, onFile, log, onRendererGone).also { holder.value = it }
                     }
                 },
                 // The tag remembers which site was asked for, so picking another
                 // one loads it while a stroke on the note next door does not.
                 update = { view ->
-                    val wanted = uaFor(
-                        android.webkit.WebSettings.getDefaultUserAgent(view.context),
-                        desktop,
-                    )
+                    val wanted = userAgent
                     val swapped = view.settings.userAgentString != wanted
                     if (swapped) view.settings.userAgentString = wanted
                     if (view.tag != url) {
@@ -2195,7 +2207,7 @@ private fun WebPanel(
                         view.reload()
                     }
                 },
-            )
+            ) }
             if (showLog) {
                 HorizontalDivider()
                 Column(
@@ -2254,6 +2266,7 @@ private fun newBrowser(
     context: android.content.Context,
     onFile: (android.webkit.ValueCallback<Array<Uri>>) -> Unit,
     log: MutableList<String>,
+    onRendererGone: (android.webkit.WebView) -> Unit,
 ): android.webkit.WebView {
     val view = android.webkit.WebView(context)
     // The host adds a factory view as WRAP_CONTENT, which reaches Chromium as an
@@ -2269,9 +2282,11 @@ private fun newBrowser(
     // With this on, a tablet plugged in over USB can be opened from
     // chrome://inspect on a desktop, which is the only way to see a stack
     // trace from a page that renders its shell and then stops.
-    android.webkit.WebView.setWebContentsDebuggingEnabled(true)
+    android.webkit.WebView.setWebContentsDebuggingEnabled(
+        context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0)
 
     fun note(line: String) {
+        if (log.lastOrNull() == line) return
         // Newest last, and bounded: a page in a failure loop can log forever.
         if (log.size >= WEB_LOG_MAX) log.removeAt(0)
         log.add(line)
@@ -2301,6 +2316,7 @@ private fun newBrowser(
                 detail: android.webkit.RenderProcessGoneDetail,
             ): Boolean {
                 note("renderer gone, crashed=${detail.didCrash()}")
+                onRendererGone(view)
                 return true
             }
         }
@@ -2325,7 +2341,7 @@ private fun newBrowser(
         }
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
-        settings.databaseEnabled = true
+        setRendererPriorityPolicy(android.webkit.WebView.RENDERER_PRIORITY_BOUND, true)
         // A sign-in popup with nowhere to go is a dead button; loading it in
         // place is what a single-window browser does.
         settings.setSupportMultipleWindows(false)
@@ -2632,6 +2648,7 @@ private fun NoteScreen(
     // One WebView for the whole note. Closing the panel used to destroy it, so
     // reopening paid the cold start and the login handshake all over again.
     val browser = remember { mutableStateOf<android.webkit.WebView?>(null) }
+    var browserGeneration by remember { mutableIntStateOf(0) }
     var webWidth by remember { mutableStateOf(WEB_PANEL_WIDTH) }
     var draftWebWidth by remember { mutableStateOf<Dp?>(null) }
     var webPopup by remember { mutableStateOf(false) }
@@ -2648,6 +2665,18 @@ private fun NoteScreen(
     DisposableEffect(Unit) {
         onDispose { browser.value?.destroy() }
     }
+    val browserVisible by rememberUpdatedState(webUrl != null)
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_STOP -> browser.value?.onPause()
+                Lifecycle.Event.ON_START -> if (browserVisible) browser.value?.onResume()
+                else -> Unit
+            }
+        }
+        lifecycleOwner?.lifecycle?.addObserver(observer)
+        onDispose { lifecycleOwner?.lifecycle?.removeObserver(observer) }
+    }
     // Every page redraw asks for the pictures on it, so decoding has to happen
     // once rather than once a frame.
     val imageCache = remember(note.id) {
@@ -2663,7 +2692,7 @@ private fun NoteScreen(
     // Folded away, the bar becomes a handle that can be dragged; unfolding puts
     // it back wherever that handle was left, which is the point of moving it.
     var toolbarSize by remember { mutableIntStateOf(penStore.toolbarSize) }
-    val collapsed = toolbarSize == 3 && skin != Skin.SPOTIGLASS
+    val collapsed = false
     fun setToolbarSize(size: Int) { toolbarSize = size; penStore.toolbarSize = size }
     // Flush against the top edge, or floating over the page. Kept in
     // preferences: where the toolbar sits is a habit, not a per-note choice.
@@ -2762,13 +2791,12 @@ private fun NoteScreen(
     }
     val toolbarEffects = rememberLiquidGlassEffectsAllowed() && !LocalSkinSettings.current.highContrast
     val floatingBarWidth = animateDpAsState(
-        minOf(maxBarWidth, if (skin == Skin.SPOTIGLASS) spotiToolbarWidth(toolbarSize) else FLOATING_BAR_MAX),
-        if (skin == Skin.SPOTIGLASS && toolbarEffects) spring(0.95f, 360f) else tween(0),
+        minOf(maxBarWidth, spotiToolbarWidth(toolbarSize)),
+        if (skin != Skin.MATERIAL && toolbarEffects) spring(0.95f, 360f) else tween(0),
         label = "상단 바 모드 너비",
     )
     var showLatency by remember { mutableStateOf(false) }
     var showPages by remember { mutableStateOf(false) }
-    var showViewOptions by remember { mutableStateOf(false) }
     var showSkinSettings by remember { mutableStateOf(false) }
     var pageLayout by remember { mutableStateOf(penStore.pageLayout) }
     var edits by remember { mutableIntStateOf(0) }
@@ -2792,32 +2820,6 @@ private fun NoteScreen(
     // A multiple of fit-to-width, which is the 100% anybody means.
     var zoom by remember { mutableFloatStateOf(1f) }
     var canvas by remember { mutableStateOf<InkCanvasView?>(null) }
-    var playbackActive by remember { mutableStateOf(false) }
-    var playbackProgress by remember { mutableIntStateOf(0) }
-    var playbackTotal by remember { mutableIntStateOf(0) }
-    LaunchedEffect(playbackActive, currentPage, canvas) {
-        val view = canvas
-        if (!playbackActive || view == null) {
-            view?.endPagePlayback()
-            return@LaunchedEffect
-        }
-        val total = view.beginPagePlayback(currentPage)
-        playbackTotal = total
-        if (total == 0) {
-            playbackActive = false
-            return@LaunchedEffect
-        }
-        try {
-            for (count in 1..total) {
-                delay(90)
-                view.showPagePlayback(count)
-                playbackProgress = count
-            }
-        } finally {
-            view.endPagePlayback()
-            playbackActive = false
-        }
-    }
     var selectedText by remember { mutableStateOf<String?>(null) }
     var selectedPdf by remember { mutableStateOf<PdfSelection?>(null) }
     var selectionPreview by remember { mutableStateOf<Bitmap?>(null) }
@@ -2913,6 +2915,15 @@ private fun NoteScreen(
         WebPanel(
             url = webUrl.orEmpty(),
             holder = browser,
+            rendererGeneration = browserGeneration,
+            onRendererGone = { failed ->
+                if (browser.value === failed) {
+                    (failed.parent as? android.view.ViewGroup)?.removeView(failed)
+                    failed.destroy()
+                    browser.value = null
+                    browserGeneration++
+                }
+            },
             popup = webPopup,
             onTogglePopup = { webPopup = !webPopup },
             desktop = webDesktop,
@@ -3040,10 +3051,10 @@ private fun NoteScreen(
         active = skin == Skin.GLASSMORPHISM &&
             (look.blur > 0.1f || look.vibrancy > 0.01f),
     )
-    val liquidBackdrop = rememberLiquidGlassBackdrop()
+    val liquidBackdrop = if (skin.isRefractive) rememberLiquidGlassBackdrop() else null
     var drawingPage by remember { mutableStateOf(false) }
     var pageLayerOrigin by remember { mutableStateOf(Offset.Zero) }
-    val popupBackdrop = remember(liquidBackdrop) { SpotiPopupBackdrop(liquidBackdrop) { pageLayerOrigin } }
+    val popupBackdrop = remember(liquidBackdrop) { liquidBackdrop?.let { SpotiPopupBackdrop(it) { pageLayerOrigin } } }
     var movingPage by remember { mutableStateOf(false) }
     CompositionLocalProvider(
         LocalBackdrop provides backdrop,
@@ -3091,7 +3102,7 @@ private fun NoteScreen(
                 .onGloballyPositioned { pageLayerOrigin = it.positionOnScreen() }
                 .then(
                     if (skin.isRefractive) {
-                        Modifier.captureLiquidGlassBackdrop(liquidBackdrop)
+                        Modifier.captureLiquidGlassBackdrop(requireNotNull(liquidBackdrop))
                     } else {
                         Modifier
                     },
@@ -3108,7 +3119,7 @@ private fun NoteScreen(
                     .fillMaxSize()
                     // AndroidView를 Backdrop 레이어에 안정적으로 합성합니다.
                     .graphicsLayer {
-                        alpha = 0.999f
+                        alpha = if (skin == Skin.MATERIAL) 1f else 0.999f
                         rotationZ = noteRotation.toFloat()
                         if (noteRotation % 180 != 0 && size.width > 0f && size.height > 0f) {
                             val fit = minOf(size.width / size.height, size.height / size.width)
@@ -3188,7 +3199,7 @@ private fun NoteScreen(
                     view.dottedPattern = dottedPattern
                     view.setPageLayout(pageLayout)
                     view.tool = tool
-                    view.readMode = mode == EditMode.READ || playbackActive
+                    view.readMode = mode == EditMode.READ
                     view.shapeKind = when {
                         mode == EditMode.SHAPE -> shapeKind
                         // The toggle only appears for these two, so the ink
@@ -3303,43 +3314,6 @@ private fun NoteScreen(
                     .padding(top = 84.dp, start = 24.dp),
             )
         }
-
-        SkinSurface(
-            modifier = Modifier.align(Alignment.BottomStart)
-                .windowInsetsPadding(ChromeInsets).padding(12.dp),
-            corner = 14.dp,
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = { playbackActive = !playbackActive }) {
-                    Text(if (playbackActive) "필기 정지 $playbackProgress/$playbackTotal" else "필기 재생")
-                }
-                TextButton(onClick = { showViewOptions = true }) { Text("보기") }
-            }
-        }
-
-        if (showViewOptions) AlertDialog(
-            onDismissRequest = { showViewOptions = false },
-            title = { Text("페이지 보기") },
-            text = { Column {
-                listOf(
-                    PageLayoutMode.VERTICAL to "1×1 · 세로 스크롤",
-                    PageLayoutMode.HORIZONTAL to "1×1 · 가로 스크롤",
-                    PageLayoutMode.SPREAD_2X1 to "2×1 · 펼침",
-                    PageLayoutMode.GRID_2X2 to "2×2 · 여러 페이지",
-                ).forEach { (value, label) ->
-                    FilterChip(
-                        selected = pageLayout == value,
-                        onClick = {
-                            pageLayout = value
-                            penStore.pageLayout = value
-                            canvas?.setPageLayout(value)
-                        },
-                        label = { Text(label) },
-                    )
-                }
-            } },
-            confirmButton = { TextButton(onClick = { showViewOptions = false }) { Text("완료") } },
-        )
 
         androidx.compose.animation.AnimatedVisibility(
             visible = pageScrubberVisible && !showPages,
@@ -3763,8 +3737,11 @@ private fun NoteScreen(
                 scaleOut(tween(130), targetScale = 0.97f) +
                 slideOutVertically(animationSpec = tween(130)) { it / 22 },
         ) {
-            ReferencePanel(
+            key(activeReferenceNoteId) { ReferencePanel(
                 store = store,
+                sharedDocument = if (activeReferenceNoteId == note.id) canvas?.document else null,
+                onSharedOpen = { canvas?.suspendSharedDetail() },
+                onSharedChanged = { canvas?.refreshSharedInk() },
                 notes = referenceNotes,
                 // The remembered note may have been deleted since; fall back to
                 // the one being written on rather than to a blank panel.
@@ -3800,7 +3777,7 @@ private fun NoteScreen(
                             referenceSize.height * factor,
                         )
                         referenceStretch = 1f
-                        view?.onNextResize(factor, fitInstead = referenceFit)
+                        view?.onNextResize(factor, fitInstead = false)
                     }
                 },
                 fit = referenceFit,
@@ -3822,13 +3799,13 @@ private fun NoteScreen(
                     penStore.setLastPage(activeReferenceNoteId, it)
                 },
                 onDrag = ::moveReference,
-                onClose = { referenceOpen = false },
-            )
+                onClose = { referenceStretch = 1f; referenceOpen = false },
+            ) }
         }
     }
         if (docked && !collapsed) {
             toolbar(Modifier.align(Alignment.TopCenter).then(
-                if (skin == Skin.SPOTIGLASS && toolbarSize > 0) Modifier.spotiToolbarAnimatedWidth(floatingBarWidth)
+                if (toolbarSize > 0) Modifier.spotiToolbarAnimatedWidth(floatingBarWidth)
                     .windowInsetsPadding(ChromeInsets.only(WindowInsetsSides.Top))
                 else Modifier.fillMaxWidth()))
         }
@@ -3867,7 +3844,7 @@ private fun NoteScreen(
     if (webPopup && webUrl != null) {
         Dialog(
             onDismissRequest = { webPopup = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false),
+            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
         ) {
             panel(Modifier.fillMaxSize(0.85f))
         }
@@ -3992,6 +3969,9 @@ private fun shareBitmap(context: android.content.Context, bitmap: Bitmap) {
 @Composable
 private fun ReferencePanel(
     store: NoteStore,
+    sharedDocument: Document?,
+    onSharedOpen: () -> Unit,
+    onSharedChanged: () -> Unit,
     /** This note first, then every other one - what the picker offers. */
     notes: List<NoteMeta>,
     noteId: String,
@@ -4031,6 +4011,26 @@ private fun ReferencePanel(
     val density = LocalDensity.current
     var opened by remember { mutableStateOf<Pair<Document, PdfSource?>?>(null) }
     var view by remember { mutableStateOf<InkCanvasView?>(null) }
+    var loadFailed by remember { mutableStateOf(false) }
+    var loadAttempt by remember { mutableIntStateOf(0) }
+    val latestDrag by rememberUpdatedState(onDrag)
+    val latestStretchEnd by rememberUpdatedState(onStretchEnd)
+    val latestClose by rememberUpdatedState(onClose)
+    fun closePanel() {
+        val ready: () -> Unit = {
+            view?.currentPageIndex()?.let(onPageChange)
+            latestClose()
+        }
+        view?.requestSafeClose(ready) ?: ready()
+    }
+    val latestSharedChanged by rememberUpdatedState(onSharedChanged)
+    DisposableEffect(sharedDocument) {
+        if (sharedDocument != null) onSharedOpen()
+        onDispose { if (sharedDocument != null) latestSharedChanged() }
+    }
+    val imageCache = remember { object : LruCache<String, Bitmap>(16 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap) = value.byteCount
+    } }
     var popupEdits by remember { mutableIntStateOf(0) }
     var popupLassoCount by remember { mutableIntStateOf(0) }
     var noteMenu by remember { mutableStateOf(false) }
@@ -4043,10 +4043,23 @@ private fun ReferencePanel(
     // A different note is a different document and a different PDF, decoded
     // the same way opening one from the list is - off the main thread, since
     // parsing a PDF header there is a visible freeze.
-    LaunchedEffect(noteId) {
+    LaunchedEffect(noteId, sharedDocument, loadAttempt) {
         opened = null
-        opened = withContext(Dispatchers.IO) {
-            store.load(noteId) to PdfSource.open(store.pdfFile(noteId), PdfSource.cacheBytesFor(context))
+        loadFailed = false
+        var pendingPdf: PdfSource? = null
+        try {
+            opened = withContext(Dispatchers.IO) {
+                val document = sharedDocument ?: store.load(noteId)
+                pendingPdf = PdfSource.open(store.pdfFile(noteId), PdfSource.cacheBytesFor(context))
+                document to pendingPdf
+            }
+            pendingPdf = null
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            loadFailed = true
+        } finally {
+            pendingPdf?.close()
         }
     }
     // The panel owns both its PDF source and its pending edits. Flush on app
@@ -4062,7 +4075,8 @@ private fun ReferencePanel(
         onDispose {
             lifecycleOwner?.lifecycle?.removeObserver(observer)
             flushLatest()
-            opened?.second?.close()
+            if (view == null) opened?.second?.close()
+            imageCache.evictAll()
         }
     }
     // A note or a page change refits the page to the panel, when that is asked
@@ -4117,6 +4131,10 @@ private fun ReferencePanel(
     ) {
     SkinSurface(
         modifier = Modifier.fillMaxSize()
+            .graphicsLayer {
+                scaleX = stretch; scaleY = stretch
+                transformOrigin = TransformOrigin(0f, 0f)
+            }
             // 유리 표면이 밝은 페이지와 겹쳐도 팝업 외곽을 잃지 않도록 밝은 림과
             // 테마 윤곽색을 함께 사용합니다.
             .border(1.5.dp, panelBorder, panelShape),
@@ -4234,10 +4252,15 @@ private fun ReferencePanel(
                     )
                 }
                 IconButton(
-                    onClick = {
-                        view?.currentPageIndex()?.let(onPageChange)
-                        onClose()
+                    modifier = Modifier.pointerInput(Unit) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false,
+                                pass = androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                            down.consume()
+                            closePanel()
+                        }
                     },
+                    onClick = ::closePanel,
                 ) {
                     Icon(Icons.Default.Close, contentDescription = "참고 화면 닫기")
                 }
@@ -4246,7 +4269,8 @@ private fun ReferencePanel(
                 val ready = opened
                 if (ready == null) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
+                        if (loadFailed) TextButton(onClick = { loadAttempt++ }) { Text("노트 열기 실패 · 다시 시도") }
+                        else CircularProgressIndicator()
                     }
                 } else {
                     AndroidView(
@@ -4262,26 +4286,29 @@ private fun ReferencePanel(
                                 pageLoader = { p, epsilon -> store.loadPage(noteId, p, epsilon) }
                                 maskLoader = { p, epsilon -> store.loadMasks(noteId, p, epsilon) }
                                 imageLoader = { imageId ->
-                                    runCatching {
+                                    imageCache.get("i:$imageId") ?: runCatching {
                                         android.graphics.BitmapFactory
                                             .decodeFile(store.imageFile(noteId, imageId).path)
-                                    }.getOrNull()
+                                    }.getOrNull()?.also { imageCache.put("i:$imageId", it) }
                                 }
                                 templateLoader = { templateId ->
-                                    runCatching { android.graphics.BitmapFactory.decodeFile(
-                                        store.templateFile(templateId).path) }.getOrNull()
+                                    imageCache.get("t:$templateId") ?: runCatching { android.graphics.BitmapFactory.decodeFile(
+                                        store.templateFile(templateId).path) }.getOrNull()?.also { imageCache.put("t:$templateId", it) }
                                 }
                                 open(ready.first, ready.second, initialPage = page)
-                                onStrokesChanged = { popupEdits++ }
+                                onStrokesChanged = {
+                                    popupEdits++
+                                    if (sharedDocument != null) latestSharedChanged()
+                                }
                                 onLassoSelected = { popupLassoCount = it }
                                 onCurrentPageChanged = { onPageChange(it) }
                                 // Already open by definition - three fingers on
                                 // this view only ever move or resize it, never
                                 // open a reference panel of its own.
                                 referenceOpen = true
-                                onReferenceDrag = onDrag
-                                onReferenceDragEnd = { onStretchEnd(this) }
-                                onCloseReference = onClose
+                                onReferenceDrag = { x, y, factor -> latestDrag(x, y, factor) }
+                                onReferenceDragEnd = { latestStretchEnd(this) }
+                                onCloseReference = { closePanel() }
                                 closeReferenceOnDownwardDrag = true
                                 onUndo = { undo(); popupEdits++ }
                                 onRedo = { redo(); popupEdits++ }
@@ -5018,8 +5045,7 @@ private fun Toolbar(
             // drawing: the last buttons in this row, from full screen to
             // the other notes, were being cut off the end of the bar with
             // no way to reach them. Only the bottom row scrolled.
-            if (skin == Skin.SPOTIGLASS) Modifier.fillMaxWidth()
-            else if (docked) Modifier else Modifier.horizontalScroll(rememberScrollState()),
+            Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {
@@ -5046,14 +5072,7 @@ private fun Toolbar(
                 // title that takes the slack has no end to stop at - which
                 // is how a landscape tablet ended up with a 2960px bar and
                 // the tools huddled in the first third of it.
-                modifier = Modifier
-                    .then(
-                        if (docked || skin == Skin.SPOTIGLASS) {
-                            Modifier.weight(1f)
-                        } else {
-                            Modifier.widthIn(max = 260.dp)
-                        },
-                    )
+                modifier = Modifier.weight(1f)
                     .padding(horizontal = 16.dp),
             )
 
@@ -5123,8 +5142,7 @@ private fun Toolbar(
             OtherNotesButton(otherNotes, onOpenNote)
         }
     }
-    if (skin == Skin.SPOTIGLASS) {
-        SpotiGlassToolbar(sizeLevel, onSizeLevel, mode,
+    SpotiGlassToolbar(sizeLevel, onSizeLevel, mode,
             inkColor = if (mode.tints) Color(pen.colorArgb.or(0xFF000000.toInt())) else null,
             toolColors = toolPens.filterKeys { it.tints }.mapValues { Color(it.value.colorArgb.or(0xFF000000.toInt())) },
             targetWidth = toolbarTargetWidth,
@@ -5188,177 +5206,6 @@ private fun Toolbar(
                 TextButton(onClick = onTogglePages) { Text(pageLabel) }
               }
             })
-        return
-    }
-    SkinSurface(
-        modifier = modifier,
-        // Docked, it is part of the window edge, so it takes the edge's corner
-        // and its single inner line rather than its own rim all the way round.
-        flush = docked,
-    ) {
-        // Every control one step smaller than the touch-target minimum. The bar
-        // is reached with a pen, and its height is page it is not showing.
-        CompositionLocalProvider(
-            LocalMinimumInteractiveComponentSize provides Dp.Unspecified,
-        ) {
-        Column(
-            Modifier
-                // Only the sides the bar actually touches. The full inset set
-                // includes the navigation bar, and a bar docked at the top was
-                // padding itself away from a navigation bar at the bottom of
-                // the screen - which is where the gap under the docked toolbar
-                // came from, and why it looked inset on every side at once.
-                .then(
-                    if (docked) {
-                        Modifier.windowInsetsPadding(
-                            ChromeInsets.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
-                        )
-                    } else {
-                        Modifier
-                    },
-                )
-                .padding(horizontal = 8.dp, vertical = 1.dp),
-        ) {
-            if (sizeLevel == 0) {
-            topRow()
-
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-            }
-            // ---- bottom row: what the pen is doing right now
-            Row(
-                Modifier
-                    // More tools than fit beside an open browser panel. Scrolling
-                    // beats hiding: every tool stays reachable at any width.
-                    .horizontalScroll(rememberScrollState()),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = onCollapse) {
-                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "도구막대 한 단계 줄이기")
-                }
-                ToolbarSizeButton(sizeLevel, onSizeLevel)
-                if (sizeLevel > 0) {
-                    IconButton(onClick = onUndo, enabled = canUndo) {
-                        Icon(Icons.AutoMirrored.Filled.Undo, "실행취소")
-                    }
-                    IconButton(onClick = onRedo, enabled = canRedo) {
-                        Icon(Icons.AutoMirrored.Filled.Redo, "다시실행")
-                    }
-                }
-                ToolButton(
-                    Icons.Default.TouchApp,
-                    "읽기 모드",
-                    mode == EditMode.READ,
-                ) { onMode(EditMode.READ) }
-                ToolbarDivider()
-
-                // The tools, in a fixed row. Each keeps its own colour and
-                // thickness, so picking one up is the whole of choosing what to
-                // write with - there is no tray of pens to curate.
-                ToolChip(Icons.Default.Create, "펜", EditMode.PEN, mode, pen, onMode)
-                ToolChip(Icons.Outlined.Brush, "연필", EditMode.PENCIL, mode, pen, onMode)
-                ToolChip(
-                    Icons.Default.Highlight,
-                    "형광펜",
-                    EditMode.HIGHLIGHTER,
-                    mode,
-                    pen,
-                    onMode,
-                )
-                ToolChip(
-                    Icons.Default.VisibilityOff,
-                    "마스킹테이프",
-                    EditMode.MASK,
-                    mode,
-                    pen,
-                    onMode,
-                )
-                if (sizeLevel < 2) {
-                ToolChip(Icons.Default.Gesture, "올가미", EditMode.LASSO, mode, pen, onMode)
-                ShapeButton(mode == EditMode.SHAPE, shapeKind, onShape)
-                ToolButton(Icons.Default.TextFields, "텍스트 선택 · 다시 눌러 추가", mode == EditMode.TEXT, onClick = onText)
-                if (mode == EditMode.TEXT) TextButton(onClick = onAddText) { Text("+ 텍스트") }
-                ToolButton(
-                    Icons.Default.AddPhotoAlternate,
-                    "사진",
-                    mode == EditMode.IMAGE,
-                    onClick = onPickImage,
-                )
-                }
-                ToolButton(
-                    Icons.Default.Delete,
-                    "지우개",
-                    mode == EditMode.ERASE,
-                ) { onMode(EditMode.ERASE) }
-                ToolbarDivider()
-
-                // The colour of whatever is in hand. Tapping it opens the
-                // picker; the templates sit next to it.
-                if (mode.tints) {
-                    PenChip(pen = pen, selected = true, onClick = onEditPen)
-                    if (sizeLevel < 2) IconButton(onClick = onPalette) {
-                        Icon(
-                            Icons.Default.Palette,
-                            contentDescription = "색상 템플릿",
-                            tint = MaterialTheme.colorScheme.outline,
-                        )
-                    }
-                    ToolbarDivider()
-                }
-
-                // A straight line in the tool's own ink, without switching to
-                // the separate shape pen. Only where a wobbly line is worth
-                // straightening - a mask covers a printed line, a highlighter
-                // underlines one.
-                if (mode == EditMode.HIGHLIGHTER || mode == EditMode.MASK) {
-                    ToolButton(
-                        Icons.Default.Remove,
-                        "직선",
-                        straightLine,
-                        onClick = onToggleStraightLine,
-                    )
-                    ToolbarDivider()
-                }
-
-                // One slider, whichever tool is in hand, because it sets the
-                // thickness of that tool and no other. Two sliders would mean
-                // one of them is always the wrong one to reach for.
-                if (mode in PenStore.DEFAULTS) {
-                    val range = PenStore.widthRange(mode, pen)
-                    FavoriteWidthButton(mode, pen.width, onWidth)
-                    if (sizeLevel < 2) SkinSlider(
-                        value = pen.width.coerceIn(range),
-                        onValueChange = onWidth,
-                        valueRange = range,
-                        modifier = Modifier.width(SLIDER_TRACK),
-                    )
-                    ToolbarDivider()
-                }
-
-                if (sizeLevel < 2) {
-                IconButton(onClick = { onWeb(SEARCH_HOME) }) {
-                    Icon(Icons.Default.Language, contentDescription = "인터넷")
-                }
-                AiButton(onWeb)
-                ToolbarDivider()
-
-                TextButton(onClick = onTogglePages) { Text(pageLabel) }
-                IconButton(onClick = onToggleLatency) {
-                    Icon(
-                        Icons.Default.Speed,
-                        contentDescription = "지연 측정",
-                        tint = if (showLatency) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.outline
-                        },
-                    )
-                }
-                }
-            }
-        }
-        }
-    }
 }
 
 /** Jumps straight to another note without going back through the list. */
