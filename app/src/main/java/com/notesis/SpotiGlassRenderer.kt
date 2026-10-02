@@ -101,9 +101,15 @@ internal data class SpotiGlassLensFrame(
 @RequiresApi(33)
 internal class SpotiGlassShader(context: Context) {
     val shader = RuntimeShader(context.assets.open("spotiglass/liquid_glass.agsl").bufferedReader().use { it.readText() })
-    // Uniform changes reuse this effect; allocating it on every frame stalls Skia.
-    val effect = RenderEffect.createRuntimeShaderEffect(shader, "u_texture_input").asComposeRenderEffect()
+    // Android RenderEffect snapshots the RuntimeShader's uniforms. Reusing an
+    // effect after mutating the shader silently keeps the previous optics.
+    lateinit var nativeEffect: RenderEffect; private set
+    lateinit var effect: androidx.compose.ui.graphics.RenderEffect; private set
+    private var previousFrame: SpotiGlassLensFrame? = null
+    private var previousResolution = Size.Zero
+    private var previousDensity = 0f
     fun update(resolution: Size, frame: SpotiGlassLensFrame, density: Float) {
+        if (frame == previousFrame && resolution == previousResolution && density == previousDensity) return
         val p = frame.progress.coerceIn(0f, 1f)
         val presence = frame.presence.coerceIn(0f, 1f)
         val rim = ((presence - 0.45f) / 0.55f).coerceIn(0f, 1f)
@@ -132,6 +138,11 @@ internal class SpotiGlassShader(context: Context) {
         shader.setFloatUniform("u_shapeScale", frame.scale.x, frame.scale.y)
         shader.setFloatUniform("u_xformRow", 1f, 0f, 0f, 1f)
         shader.setFloatUniform("u_xformOff", 0f, 0f)
+        nativeEffect = RenderEffect.createRuntimeShaderEffect(shader, "u_texture_input")
+        effect = nativeEffect.asComposeRenderEffect()
+        previousFrame = frame
+        previousResolution = resolution
+        previousDensity = density
     }
 }
 

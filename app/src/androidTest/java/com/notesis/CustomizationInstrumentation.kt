@@ -56,7 +56,9 @@ class CustomizationInstrumentation : Instrumentation() {
                 2, android.hardware.HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or android.hardware.HardwareBuffer.USAGE_GPU_COLOR_OUTPUT)
             val node = android.graphics.RenderNode("SpotiGlass shader test")
             node.setPosition(0, 0, 400, 160)
-            node.setRenderEffect(android.graphics.RenderEffect.createRuntimeShaderEffect(optical.shader, "u_texture_input"))
+            // Exercise the exact cached effect used in Compose, not a freshly
+            // created test-only effect that hides stale-uniform regressions.
+            node.setRenderEffect(optical.nativeEffect)
             node.beginRecording().drawBitmap(source, 0f, 0f, null)
             node.endRecording()
             val renderer = android.graphics.HardwareRenderer().apply {
@@ -79,6 +81,11 @@ class CustomizationInstrumentation : Instrumentation() {
         }
         val resting = render(frame.copy(progress = 0f, presence = 0f))
         val lifted = render(frame)
+        val sameEffect = optical.nativeEffect
+        optical.update(size, frame, 1f)
+        check(optical.nativeEffect === sameEffect) { "Static optics needlessly recreated the effect" }
+        optical.update(size, frame.copy(distortion = 0.12f), 1f)
+        check(optical.nativeEffect !== sameEffect) { "Changing uniforms retained the stale Android effect" }
         check(resting.getPixel(10, 10) == source.getPixel(10, 10)) { "Rest pill changed outside the lens" }
         check(lifted.getPixel(10, 10) == source.getPixel(10, 10)) { "Moving lens changed outside the lens" }
         check(lifted.getPixel(200, 80) == source.getPixel(200, 80)) { "Pure glass changed the unbent center" }

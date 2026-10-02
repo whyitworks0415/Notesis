@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.input.pointer.pointerInput
@@ -81,6 +82,20 @@ internal fun Modifier.spotiToolbarAnimatedWidth(width: State<Dp>): Modifier = la
     layout(child.width, child.height) { child.placeRelative(0, 0) }
 }
 
+/** Keep a complete row visible, including hit testing, on a narrower canvas. */
+internal fun Modifier.spotiFitRow(minWidth: Dp): Modifier = layout { measurable, constraints ->
+    val available = constraints.maxWidth
+    val logical = maxOf(available, minWidth.roundToPx())
+    val scale = available.toFloat() / logical
+    val child = measurable.measure(constraints.copy(minWidth = logical, maxWidth = logical, minHeight = 0))
+    layout(available, (child.height * scale).toInt()) {
+        child.placeWithLayer(0, 0) {
+            scaleX = scale; scaleY = scale
+            transformOrigin = TransformOrigin(0f, 0f)
+        }
+    }
+}
+
 /** Responsive rows preserve every tool and a 44 dp hit area without scrolling. */
 internal fun spotiToolRows(tools: List<SpotiToolbarTool>, widthDp: Float): List<List<SpotiToolbarTool>> {
     if (tools.isEmpty()) return emptyList()
@@ -108,7 +123,7 @@ private fun Modifier.spotiToolbarGlass(circle: Boolean = false): Modifier {
         SpotiGlassLensFrame(center = Offset(size.width / 2, size.height / 2), size = size,
             radius = if (circle) size.minDimension / 2 else look.spotiglassCorner * density,
             distortion = 0.04f * look.refraction / 24f, band = look.depth,
-            dispersion = 0.002f * look.dispersion / 0.35f)
+            dispersion = 0.002f * look.dispersion / 0.35f, borderWidth = 1.2f)
     }
     glass = if (effects && backdrop != null) glass.drawBackdrop(backdrop, shape = { shape },
         effects = {}, highlight = null, shadow = null,
@@ -253,7 +268,7 @@ internal fun SpotiGlassToolbar(
                     .only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)) else Modifier)
                 .padding(horizontal = 8.dp, vertical = 2.dp)) {
                 if (sizeLevel == 0) {
-                    topRow()
+                    Box(Modifier.fillMaxWidth().spotiFitRow(800.dp)) { topRow() }
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
                 Box {
@@ -263,31 +278,30 @@ internal fun SpotiGlassToolbar(
                                 detectDragGestures { change, delta -> change.consume(); onDrag(delta) }
                             }, iconOnly = true, persistentGlass = true, onClick = { menu(ToolbarMenu.FUNCTIONS) })
                     } else {
-                      Column {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(Modifier.fillMaxWidth().then(if (sizeLevel == 0) Modifier.spotiFitRow(800.dp) else Modifier),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(if (sizeLevel == 0) 4.dp else 8.dp)) {
                             Box(Modifier.weight(1f)) {
                               // Freeze wrapping at the destination width while the
                               // spring grows the bar; avoid 6 -> 3 -> 2 -> 1 rows.
                               val toolWidth = (targetWidth.value - 100f).coerceAtLeast(100f)
                               Column {
-                                spotiToolRows(spotiToolbarTools(sizeLevel), toolWidth).forEach { tools ->
+                                val rows = if (sizeLevel == 0) listOf(spotiToolbarTools(0))
+                                    else spotiToolRows(spotiToolbarTools(sizeLevel), toolWidth)
+                                rows.forEach { tools ->
                                   SpotiGlassBar(tools.map { SpotiGlassItem(it.label, it.icon(), toolColors[it.mode]) },
                                     selectedIndex = if (open && page == ToolbarMenu.AI) tools.indexOf(SpotiToolbarTool.AI)
                                         else tools.indexOfFirst { it.mode == mode },
                                     onSelected = { pick(tools[it]) }, modifier = Modifier.fillMaxWidth(),
-                                    selectedContentColor = inkColor, showLabels = false)
+                                    selectedContentColor = inkColor, showLabels = false, compact = sizeLevel == 0)
                                 }
                               }
                             }
+                            if (sizeLevel == 0) Box(Modifier.width(360.dp)) { penOptions(360.dp) }
                             SpotiActionButton("기능", Icons.Default.Tune, selected = open,
-                                modifier = Modifier.size(52.dp), iconOnly = true, persistentGlass = true,
+                                modifier = Modifier.size(if (sizeLevel == 0) 44.dp else 52.dp), iconOnly = true, persistentGlass = true,
                                 onClick = { menu(ToolbarMenu.FUNCTIONS) })
                         }
-                        if (sizeLevel == 0) Box(Modifier.fillMaxWidth()) {
-                            penOptions((targetWidth - 40.dp).coerceAtLeast(100.dp))
-                        }
-                      }
                     }
                     if (visible.currentState || visible.targetState) {
                         val maxHeight = (LocalConfiguration.current.screenHeightDp - 140).coerceAtLeast(180).dp

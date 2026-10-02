@@ -5013,7 +5013,8 @@ private fun Toolbar(
             // drawing: the last buttons in this row, from full screen to
             // the other notes, were being cut off the end of the bar with
             // no way to reach them. Only the bottom row scrolled.
-            if (docked) Modifier else Modifier.horizontalScroll(rememberScrollState()),
+            if (skin == Skin.SPOTIGLASS) Modifier.fillMaxWidth()
+            else if (docked) Modifier else Modifier.horizontalScroll(rememberScrollState()),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {
@@ -5042,7 +5043,7 @@ private fun Toolbar(
                 // the tools huddled in the first third of it.
                 modifier = Modifier
                     .then(
-                        if (docked) {
+                        if (docked || skin == Skin.SPOTIGLASS) {
                             Modifier.weight(1f)
                         } else {
                             Modifier.widthIn(max = 260.dp)
@@ -5160,7 +5161,9 @@ private fun Toolbar(
                 if (mode == EditMode.TEXT) TextButton(onClick = onAddText) { Text("+ 텍스트") }
                 if (mode.tints) {
                     PenChip(pen, true, onEditPen)
-                    IconButton(onClick = onPalette) { Icon(Icons.Default.Palette, "색상 템플릿") }
+                    IconButton(onClick = onPalette, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Default.Palette, "색상 템플릿", Modifier.size(20.dp))
+                    }
                 }
                 if (mode == EditMode.HIGHLIGHTER || mode == EditMode.MASK) {
                     ToolButton(Icons.Default.Remove, "직선", straightLine, onClick = onToggleStraightLine)
@@ -5173,18 +5176,7 @@ private fun Toolbar(
                     SkinSlider(pen.width.coerceIn(range), onWidth, range, Modifier.weight(1f).widthIn(min = 64.dp))
                 }
               }
-              if (availableWidth < 360.dp) {
-                Column {
-                  Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    inkOptions()
-                    Spacer(Modifier.weight(1f))
-                    TextButton(onClick = onTogglePages) { Text(pageLabel) }
-                  }
-                  if (mode in PenStore.DEFAULTS) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    widthOptions()
-                  }
-                }
-              } else Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+              Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 inkOptions()
                 widthOptions()
                 if (mode !in PenStore.DEFAULTS) Spacer(Modifier.weight(1f))

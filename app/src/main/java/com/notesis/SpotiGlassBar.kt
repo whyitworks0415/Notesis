@@ -18,6 +18,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ClipOp
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.withTransform
@@ -64,7 +65,7 @@ internal fun spotiGlassPosition(x: Float, width: Float, count: Int, rtl: Boolean
 fun SpotiGlassBar(
     items: List<SpotiGlassItem>, selectedIndex: Int, onSelected: (Int) -> Unit,
     modifier: Modifier = Modifier, selectedContentColor: Color? = null,
-    showLabels: Boolean = true,
+    showLabels: Boolean = true, compact: Boolean = false,
 ) {
     require(items.isNotEmpty())
     val look = LocalSkinSettings.current
@@ -92,7 +93,7 @@ fun SpotiGlassBar(
         }
     }
     val withIcons = items.any { it.icon != null }
-    val barHeight = if (withIcons && showLabels) 64.dp else 48.dp
+    val barHeight = if (compact) 40.dp else if (withIcons && showLabels) 64.dp else 48.dp
     val padding = 6.dp
     val cellHeight = barHeight - padding * 2
     val fill = scheme.onSurface.copy(alpha = if (dark) 0.12f else 0.08f)
@@ -135,7 +136,7 @@ fun SpotiGlassBar(
                 radius = with(density) { (h / 2).toPx() } * (look.spotiglassCorner / 32f).coerceIn(0f, 1.5f),
                 scale = Offset(sx, sy), progress = motion.progress, presence = motion.presence, fill = fill,
                 distortion = 0.04f * (look.refraction / 24f), band = look.depth,
-                dispersion = 0.002f * (look.dispersion / 0.35f))
+                dispersion = 0.002f * (look.dispersion / 0.35f), borderWidth = 1.2f)
         }
         var scene = Modifier.fillMaxSize().spotiGlassLens(lensAllowed, active = { moving() }) { _, _ -> lensFrame() }
         // The protruding lens also samples the page outside the capsule.
@@ -143,6 +144,17 @@ fun SpotiGlassBar(
             shape = { RectangleShape }, effects = {}, highlight = null, shadow = null)
         Box(scene) {
             Box(Modifier.fillMaxWidth().height(barHeight).align(Alignment.Center)
+                .drawWithContent {
+                    if (moving()) {
+                        val frame = lensFrame()
+                        val path = spotiGlassPath(frame.size, frame.radius).apply {
+                            translate(frame.center - Offset(frame.size.width / 2, frame.size.height / 2) - Offset(0f, 8.dp.toPx()))
+                        }
+                        // Frost remains on the bar, but not underneath the lifted
+                        // lens: it must refract the sharp page and icon scene.
+                        clipPath(path, ClipOp.Difference) { this@drawWithContent.drawContent() }
+                    } else drawContent()
+                }
                 .spotiGlassSurface(SpotiGlassShape(look.spotiglassCorner.dp), look, navigation = true))
             Box(Modifier.matchParentSize().drawWithContent {
                 frameRevision
@@ -154,7 +166,7 @@ fun SpotiGlassBar(
                         translate(frame.center - Offset(body.width / 2, body.height / 2))
                     }
                     val tint = if (moving()) spotiGlassHoverColor(items, motion.position, scheme.primary)
-                        .copy(alpha = 0.16f * motion.presence) else fill
+                        .copy(alpha = 0.04f * motion.presence) else fill
                     drawPath(path, tint)
                 }
                 drawContent()
@@ -169,7 +181,7 @@ fun SpotiGlassBar(
                             .clickable(role = Role.Tab, interactionSource = remember { MutableInteractionSource() }, indication = null) { choose(index) }
                         Column(hit, horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically)) {
-                            item.icon?.let { Icon(it, null, tint = color, modifier = Modifier.size(25.dp)) }
+                            item.icon?.let { Icon(it, null, tint = color, modifier = Modifier.size(if (compact) 20.dp else 25.dp)) }
                             if (showLabels || item.icon == null) Text(item.label, color = color,
                                 style = if (withIcons) MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp) else MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -180,37 +192,22 @@ fun SpotiGlassBar(
             IconShell(false, Modifier.pointerInput(widthPx, items.size, rtl, lensAllowed) {
                 if (!lensAllowed) return@pointerInput
                 awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                     var lastPosition = down.position
-                    var elapsed = 0L
-                    var grabbed = false
+                    down.consume()
+                    motion.grab(spotiGlassPosition(lastPosition.x - paddingPx, widthPx, items.size, rtl)); wake++
                     var released = false
                     try {
                         while (!released) {
-                            val event = if (grabbed) awaitPointerEvent(PointerEventPass.Initial)
-                                else withTimeoutOrNull((100 - elapsed).coerceAtLeast(1)) { awaitPointerEvent(PointerEventPass.Initial) }
-                            if (event == null) {
-                                grabbed = true
-                                motion.grab(spotiGlassPosition(lastPosition.x - paddingPx, widthPx, items.size, rtl)); wake++
-                                continue
-                            }
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
                             if (change.isConsumed) break
                             lastPosition = change.position
-                            elapsed = change.uptimeMillis - down.uptimeMillis
-                            val delta = change.position - down.position
-                            if (!grabbed && abs(delta.y) > viewConfiguration.touchSlop && abs(delta.y) > abs(delta.x)) break
-                            if (!grabbed && abs(delta.x) > viewConfiguration.touchSlop) {
-                                grabbed = true
-                                motion.grab(spotiGlassPosition(lastPosition.x - paddingPx, widthPx, items.size, rtl)); wake++
-                            }
-                            if (grabbed) {
-                                motion.follow(spotiGlassPosition(lastPosition.x - paddingPx, widthPx, items.size, rtl))
-                                change.consume()
-                            }
+                            motion.follow(spotiGlassPosition(lastPosition.x - paddingPx, widthPx, items.size, rtl))
+                            change.consume()
                             released = !change.pressed
                         }
-                        if (grabbed && released) {
+                        if (released) {
                             val next = spotiGlassPosition(lastPosition.x - paddingPx, widthPx, items.size, rtl).roundToInt()
                             motion.release(next.toFloat()); wake++
                             latestSelect(next)
