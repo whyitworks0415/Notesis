@@ -49,6 +49,7 @@ internal val LocalSpotiGlassHostBackdrop = compositionLocalOf<LayerBackdrop?> { 
 
 /** Ported continuous outline; the path and the upstream shader share a curve. */
 internal fun spotiGlassPath(size: Size, radius: Float): Path {
+    if (size.width <= 0f || size.height <= 0f) return Path()
     val w = size.width; val h = size.height
     val r = radius.coerceIn(0f, minOf(w, h) / 2)
     if (r < 0.5f) return Path().apply { addRect(androidx.compose.ui.geometry.Rect(Offset.Zero, size)) }
@@ -100,6 +101,8 @@ internal data class SpotiGlassLensFrame(
 @RequiresApi(33)
 internal class SpotiGlassShader(context: Context) {
     val shader = RuntimeShader(context.assets.open("spotiglass/liquid_glass.agsl").bufferedReader().use { it.readText() })
+    // Uniform changes reuse this effect; allocating it on every frame stalls Skia.
+    val effect = RenderEffect.createRuntimeShaderEffect(shader, "u_texture_input").asComposeRenderEffect()
     fun update(resolution: Size, frame: SpotiGlassLensFrame, density: Float) {
         val p = frame.progress.coerceIn(0f, 1f)
         val presence = frame.presence.coerceIn(0f, 1f)
@@ -133,18 +136,20 @@ internal class SpotiGlassShader(context: Context) {
 }
 
 @Composable
-internal fun Modifier.spotiGlassLens(enabled: Boolean, frame: (Size, Float) -> SpotiGlassLensFrame): Modifier {
+internal fun Modifier.spotiGlassLens(enabled: Boolean, active: () -> Boolean = { true },
+    frame: (Size, Float) -> SpotiGlassLensFrame): Modifier {
     if (Build.VERSION.SDK_INT < 33) return this
     val context = LocalContext.current
     // A settled bar draws no capture/effect, but retains its compiled program
     // for the next gesture. Reduced effects never initialize this lazy value.
     val compiled = remember(context) { lazy { SpotiGlassShader(context) } }
     if (!enabled) return this
-    val shader = compiled.value
     val capture = rememberGraphicsLayer()
     return drawWithContent {
+        if (size.width <= 0f || size.height <= 0f || !active()) { drawContent(); return@drawWithContent }
+        val shader = compiled.value
         shader.update(size, frame(size, density), density)
-        capture.renderEffect = RenderEffect.createRuntimeShaderEffect(shader.shader, "u_texture_input").asComposeRenderEffect()
+        capture.renderEffect = shader.effect
         capture.record { this@drawWithContent.drawContent() }
         drawLayer(capture)
     }
@@ -195,6 +200,7 @@ internal fun Modifier.spotiGlassSurface(
         drawContent()
         fun edge(insetDp: Float, widthDp: Float, brush: Brush) {
             val inset = insetDp * density
+            if (size.width <= inset * 2 || size.height <= inset * 2) return
             val outline = shape.createOutline(Size(size.width - inset * 2, size.height - inset * 2), layoutDirection, this)
             withTransform({ translate(inset, inset) }) {
                 when (outline) {

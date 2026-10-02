@@ -28,6 +28,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -37,10 +38,17 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kyant.backdrop.drawBackdrop
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.flow.first
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-data class SpotiGlassItem(val label: String, val icon: ImageVector? = null)
+data class SpotiGlassItem(val label: String, val icon: ImageVector? = null, val color: Color? = null)
+
+internal fun spotiGlassHoverColor(items: List<SpotiGlassItem>, position: Float, fallback: Color): Color {
+    val index = position.roundToInt().coerceIn(items.indices)
+    return items[index].color ?: fallback
+}
 
 internal fun spotiGlassPosition(x: Float, width: Float, count: Int, rtl: Boolean): Float {
     if (count <= 1 || width <= 0f) return 0f
@@ -56,8 +64,9 @@ internal fun spotiGlassPosition(x: Float, width: Float, count: Int, rtl: Boolean
 fun SpotiGlassBar(
     items: List<SpotiGlassItem>, selectedIndex: Int, onSelected: (Int) -> Unit,
     modifier: Modifier = Modifier, selectedContentColor: Color? = null,
+    showLabels: Boolean = true,
 ) {
-    require(items.size >= 2)
+    require(items.isNotEmpty())
     val look = LocalSkinSettings.current
     val scheme = MaterialTheme.colorScheme
     val dark = scheme.surface.luminance() < 0.5f
@@ -83,7 +92,7 @@ fun SpotiGlassBar(
         }
     }
     val withIcons = items.any { it.icon != null }
-    val barHeight = if (withIcons) 64.dp else 48.dp
+    val barHeight = if (withIcons && showLabels) 64.dp else 48.dp
     val padding = 6.dp
     val cellHeight = barHeight - padding * 2
     val fill = scheme.onSurface.copy(alpha = if (dark) 0.12f else 0.08f)
@@ -92,67 +101,76 @@ fun SpotiGlassBar(
         val cell = (maxWidth - padding * 2).coerceAtLeast(1.dp) / items.size
         val widthPx = with(density) { cell.toPx() * items.size }
         val paddingPx = with(density) { padding.toPx() }
-        LaunchedEffect(wake, motion, cell.value) {
-            var last = withFrameNanos { it }
-            while (motion.running) {
+        // Retargeting a drag never cancels/restarts the frame clock. Frame state
+        // is read in drawing only, so icons and touch targets keep their layout.
+        LaunchedEffect(motion, cell.value) {
+            var observed = -1
+            var last = 0L
+            while (isActive) {
+                if (!motion.running) {
+                    snapshotFlow { wake }.first { it != observed }
+                    observed = wake
+                    last = 0L
+                    if (!motion.running) continue
+                }
                 val now = withFrameNanos { it }
-                motion.tick(now / 1e9, (now - last) / 1e9, cell.value)
+                if (last != 0L) motion.tick(now / 1e9, (now - last) / 1e9, cell.value)
                 frameRevision++
                 last = now
             }
         }
-        @Suppress("UNUSED_VARIABLE") val currentFrame = frameRevision
-        val visual = if (rtl) items.lastIndex - motion.position else motion.position
-        val extra = (barHeight.value + 9 * response) / cellHeight.value - 1
-        val morphW = cell * (1 + extra * motion.growX * response)
-        val morphH = cellHeight * (1 + extra * motion.growY * response)
-        val sx = 1 + motion.deviation * response
-        val sy = 1 - motion.deviation * response
-        val pillW = morphW * sx
-        val pillH = morphH * sy
-        val centerX = padding + cell * (visual + 0.5f)
-        val centerY = 8.dp + barHeight / 2
-        val pillRadius = morphH / 2 * (look.spotiglassCorner / 32f).coerceIn(0f, 1.5f)
-        val showPill = selected != null || motion.dragging
-        val moving = lensAllowed && motion.running && showPill
-        val lensFrame = SpotiGlassLensFrame(
-            center = with(density) { Offset(centerX.toPx(), centerY.toPx()) },
-            size = with(density) { Size(pillW.toPx(), pillH.toPx()) },
-            radius = with(density) { pillRadius.toPx() }, scale = Offset(sx, sy),
-            progress = motion.progress, presence = motion.presence, fill = fill,
-            distortion = 0.04f * (look.refraction / 24f), band = look.depth,
-            dispersion = 0.002f * (look.dispersion / 0.35f),
-        )
-        val flatShape = SpotiGlassShape((cellHeight / 2) * (look.spotiglassCorner / 32f).coerceIn(0f, 1.5f))
-        var scene = Modifier.fillMaxSize().spotiGlassLens(moving) { _, _ -> lensFrame }
+        fun showPill() = selected != null || motion.dragging
+        fun moving(): Boolean { frameRevision; return lensAllowed && motion.running && showPill() }
+        fun lensFrame(): SpotiGlassLensFrame {
+            frameRevision
+            val visual = if (rtl) items.lastIndex - motion.position else motion.position
+            val extra = (barHeight.value + 9 * response) / cellHeight.value - 1
+            val w = cell * (1 + extra * motion.growX * response)
+            val h = cellHeight * (1 + extra * motion.growY * response)
+            val sx = 1 + motion.deviation * response
+            val sy = 1 - motion.deviation * response
+            return SpotiGlassLensFrame(
+                center = with(density) { Offset((padding + cell * (visual + 0.5f)).toPx(), (8.dp + barHeight / 2).toPx()) },
+                size = with(density) { Size((w * sx).toPx(), (h * sy).toPx()) },
+                radius = with(density) { (h / 2).toPx() } * (look.spotiglassCorner / 32f).coerceIn(0f, 1.5f),
+                scale = Offset(sx, sy), progress = motion.progress, presence = motion.presence, fill = fill,
+                distortion = 0.04f * (look.refraction / 24f), band = look.depth,
+                dispersion = 0.002f * (look.dispersion / 0.35f))
+        }
+        var scene = Modifier.fillMaxSize().spotiGlassLens(lensAllowed, active = { moving() }) { _, _ -> lensFrame() }
         // The protruding lens also samples the page outside the capsule.
-        if (backdrop != null && moving) scene = scene.drawBackdrop(backdrop,
+        if (backdrop != null && lensAllowed) scene = scene.drawBackdrop(backdrop,
             shape = { RectangleShape }, effects = {}, highlight = null, shadow = null)
         Box(scene) {
             Box(Modifier.fillMaxWidth().height(barHeight).align(Alignment.Center)
                 .spotiGlassSurface(SpotiGlassShape(look.spotiglassCorner.dp), look, navigation = true))
-            if (showPill && !moving) Box(Modifier.absoluteOffset(x = padding + cell * visual, y = 8.dp + padding)
-                .width(cell).height(cellHeight).background(fill, flatShape))
-            if (moving) {
-                val rim = ((motion.presence - 0.45f) / 0.55f).coerceIn(0f, 1f)
-                val shadowAlpha = 0.3f * motion.progress * rim
-                Box(Modifier.absoluteOffset(centerX - pillW / 2, centerY - pillH / 2)
-                    .width(pillW).height(pillH)
-                    .shadow(9.dp, SpotiGlassShape(pillRadius), clip = false,
-                        ambientColor = Color.Black.copy(alpha = shadowAlpha), spotColor = Color.Black.copy(alpha = shadowAlpha)))
-            }
+            Box(Modifier.matchParentSize().drawWithContent {
+                frameRevision
+                if (showPill()) {
+                    val frame = lensFrame()
+                    val body = if (moving()) frame.size else Size(cell.toPx(), cellHeight.toPx())
+                    val radius = if (moving()) frame.radius else body.height / 2 * (look.spotiglassCorner / 32f)
+                    val path = spotiGlassPath(body, radius).apply {
+                        translate(frame.center - Offset(body.width / 2, body.height / 2))
+                    }
+                    val tint = if (moving()) spotiGlassHoverColor(items, motion.position, scheme.primary)
+                        .copy(alpha = 0.16f * motion.presence) else fill
+                    drawPath(path, tint)
+                }
+                drawContent()
+            })
             @Composable
             fun IconShell(colored: Boolean, shellModifier: Modifier) {
                 Row(shellModifier.fillMaxWidth().height(cellHeight).align(Alignment.Center).padding(horizontal = padding)) {
                     items.forEachIndexed { index, item ->
-                        val color = if (colored) selectedContentColor ?: scheme.primary else scheme.onSurface
+                        val color = if (colored) item.color ?: selectedContentColor ?: scheme.primary else scheme.onSurface
                         var hit = Modifier.weight(1f).fillMaxSize()
-                        if (!colored) hit = hit.semantics { this.selected = selected == index }
+                        if (!colored) hit = hit.semantics { this.selected = selected == index; contentDescription = item.label }
                             .clickable(role = Role.Tab, interactionSource = remember { MutableInteractionSource() }, indication = null) { choose(index) }
                         Column(hit, horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically)) {
                             item.icon?.let { Icon(it, null, tint = color, modifier = Modifier.size(25.dp)) }
-                            Text(item.label, color = color,
+                            if (showLabels || item.icon == null) Text(item.label, color = color,
                                 style = if (withIcons) MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp) else MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
@@ -202,17 +220,23 @@ fun SpotiGlassBar(
                     }
                 }
             })
-            if (showPill) IconShell(true, Modifier.clearAndSetSemantics {}.drawWithContent {
-                val cx = with(density) { centerX.toPx() }
+            IconShell(true, Modifier.clearAndSetSemantics {}.drawWithContent {
+                frameRevision
+                if (!showPill()) return@drawWithContent
+                val frame = lensFrame()
+                val cx = frame.center.x
                 val cy = size.height / 2
-                val restSize = if (moving) with(density) { Size(morphW.toPx(), morphH.toPx()) }
+                val raised = moving()
+                val sx = if (raised) frame.scale.x else 1f
+                val sy = if (raised) frame.scale.y else 1f
+                val restSize = if (raised) Size(frame.size.width / sx, frame.size.height / sy)
                     else with(density) { Size(cell.toPx(), cellHeight.toPx()) }
-                val radius = if (moving) with(density) { pillRadius.toPx() } else with(density) { cellHeight.toPx() / 2 * (look.spotiglassCorner / 32f) }
+                val radius = if (raised) frame.radius else with(density) { cellHeight.toPx() / 2 * (look.spotiglassCorner / 32f) }
                 val path = spotiGlassPath(restSize, radius)
                 path.translate(Offset(-restSize.width / 2, -restSize.height / 2))
-                withTransform({ translate(cx, cy); scale(if (moving) sx else 1f, if (moving) sy else 1f, pivot = Offset.Zero) }) {
+                withTransform({ translate(cx, cy); scale(sx, sy, pivot = Offset.Zero) }) {
                     clipPath(path) {
-                        withTransform({ scale(if (moving) 1 / sx else 1f, if (moving) 1 / sy else 1f, pivot = Offset.Zero); translate(-cx, -cy) }) {
+                        withTransform({ scale(1 / sx, 1 / sy, pivot = Offset.Zero); translate(-cx, -cy) }) {
                             this@drawWithContent.drawContent()
                         }
                     }

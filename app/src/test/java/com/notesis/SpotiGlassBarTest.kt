@@ -5,6 +5,18 @@ import org.junit.Test
 import kotlin.math.roundToInt
 
 class SpotiGlassBarTest {
+    @Test fun `travelling lens previews the hovered tools own stored color`() {
+        val black = androidx.compose.ui.graphics.Color.Black
+        val yellow = androidx.compose.ui.graphics.Color.Yellow
+        val blue = androidx.compose.ui.graphics.Color.Blue
+        val tools = listOf(SpotiGlassItem("읽기"), SpotiGlassItem("펜", color = black),
+            SpotiGlassItem("형광펜", color = yellow), SpotiGlassItem("마스킹", color = blue))
+        assertEquals(black, spotiGlassHoverColor(tools, 1f, blue))
+        assertEquals(yellow, spotiGlassHoverColor(tools, 1.6f, black))
+        assertEquals(blue, spotiGlassHoverColor(tools, 3f, black))
+        assertEquals(blue, spotiGlassHoverColor(tools, -2f, blue))
+    }
+
     @Test fun `tap lifts the glass then lands in a flat idle state`() {
         val motion = SpotiGlassMotion(0f)
         motion.select(3f)

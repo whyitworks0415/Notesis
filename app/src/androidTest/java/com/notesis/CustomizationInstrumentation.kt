@@ -35,6 +35,8 @@ class CustomizationInstrumentation : Instrumentation() {
 
     @androidx.annotation.RequiresApi(33)
     private fun checkSpotiGlassShader() {
+        check(spotiGlassPath(androidx.compose.ui.geometry.Size.Zero, 12f).isEmpty)
+        check(spotiGlassPath(androidx.compose.ui.geometry.Size(-1f, 20f), 12f).isEmpty)
         val source = Bitmap.createBitmap(400, 160, Bitmap.Config.ARGB_8888)
         for (y in 0 until source.height) for (x in 0 until source.width) {
             source.setPixel(x, y, Color.rgb((x * 7) % 256, (y * 9) % 256, (x + y) % 256))

@@ -7,6 +7,17 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 
 class SpotiGlassToolbarTest {
+    @Test fun `narrow full toolbar shows every tool without scrolling and preserves touch areas`() {
+        val tools = spotiToolbarTools(0)
+        for (width in listOf(110f, 176f, 264f, 400f, 532f, 820f)) {
+            val rows = spotiToolRows(tools, width)
+            assertEquals(tools, rows.flatten())
+            assertTrue(rows.all { it.isNotEmpty() })
+            assertTrue(rows.all { it.size * 44 + 12 <= width })
+        }
+        assertTrue(spotiToolRows(emptyList(), 300f).isEmpty())
+    }
+
     @Test fun `quick mode has exactly the four sketched tools`() {
         assertEquals(listOf(EditMode.READ, EditMode.PEN, EditMode.HIGHLIGHTER, EditMode.MASK),
             spotiToolbarTools(2).map { it.mode })

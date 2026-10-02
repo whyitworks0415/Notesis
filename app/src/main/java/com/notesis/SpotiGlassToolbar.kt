@@ -1,7 +1,6 @@
 package com.notesis
 
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.fadeIn
@@ -13,9 +12,9 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
@@ -28,15 +27,19 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -44,11 +47,13 @@ import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.window.PopupPositionProvider
 import kotlin.math.PI
 import kotlin.math.sin
+import com.kyant.backdrop.drawBackdrop
 
 internal enum class SpotiToolbarTool(val mode: EditMode?, val label: String) {
     READ(EditMode.READ, "읽기"), PEN(EditMode.PEN, "펜"), PENCIL(EditMode.PENCIL, "연필"),
@@ -65,9 +70,58 @@ internal fun spotiToolbarTools(level: Int): List<SpotiToolbarTool> = when (level
 
 internal fun spotiToolbarWidth(level: Int) = when (level) {
     0 -> 940.dp
-    1 -> 792.dp
-    2 -> 400.dp
-    else -> 88.dp
+    1 -> 632.dp
+    2 -> 304.dp
+    else -> 92.dp
+}
+
+internal fun Modifier.spotiToolbarAnimatedWidth(width: State<Dp>): Modifier = layout { measurable, constraints ->
+    val pixels = width.value.roundToPx().coerceIn(constraints.minWidth, constraints.maxWidth)
+    val child = measurable.measure(constraints.copy(minWidth = pixels, maxWidth = pixels))
+    layout(child.width, child.height) { child.placeRelative(0, 0) }
+}
+
+/** Responsive rows preserve every tool and a 44 dp hit area without scrolling. */
+internal fun spotiToolRows(tools: List<SpotiToolbarTool>, widthDp: Float): List<List<SpotiToolbarTool>> {
+    if (tools.isEmpty()) return emptyList()
+    val capacity = ((widthDp - 12f) / 44f).toInt().coerceAtLeast(2)
+    val rows = (tools.size + capacity - 1) / capacity
+    // Balance the rows instead of leaving almost all the tools in the first.
+    var start = 0
+    return List(rows) { row ->
+        val count = tools.size / rows + if (row < tools.size % rows) 1 else 0
+        tools.subList(start, start + count).also { start += count }
+    }
+}
+
+/** Clear persistent optics: sample the page with the original refractive shader. */
+@Composable
+private fun Modifier.spotiToolbarGlass(circle: Boolean = false): Modifier {
+    val look = LocalSkinSettings.current
+    val effects = rememberLiquidGlassEffectsAllowed() && !look.highContrast && look.spotiglassClarity > 0f
+    val shape = if (circle) CircleShape else SpotiGlassShape(look.spotiglassCorner.dp)
+    val backdrop = LocalLiquidGlassBackdrop.current
+    val scheme = MaterialTheme.colorScheme
+    var glass = shadow(3.dp, shape, clip = false,
+        ambientColor = Color.Black.copy(alpha = 0.08f), spotColor = Color.Black.copy(alpha = 0.08f))
+        .spotiGlassLens(effects) { size, density ->
+        SpotiGlassLensFrame(center = Offset(size.width / 2, size.height / 2), size = size,
+            radius = if (circle) size.minDimension / 2 else look.spotiglassCorner * density,
+            distortion = 0.04f * look.refraction / 24f, band = look.depth,
+            dispersion = 0.002f * look.dispersion / 0.35f)
+    }
+    glass = if (effects && backdrop != null) glass.drawBackdrop(backdrop, shape = { shape },
+        effects = {}, highlight = null, shadow = null,
+        onDrawSurface = { drawRect(scheme.surface.copy(alpha = (1f - look.spotiglassClarity) * 0.5f + 0.08f)) })
+    else glass.background(scheme.surfaceContainerHigh, shape)
+    return glass.drawWithContent {
+        drawContent()
+        val rim = Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.65f),
+            scheme.onSurface.copy(alpha = 0.12f), Color.White.copy(alpha = 0.4f)))
+        val stroke = Stroke(0.8.dp.toPx())
+        if (circle) drawCircle(rim, radius = (size.minDimension / 2 - stroke.width / 2).coerceAtLeast(0f), style = stroke)
+        else drawPath(spotiGlassPath(size, look.spotiglassCorner * density), rim, style = stroke)
+    }
 }
 
 private fun SpotiToolbarTool.icon(): ImageVector = when (this) {
@@ -105,8 +159,9 @@ internal fun Modifier.spotiGlassMorph(key: Any, enter: Boolean = false): Modifie
         } else phase.snapTo(1f)
         initial = false
     }
-    val raised = sin(PI * phase.value).toFloat().coerceIn(0f, 1f)
-    return spotiGlassLens(effects && raised > 0.002f) { size, density ->
+    fun raised() = sin(PI * phase.value).toFloat().coerceIn(0f, 1f)
+    return spotiGlassLens(effects, active = { raised() > 0.002f }) { size, density ->
+        val raised = raised()
         SpotiGlassLensFrame(center = Offset(size.width / 2, size.height / 2), size = size,
             radius = look.spotiglassCorner * density, progress = raised, presence = raised,
             distortion = 0.04f * (look.refraction / 24) * look.spotiglassResponse,
@@ -117,7 +172,8 @@ internal fun Modifier.spotiGlassMorph(key: Any, enter: Boolean = false): Modifie
 @Composable
 private fun SpotiActionButton(
     label: String, icon: ImageVector? = null, modifier: Modifier = Modifier,
-    selected: Boolean = false, enabled: Boolean = true, iconOnly: Boolean = false, onClick: () -> Unit,
+    selected: Boolean = false, enabled: Boolean = true, iconOnly: Boolean = false,
+    persistentGlass: Boolean = false, onClick: () -> Unit,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -133,11 +189,10 @@ private fun SpotiActionButton(
         .semantics { contentDescription = label }
         .clickable(enabled = enabled, role = Role.Button, interactionSource = interaction, indication = null, onClick = onClick),
         contentAlignment = Alignment.Center) {
-        Box(Modifier.matchParentSize().spotiGlassMorph(pressed)
-            .graphicsLayer { scaleX = grow; scaleY = grow }
-            .background(if (selected) scheme.primary.copy(alpha = 0.12f) else scheme.onSurface.copy(alpha = 0.06f), shape)
-            .then(if (pressed && effects) Modifier.liquidGlass(shape = shape, intensity = grow - 0.08f,
-                surfaceColor = Color.White.copy(alpha = 0.08f), shadowElevation = 2.dp) else Modifier))
+        val body = Modifier.matchParentSize().graphicsLayer { scaleX = grow; scaleY = grow }
+        Box(if (persistentGlass) body.spotiToolbarGlass(circle = true)
+            else body.spotiGlassMorph(pressed)
+                .background(if (selected) scheme.primary.copy(alpha = 0.12f) else scheme.onSurface.copy(alpha = 0.06f), shape))
         Column(Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
             horizontalAlignment = Alignment.CenterHorizontally) {
             val color = (if (selected) scheme.primary else scheme.onSurface).copy(alpha = if (enabled) 1f else 0.38f)
@@ -171,10 +226,12 @@ internal class SpotiToolbarPopupPosition(private val atStart: Boolean, private v
 @Composable
 internal fun SpotiGlassToolbar(
     sizeLevel: Int, onSizeLevel: (Int) -> Unit, mode: EditMode, inkColor: Color?,
+    toolColors: Map<EditMode, Color>,
+    targetWidth: Dp,
     docked: Boolean, modifier: Modifier, onDrag: (Offset) -> Unit,
     onTool: (SpotiToolbarTool) -> Unit, actions: List<SpotiToolbarAction>,
     notes: List<SpotiToolbarAction>, ai: List<SpotiToolbarAction>,
-    topRow: @Composable () -> Unit, penOptions: @Composable RowScope.() -> Unit,
+    topRow: @Composable () -> Unit, penOptions: @Composable (Dp) -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
     var page by remember { mutableStateOf(ToolbarMenu.FUNCTIONS) }
@@ -187,8 +244,9 @@ internal fun SpotiGlassToolbar(
     }
     val effects = rememberLiquidGlassEffectsAllowed() && !LocalSkinSettings.current.highContrast
     val popupBackdrop = LocalSpotiPopupBackdrop.current ?: LocalLiquidGlassBackdrop.current
-    SkinSurface(modifier.spotiGlassMorph(sizeLevel)
-        .animateContentSize(if (effects) spring(0.86f, 430f) else tween(0)), flush = docked && sizeLevel == 0) {
+    Box(modifier
+        .animateContentSize(if (effects) spring(0.95f, 360f) else tween(0))) {
+        if (sizeLevel == 0) Box(Modifier.matchParentSize().spotiToolbarGlass())
         CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides androidx.compose.ui.unit.Dp.Unspecified) {
             Column(Modifier.then(if (docked && sizeLevel == 0) Modifier.windowInsetsPadding(
                 WindowInsets.systemBars.union(WindowInsets.displayCutout)
@@ -201,24 +259,35 @@ internal fun SpotiGlassToolbar(
                 Box {
                     if (sizeLevel == 3) {
                         SpotiActionButton("도구·기능 메뉴", Icons.Default.Menu,
-                            Modifier.pointerInput(Unit) {
+                            Modifier.size(52.dp).pointerInput(Unit) {
                                 detectDragGestures { change, delta -> change.consume(); onDrag(delta) }
-                            }, iconOnly = true, onClick = { menu(ToolbarMenu.FUNCTIONS) })
+                            }, iconOnly = true, persistentGlass = true, onClick = { menu(ToolbarMenu.FUNCTIONS) })
                     } else {
-                        Row(Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            SpotiActionButton("${sizeLevel + 1}/4", onClick = { menu(ToolbarMenu.SIZES) })
-                            val tools = spotiToolbarTools(sizeLevel)
-                            SpotiGlassBar(tools.map { SpotiGlassItem(it.label, it.icon()) },
-                                selectedIndex = if (open && page == ToolbarMenu.AI) tools.indexOf(SpotiToolbarTool.AI)
-                                    else tools.indexOfFirst { it.mode == mode },
-                                onSelected = { pick(tools[it]) },
-                                modifier = Modifier.width((tools.size * 56 + 12).dp),
-                                selectedContentColor = inkColor)
+                      Column {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Box(Modifier.weight(1f)) {
+                              // Freeze wrapping at the destination width while the
+                              // spring grows the bar; avoid 6 -> 3 -> 2 -> 1 rows.
+                              val toolWidth = (targetWidth.value - 100f).coerceAtLeast(100f)
+                              Column {
+                                spotiToolRows(spotiToolbarTools(sizeLevel), toolWidth).forEach { tools ->
+                                  SpotiGlassBar(tools.map { SpotiGlassItem(it.label, it.icon(), toolColors[it.mode]) },
+                                    selectedIndex = if (open && page == ToolbarMenu.AI) tools.indexOf(SpotiToolbarTool.AI)
+                                        else tools.indexOfFirst { it.mode == mode },
+                                    onSelected = { pick(tools[it]) }, modifier = Modifier.fillMaxWidth(),
+                                    selectedContentColor = inkColor, showLabels = false)
+                                }
+                              }
+                            }
                             SpotiActionButton("기능", Icons.Default.Tune, selected = open,
+                                modifier = Modifier.size(52.dp), iconOnly = true, persistentGlass = true,
                                 onClick = { menu(ToolbarMenu.FUNCTIONS) })
-                            if (sizeLevel == 0) penOptions()
                         }
+                        if (sizeLevel == 0) Box(Modifier.fillMaxWidth()) {
+                            penOptions((targetWidth - 40.dp).coerceAtLeast(100.dp))
+                        }
+                      }
                     }
                     if (visible.currentState || visible.targetState) {
                         val maxHeight = (LocalConfiguration.current.screenHeightDp - 140).coerceAtLeast(180).dp

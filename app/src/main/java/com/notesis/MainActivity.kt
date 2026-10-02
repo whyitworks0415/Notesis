@@ -37,6 +37,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
@@ -2747,9 +2748,9 @@ private fun NoteScreen(
         (containerSize.width.takeIf { it > 0 } ?: Int.MAX_VALUE).toDp()
     }
     val toolbarEffects = rememberLiquidGlassEffectsAllowed() && !LocalSkinSettings.current.highContrast
-    val floatingBarWidth by animateDpAsState(
+    val floatingBarWidth = animateDpAsState(
         minOf(maxBarWidth, if (skin == Skin.SPOTIGLASS) spotiToolbarWidth(toolbarSize) else FLOATING_BAR_MAX),
-        if (skin == Skin.SPOTIGLASS && toolbarEffects) spring(0.86f, 430f) else tween(0),
+        if (skin == Skin.SPOTIGLASS && toolbarEffects) spring(0.95f, 360f) else tween(0),
         label = "상단 바 모드 너비",
     )
     var showLatency by remember { mutableStateOf(false) }
@@ -2932,6 +2933,8 @@ private fun NoteScreen(
             note = note,
             otherNotes = otherNotes,
             pen = pen,
+            toolPens = settings,
+            toolbarTargetWidth = minOf(maxBarWidth, spotiToolbarWidth(toolbarSize)),
             mode = mode,
             shapeKind = shapeKind,
             straightLine = straightLine,
@@ -3364,7 +3367,7 @@ private fun NoteScreen(
                     // the tools huddled in the first third of it.
                     // Intrinsic text must not resize the whole bar when the pen
                     // type or a value such as 9.9/10 changes.
-                    .width(floatingBarWidth)
+                    .spotiToolbarAnimatedWidth(floatingBarWidth)
                     // Placed and clamped together: the folded handle can be
                     // dragged anywhere, and unfolding measures the wide bar and
                     // pulls it back inside rather than letting it hang off.
@@ -3820,7 +3823,7 @@ private fun NoteScreen(
     }
         if (docked && !collapsed) {
             toolbar(Modifier.align(Alignment.TopCenter).then(
-                if (skin == Skin.SPOTIGLASS && toolbarSize > 0) Modifier.width(floatingBarWidth)
+                if (skin == Skin.SPOTIGLASS && toolbarSize > 0) Modifier.spotiToolbarAnimatedWidth(floatingBarWidth)
                     .windowInsetsPadding(ChromeInsets.only(WindowInsetsSides.Top))
                 else Modifier.fillMaxWidth()))
         }
@@ -4953,6 +4956,8 @@ private fun Toolbar(
     note: NoteMeta,
     otherNotes: List<NoteMeta>,
     pen: PenPreset,
+    toolPens: Map<EditMode, PenPreset>,
+    toolbarTargetWidth: Dp,
     mode: EditMode,
     shapeKind: ShapeKind,
     straightLine: Boolean,
@@ -5115,6 +5120,8 @@ private fun Toolbar(
     if (skin == Skin.SPOTIGLASS) {
         SpotiGlassToolbar(sizeLevel, onSizeLevel, mode,
             inkColor = if (mode.tints) Color(pen.colorArgb.or(0xFF000000.toInt())) else null,
+            toolColors = toolPens.filterKeys { it.tints }.mapValues { Color(it.value.colorArgb.or(0xFF000000.toInt())) },
+            targetWidth = toolbarTargetWidth,
             docked = docked, modifier = modifier, onDrag = onDragBar,
             onTool = { tool -> when (tool.mode) {
                 EditMode.SHAPE -> onShape(shapeKind)
@@ -5147,7 +5154,8 @@ private fun Toolbar(
             notes = otherNotes.map { other -> SpotiToolbarAction(other.title, Icons.Default.Description) { onOpenNote(other) } },
             ai = AI_SITES.map { (name, url) -> SpotiToolbarAction(name, Icons.Default.AutoAwesome) { onWeb(url) } },
             topRow = topRow,
-            penOptions = {
+            penOptions = { availableWidth ->
+              val inkOptions: @Composable RowScope.() -> Unit = {
                 if (mode == EditMode.SHAPE) ShapeButton(true, shapeKind, onShape)
                 if (mode == EditMode.TEXT) TextButton(onClick = onAddText) { Text("+ 텍스트") }
                 if (mode.tints) {
@@ -5157,12 +5165,31 @@ private fun Toolbar(
                 if (mode == EditMode.HIGHLIGHTER || mode == EditMode.MASK) {
                     ToolButton(Icons.Default.Remove, "직선", straightLine, onClick = onToggleStraightLine)
                 }
+              }
+              val widthOptions: @Composable RowScope.() -> Unit = {
                 if (mode in PenStore.DEFAULTS) {
                     val range = PenStore.widthRange(mode, pen)
                     FavoriteWidthButton(mode, pen.width, onWidth)
-                    SkinSlider(pen.width.coerceIn(range), onWidth, range, Modifier.width(SLIDER_TRACK))
+                    SkinSlider(pen.width.coerceIn(range), onWidth, range, Modifier.weight(1f).widthIn(min = 64.dp))
                 }
+              }
+              if (availableWidth < 360.dp) {
+                Column {
+                  Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    inkOptions()
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = onTogglePages) { Text(pageLabel) }
+                  }
+                  if (mode in PenStore.DEFAULTS) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    widthOptions()
+                  }
+                }
+              } else Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                inkOptions()
+                widthOptions()
+                if (mode !in PenStore.DEFAULTS) Spacer(Modifier.weight(1f))
                 TextButton(onClick = onTogglePages) { Text(pageLabel) }
+              }
             })
         return
     }
