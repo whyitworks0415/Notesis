@@ -167,6 +167,8 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.pointerInput
@@ -323,6 +325,7 @@ class MainActivity : ComponentActivity() {
                             prefs.skin = it
                         },
                         onOpenNote = { openNote = it },
+                        onLookChange = { look = it; lookStore.save(it) },
                         onBack = { openNote = null; incomingImportedNote = null },
                     )
                     }
@@ -2503,6 +2506,7 @@ private fun NoteScreen(
     skin: Skin,
     onSkin: (Skin) -> Unit,
     onOpenNote: (NoteMeta) -> Unit,
+    onLookChange: (SkinSettings) -> Unit,
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -2645,7 +2649,7 @@ private fun NoteScreen(
     // Folded away, the bar becomes a handle that can be dragged; unfolding puts
     // it back wherever that handle was left, which is the point of moving it.
     var toolbarSize by remember { mutableIntStateOf(penStore.toolbarSize) }
-    val collapsed = toolbarSize == 3
+    val collapsed = toolbarSize == 3 && skin != Skin.SPOTIGLASS
     fun setToolbarSize(size: Int) { toolbarSize = size; penStore.toolbarSize = size }
     // Flush against the top edge, or floating over the page. Kept in
     // preferences: where the toolbar sits is a habit, not a per-note choice.
@@ -2742,9 +2746,16 @@ private fun NoteScreen(
     val maxBarWidth = with(density) {
         (containerSize.width.takeIf { it > 0 } ?: Int.MAX_VALUE).toDp()
     }
+    val toolbarEffects = rememberLiquidGlassEffectsAllowed() && !LocalSkinSettings.current.highContrast
+    val floatingBarWidth by animateDpAsState(
+        minOf(maxBarWidth, if (skin == Skin.SPOTIGLASS) spotiToolbarWidth(toolbarSize) else FLOATING_BAR_MAX),
+        if (skin == Skin.SPOTIGLASS && toolbarEffects) spring(0.86f, 430f) else tween(0),
+        label = "상단 바 모드 너비",
+    )
     var showLatency by remember { mutableStateOf(false) }
     var showPages by remember { mutableStateOf(false) }
     var showViewOptions by remember { mutableStateOf(false) }
+    var showSkinSettings by remember { mutableStateOf(false) }
     var pageLayout by remember { mutableStateOf(penStore.pageLayout) }
     var edits by remember { mutableIntStateOf(0) }
     val indexedRevisions = remember(note.id) { mutableMapOf<String, Long>() }
@@ -2997,6 +3008,12 @@ private fun NoteScreen(
             },
             canResetBar = !docked && barOffset != null,
             onResetBar = { barOffset = null },
+            onScreenSettings = { showSkinSettings = true },
+            onDragBar = { delta ->
+                val at = barPlacement(barOffset, barSize, containerSize)
+                if (docked) { docked = false; penStore.docked = false }
+                barOffset = Offset(at.x + delta.x, at.y + delta.y)
+            },
             modifier = barModifier,
         )
     }
@@ -3010,10 +3027,13 @@ private fun NoteScreen(
     )
     val liquidBackdrop = rememberLiquidGlassBackdrop()
     var drawingPage by remember { mutableStateOf(false) }
+    var pageLayerOrigin by remember { mutableStateOf(Offset.Zero) }
+    val popupBackdrop = remember(liquidBackdrop) { SpotiPopupBackdrop(liquidBackdrop) { pageLayerOrigin } }
     var movingPage by remember { mutableStateOf(false) }
     CompositionLocalProvider(
         LocalBackdrop provides backdrop,
         LocalLiquidGlassBackdrop provides if (skin.isRefractive) liquidBackdrop else null,
+        LocalSpotiPopupBackdrop provides if (skin == Skin.SPOTIGLASS) popupBackdrop else null,
     ) {
     Row(Modifier.fillMaxSize().drawWithContent {
         drawContent()
@@ -3053,6 +3073,7 @@ private fun NoteScreen(
             Modifier
                 .fillMaxSize()
                 .recordBackdrop(backdrop)
+                .onGloballyPositioned { pageLayerOrigin = it.positionOnScreen() }
                 .then(
                     if (skin.isRefractive) {
                         Modifier.captureLiquidGlassBackdrop(liquidBackdrop)
@@ -3343,7 +3364,7 @@ private fun NoteScreen(
                     // the tools huddled in the first third of it.
                     // Intrinsic text must not resize the whole bar when the pen
                     // type or a value such as 9.9/10 changes.
-                    .width(minOf(maxBarWidth, FLOATING_BAR_MAX))
+                    .width(floatingBarWidth)
                     // Placed and clamped together: the folded handle can be
                     // dragged anywhere, and unfolding measures the wide bar and
                     // pulls it back inside rather than letting it hang off.
@@ -3373,6 +3394,14 @@ private fun NoteScreen(
             }
         }
 
+
+        if (showSkinSettings) {
+            Dialog(onDismissRequest = { showSkinSettings = false },
+                properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+                SkinSettingsScreen(skin, LocalSkinSettings.current, onSkin, onLookChange,
+                    onBack = { showSkinSettings = false })
+            }
+        }
 
         if (showVoice) {
             val recordings = remember(note.id, voiceRevision) { store.recordings(note.id) }
@@ -3790,7 +3819,10 @@ private fun NoteScreen(
         }
     }
         if (docked && !collapsed) {
-            toolbar(Modifier.align(Alignment.TopCenter).fillMaxWidth())
+            toolbar(Modifier.align(Alignment.TopCenter).then(
+                if (skin == Skin.SPOTIGLASS && toolbarSize > 0) Modifier.width(floatingBarWidth)
+                    .windowInsetsPadding(ChromeInsets.only(WindowInsetsSides.Top))
+                else Modifier.fillMaxWidth()))
         }
     }
 
@@ -4963,8 +4995,177 @@ private fun Toolbar(
     /** Whether the bar has been dragged away from where it starts. */
     canResetBar: Boolean,
     onResetBar: () -> Unit,
+    onScreenSettings: () -> Unit,
+    onDragBar: (Offset) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val topRow: @Composable () -> Unit = {
+        // ---- top row: the note, and what is done to the whole of it
+        Row(
+            // Docked the bar is the window and everything fits. Floating it
+            // is capped, and narrower still with the browser panel open -
+            // and a Row that cannot scroll does not shrink, it just stops
+            // drawing: the last buttons in this row, from full screen to
+            // the other notes, were being cut off the end of the bar with
+            // no way to reach them. Only the bottom row scrolled.
+            if (docked) Modifier else Modifier.horizontalScroll(rememberScrollState()),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로가기")
+            }
+            IconButton(onClick = onTogglePages) {
+                Icon(Icons.Default.Search, contentDescription = "페이지 · 검색")
+            }
+            ToolButton(
+                Icons.Default.CropFree,
+                "영역 캡쳐",
+                mode == EditMode.CAPTURE,
+            ) { onMode(EditMode.CAPTURE) }
+
+            Text(
+                note.title,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                // Docked the bar is the window's width and the title takes
+                // the slack, so the two clusters stay pinned to their ends.
+                // Floating, the bar is only as wide as it needs to be, and a
+                // title that takes the slack has no end to stop at - which
+                // is how a landscape tablet ended up with a 2960px bar and
+                // the tools huddled in the first third of it.
+                modifier = Modifier
+                    .then(
+                        if (docked) {
+                            Modifier.weight(1f)
+                        } else {
+                            Modifier.widthIn(max = 260.dp)
+                        },
+                    )
+                    .padding(horizontal = 16.dp),
+            )
+
+            IconButton(onClick = onUndo, enabled = canUndo) {
+                Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "실행취소")
+            }
+            IconButton(onClick = onRedo, enabled = canRedo) {
+                Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "다시실행")
+            }
+            IconButton(onClick = onVoice) {
+                Icon(
+                    Icons.Default.Mic,
+                    contentDescription = if (recording) "녹음 중 · 녹음 패널 열기" else "녹음 패널 열기",
+                    tint = if (recording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                )
+            }
+            IconButton(onClick = onRotate) {
+                Icon(Icons.Default.ScreenRotation, contentDescription = "노트 회전 ${noteRotation}도")
+            }
+            // 확대 아이콘과 수치는 분리해 둘을 감싸는 강조 칸은 만들지 않고,
+            // 숫자는 행의 정중앙에 놓습니다.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(
+                    onClick = onFitWidth,
+                    modifier = Modifier.size(40.dp),
+                ) {
+                    Icon(Icons.Default.ZoomOutMap, contentDescription = "화면에 맞추기")
+                }
+                Text(
+                    zoomLabel,
+                    style = MaterialTheme.typography.labelMedium,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .widthIn(min = 44.dp)
+                        .padding(horizontal = 4.dp),
+                )
+            }
+            SkinButton(skin, onSkin)
+            IconButton(onClick = onToggleDock) {
+                Icon(
+                    if (docked) {
+                        Icons.Default.PictureInPictureAlt
+                    } else {
+                        Icons.Default.VerticalAlignTop
+                    },
+                    contentDescription = if (docked) "떼어내기" else "상단 고정",
+                )
+            }
+            // Only once there is somewhere to come back from. A bar that
+            // has never been moved does not need a button for moving it
+            // back, and a bar dragged to a corner and left there had no way
+            // back at all short of docking it and undocking it again.
+            if (canResetBar) {
+                IconButton(onClick = onResetBar) {
+                    Icon(
+                        Icons.Default.FilterCenterFocus,
+                        contentDescription = "도구막대 제자리로",
+                    )
+                }
+            }
+            IconButton(onClick = onToggleFullscreen) {
+                Icon(
+                    if (fullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                    contentDescription = "전체화면",
+                )
+            }
+            OtherNotesButton(otherNotes, onOpenNote)
+        }
+    }
+    if (skin == Skin.SPOTIGLASS) {
+        SpotiGlassToolbar(sizeLevel, onSizeLevel, mode,
+            inkColor = if (mode.tints) Color(pen.colorArgb.or(0xFF000000.toInt())) else null,
+            docked = docked, modifier = modifier, onDrag = onDragBar,
+            onTool = { tool -> when (tool.mode) {
+                EditMode.SHAPE -> onShape(shapeKind)
+                EditMode.TEXT -> onText()
+                null -> Unit
+                else -> onMode(tool.mode)
+            } },
+            actions = buildList {
+                add(SpotiToolbarAction("뒤로가기", Icons.AutoMirrored.Filled.ArrowBack, onClick = onBack))
+                add(SpotiToolbarAction("검색 · 페이지", Icons.Default.Search, slot = 8, onClick = onTogglePages))
+                add(SpotiToolbarAction("실행취소", Icons.AutoMirrored.Filled.Undo, enabled = canUndo, onClick = onUndo))
+                add(SpotiToolbarAction("다시실행", Icons.AutoMirrored.Filled.Redo, enabled = canRedo, onClick = onRedo))
+                add(SpotiToolbarAction("마이크", Icons.Default.Mic, selected = recording, slot = 0, onClick = onVoice))
+                add(SpotiToolbarAction(if (docked) "상단 고정 해제" else "상단 고정", Icons.Default.VerticalAlignTop,
+                    selected = docked, slot = 1, onClick = onToggleDock))
+                add(SpotiToolbarAction("전체화면", Icons.Default.Fullscreen, selected = fullscreen, slot = 2, onClick = onToggleFullscreen))
+                add(SpotiToolbarAction("노트 회전", Icons.Default.ScreenRotation, slot = 7, onClick = onRotate))
+                add(SpotiToolbarAction("캡쳐", Icons.Default.CropFree, slot = 5, onClick = { onMode(EditMode.CAPTURE) }))
+                add(SpotiToolbarAction("필기 설정", Icons.Default.Create, slot = 4, onClick = {
+                    if (!mode.tints) onMode(EditMode.PEN)
+                    onEditPen()
+                }))
+                add(SpotiToolbarAction("사진", Icons.Default.AddPhotoAlternate, onClick = onPickImage))
+                add(SpotiToolbarAction("UI · 화면 설정", Icons.Default.AutoAwesomeMosaic, slot = 6, onClick = onScreenSettings))
+                add(SpotiToolbarAction("화면 맞추기 · $zoomLabel", Icons.Default.ZoomOutMap, onClick = onFitWidth))
+                add(SpotiToolbarAction("인터넷", Icons.Default.Language, onClick = { onWeb(SEARCH_HOME) }))
+                add(SpotiToolbarAction("지연 측정", Icons.Default.Speed, selected = showLatency, onClick = onToggleLatency))
+                if (canResetBar) add(SpotiToolbarAction("도구막대 제자리로", Icons.Default.FilterCenterFocus, onClick = onResetBar))
+            },
+            notes = otherNotes.map { other -> SpotiToolbarAction(other.title, Icons.Default.Description) { onOpenNote(other) } },
+            ai = AI_SITES.map { (name, url) -> SpotiToolbarAction(name, Icons.Default.AutoAwesome) { onWeb(url) } },
+            topRow = topRow,
+            penOptions = {
+                if (mode == EditMode.SHAPE) ShapeButton(true, shapeKind, onShape)
+                if (mode == EditMode.TEXT) TextButton(onClick = onAddText) { Text("+ 텍스트") }
+                if (mode.tints) {
+                    PenChip(pen, true, onEditPen)
+                    IconButton(onClick = onPalette) { Icon(Icons.Default.Palette, "색상 템플릿") }
+                }
+                if (mode == EditMode.HIGHLIGHTER || mode == EditMode.MASK) {
+                    ToolButton(Icons.Default.Remove, "직선", straightLine, onClick = onToggleStraightLine)
+                }
+                if (mode in PenStore.DEFAULTS) {
+                    val range = PenStore.widthRange(mode, pen)
+                    FavoriteWidthButton(mode, pen.width, onWidth)
+                    SkinSlider(pen.width.coerceIn(range), onWidth, range, Modifier.width(SLIDER_TRACK))
+                }
+                TextButton(onClick = onTogglePages) { Text(pageLabel) }
+            })
+        return
+    }
     SkinSurface(
         modifier = modifier,
         // Docked, it is part of the window edge, so it takes the edge's corner
@@ -4995,117 +5196,7 @@ private fun Toolbar(
                 .padding(horizontal = 8.dp, vertical = 1.dp),
         ) {
             if (sizeLevel == 0) {
-            // ---- top row: the note, and what is done to the whole of it
-            Row(
-                // Docked the bar is the window and everything fits. Floating it
-                // is capped, and narrower still with the browser panel open -
-                // and a Row that cannot scroll does not shrink, it just stops
-                // drawing: the last buttons in this row, from full screen to
-                // the other notes, were being cut off the end of the bar with
-                // no way to reach them. Only the bottom row scrolled.
-                if (docked) Modifier else Modifier.horizontalScroll(rememberScrollState()),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로가기")
-                }
-                IconButton(onClick = onTogglePages) {
-                    Icon(Icons.Default.Search, contentDescription = "페이지 · 검색")
-                }
-                ToolButton(
-                    Icons.Default.CropFree,
-                    "영역 캡쳐",
-                    mode == EditMode.CAPTURE,
-                ) { onMode(EditMode.CAPTURE) }
-
-                Text(
-                    note.title,
-                    style = MaterialTheme.typography.titleSmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center,
-                    // Docked the bar is the window's width and the title takes
-                    // the slack, so the two clusters stay pinned to their ends.
-                    // Floating, the bar is only as wide as it needs to be, and a
-                    // title that takes the slack has no end to stop at - which
-                    // is how a landscape tablet ended up with a 2960px bar and
-                    // the tools huddled in the first third of it.
-                    modifier = Modifier
-                        .then(
-                            if (docked) {
-                                Modifier.weight(1f)
-                            } else {
-                                Modifier.widthIn(max = 260.dp)
-                            },
-                        )
-                        .padding(horizontal = 16.dp),
-                )
-
-                IconButton(onClick = onUndo, enabled = canUndo) {
-                    Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "실행취소")
-                }
-                IconButton(onClick = onRedo, enabled = canRedo) {
-                    Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "다시실행")
-                }
-                IconButton(onClick = onVoice) {
-                    Icon(
-                        Icons.Default.Mic,
-                        contentDescription = if (recording) "녹음 중 · 녹음 패널 열기" else "녹음 패널 열기",
-                        tint = if (recording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-                    )
-                }
-                IconButton(onClick = onRotate) {
-                    Icon(Icons.Default.ScreenRotation, contentDescription = "노트 회전 ${noteRotation}도")
-                }
-                // 확대 아이콘과 수치는 분리해 둘을 감싸는 강조 칸은 만들지 않고,
-                // 숫자는 행의 정중앙에 놓습니다.
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(
-                        onClick = onFitWidth,
-                        modifier = Modifier.size(40.dp),
-                    ) {
-                        Icon(Icons.Default.ZoomOutMap, contentDescription = "화면에 맞추기")
-                    }
-                    Text(
-                        zoomLabel,
-                        style = MaterialTheme.typography.labelMedium,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier
-                            .widthIn(min = 44.dp)
-                            .padding(horizontal = 4.dp),
-                    )
-                }
-                SkinButton(skin, onSkin)
-                IconButton(onClick = onToggleDock) {
-                    Icon(
-                        if (docked) {
-                            Icons.Default.PictureInPictureAlt
-                        } else {
-                            Icons.Default.VerticalAlignTop
-                        },
-                        contentDescription = if (docked) "떼어내기" else "상단 고정",
-                    )
-                }
-                // Only once there is somewhere to come back from. A bar that
-                // has never been moved does not need a button for moving it
-                // back, and a bar dragged to a corner and left there had no way
-                // back at all short of docking it and undocking it again.
-                if (canResetBar) {
-                    IconButton(onClick = onResetBar) {
-                        Icon(
-                            Icons.Default.FilterCenterFocus,
-                            contentDescription = "도구막대 제자리로",
-                        )
-                    }
-                }
-                IconButton(onClick = onToggleFullscreen) {
-                    Icon(
-                        if (fullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
-                        contentDescription = "전체화면",
-                    )
-                }
-                OtherNotesButton(otherNotes, onOpenNote)
-            }
+            topRow()
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
@@ -5130,40 +5221,6 @@ private fun Toolbar(
                         Icon(Icons.AutoMirrored.Filled.Redo, "다시실행")
                     }
                 }
-                if (skin == Skin.SPOTIGLASS) {
-                    val tools = buildList {
-                        add(EditMode.READ to SpotiGlassItem("읽기", Icons.Default.TouchApp))
-                        add(EditMode.PEN to SpotiGlassItem("펜", Icons.Default.Create))
-                        add(EditMode.PENCIL to SpotiGlassItem("연필", Icons.Outlined.Brush))
-                        add(EditMode.HIGHLIGHTER to SpotiGlassItem("형광펜", Icons.Default.Highlight))
-                        add(EditMode.MASK to SpotiGlassItem("마스킹", Icons.Default.VisibilityOff))
-                        if (sizeLevel < 2) {
-                            add(EditMode.LASSO to SpotiGlassItem("올가미", Icons.Default.Gesture))
-                            add(EditMode.SHAPE to SpotiGlassItem("도형", Icons.Default.Category))
-                            add(EditMode.TEXT to SpotiGlassItem("텍스트", Icons.Default.TextFields))
-                            add(EditMode.IMAGE to SpotiGlassItem("사진", Icons.Default.AddPhotoAlternate))
-                        }
-                        add(EditMode.ERASE to SpotiGlassItem("지우개", Icons.Default.Delete))
-                    }
-                    SpotiGlassBar(
-                        items = tools.map { it.second },
-                        selectedIndex = tools.indexOfFirst { it.first == mode },
-                        onSelected = { index ->
-                            when (val tool = tools[index].first) {
-                                EditMode.SHAPE -> onShape(shapeKind)
-                                EditMode.TEXT -> onText()
-                                EditMode.IMAGE -> onPickImage()
-                                else -> onMode(tool)
-                            }
-                        },
-                        modifier = Modifier.width((tools.size * 56 + 8).dp).padding(vertical = 4.dp),
-                        selectedContentColor = if (mode.tints) Color(pen.colorArgb.or(0xFF000000.toInt())) else null,
-                    )
-                    if (sizeLevel < 2) {
-                        ShapeButton(mode == EditMode.SHAPE, shapeKind, onShape)
-                        if (mode == EditMode.TEXT) TextButton(onClick = onAddText) { Text("+ 텍스트") }
-                    }
-                } else {
                 ToolButton(
                     Icons.Default.TouchApp,
                     "읽기 모드",
@@ -5209,7 +5266,6 @@ private fun Toolbar(
                     "지우개",
                     mode == EditMode.ERASE,
                 ) { onMode(EditMode.ERASE) }
-                }
                 ToolbarDivider()
 
                 // The colour of whatever is in hand. Tapping it opens the
