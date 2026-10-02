@@ -7,7 +7,7 @@ import kotlin.math.sign
 // Kotlin port of liquid_glass_easy 4.3.2's animated nav-bar ticker,
 // liquidGlassSpringStep and LiquidGlassLensMotion. Copyright (c) 2025 Ahmed
 // Gamil, MIT. Full license and source provenance: assets/spotiglass/upstream.
-internal class SpotiGlassMotion(initial: Float) {
+internal class SpotiGlassMotion(initial: Float, private val control: Boolean = false) {
     private class Spring(var x: Double = 0.0, var velocity: Double = 0.0) {
         fun step(target: Double, dt: Double, stiffness: Double, damping: Double) {
             var remaining = dt
@@ -77,14 +77,15 @@ internal class SpotiGlassMotion(initial: Float) {
         val step = dt.coerceAtMost(0.05)
         val landed: Boolean
         if (dragging) {
-            travel.x += (followTarget - travel.x) * (1 - exp(-step / 0.05))
+            if (control) travel.x = followTarget
+            else travel.x += (followTarget - travel.x) * (1 - exp(-step / 0.05))
             landed = false
         } else {
             travel.step(target, step, 280.0, 31.4)
             landed = travel.settle(target, 0.003, 0.05)
             val span = target - from
             val fraction = if (abs(span) < 1e-6) 1.0 else (travel.x - from) / span
-            if (landed || fraction >= 0.92) lifted = false
+            if (landed || (!control && fraction >= 0.92)) lifted = false
         }
         val liftTarget = if (lifted) 1.0 else 0.0
         liftX.step(liftTarget, step, 250.0, 19.0)

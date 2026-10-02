@@ -89,12 +89,19 @@ class CustomizationInstrumentation : Instrumentation() {
         val stretched = render(frame.copy(size = androidx.compose.ui.geometry.Size(112f, 45.76f),
             scale = androidx.compose.ui.geometry.Offset(1.12f, 0.88f)))
         check(stretched.getPixel(10, 10) == source.getPixel(10, 10))
+        val restControl = render(frame.copy(size = androidx.compose.ui.geometry.Size(37f, 24f), radius = 12f,
+            fill = androidx.compose.ui.graphics.Color.White, progress = 0f, presence = 0f))
+        val heldControl = render(frame.copy(size = androidx.compose.ui.geometry.Size(58f, 38.333f), radius = 19.1665f,
+            fill = androidx.compose.ui.graphics.Color.White, distortion = 0.12f, band = 13f))
+        check(restControl.getPixel(200, 80) == Color.WHITE) { "Rest control did not restore its solid white cover" }
+        check(heldControl.getPixel(200, 80) == source.getPixel(200, 80)) { "Held control retained the opaque rest cover" }
+        check(heldControl.getPixel(10, 10) == source.getPixel(10, 10))
         File(targetContext.cacheDir, "spotiglass-shader-test.png").outputStream().use {
             stretched.compress(Bitmap.CompressFormat.PNG, 100, it)
         }
         // The same AGSL program must also be accepted by the live GPU effect.
         android.graphics.RenderEffect.createRuntimeShaderEffect(optical.shader, "u_texture_input")
-        resting.recycle(); lifted.recycle(); stretched.recycle(); source.recycle()
+        resting.recycle(); lifted.recycle(); stretched.recycle(); restControl.recycle(); heldControl.recycle(); source.recycle()
     }
 
     override fun onStart() {

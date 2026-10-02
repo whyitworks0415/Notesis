@@ -339,7 +339,7 @@ private fun Preview() {
     Box(
         Modifier
             .fillMaxWidth()
-            .height(230.dp),
+            .height(if (LocalSkin.current == Skin.SPOTIGLASS) 290.dp else 230.dp),
         contentAlignment = Alignment.Center,
     ) {
         val backdrop = rememberBackdrop(active = true)
@@ -398,6 +398,12 @@ private fun Preview() {
                         modifier = Modifier.fillMaxWidth(),
                     )
                     SkinSlider(amount, { amount = it }, 0f..1f, Modifier.fillMaxWidth(0.8f))
+                    Row(verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("누르거나 밀어서 전환", color = Color.White,
+                            style = MaterialTheme.typography.labelLarge)
+                        SkinSwitch(enabled) { enabled = it }
+                    }
                 }
             } else {
             SkinSurface(Modifier.fillMaxWidth(0.76f).height(138.dp)) {

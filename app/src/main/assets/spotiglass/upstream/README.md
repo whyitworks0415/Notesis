@@ -27,6 +27,12 @@ The files in this directory are unmodified upstream sources. Notesis ports:
 - Continuous clip path and shader uniform packing to `SpotiGlassRenderer.kt`.
 - Mornye capsule tint, clarity/blur buckets, dark luma filter and rim gradients
   to `spotiGlassSurface`; tab geometry and colored icon shell to SpotiGlassBar.
+- Slider and switch rest/lifted thumb dimensions (37x24 and 58x38.333),
+  relative drag input and distortion settings to `SpotiGlassControls.kt`.
+  Notesis keeps the lens raised until travel settles, including externally
+  changed values, as requested. Controls reuse the nav ticker spring port.
+  `slider.dart`, `slider_layout.dart`, `switch.dart` and `switch_layout.dart`
+  preserve the unmodified upstream implementations.
 
 Compose supplies layout, accessibility and input; Android supplies backdrop
 capture, Gaussian blur and shadows. Shadow rasterization and typefaces depend

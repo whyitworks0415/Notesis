@@ -66,6 +66,11 @@ fun LiquidGlassSlider(
     useLiquidGlass: Boolean = true,
     onValueChangeFinished: (() -> Unit)? = null,
 ) {
+    if (LocalSkin.current == Skin.SPOTIGLASS && useLiquidGlass) {
+        SpotiGlassSlider(value, onValueChange, modifier, valueRange, steps, enabled,
+            label, valueFormatter, onValueChangeFinished)
+        return
+    }
     val range = valueRange.endInclusive - valueRange.start
     val safeRange = range.takeIf { it > 0f } ?: 1f
     val fraction = ((value - valueRange.start) / safeRange).coerceIn(0f, 1f)

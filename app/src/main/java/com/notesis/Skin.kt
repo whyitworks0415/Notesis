@@ -771,6 +771,10 @@ fun SkinSlider(
  */
 @Composable
 fun SkinSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    if (LocalSkin.current == Skin.SPOTIGLASS) {
+        SpotiGlassSwitch(checked, onCheckedChange)
+        return
+    }
     val skin = LocalSkin.current
     val tokens = skin.tokens()
     val liquid = skin.isRefractive
