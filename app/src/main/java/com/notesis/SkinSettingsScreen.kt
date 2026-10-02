@@ -264,10 +264,10 @@ fun SkinSettingsScreen(
                 }
                 Setting(
                     "모서리 곡률",
-                    "%.0fdp".format(settings.corner),
-                    settings.corner,
+                    "%.0fdp".format(if (skin == Skin.SPOTIGLASS) settings.spotiglassCorner else settings.corner),
+                    if (skin == Skin.SPOTIGLASS) settings.spotiglassCorner else settings.corner,
                     SkinSettings.CORNER_RANGE,
-                ) { onChange(settings.copy(corner = it)) }
+                ) { onChange(if (skin == Skin.SPOTIGLASS) settings.copy(spotiglassCorner = it) else settings.copy(corner = it)) }
             }
 
             item {

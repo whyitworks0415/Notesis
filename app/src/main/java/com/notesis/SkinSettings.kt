@@ -48,9 +48,10 @@ data class SkinSettings(
     val accent: Int = DEFAULT_ACCENT,
     val corner: Float = 26f,
     /** Spotiglass의 투명도. 0은 불투명, 1은 가장 맑은 유리입니다. */
-    val spotiglassClarity: Float = 0.72f,
+    val spotiglassClarity: Float = 0.75f,
     /** 누름/슬라이드에 따른 렌즈의 늘어남과 들림 강도입니다. */
-    val spotiglassResponse: Float = 0.75f,
+    val spotiglassResponse: Float = 1f,
+    val spotiglassCorner: Float = 32f,
     /**
      * Everything legible before everything pretty. Darkens the accent, makes
      * the glass solid, thickens every edge and gives the outlines their weight
@@ -74,6 +75,7 @@ data class SkinSettings(
         .put("corner", corner.toDouble())
         .put("spotiglassClarity", spotiglassClarity.toDouble())
         .put("spotiglassResponse", spotiglassResponse.toDouble())
+        .put("spotiglassCorner", spotiglassCorner.toDouble())
         .put("highContrast", highContrast)
         .toString()
 
@@ -109,6 +111,8 @@ data class SkinSettings(
                     .toFloat().takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: d.spotiglassClarity,
                 spotiglassResponse = json.optDouble("spotiglassResponse", d.spotiglassResponse.toDouble())
                     .toFloat().takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: d.spotiglassResponse,
+                spotiglassCorner = json.optDouble("spotiglassCorner", d.spotiglassCorner.toDouble())
+                    .toFloat().takeIf { it.isFinite() }?.coerceIn(CORNER_RANGE) ?: d.spotiglassCorner,
                 highContrast = json.optBoolean("highContrast", d.highContrast),
             )
         }

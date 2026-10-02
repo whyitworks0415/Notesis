@@ -235,7 +235,7 @@ fun Skin.tokens(): SkinTokens = when (this) {
 
     Skin.SPOTIGLASS -> LocalSkinSettings.current.let { look ->
         SkinTokens(
-            corner = look.corner.dp,
+            corner = look.spotiglassCorner.dp,
             fillAlpha = 1f,
             fill = Color(look.tint).copy(alpha = Color(look.tint).alpha * 0.6f),
             rim = Brush.linearGradient(
@@ -347,7 +347,14 @@ fun SkinSurface(
         )
         return
     }
-    val surfaceModifier = if (skin.isRefractive) {
+    val spotiHost = if (skin == Skin.SPOTIGLASS) rememberLiquidGlassBackdrop() else null
+    val surfaceModifier = if (skin == Skin.SPOTIGLASS) {
+        modifier.spotiGlassSurface(
+            if (radius == 0.dp) shape else SpotiGlassShape(radius), LocalSkinSettings.current,
+            elevation = if (flush) 0.dp else tokens.shadow, rim = !flush,
+            exportedBackdrop = spotiHost,
+        ).then(if (flush) Modifier.flushEdge(tokens) else Modifier)
+    } else if (skin.isRefractive) {
         // API 33+에서는 Kyant Backdrop의 실제 AGSL 렌즈를 사용합니다. 고정 바도
         // 같은 경로를 타므로 유리 효과가 빠지지 않고, 창 가장자리에는 불필요한
         // 외곽 그림자/테두리를 그리지 않아 위아래 회색 틈이 생기지 않습니다.
@@ -370,7 +377,9 @@ fun SkinSurface(
             .then(if (flush) Modifier.flushEdge(tokens) else Modifier.glassEdge(tokens, shape))
     }
     Box(surfaceModifier) {
-        content()
+        if (spotiHost != null) {
+            CompositionLocalProvider(LocalSpotiGlassHostBackdrop provides spotiHost) { content() }
+        } else content()
     }
 }
 

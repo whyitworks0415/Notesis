@@ -34,7 +34,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -96,20 +95,31 @@ fun Modifier.liquidGlass(
     drawBorder: Boolean = true,
 ): Modifier {
     val spoti = LocalSkin.current == Skin.SPOTIGLASS
-    val clarity = if (spoti) settings.spotiglassClarity.coerceIn(0f, 1f) else 1f
+    if (spoti) {
+        val circle = shape == androidx.compose.foundation.shape.CircleShape
+        val square = shape == RoundedCornerShape(0.dp)
+        val spotiShape = if (circle || square) shape else SpotiGlassShape(settings.spotiglassCorner.dp)
+        val effects = enabled && rememberLiquidGlassEffectsAllowed() && !settings.highContrast && settings.spotiglassClarity > 0f
+        return this.spotiGlassLens(effects && settings.refraction > 0f && settings.depth > 0f) { size, density ->
+            SpotiGlassLensFrame(
+                center = androidx.compose.ui.geometry.Offset(size.width / 2, size.height / 2),
+                size = size,
+                radius = if (circle) size.minDimension / 2 else if (square) 0f else settings.spotiglassCorner * density,
+                distortion = 0.02f * settings.refraction / 24f * intensity,
+                band = 8f * settings.depth / 12f,
+                dispersion = 0f,
+                borderWidth = 0f,
+            )
+        }.spotiGlassSurface(spotiShape, settings, elevation = shadowElevation, rim = drawBorder)
+    }
     val amount = intensity.coerceIn(0f, 1f)
     val backdrop = LocalLiquidGlassBackdrop.current
     val effectsAllowed = rememberLiquidGlassEffectsAllowed() && !settings.highContrast
     val density = LocalDensity.current
-    val blurPx = with(density) { settings.blur.dp.toPx() } * amount *
-        if (spoti) (1f - clarity * 0.65f) else 1f
+    val blurPx = with(density) { settings.blur.dp.toPx() } * amount
     val depthPx = with(density) { settings.depth.dp.toPx() } * amount
     val refractionPx = with(density) { settings.refraction.dp.toPx() } * amount
-    val body = if (spoti) {
-        // Dark glass retains the theme's dark ground instead of an opaque white coat.
-        surfaceColor.copy(alpha = surfaceColor.alpha * clarity)
-            .compositeOver(MaterialTheme.colorScheme.surface.copy(alpha = 1f - clarity))
-    } else surfaceColor
+    val body = surfaceColor
     val tint = body.copy(
         alpha = if (settings.highContrast) {
             maxOf(body.alpha, 0.94f)
@@ -118,15 +128,14 @@ fun Modifier.liquidGlass(
             // 넣으면 전환 중 중앙에 흰 점이 생깁니다. 0은 그대로 보존합니다.
             0f
         } else {
-            (body.alpha * (0.72f + amount * 0.28f)).coerceIn(0f, if (spoti) 1f else 0.72f)
+            (body.alpha * (0.72f + amount * 0.28f)).coerceIn(0f, 0.72f)
         },
     )
     val borderColor = Color(settings.border).copy(
-        alpha = (if (spoti) Color(settings.border).alpha * 0.32f
-            else 0.30f + settings.dispersion.coerceIn(0f, 1f) * 0.38f) * amount,
+        alpha = (0.30f + settings.dispersion.coerceIn(0f, 1f) * 0.38f) * amount,
     )
 
-    if (enabled && amount > 0.001f && effectsAllowed && backdrop != null && clarity > 0f) {
+    if (enabled && amount > 0.001f && effectsAllowed && backdrop != null) {
         var result = this
             .shadow(shadowElevation, shape, clip = false)
             .drawBackdrop(

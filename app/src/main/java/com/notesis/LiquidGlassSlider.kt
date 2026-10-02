@@ -77,7 +77,7 @@ fun LiquidGlassSlider(
     val look = LocalSkinSettings.current
     val spoti = LocalSkin.current == Skin.SPOTIGLASS
     val response = if (spoti) look.spotiglassResponse else 1f
-    val thumbShape = if (spoti) RoundedCornerShape((look.corner - 4f).coerceIn(0f, 48f).dp) else CircleShape
+    val thumbShape = if (spoti) SpotiGlassShape(look.spotiglassCorner.coerceIn(0f, 48f).dp) else CircleShape
     // 손잡이가 페이지가 아니라 바로 아래 트랙을 굴절시키도록 트랙 전용 레이어를 둡니다.
     val trackBackdrop = rememberLiquidGlassBackdrop()
     var trackWidth by remember { mutableIntStateOf(0) }

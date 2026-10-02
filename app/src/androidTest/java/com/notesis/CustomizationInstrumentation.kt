@@ -33,6 +33,70 @@ class CustomizationInstrumentation : Instrumentation() {
         failure?.let { throw it }
     }
 
+    @androidx.annotation.RequiresApi(33)
+    private fun checkSpotiGlassShader() {
+        val source = Bitmap.createBitmap(400, 160, Bitmap.Config.ARGB_8888)
+        for (y in 0 until source.height) for (x in 0 until source.width) {
+            source.setPixel(x, y, Color.rgb((x * 7) % 256, (y * 9) % 256, (x + y) % 256))
+        }
+        val optical = SpotiGlassShader(targetContext) // Compiles the full port on Android Skia.
+        optical.shader.setInputShader("u_texture_input", android.graphics.BitmapShader(
+            source, android.graphics.Shader.TileMode.CLAMP, android.graphics.Shader.TileMode.CLAMP))
+        val size = androidx.compose.ui.geometry.Size(400f, 160f)
+        val frame = SpotiGlassLensFrame(
+            center = androidx.compose.ui.geometry.Offset(200f, 80f),
+            size = androidx.compose.ui.geometry.Size(100f, 52f), radius = 26f,
+            fill = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.08f),
+        )
+        fun render(value: SpotiGlassLensFrame): Bitmap {
+            optical.update(size, value, 1f)
+            val reader = android.media.ImageReader.newInstance(400, 160, android.graphics.PixelFormat.RGBA_8888,
+                2, android.hardware.HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or android.hardware.HardwareBuffer.USAGE_GPU_COLOR_OUTPUT)
+            val node = android.graphics.RenderNode("SpotiGlass shader test")
+            node.setPosition(0, 0, 400, 160)
+            node.setRenderEffect(android.graphics.RenderEffect.createRuntimeShaderEffect(optical.shader, "u_texture_input"))
+            node.beginRecording().drawBitmap(source, 0f, 0f, null)
+            node.endRecording()
+            val renderer = android.graphics.HardwareRenderer().apply {
+                setSurface(reader.surface); setContentRoot(node)
+            }
+            try {
+                renderer.createRenderRequest().setWaitForPresent(true).syncAndDraw()
+                var image = reader.acquireNextImage()
+                repeat(50) { if (image == null) { Thread.sleep(10); image = reader.acquireNextImage() } }
+                val rendered = image ?: error("GPU shader image was not presented")
+                return rendered.use {
+                    val buffer = it.hardwareBuffer ?: error("GPU shader hardware buffer missing")
+                    buffer.use {
+                        val bitmap = Bitmap.wrapHardwareBuffer(it, android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.SRGB))
+                            ?: error("GPU shader bitmap missing")
+                        bitmap.copy(Bitmap.Config.ARGB_8888, false).also { bitmap.recycle() }
+                    }
+                }
+            } finally { renderer.destroy(); reader.close() }
+        }
+        val resting = render(frame.copy(progress = 0f, presence = 0f))
+        val lifted = render(frame)
+        check(resting.getPixel(10, 10) == source.getPixel(10, 10)) { "Rest pill changed outside the lens" }
+        check(lifted.getPixel(10, 10) == source.getPixel(10, 10)) { "Moving lens changed outside the lens" }
+        check(lifted.getPixel(200, 80) == source.getPixel(200, 80)) { "Pure glass changed the unbent center" }
+        var bentPixels = 0
+        for (y in 50..110) for (x in 140..260) {
+            check(Color.alpha(lifted.getPixel(x, y)) == 255)
+            if (lifted.getPixel(x, y) != source.getPixel(x, y)) bentPixels++
+        }
+        check(bentPixels > 300) { "Refraction band did not bend the captured pixels: $bentPixels" }
+        val stretched = render(frame.copy(size = androidx.compose.ui.geometry.Size(112f, 45.76f),
+            scale = androidx.compose.ui.geometry.Offset(1.12f, 0.88f)))
+        check(stretched.getPixel(10, 10) == source.getPixel(10, 10))
+        File(targetContext.cacheDir, "spotiglass-shader-test.png").outputStream().use {
+            stretched.compress(Bitmap.CompressFormat.PNG, 100, it)
+        }
+        // The same AGSL program must also be accepted by the live GPU effect.
+        android.graphics.RenderEffect.createRuntimeShaderEffect(optical.shader, "u_texture_input")
+        resting.recycle(); lifted.recycle(); stretched.recycle(); source.recycle()
+    }
+
     override fun onStart() {
         val output = Bundle()
         try {
@@ -60,6 +124,7 @@ class CustomizationInstrumentation : Instrumentation() {
             check(SkinSettings.fromJson("{}").spotiglassClarity == SkinSettings().spotiglassClarity)
             check(SkinSettings.fromJson("{\"spotiglassClarity\":2,\"spotiglassResponse\":-1}")
                 .let { it.spotiglassClarity == 1f && it.spotiglassResponse == 0f })
+            if (android.os.Build.VERSION.SDK_INT >= 33) checkSpotiGlassShader()
             val content = TextBoxContent("한글 텍스트\n수식 x² + y² = 1", 32f, Color.BLUE)
             val bitmap = renderTextBox(content)
             check(bitmap.width > 20 && bitmap.height > 20)
@@ -109,7 +174,7 @@ class CustomizationInstrumentation : Instrumentation() {
             store.delete(note.id)
             bitmap.recycle()
             changedBitmap.recycle()
-            output.putString("stream", "PASS preferences, text rendering, insertion/edit/undo/redo, autosave/reload, intermittent pen contact, stationary pen starts, pen antialiasing, PDF export/preview and stroke overlap\n")
+            output.putString("stream", "PASS Spotiglass GPU shader compilation/refraction/deformation, preferences, text rendering, insertion/edit/undo/redo, autosave/reload, intermittent pen contact, stationary pen starts, pen antialiasing, PDF export/preview and stroke overlap\n")
             finish(Activity.RESULT_OK, output)
         } catch (error: Throwable) {
             output.putString("stream", error.stackTraceToString())
