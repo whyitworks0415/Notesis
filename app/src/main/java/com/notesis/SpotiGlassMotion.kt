@@ -28,7 +28,7 @@ internal class SpotiGlassMotion(initial: Float, private val control: Boolean = f
     private val liftX = Spring()
     private val liftY = Spring()
     private val material = Spring()
-    private val samples = ArrayDeque<Pair<Double, Double>>()
+    private val samples = MotionSampleWindow()
     private var from = initial.toDouble()
     private var target = from
     private var followTarget = from
@@ -94,17 +94,8 @@ internal class SpotiGlassMotion(initial: Float, private val control: Boolean = f
         liftX.settle(liftTarget, 0.001, 0.01)
         liftY.settle(liftTarget, 0.001, 0.01)
         material.settle(liftTarget, 0.001, 0.01)
-        samples.addLast(travel.x * cellWidth to now)
-        while (samples.isNotEmpty() && samples.first().second < now - 0.3) samples.removeFirst()
-        val velocities = samples.zipWithNext().mapNotNull { (a, b) ->
-            val delta = b.second - a.second
-            if (delta > 0) ((b.first - a.first) / delta) to ((a.second + b.second) / 2) else null
-        }
-        val accelerations = velocities.zipWithNext().mapNotNull { (a, b) ->
-            val delta = b.second - a.second
-            if (delta > 0) (b.first - a.first) / delta else null
-        }
-        val acceleration = if (accelerations.isEmpty()) 0.0 else accelerations.average()
+        samples.add(travel.x * cellWidth, now)
+        val acceleration = samples.acceleration()
         val raw = (acceleration * 0.00007).coerceIn(-0.12, 0.12)
         rawDeviation += (raw - rawDeviation) * (step / 0.18).coerceIn(0.0, 1.0)
         if (easedSign == 0.0) easedSign = travelSign
@@ -122,5 +113,56 @@ internal class SpotiGlassMotion(initial: Float, private val control: Boolean = f
             running = false; samples.clear(); rawDeviation = 0.0; deviation = 0f
             travelSign = 0.0; easedSign = 0.0
         }
+    }
+}
+
+/** Same 300ms derivative window, without Pair/list allocation on every frame. */
+internal class MotionSampleWindow {
+    private var positions = DoubleArray(64)
+    private var times = DoubleArray(64)
+    private var start = 0
+    private var size = 0
+
+    fun clear() { start = 0; size = 0 }
+
+    fun add(position: Double, time: Double) {
+        while (size > 0 && times[start] < time - 0.3) {
+            start = (start + 1) % times.size
+            size--
+        }
+        if (size == times.size) {
+            val newPositions = DoubleArray(size * 2)
+            val newTimes = DoubleArray(size * 2)
+            for (i in 0 until size) {
+                val index = (start + i) % times.size
+                newPositions[i] = positions[index]
+                newTimes[i] = times[index]
+            }
+            positions = newPositions; times = newTimes; start = 0
+        }
+        val index = (start + size) % times.size
+        positions[index] = position; times[index] = time; size++
+    }
+
+    fun acceleration(): Double {
+        var previousVelocity = 0.0
+        var previousTime = 0.0
+        var hasVelocity = false
+        var total = 0.0
+        var count = 0
+        for (i in 1 until size) {
+            val a = (start + i - 1) % times.size
+            val b = (start + i) % times.size
+            val delta = times[b] - times[a]
+            if (delta <= 0) continue
+            val velocity = (positions[b] - positions[a]) / delta
+            val time = (times[a] + times[b]) / 2
+            if (hasVelocity && time > previousTime) {
+                total += (velocity - previousVelocity) / (time - previousTime)
+                count++
+            }
+            previousVelocity = velocity; previousTime = time; hasVelocity = true
+        }
+        return if (count == 0) 0.0 else total / count
     }
 }

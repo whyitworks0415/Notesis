@@ -140,8 +140,12 @@ class PdfSource private constructor(
         val width = bucketFor(wantPx)
         val key = keyOf(index, width)
         cache.get(key)?.let { return it }
-        // A coarser render of the same page is a better thing to show than blank
-        // paper while the sharper one is still being made.
+        // Reuse a sharper cached page when zooming out. Looking only for a
+        // coarser page made an already visible PDF go white until the smaller
+        // bucket finished rendering.
+        // Downsampling a sharper page is already the best result for this
+        // zoom, and avoids evicting it just to render a smaller duplicate.
+        finerThan(index, width)?.let { return it }
         val fallback = coarserThan(index, width)
         if (request) request(key) { renderWholePage(index, width) }
         return fallback
@@ -336,6 +340,15 @@ class PdfSource private constructor(
         var width = MIN_PAGE_WIDTH
         while (width < wantPx && width < MAX_PAGE_WIDTH) width *= 2
         return width
+    }
+
+    private fun finerThan(index: Int, width: Int): Bitmap? {
+        var candidate = width * 2
+        while (candidate <= MAX_PAGE_WIDTH) {
+            cache.get(keyOf(index, candidate))?.let { return it }
+            candidate *= 2
+        }
+        return null
     }
 
     private fun coarserThan(index: Int, width: Int): Bitmap? {

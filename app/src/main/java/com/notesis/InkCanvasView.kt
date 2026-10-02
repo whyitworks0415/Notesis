@@ -5,6 +5,7 @@ package com.notesis
 import android.os.Build
 import android.os.Debug
 import android.os.Trace
+import android.os.SystemClock
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BlendMode
@@ -1033,7 +1034,19 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** Mesh generation is native work; keeping it off the UI thread keeps frames. */
     private val refiner = Executors.newSingleThreadExecutor()
-    private val refineRunnable = Runnable { refineVisiblePages() }
+    private var lastInkEditMillis = 0L
+    @Volatile private var inkCacheWorkGeneration = 0
+    private val inkCacheRunnable = Runnable { if (!disposed) dry.postInvalidateOnAnimation() }
+    private class CachedInk(
+        val bitmap: Bitmap,
+        val prefix: InkRenderPrefix<Stroke>,
+        val meshRevision: Long,
+    )
+    private var refineRunnablePosted = false
+    private val refineRunnable = Runnable {
+        refineRunnablePosted = false
+        refineVisiblePages()
+    }
     private val prefetchRunnable = Runnable {
         prioritizePdf(PREFETCH_STOP_RADIUS)
         prefetchNearbyPages(PREFETCH_STOP_RADIUS)
@@ -1189,6 +1202,7 @@ class InkCanvasView @JvmOverloads constructor(
         stopFling(resumeDetail = false)
         removeCallbacks(refineRunnable)
         removeCallbacks(prefetchRunnable)
+        removeCallbacks(inkCacheRunnable)
         disposed = true
         refineRequestSerial++
         viewportRenderGeneration++
@@ -1348,6 +1362,10 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun afterEdit(vararg changed: Page) {
+        inkCacheWorkGeneration++
+        lastInkEditMillis = SystemClock.uptimeMillis()
+        removeCallbacks(inkCacheRunnable)
+        postDelayed(inkCacheRunnable, INK_CACHE_IDLE_MS)
         document.markEdited()
         for (page in changed) {
             page.dirty = true
@@ -1471,9 +1489,9 @@ class InkCanvasView @JvmOverloads constructor(
             scheduleStoppedPrefetch()
         }
         reportZoom()
-        // Only once the zoom settles - rebuilding on every pinch frame would
-        // cost far more than it buys.
-        if (!holdingDetail()) scheduleRefine()
+        // New pages need their stored ink even while the viewport is moving.
+        // Detail rebuilding still waits for the movement to settle.
+        if (!holdingDetail() || visiblePages().any { !it.loaded }) scheduleRefine()
     }
 
     private fun reportZoom(force: Boolean = false) {
@@ -1596,6 +1614,7 @@ class InkCanvasView @JvmOverloads constructor(
                 if (index < 0) return true
                 val pointerId = event.getPointerId(event.actionIndex)
                 activeStylusPointer = pointerId
+                inkCacheWorkGeneration++
                 if (Build.VERSION.SDK_INT >= 35) {
                     requestedFrameRate = REQUESTED_FRAME_RATE_CATEGORY_HIGH
                 }
@@ -2611,7 +2630,7 @@ class InkCanvasView @JvmOverloads constructor(
         // Never while a stroke is being drawn: the page list would be swapped
         // out from under the stroke that is about to land on it.
         if (activeStylusPointer != null) return
-        if (holdingDetail()) return
+        val loadOnly = holdingDetail()
         val target = tessellationBucket(currentScale())
         val epsilon = epsilonFor(target)
         val serial = refineRequestSerial
@@ -2628,6 +2647,7 @@ class InkCanvasView @JvmOverloads constructor(
         dry.visibleDocumentBounds(viewport)
         val margin = REFINE_MARGIN_PX / currentScale().coerceAtLeast(0.01f)
         val work = visible.mapIndexedNotNull { _, page ->
+            if (loadOnly) return@mapIndexedNotNull null
             if (!page.loaded || page.strokes.isEmpty()) return@mapIndexedNotNull null
             val index = document.pages.indexOf(page)
             if (index < 0) return@mapIndexedNotNull null
@@ -2704,7 +2724,7 @@ class InkCanvasView @JvmOverloads constructor(
             if (obsolete()) return@submit
             post {
                 if (disposed || serial != refineRequestSerial ||
-                    tessellationBucket(currentScale()) != target
+                    (!loadOnly && tessellationBucket(currentScale()) != target)
                 ) return@post
                 for ((page, strokes) in loaded) {
                     if (page.loaded) continue
@@ -2914,7 +2934,9 @@ class InkCanvasView @JvmOverloads constructor(
 
     private fun scheduleRefine() {
         if (disposed) return
+        if (holdingDetail() && (refineRunnablePosted || refineFuture?.isDone == false)) return
         removeCallbacks(refineRunnable)
+        refineRunnablePosted = false
         refineRequestSerial++
         refineFuture?.cancel(true)
         refineFuture = null
@@ -2922,15 +2944,14 @@ class InkCanvasView @JvmOverloads constructor(
             if (page.renderState == RenderState.Rendering) page.renderState = RenderState.Dirty
         }
         refiningPages = emptyList()
-        // Nothing at all while the pinch is on. The zero-delay path below exists
-        // so a page that has never been read does not wait to appear, and during
-        // a pinch that path fires on every page scrolled into view - a full read
-        // and rebuild on the frame the zoom is being drawn in. endZoom posts one.
-        if (holdingDetail()) return
+        // Keep loading newly exposed pages during movement. Mesh refinement
+        // still waits until the gesture ends.
+        if (holdingDetail() && visiblePages().all { it.loaded }) return
         // A page with nothing on it yet should not wait out the settle delay -
         // that delay exists to avoid rebuilding mid-pinch, not to hold up the
         // first paint of a note.
         val delay = if (visiblePages().any { !it.loaded }) 0L else REFINE_DEBOUNCE_MS
+        refineRunnablePosted = true
         postDelayed(refineRunnable, delay)
     }
 
@@ -3802,8 +3823,8 @@ class InkCanvasView @JvmOverloads constructor(
 
         private val strokeIndexes = IdentityHashMap<Page, StrokeGrid>()
         private val textLayouts = java.util.WeakHashMap<PageImage, TextRender>()
-        private val inkBitmaps = object : LruCache<String, Bitmap>(48 * 1024 * 1024) {
-            override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
+        private val inkBitmaps = object : LruCache<String, CachedInk>(48 * 1024 * 1024) {
+            override fun sizeOf(key: String, value: CachedInk): Int = value.bitmap.byteCount
         }
         private val inkBitmapPending = HashSet<String>()
         private var inkBitmapGeneration = 0
@@ -3814,6 +3835,7 @@ class InkCanvasView @JvmOverloads constructor(
             inkBitmaps.evictAll()
             inkBitmapPending.clear()
             inkBitmapGeneration++
+            inkCacheWorkGeneration++
             viewportRenderGeneration++
         }
 
@@ -3828,14 +3850,23 @@ class InkCanvasView @JvmOverloads constructor(
             strokeIndexes[page]?.remove(page, strokes)
         }
 
-        private fun cachedInk(page: Page, visibleCount: Int): Bitmap? {
-            if (!page.loaded || visibleCount < 250 || page.strokes.size < 300 || movingLasso) return null
+        private fun cachedInk(page: Page, visibleCount: Int): CachedInk? {
+            if (!page.loaded || visibleCount < 250 || page.strokes.size < 300 || movingLasso ||
+                currentScale() < 1f) return null
             val scale = tessellationBucket(currentScale())
             val pixels = page.width.toDouble() * page.height * scale * scale
             if (pixels > 8_000_000.0 || pixels <= 0.0) return null
-            val key = "${page.id}:${page.revision}:${page.meshRevision}:${page.strokes.size}:$scale"
-            inkBitmaps.get(key)?.let { return it }
+            val key = "${page.id}:$scale"
+            val cached = inkBitmaps.get(key)?.takeIf {
+                it.meshRevision == page.meshRevision && it.prefix.matches(page.strokes, page.revision)
+            }
+            if (cached != null && cached.prefix.strokes.size == page.strokes.size) return cached
+            // Keep the previous bitmap underneath the appended vector strokes.
+            // Rebuilding a dense page between every pair of pen contacts is
+            // quadratic in the amount of writing and competes with wet ink.
             if (activeStylusPointer == null && !viewportInteracting && !zooming && !flinging &&
+                SystemClock.uptimeMillis() - lastInkEditMillis >= INK_CACHE_IDLE_MS &&
+                page.strokes.none { it.brush.family == Tool.HIGHLIGHTER.brushFamily() } &&
                 inkBitmapPending.add(key)
             ) {
                 val snapshot = page.strokes.toList()
@@ -3843,9 +3874,11 @@ class InkCanvasView @JvmOverloads constructor(
                 val meshRevision = page.meshRevision
                 val generation = inkBitmapGeneration
                 val viewportGeneration = viewportRenderGeneration
+                val workGeneration = inkCacheWorkGeneration
                 runCatching { refiner.execute {
                     val bitmap = runCatching {
-                        if (viewportGeneration != viewportRenderGeneration) return@runCatching null
+                        if (viewportGeneration != viewportRenderGeneration ||
+                            workGeneration != inkCacheWorkGeneration) return@runCatching null
                         val width = (page.width * scale).toInt().coerceAtLeast(1)
                         val height = (page.height * scale).toInt().coerceAtLeast(1)
                         Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { image ->
@@ -3854,7 +3887,8 @@ class InkCanvasView @JvmOverloads constructor(
                             val strokeRenderer = CanvasStrokeRenderer.create(PencilTextureStore)
                             for (stroke in snapshot) {
                                 if (Thread.currentThread().isInterrupted ||
-                                    viewportGeneration != viewportRenderGeneration
+                                    viewportGeneration != viewportRenderGeneration ||
+                                    workGeneration != inkCacheWorkGeneration
                                 ) {
                                     image.recycle()
                                     return@runCatching null
@@ -3863,21 +3897,29 @@ class InkCanvasView @JvmOverloads constructor(
                             }
                         }
                     }.getOrNull()
+                    // Build prefix membership on the worker too; publishing a
+                    // dense page should not allocate its identity table on UI.
+                    val rendered = bitmap?.let {
+                        val prefix = InkRenderPrefix(snapshot)
+                        prefix.matches(snapshot, revision)
+                        CachedInk(it, prefix, meshRevision)
+                    }
                     post {
                         inkBitmapPending.remove(key)
                         val visible = visiblePages().any { it === page }
-                        if (viewportGeneration == viewportRenderGeneration && visible &&
+                        if (!disposed && viewportGeneration == viewportRenderGeneration && visible &&
+                            workGeneration == inkCacheWorkGeneration &&
                             generation == inkBitmapGeneration && page.revision == revision &&
                             page.meshRevision == meshRevision &&
-                            page.strokes.size == snapshot.size && bitmap != null
+                            page.strokes.size == snapshot.size && rendered != null
                         ) {
-                            inkBitmaps.put(key, bitmap)
+                            inkBitmaps.put(key, rendered)
                             invalidate()
                         } else bitmap?.recycle()
                     }
                 } }.onFailure { inkBitmapPending.remove(key) }
             }
-            return null
+            return cached
         }
 
         override fun onDraw(canvas: Canvas) {
@@ -3936,7 +3978,10 @@ class InkCanvasView @JvmOverloads constructor(
                     // Keep the source list in its original order within each
                     // layer so overlapping strokes still look predictable.
                     if (inkBitmap != null) {
-                        scoped.drawBitmap(inkBitmap, null, pageRect, bitmapPaint)
+                        scoped.drawBitmap(inkBitmap.bitmap, null, pageRect, bitmapPaint)
+                        for (stroke in visibleStrokes) {
+                            if (!inkBitmap.prefix.contains(stroke)) scope.drawStroke(stroke)
+                        }
                     } else if (!hasHighlighter) {
                         for (stroke in visibleStrokes) {
                             if (lifted && stroke in lassoStrokes) continue
@@ -4183,35 +4228,41 @@ class InkCanvasView @JvmOverloads constructor(
                 return
             }
             canvas.drawRect(pageRect, paper)
+            // Draw only visible pattern cells, retaining their original page
+            // coordinates and a margin for antialiasing at the viewport edges.
+            val left = viewport[0] - document.leftOf(index)
+            val top = viewport[1] - document.topOf(index)
+            val right = minOf(page.width, viewport[2] - document.leftOf(index) + 4f)
+            val bottom = minOf(page.height, viewport[3] - document.topOf(index) + 4f)
             when (page.background) {
                 PageBackground.BLANK -> Unit
                 PageBackground.INFINITE -> Unit
                 PageBackground.LINED -> {
-                    var y = RULE_SPACING
-                    while (y < page.height) {
+                    var y = firstVisiblePaperRule(top, RULE_SPACING)
+                    while (y < bottom) {
                         canvas.drawLine(0f, y, page.width, y, rule)
                         y += RULE_SPACING
                     }
                 }
 
                 PageBackground.GRID -> {
-                    var y = RULE_SPACING
-                    while (y < page.height) {
+                    var y = firstVisiblePaperRule(top, RULE_SPACING)
+                    while (y < bottom) {
                         canvas.drawLine(0f, y, page.width, y, rule)
                         y += RULE_SPACING
                     }
-                    var x = RULE_SPACING
-                    while (x < page.width) {
+                    var x = firstVisiblePaperRule(left, RULE_SPACING)
+                    while (x < right) {
                         canvas.drawLine(x, 0f, x, page.height, rule)
                         x += RULE_SPACING
                     }
                 }
 
                 PageBackground.DOT -> {
-                    var y = RULE_SPACING
-                    while (y < page.height) {
-                        var x = RULE_SPACING
-                        while (x < page.width) {
+                    var y = firstVisiblePaperRule(top, RULE_SPACING)
+                    while (y < bottom) {
+                        var x = firstVisiblePaperRule(left, RULE_SPACING)
+                        while (x < right) {
                             canvas.drawCircle(x, y, 2.5f, rule)
                             x += RULE_SPACING
                         }
@@ -4220,8 +4271,8 @@ class InkCanvasView @JvmOverloads constructor(
                 }
 
                 PageBackground.NARROW_LINED -> {
-                    var y = RULE_SPACING / 2f
-                    while (y < page.height) {
+                    var y = firstVisiblePaperRule(top, RULE_SPACING / 2f)
+                    while (y < bottom) {
                         canvas.drawLine(0f, y, page.width, y, rule)
                         y += RULE_SPACING / 2f
                     }
@@ -4232,8 +4283,8 @@ class InkCanvasView @JvmOverloads constructor(
                         page.width * 0.30f, page.height * 0.82f, rule)
                     canvas.drawLine(0f, page.height * 0.82f,
                         page.width, page.height * 0.82f, rule)
-                    var y = RULE_SPACING
-                    while (y < page.height * 0.82f) {
+                    var y = firstVisiblePaperRule(top, RULE_SPACING)
+                    while (y < minOf(bottom, page.height * 0.82f)) {
                         canvas.drawLine(0f, y, page.width, y, rule)
                         y += RULE_SPACING
                     }
@@ -4334,6 +4385,7 @@ class InkCanvasView @JvmOverloads constructor(
         const val RULE_SPACING = 60f
         const val PAGE_TOP_MARGIN_PX = 24f
         const val REFINE_DEBOUNCE_MS = 200L
+        private const val INK_CACHE_IDLE_MS = 700L
         const val ZOOM_REPORT_INTERVAL_NS = 33_000_000L
         const val REFINE_MARGIN_PX = 160f
         const val BASE_TESSELLATION_SCALE = 1f

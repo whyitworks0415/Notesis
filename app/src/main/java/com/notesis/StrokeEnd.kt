@@ -92,7 +92,7 @@ internal fun withoutContactSpurs(stroke: Stroke): Stroke {
             orientationRadians = sample.orientationRadians,
         )
     }
-    return Stroke(stroke.brush, clean.toImmutable())
+    return Stroke(stroke.brush, clean)
 }
 
 /**
@@ -133,5 +133,5 @@ internal fun withoutStationaryStart(stroke: Stroke): Stroke {
             orientationRadians = sample.orientationRadians,
         )
     }
-    return Stroke(stroke.brush, clean.toImmutable())
+    return Stroke(stroke.brush, clean)
 }

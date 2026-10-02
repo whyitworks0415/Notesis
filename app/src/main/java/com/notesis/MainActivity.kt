@@ -2501,6 +2501,19 @@ private val EditMode.tints: Boolean
         this == EditMode.MASK || this == EditMode.SHAPE
 
 @Composable
+private fun LatencyHud(report: () -> String, modifier: Modifier = Modifier) {
+    val latestReport by rememberUpdatedState(report)
+    var text by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) {
+        while (true) {
+            text = latestReport()
+            delay(500)
+        }
+    }
+    Text(text, fontSize = 12.sp, color = Color(0xFF555555), modifier = modifier)
+}
+
+@Composable
 private fun NoteScreen(
     store: NoteStore,
     note: NoteMeta,
@@ -2805,7 +2818,6 @@ private fun NoteScreen(
             playbackActive = false
         }
     }
-    var latencyText by remember { mutableStateOf("") }
     var selectedText by remember { mutableStateOf<String?>(null) }
     var selectedPdf by remember { mutableStateOf<PdfSelection?>(null) }
     var selectionPreview by remember { mutableStateOf<Bitmap?>(null) }
@@ -3279,19 +3291,12 @@ private fun NoteScreen(
         }
 
         if (showLatency) {
-            LaunchedEffect(Unit) {
-                while (true) {
-                    latencyText = canvas?.let {
-                        it.debugPerformanceReport() +
-                            "\nzoom ${"%.0f".format(zoom * 100)}%"
+            LatencyHud(
+                report = {
+                    canvas?.let {
+                        it.debugPerformanceReport() + "\nzoom ${"%.0f".format(zoom * 100)}%"
                     }.orEmpty()
-                    delay(500)
-                }
-            }
-            Text(
-                latencyText,
-                fontSize = 12.sp,
-                color = Color(0xFF555555),
+                },
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .windowInsetsPadding(ChromeInsets)
