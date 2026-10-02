@@ -188,6 +188,13 @@ fun SkinSettingsScreen(
                 SectionLabel("배경")
                 if (skin == Skin.SPOTIGLASS) {
                     Setting(
+                        "도구바 배경 불투명도",
+                        "%.0f%%".format(settings.spotiglassToolbarOpacity * 100),
+                        settings.spotiglassToolbarOpacity,
+                        0f..1f,
+                        note = "0%는 투명, 100%는 불투명. 도구 아이콘과 눌렀을 때의 굴절은 유지됩니다",
+                    ) { onChange(settings.copy(spotiglassToolbarOpacity = it)) }
+                    Setting(
                         "유리 투명도",
                         "%.0f%%".format(settings.spotiglassClarity * 100),
                         settings.spotiglassClarity,

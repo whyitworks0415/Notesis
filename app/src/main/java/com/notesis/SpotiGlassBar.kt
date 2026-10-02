@@ -138,24 +138,52 @@ fun SpotiGlassBar(
                 distortion = 0.04f * (look.refraction / 24f), band = look.depth,
                 dispersion = 0.002f * (look.dispersion / 0.35f), borderWidth = 1.2f)
         }
-        var scene = Modifier.fillMaxSize().spotiGlassLens(lensAllowed, active = { moving() }) { _, _ -> lensFrame() }
+            @Composable
+            fun IconShell(colored: Boolean, shellModifier: Modifier, interactive: Boolean = true) {
+                Row(shellModifier.fillMaxWidth().height(cellHeight).align(Alignment.Center).padding(horizontal = padding)) {
+                    items.forEachIndexed { index, item ->
+                        val color = if (colored) item.color ?: selectedContentColor ?: scheme.primary else scheme.onSurface
+                        var hit = Modifier.weight(1f).fillMaxSize()
+                        if (!colored && interactive) hit = hit.semantics { this.selected = selected == index; contentDescription = item.label }
+                            .clickable(role = Role.Tab, interactionSource = remember { MutableInteractionSource() }, indication = null) { choose(index) }
+                        Column(hit, horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically)) {
+                            item.icon?.let { Icon(it, null, tint = color, modifier = Modifier.size(if (compact) 20.dp else 25.dp)) }
+                            if (showLabels || item.icon == null) Text(item.label, color = color,
+                                style = if (withIcons) MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp) else MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+            }
+        fun lensPath() = lensFrame().let { frame ->
+            spotiGlassPath(frame.size, frame.radius).apply {
+                translate(frame.center - Offset(frame.size.width / 2, frame.size.height / 2))
+            }
+        }
+        @Composable
+        fun Frost() {
+            Box(Modifier.fillMaxWidth().height(barHeight).align(Alignment.Center)
+                .spotiGlassSurface(SpotiGlassShape(look.spotiglassCorner.dp), look, navigation = true))
+        }
+        // Compose the stationary capsule outside the final lens silhouette.
+        // Its frost must never enter the shader's source texture: refraction
+        // samples beyond the silhouette and would pull its cut edge back in.
+        Box(Modifier.fillMaxSize().clearAndSetSemantics {}.drawWithContent {
+            if (moving()) clipPath(lensPath(), ClipOp.Difference) { this@drawWithContent.drawContent() }
+        }) {
+            Frost()
+            IconShell(false, Modifier, interactive = false)
+        }
+        var scene = Modifier.fillMaxSize().drawWithContent {
+            if (moving()) clipPath(lensPath()) { this@drawWithContent.drawContent() }
+            else drawContent()
+        }.spotiGlassLens(lensAllowed, active = { moving() }) { _, _ -> lensFrame() }
         // The protruding lens also samples the page outside the capsule.
         if (backdrop != null && lensAllowed) scene = scene.drawBackdrop(backdrop,
             shape = { RectangleShape }, effects = {}, highlight = null, shadow = null)
         Box(scene) {
-            Box(Modifier.fillMaxWidth().height(barHeight).align(Alignment.Center)
-                .drawWithContent {
-                    if (moving()) {
-                        val frame = lensFrame()
-                        val path = spotiGlassPath(frame.size, frame.radius).apply {
-                            translate(frame.center - Offset(frame.size.width / 2, frame.size.height / 2) - Offset(0f, 8.dp.toPx()))
-                        }
-                        // Frost remains on the bar, but not underneath the lifted
-                        // lens: it must refract the sharp page and icon scene.
-                        clipPath(path, ClipOp.Difference) { this@drawWithContent.drawContent() }
-                    } else drawContent()
-                }
-                .spotiGlassSurface(SpotiGlassShape(look.spotiglassCorner.dp), look, navigation = true))
+            Box(Modifier.fillMaxSize().drawWithContent { if (!moving()) drawContent() }) { Frost() }
             Box(Modifier.matchParentSize().drawWithContent {
                 frameRevision
                 if (showPill()) {
@@ -171,24 +199,6 @@ fun SpotiGlassBar(
                 }
                 drawContent()
             })
-            @Composable
-            fun IconShell(colored: Boolean, shellModifier: Modifier) {
-                Row(shellModifier.fillMaxWidth().height(cellHeight).align(Alignment.Center).padding(horizontal = padding)) {
-                    items.forEachIndexed { index, item ->
-                        val color = if (colored) item.color ?: selectedContentColor ?: scheme.primary else scheme.onSurface
-                        var hit = Modifier.weight(1f).fillMaxSize()
-                        if (!colored) hit = hit.semantics { this.selected = selected == index; contentDescription = item.label }
-                            .clickable(role = Role.Tab, interactionSource = remember { MutableInteractionSource() }, indication = null) { choose(index) }
-                        Column(hit, horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically)) {
-                            item.icon?.let { Icon(it, null, tint = color, modifier = Modifier.size(if (compact) 20.dp else 25.dp)) }
-                            if (showLabels || item.icon == null) Text(item.label, color = color,
-                                style = if (withIcons) MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp) else MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                    }
-                }
-            }
             IconShell(false, Modifier.pointerInput(widthPx, items.size, rtl, lensAllowed) {
                 if (!lensAllowed) return@pointerInput
                 awaitEachGesture {

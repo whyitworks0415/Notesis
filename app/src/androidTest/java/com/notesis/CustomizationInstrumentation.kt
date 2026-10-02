@@ -132,12 +132,15 @@ class CustomizationInstrumentation : Instrumentation() {
             check(reloaded.colorTemplates().single().second == listOf(Color.BLUE, Color.RED))
             check(reloaded.toolbarSize == 2 && reloaded.homeColor == Color.BLUE)
             pens.skin = Skin.SPOTIGLASS
-            val glassLook = SkinSettings(spotiglassClarity = 0.43f, spotiglassResponse = 0.25f,
+            val glassLook = SkinSettings(spotiglassClarity = 0.43f, spotiglassToolbarOpacity = 0.62f, spotiglassResponse = 0.25f,
                 corner = 32f, themeMode = AppThemeMode.DARK)
             SkinSettingsStore(isolated).save(glassLook)
             check(PenStore(isolated).skin == Skin.SPOTIGLASS)
             check(SkinSettingsStore(isolated).load() == glassLook)
             check(SkinSettings.fromJson("{}").spotiglassClarity == SkinSettings().spotiglassClarity)
+            check(SkinSettings.fromJson("{}").spotiglassToolbarOpacity == SkinSettings().spotiglassToolbarOpacity)
+            check(SkinSettings.fromJson("{\"spotiglassToolbarOpacity\":2}").spotiglassToolbarOpacity == 1f)
+            check(SkinSettings.fromJson("{\"spotiglassToolbarOpacity\":-1}").spotiglassToolbarOpacity == 0f)
             check(SkinSettings.fromJson("{\"spotiglassClarity\":2,\"spotiglassResponse\":-1}")
                 .let { it.spotiglassClarity == 1f && it.spotiglassResponse == 0f })
             if (android.os.Build.VERSION.SDK_INT >= 33) checkSpotiGlassShader()

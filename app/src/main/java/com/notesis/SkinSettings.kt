@@ -49,6 +49,8 @@ data class SkinSettings(
     val corner: Float = 26f,
     /** Spotiglass의 투명도. 0은 불투명, 1은 가장 맑은 유리입니다. */
     val spotiglassClarity: Float = 0.75f,
+    /** 도구바 배경의 불투명도. 렌즈 굴절과 아이콘에는 적용하지 않습니다. */
+    val spotiglassToolbarOpacity: Float = 0.205f,
     /** 누름/슬라이드에 따른 렌즈의 늘어남과 들림 강도입니다. */
     val spotiglassResponse: Float = 1f,
     val spotiglassCorner: Float = 32f,
@@ -74,6 +76,7 @@ data class SkinSettings(
         .put("accent", accent)
         .put("corner", corner.toDouble())
         .put("spotiglassClarity", spotiglassClarity.toDouble())
+        .put("spotiglassToolbarOpacity", spotiglassToolbarOpacity.toDouble())
         .put("spotiglassResponse", spotiglassResponse.toDouble())
         .put("spotiglassCorner", spotiglassCorner.toDouble())
         .put("highContrast", highContrast)
@@ -109,6 +112,8 @@ data class SkinSettings(
                 corner = json.optDouble("corner", d.corner.toDouble()).toFloat(),
                 spotiglassClarity = json.optDouble("spotiglassClarity", d.spotiglassClarity.toDouble())
                     .toFloat().takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: d.spotiglassClarity,
+                spotiglassToolbarOpacity = json.optDouble("spotiglassToolbarOpacity", d.spotiglassToolbarOpacity.toDouble())
+                    .toFloat().takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: d.spotiglassToolbarOpacity,
                 spotiglassResponse = json.optDouble("spotiglassResponse", d.spotiglassResponse.toDouble())
                     .toFloat().takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: d.spotiglassResponse,
                 spotiglassCorner = json.optDouble("spotiglassCorner", d.spotiglassCorner.toDouble())

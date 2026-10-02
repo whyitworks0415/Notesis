@@ -127,8 +127,10 @@ private fun Modifier.spotiToolbarGlass(circle: Boolean = false): Modifier {
     }
     glass = if (effects && backdrop != null) glass.drawBackdrop(backdrop, shape = { shape },
         effects = {}, highlight = null, shadow = null,
-        onDrawSurface = { drawRect(scheme.surface.copy(alpha = (1f - look.spotiglassClarity) * 0.5f + 0.08f)) })
-    else glass.background(scheme.surfaceContainerHigh, shape)
+        onDrawSurface = { drawRect(scheme.surface.copy(alpha = if (circle)
+            (1f - look.spotiglassClarity) * 0.5f + 0.08f else look.spotiglassToolbarOpacity.coerceIn(0f, 1f))) })
+    else glass.background(scheme.surfaceContainerHigh.copy(alpha = if (circle || look.highContrast) 1f
+        else look.spotiglassToolbarOpacity.coerceIn(0f, 1f)), shape)
     return glass.drawWithContent {
         drawContent()
         val rim = Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.65f),
