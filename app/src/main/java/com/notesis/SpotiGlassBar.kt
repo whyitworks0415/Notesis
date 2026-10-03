@@ -179,10 +179,12 @@ fun SpotiGlassBar(
             if (moving()) clipPath(lensPath()) { this@drawWithContent.drawContent() }
             else drawContent()
         }.spotiGlassLens(lensAllowed, active = { moving() }) { _, _ -> lensFrame() }
-        // The protruding lens also samples the page outside the capsule.
-        if (backdrop != null && lensAllowed) scene = scene.drawBackdrop(backdrop,
-            shape = { RectangleShape }, effects = {}, highlight = null, shadow = null)
         Box(scene) {
+            // Sample the clear page only while the lens is raised. At rest this
+            // rectangular capture would overwrite the parent toolbar's glass.
+            if (backdrop != null && lensAllowed) Box(Modifier.matchParentSize()
+                .drawWithContent { if (moving()) drawContent() }
+                .drawBackdrop(backdrop, shape = { RectangleShape }, effects = {}, highlight = null, shadow = null))
             Box(Modifier.fillMaxSize().drawWithContent { if (!moving()) drawContent() }) { Frost() }
             Box(Modifier.matchParentSize().drawWithContent {
                 frameRevision

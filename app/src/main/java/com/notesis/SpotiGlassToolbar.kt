@@ -191,9 +191,9 @@ internal fun Modifier.spotiGlassMorph(key: Any, enter: Boolean = false): Modifie
 private fun SpotiActionButton(
     label: String, icon: ImageVector? = null, modifier: Modifier = Modifier,
     selected: Boolean = false, enabled: Boolean = true, iconOnly: Boolean = false,
-    persistentGlass: Boolean = false, onClick: () -> Unit,
+    persistentGlass: Boolean = false, plain: Boolean = false, onClick: () -> Unit,
 ) {
-    if (LocalSkin.current != Skin.SPOTIGLASS) {
+    if (plain || LocalSkin.current != Skin.SPOTIGLASS) {
         val scheme = MaterialTheme.colorScheme
         val shape = androidx.compose.foundation.shape.RoundedCornerShape(22.dp)
         Box(modifier.sizeIn(minWidth = 44.dp, minHeight = 44.dp)
@@ -322,7 +322,8 @@ internal fun SpotiGlassToolbar(
                             }
                             if (sizeLevel == 0) Box(Modifier.width(360.dp)) { penOptions(360.dp) }
                             SpotiActionButton("기능", Icons.Default.Tune, selected = open,
-                                modifier = Modifier.size(if (sizeLevel == 0) 44.dp else 52.dp), iconOnly = true, persistentGlass = true,
+                                modifier = Modifier.size(if (sizeLevel == 0) 44.dp else 52.dp), iconOnly = true,
+                                persistentGlass = sizeLevel != 0, plain = sizeLevel == 0,
                                 onClick = { menu(ToolbarMenu.FUNCTIONS) })
                         }
                     }
