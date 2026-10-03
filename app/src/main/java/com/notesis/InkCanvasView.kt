@@ -647,8 +647,14 @@ class InkCanvasView @JvmOverloads constructor(
      * way a mouse does, instead of waiting out a hold first. The hold exists so
      * that writing stays the default; when reading is the declared intent there
      * is nothing to disambiguate and nothing to wait for.
+     * The S Pen button instead captures a dragged rectangle, or selects the
+     * text between two separate taps when the pen stays within touch slop.
      */
     var readMode: Boolean = false
+        set(value) {
+            if (field != value) readButtonGesture.reset()
+            field = value
+        }
 
     /** Non-null while the pen draws shapes rather than following the hand. */
     var shapeKind: ShapeKind? = null
@@ -968,6 +974,8 @@ class InkCanvasView @JvmOverloads constructor(
     private var flinging = false
 
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
+    private val readButtonGesture = ReadButtonGesture(touchSlop)
+    private var readingWithButton = false
     private var selection: PdfSelection? = null
     private var selectingPage = -1
     private var selectionAnchor: RectF? = null
@@ -1635,7 +1643,7 @@ class InkCanvasView @JvmOverloads constructor(
         if (!stylus) return super.onHoverEvent(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE -> {
-                val show = tool == Tool.ERASER || event.isEraserGesture()
+                val show = !readMode && (tool == Tool.ERASER || event.isEraserGesture())
                 val changed = show != eraserCursorVisible ||
                     (show && hypot(event.x - eraserCursorX, event.y - eraserCursorY) >= 0.5f)
                 eraserCursorVisible = show
@@ -1686,6 +1694,20 @@ class InkCanvasView @JvmOverloads constructor(
                 }
                 activePage = document.pages[index]
                 val eraserGesture = event.isEraserGesture()
+                if (readMode && eraserGesture) {
+                    onDrawingChanged?.invoke(true)
+                    readingWithButton = true
+                    eraserCursorVisible = false
+                    capturePage = index
+                    val x = event.getX(event.actionIndex)
+                    val y = event.getY(event.actionIndex)
+                    pageLocalInto(x, y, index, shapeStart)
+                    readButtonGesture.begin(ReadTextPoint(index, shapeStart[0], shapeStart[1]), x, y)
+                    captureRect.setEmpty()
+                    dry.invalidate()
+                    return true
+                }
+                readButtonGesture.reset()
                 if (captureMode && !eraserGesture) {
                     onDrawingChanged?.invoke(true)
                     capturePage = index
@@ -1790,6 +1812,10 @@ class InkCanvasView @JvmOverloads constructor(
                 val pointerId = activeStylusPointer ?: return false
                 val index = event.findPointerIndex(pointerId)
                 if (index < 0) return false
+                if (readingWithButton) {
+                    updateReadButtonCapture(event, index)
+                    return true
+                }
                 if (capturing) {
                     pageLocalInto(event.getX(index), event.getY(index), capturePage, shapeEnd)
                     captureRect.set(
@@ -1887,6 +1913,30 @@ class InkCanvasView @JvmOverloads constructor(
                 // A palm/finger lifting must not finish the stylus stroke.
                 if (event.getPointerId(event.actionIndex) != pointerId) return true
                 predictionHead.clear()
+                if (readingWithButton) {
+                    // Include the lift position even when no final MOVE was delivered.
+                    updateReadButtonCapture(event, event.actionIndex)
+                    when (val result = readButtonGesture.finish()) {
+                        ReadButtonGesture.Result.Capture -> finishCapture()
+                        is ReadButtonGesture.Result.Select -> {
+                            val page = document.pages.getOrNull(result.end.page)
+                            val source = pdf
+                            if (page?.background == PageBackground.PDF && source != null) {
+                                selectingPage = result.end.page
+                                selectionAnchor = RectF(result.start.x, result.start.y,
+                                    result.start.x, result.start.y)
+                                requestSelection(source, page.pdfPageIndex,
+                                    RectF(result.start.x, result.start.y, result.start.x, result.start.y),
+                                    RectF(result.end.x, result.end.y, result.end.x, result.end.y))
+                            } else {
+                                readButtonGesture.reset()
+                            }
+                        }
+                        null -> Unit
+                    }
+                    endStylus()
+                    return true
+                }
                 pendingTextPlacement?.let { position ->
                     endStylus()
                     onTextRequested?.invoke(position.first, position.second, position.third)
@@ -1971,6 +2021,11 @@ class InkCanvasView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_CANCEL -> {
+                if (readingWithButton) {
+                    readButtonGesture.reset()
+                    capturing = false
+                    captureRect.setEmpty()
+                }
                 predictionHead.clear()
                 if (predictionEnabled && activeStrokeId != null) predictor.record(event)
                 activeStrokeId?.let { wet.cancelStroke(it, event) }
@@ -2257,6 +2312,7 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun endStylus() {
+        readingWithButton = false
         pendingTextPlacement = null
         removeCallbacks(longPress)
         selectingText = false
@@ -3095,8 +3151,9 @@ class InkCanvasView @JvmOverloads constructor(
 
     fun clearSelection() {
         selectionSerial++
-        if (selection == null) return
+        readButtonGesture.reset()
         selectionAnchor = null
+        if (selection == null) return
         setSelection(null)
     }
 
@@ -3613,6 +3670,26 @@ class InkCanvasView @JvmOverloads constructor(
             imageGrab[0] = imagePoint[0]
             imageGrab[1] = imagePoint[1]
         }
+        dry.postInvalidateOnAnimation()
+    }
+
+    private fun updateReadButtonCapture(event: MotionEvent, pointerIndex: Int) {
+        for (historyIndex in 0 until event.historySize) {
+            readButtonGesture.move(event.getHistoricalX(pointerIndex, historyIndex),
+                event.getHistoricalY(pointerIndex, historyIndex))
+        }
+        readButtonGesture.move(event.getX(pointerIndex), event.getY(pointerIndex))
+        if (!readButtonGesture.dragging) return
+        if (!capturing) {
+            // Clear the text overlay without resetting the active button drag.
+            selectionSerial++
+            selectionAnchor = null
+            if (selection != null) setSelection(null)
+        }
+        capturing = true
+        pageLocalInto(event.getX(pointerIndex), event.getY(pointerIndex), capturePage, shapeEnd)
+        captureRect.set(min(shapeStart[0], shapeEnd[0]), min(shapeStart[1], shapeEnd[1]),
+            max(shapeStart[0], shapeEnd[0]), max(shapeStart[1], shapeEnd[1]))
         dry.postInvalidateOnAnimation()
     }
 
