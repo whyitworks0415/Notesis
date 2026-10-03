@@ -109,38 +109,17 @@ internal fun spotiToolRows(tools: List<SpotiToolbarTool>, widthDp: Float): List<
     }
 }
 
-/** Clear persistent optics: sample the page with the original refractive shader. */
+/** Use the existing Liquid Glass skin optics for the enclosing chrome. */
 @Composable
 private fun Modifier.spotiToolbarGlass(circle: Boolean = false): Modifier {
     val look = LocalSkinSettings.current
-    val effects = rememberLiquidGlassEffectsAllowed() && !look.highContrast && look.spotiglassClarity > 0f
-    val shape = if (circle) CircleShape else SpotiGlassShape(look.spotiglassCorner.dp)
-    val backdrop = LocalLiquidGlassBackdrop.current
-    val scheme = MaterialTheme.colorScheme
-    var glass = shadow(3.dp, shape, clip = false,
-        ambientColor = Color.Black.copy(alpha = 0.08f), spotColor = Color.Black.copy(alpha = 0.08f))
-        .spotiGlassLens(effects) { size, density ->
-        SpotiGlassLensFrame(center = Offset(size.width / 2, size.height / 2), size = size,
-            radius = if (circle) size.minDimension / 2 else look.spotiglassCorner * density,
-            distortion = 0.04f * look.refraction / 24f, band = look.depth,
-            dispersion = 0.002f * look.dispersion / 0.35f, borderWidth = 1.2f)
-    }
-    glass = if (effects && backdrop != null) glass.drawBackdrop(backdrop, shape = { shape },
-        effects = {}, highlight = null, shadow = null,
-        onDrawSurface = { drawRect(scheme.surface.copy(alpha = if (circle)
-            (1f - look.spotiglassClarity) * 0.5f + 0.08f else look.spotiglassToolbarOpacity.coerceIn(0f, 1f))) })
-    else glass.background(scheme.surfaceContainerHigh.copy(alpha = if (circle || look.highContrast) 1f
-        else look.spotiglassToolbarOpacity.coerceIn(0f, 1f)), shape)
-    return glass.drawWithContent {
-        drawContent()
-        val rim = Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.65f),
-            scheme.onSurface.copy(alpha = 0.12f), Color.White.copy(alpha = 0.4f)))
-        val stroke = Stroke(0.8.dp.toPx())
-        if (circle) drawCircle(rim, radius = (size.minDimension / 2 - stroke.width / 2).coerceAtLeast(0f), style = stroke)
-        else drawPath(spotiGlassPath(size, look.spotiglassCorner * density), rim, style = stroke)
-    }
+    val shape = if (circle) CircleShape else androidx.compose.foundation.shape.RoundedCornerShape(look.spotiglassCorner.dp)
+    val color = if (circle) Color(look.tint) else MaterialTheme.colorScheme.surface.copy(
+        alpha = look.spotiglassToolbarOpacity.coerceIn(0f, 1f))
+    return liquidGlass(shape = shape, settings = look, surfaceColor = color,
+        shadowElevation = 3.dp, useSpotiStyle = false,
+        surfaceOpacity = if (circle) null else look.spotiglassToolbarOpacity)
 }
-
 private fun SpotiToolbarTool.icon(): ImageVector = when (this) {
     SpotiToolbarTool.READ -> Icons.Default.TouchApp
     SpotiToolbarTool.PEN -> Icons.Default.Create

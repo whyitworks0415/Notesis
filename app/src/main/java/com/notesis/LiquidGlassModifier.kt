@@ -93,8 +93,10 @@ fun Modifier.liquidGlass(
     surfaceColor: Color = Color(settings.tint),
     shadowElevation: Dp = LiquidGlassTokens.fallbackShadow,
     drawBorder: Boolean = true,
+    useSpotiStyle: Boolean = true,
+    surfaceOpacity: Float? = null,
 ): Modifier {
-    val spoti = LocalSkin.current == Skin.SPOTIGLASS
+    val spoti = useSpotiStyle && LocalSkin.current == Skin.SPOTIGLASS
     if (spoti) {
         val circle = shape == androidx.compose.foundation.shape.CircleShape
         val square = shape == RoundedCornerShape(0.dp)
@@ -123,6 +125,8 @@ fun Modifier.liquidGlass(
     val tint = body.copy(
         alpha = if (settings.highContrast) {
             maxOf(body.alpha, 0.94f)
+        } else if (surfaceOpacity != null) {
+            surfaceOpacity.coerceIn(0f, 1f)
         } else if (body.alpha <= 0f) {
             // 완전 투명 렌즈를 요청한 손잡이/버튼에 최소 흰색 알파를 강제로
             // 넣으면 전환 중 중앙에 흰 점이 생깁니다. 0은 그대로 보존합니다.

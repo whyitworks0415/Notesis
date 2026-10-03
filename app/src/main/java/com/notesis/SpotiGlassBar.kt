@@ -97,7 +97,6 @@ fun SpotiGlassBar(
     val padding = 6.dp
     val cellHeight = barHeight - padding * 2
     val fill = scheme.onSurface.copy(alpha = if (dark) 0.12f else 0.08f)
-    val backdrop = LocalSpotiGlassHostBackdrop.current ?: LocalLiquidGlassBackdrop.current
     BoxWithConstraints(modifier.height(barHeight + 16.dp).selectableGroup()) {
         val cell = (maxWidth - padding * 2).coerceAtLeast(1.dp) / items.size
         val widthPx = with(density) { cell.toPx() * items.size }
@@ -139,12 +138,12 @@ fun SpotiGlassBar(
                 dispersion = 0.002f * (look.dispersion / 0.35f), borderWidth = 1.2f)
         }
             @Composable
-            fun IconShell(colored: Boolean, shellModifier: Modifier, interactive: Boolean = true) {
+            fun IconShell(colored: Boolean, shellModifier: Modifier) {
                 Row(shellModifier.fillMaxWidth().height(cellHeight).align(Alignment.Center).padding(horizontal = padding)) {
                     items.forEachIndexed { index, item ->
                         val color = if (colored) item.color ?: selectedContentColor ?: scheme.primary else scheme.onSurface
                         var hit = Modifier.weight(1f).fillMaxSize()
-                        if (!colored && interactive) hit = hit.semantics { this.selected = selected == index; contentDescription = item.label }
+                        if (!colored) hit = hit.semantics { this.selected = selected == index; contentDescription = item.label }
                             .clickable(role = Role.Tab, interactionSource = remember { MutableInteractionSource() }, indication = null) { choose(index) }
                         Column(hit, horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically)) {
@@ -156,36 +155,17 @@ fun SpotiGlassBar(
                     }
                 }
             }
-        fun lensPath() = lensFrame().let { frame ->
-            spotiGlassPath(frame.size, frame.radius).apply {
-                translate(frame.center - Offset(frame.size.width / 2, frame.size.height / 2))
-            }
-        }
         @Composable
         fun Frost() {
             Box(Modifier.fillMaxWidth().height(barHeight).align(Alignment.Center)
                 .spotiGlassSurface(SpotiGlassShape(look.spotiglassCorner.dp), look, navigation = true))
         }
-        // Compose the stationary capsule outside the final lens silhouette.
-        // Its frost must never enter the shader's source texture: refraction
-        // samples beyond the silhouette and would pull its cut edge back in.
-        Box(Modifier.fillMaxSize().clearAndSetSemantics {}.drawWithContent {
-            if (moving()) clipPath(lensPath(), ClipOp.Difference) { this@drawWithContent.drawContent() }
-        }) {
-            Frost()
-            IconShell(false, Modifier, interactive = false)
-        }
-        var scene = Modifier.fillMaxSize().drawWithContent {
-            if (moving()) clipPath(lensPath()) { this@drawWithContent.drawContent() }
-            else drawContent()
-        }.spotiGlassLens(lensAllowed, active = { moving() }) { _, _ -> lensFrame() }
+        // The same frosted capsule remains in the source at rest and on press.
+        // Refract the bar and its icons together; never punch through to the page
+        // or swap between two backdrop surfaces during animation.
+        val scene = Modifier.fillMaxSize().spotiGlassLens(lensAllowed, active = { moving() }) { _, _ -> lensFrame() }
         Box(scene) {
-            // Sample the clear page only while the lens is raised. At rest this
-            // rectangular capture would overwrite the parent toolbar's glass.
-            if (backdrop != null && lensAllowed) Box(Modifier.matchParentSize()
-                .drawWithContent { if (moving()) drawContent() }
-                .drawBackdrop(backdrop, shape = { RectangleShape }, effects = {}, highlight = null, shadow = null))
-            Box(Modifier.fillMaxSize().drawWithContent { if (!moving()) drawContent() }) { Frost() }
+            Frost()
             Box(Modifier.matchParentSize().drawWithContent {
                 frameRevision
                 if (showPill()) {
