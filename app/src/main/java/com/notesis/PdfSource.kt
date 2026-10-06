@@ -37,6 +37,14 @@ data class PdfSelection(
  * scrolling - so a miss returns nothing, the page draws blank, and [onReady]
  * fires once the bitmap has landed in the cache.
  */
+/** Where a link in a PDF leads. */
+sealed interface PdfLink {
+    data class Web(val url: String) : PdfLink
+
+    /** A zero-based page of the same PDF. */
+    data class Page(val pdfPageIndex: Int) : PdfLink
+}
+
 class PdfSource private constructor(
     private val descriptor: ParcelFileDescriptor,
     private val renderer: PdfRenderer,
@@ -327,6 +335,27 @@ class PdfSource private constructor(
                 }
             }.getOrNull()
         }
+
+    /**
+     * The link under a page-local world point: a web address, or another page
+     * of the same PDF (a table of contents, a footnote, a "see page 12").
+     * Android 15 is the first to expose either.
+     */
+    fun linkAt(index: Int, worldX: Float, worldY: Float): PdfLink? = synchronized(renderLock) {
+        if (Build.VERSION.SDK_INT < 35) return null
+        if (closed || index !in 0 until pageCount) return null
+        runCatching {
+            renderer.openPage(index).use { page ->
+                val x = worldX / POINTS_TO_WORLD
+                val y = worldY / POINTS_TO_WORLD
+                page.linkContents.firstOrNull { link -> link.bounds.any { it.contains(x, y) } }
+                    ?.let { return PdfLink.Web(it.uri.toString()) }
+                page.gotoLinks.firstOrNull { link -> link.bounds.any { it.contains(x, y) } }
+                    ?.let { return PdfLink.Page(it.destination.pageNumber) }
+                null
+            }
+        }.getOrNull()
+    }
 
     private fun toPagePoint(world: RectF) = Point(
         (world.left / POINTS_TO_WORLD).toInt(),

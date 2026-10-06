@@ -143,6 +143,10 @@ class PenStore(context: Context) {
         get() = prefs.getBoolean("highlighterAboveInk", false)
         set(value) = prefs.edit().putBoolean("highlighterAboveInk", value).apply()
 
+    var librarySort: Int
+        get() = prefs.getInt("librarySort", 0)
+        set(value) = prefs.edit().putInt("librarySort", value).apply()
+
     var partialEraser: Boolean
         get() = prefs.getBoolean("partialEraser", false)
         set(value) = prefs.edit().putBoolean("partialEraser", value).apply()

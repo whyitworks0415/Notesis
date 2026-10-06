@@ -71,6 +71,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddPhotoAlternate
@@ -127,6 +128,7 @@ import androidx.compose.material.icons.outlined.Brush
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.ZoomOutMap
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material3.Card
@@ -431,9 +433,13 @@ private fun NoteListScreen(
     var importFailed by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<NoteMeta>?>(null) }
+    var pageHits by remember { mutableStateOf<Map<String, List<PageHit>>>(emptyMap()) }
+    var showTrash by remember { mutableStateOf(false) }
+    var sortMenu by remember { mutableStateOf(false) }
     // Which note the image picker, once it comes back, belongs to.
     var thumbnailFor by remember { mutableStateOf<NoteMeta?>(null) }
     val homeStore = remember { PenStore(context) }
+    var librarySort by remember { mutableIntStateOf(homeStore.librarySort) }
     var homeRevision by remember { mutableIntStateOf(0) }
     var showHomeBackground by remember { mutableStateOf(false) }
     val homeColor = remember(homeRevision) { homeStore.homeColor }
@@ -499,7 +505,9 @@ private fun NoteListScreen(
             return@LaunchedEffect
         }
         delay(SEARCH_DEBOUNCE_MS)
-        results = withContext(Dispatchers.IO) { store.search(query) }
+        val found = withContext(Dispatchers.IO) { store.searchWithPages(query) }
+        results = found.map { it.first }
+        pageHits = found.filter { it.second.isNotEmpty() }.associate { it.first.id to it.second }
     }
     // Blank is the top level. Searching reaches across every folder, because
     // the point of searching is not knowing where a thing is.
@@ -510,7 +518,16 @@ private fun NoteListScreen(
     var deletingFolder by remember { mutableStateOf(false) }
     var folderMenu by remember { mutableStateOf(false) }
     val folders = remember(revision) { store.folders() }
-    val shown = results ?: notes.filter { it.folder == folder }
+    // Favourites first, then the chosen order within each group.
+    val shown = (results ?: notes.filter { it.folder == folder }).sortedWith(
+        compareByDescending<NoteMeta> { it.favorite }.then(
+            when (librarySort) {
+                LIBRARY_SORT_TITLE -> compareBy { it.title.lowercase() }
+                LIBRARY_SORT_PAGES -> compareByDescending { it.pageCount }
+                else -> compareByDescending { it.modified }
+            },
+        ),
+    )
 
     // The user picks where it goes, so a backup survives the app being removed.
     val saveArchive = rememberLauncherForActivityResult(
@@ -709,6 +726,33 @@ private fun NoteListScreen(
                             })
                         }
                     }
+                    Box {
+                        IconButton(onClick = { sortMenu = true }) {
+                            Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = "정렬")
+                        }
+                        DropdownMenu(sortMenu, onDismissRequest = { sortMenu = false }) {
+                            listOf(
+                                LIBRARY_SORT_MODIFIED to "최근 수정 순",
+                                LIBRARY_SORT_TITLE to "이름 순",
+                                LIBRARY_SORT_PAGES to "쪽수 많은 순",
+                            ).forEach { (mode, label) ->
+                                DropdownMenuItem(
+                                    text = { Text(label) },
+                                    leadingIcon = if (librarySort == mode) {
+                                        { Icon(Icons.Default.Check, contentDescription = null) }
+                                    } else null,
+                                    onClick = {
+                                        librarySort = mode
+                                        homeStore.librarySort = mode
+                                        sortMenu = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    IconButton(onClick = { showTrash = true }) {
+                        Icon(Icons.Default.Delete, contentDescription = "휴지통")
+                    }
                     IconButton(onClick = { showHomeBackground = true }) {
                         Icon(Icons.Default.Image, contentDescription = "노트 목록 배경")
                     }
@@ -850,6 +894,34 @@ private fun NoteListScreen(
                         FolderRow(folders) { folder = it }
                     }
                 }
+                // Where in each note the text was found; opening one goes
+                // straight to that page.
+                if (results != null && pageHits.isNotEmpty()) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Text(
+                            "페이지에서 찾은 곳",
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                    }
+                    shown.forEach { note ->
+                        pageHits[note.id]?.take(MAX_HITS_PER_NOTE)?.forEach { hit ->
+                            item(key = "hit:${note.id}:${hit.pageId}", span = { GridItemSpan(maxLineSpan) }) {
+                                SearchHitRow(note, hit) {
+                                    homeStore.setLastPage(note.id, hit.pageIndex)
+                                    onOpen(note)
+                                }
+                            }
+                        }
+                    }
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Text(
+                            "노트",
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                    }
+                }
                 items(shown, key = { it.id }) { note ->
                     NoteCard(
                         note = note,
@@ -885,6 +957,10 @@ private fun NoteListScreen(
                             }
                         } else null,
                         onFile = { filing = note },
+                        onToggleFavorite = {
+                            store.setFavorite(note.id, !note.favorite)
+                            revision++
+                        },
                         onIndex = {
                             busy = "필기를 읽는 중"
                             scope.launch {
@@ -985,10 +1061,10 @@ private fun NoteListScreen(
     )
     if (bulkDelete) AlertDialog(
         onDismissRequest = { bulkDelete = false },
-        title = { Text("선택한 노트 ${selectedIds.size}개를 삭제할까요?") },
-        text = { Text("삭제한 노트는 복구할 수 없습니다.") },
+        title = { Text("선택한 노트 ${selectedIds.size}개를 휴지통으로 옮길까요?") },
+        text = { Text("휴지통에서 ${NoteStore.TRASH_DAYS}일 동안 복원할 수 있습니다.") },
         confirmButton = { TextButton(onClick = {
-            selectedIds.forEach(store::delete)
+            selectedIds.forEach(store::moveToTrash)
             selectedIds.clear(); selectionMode = false; bulkDelete = false; revision++
         }) { Text("삭제") } },
         dismissButton = { TextButton(onClick = { bulkDelete = false }) { Text("취소") } },
@@ -1077,15 +1153,21 @@ private fun NoteListScreen(
         )
     }
 
+    if (showTrash) TrashDialog(
+        store = store,
+        onChanged = { revision++ },
+        onDismiss = { showTrash = false },
+    )
+
     pendingDelete?.let { note ->
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
-            title = { Text("노트를 삭제할까요?") },
-            text = { Text("\"${note.title}\" 은(는) 복구할 수 없습니다.") },
+            title = { Text("노트를 휴지통으로 옮길까요?") },
+            text = { Text("\"${note.title}\" 은(는) 휴지통에서 ${NoteStore.TRASH_DAYS}일 동안 복원할 수 있습니다.") },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        store.delete(note.id)
+                        store.moveToTrash(note.id)
                         pendingDelete = null
                         revision++
                     },
@@ -1096,6 +1178,94 @@ private fun NoteListScreen(
             },
         )
     }
+}
+
+private const val PLAYBACK_WINDOW_MS = 2500L
+private const val PLAYBACK_TICK_MS = 120L
+private const val LIBRARY_SORT_MODIFIED = 0
+private const val LIBRARY_SORT_TITLE = 1
+private const val LIBRARY_SORT_PAGES = 2
+private const val MAX_HITS_PER_NOTE = 5
+
+/** One page a search matched: which note, which page, and the words around the match. */
+@Composable
+private fun SearchHitRow(note: NoteMeta, hit: PageHit, onOpen: () -> Unit) {
+    SkinSurface(corner = 12.dp, modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen)) {
+        Row(
+            Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "${note.title} · ${hit.pageIndex + 1}쪽",
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 220.dp),
+            )
+            Spacer(Modifier.width(12.dp))
+            Text(
+                hit.snippet,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/** Deleted notes, restorable until they age out after [NoteStore.TRASH_DAYS] days. */
+@Composable
+private fun TrashDialog(store: NoteStore, onChanged: () -> Unit, onDismiss: () -> Unit) {
+    var revision by remember { mutableIntStateOf(0) }
+    val trashed = remember(revision) { store.trashed() }
+    var confirmEmpty by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("휴지통") },
+        text = {
+            if (trashed.isEmpty()) {
+                Text("비어 있습니다", color = MaterialTheme.colorScheme.outline)
+            } else LazyColumn(Modifier.heightIn(max = 420.dp)) {
+                items(trashed, key = { it.id }) { note ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(note.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                "${dateFormat.format(Date(note.trashedAt))}에 삭제 · ${note.pageCount}쪽",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.outline,
+                            )
+                        }
+                        TextButton(onClick = {
+                            store.restoreFromTrash(note.id)
+                            revision++
+                            onChanged()
+                        }) { Text("복원") }
+                        TextButton(onClick = {
+                            store.delete(note.id)
+                            revision++
+                        }) { Text("영구 삭제") }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("닫기") } },
+        dismissButton = if (trashed.isNotEmpty()) {
+            { TextButton(onClick = { confirmEmpty = true }) { Text("비우기") } }
+        } else null,
+    )
+    if (confirmEmpty) AlertDialog(
+        onDismissRequest = { confirmEmpty = false },
+        title = { Text("휴지통을 비울까요?") },
+        text = { Text("노트 ${trashed.size}개가 완전히 삭제되어 복구할 수 없습니다.") },
+        confirmButton = { TextButton(onClick = {
+            store.emptyTrash()
+            confirmEmpty = false
+            revision++
+        }) { Text("비우기") } },
+        dismissButton = { TextButton(onClick = { confirmEmpty = false }) { Text("취소") } },
+    )
 }
 
 /** The picked file's own name, so an imported PDF is not called "제목 없음". */
@@ -1124,6 +1294,7 @@ private fun NoteCard(
     onExportMarkdown: (() -> Unit)?,
     onIndex: () -> Unit,
     onFile: () -> Unit,
+    onToggleFavorite: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     // Keyed on the file's timestamp, so replacing the picture redraws the card
@@ -1193,6 +1364,12 @@ private fun NoteCard(
                         modifier = Modifier.size(40.dp),
                     )
                 }
+                if (note.favorite) Icon(
+                    Icons.Default.Star,
+                    contentDescription = "즐겨찾기",
+                    tint = Color(0xFFF5B400),
+                    modifier = Modifier.align(Alignment.TopStart).padding(10.dp),
+                )
                 if (selectionMode) Icon(
                     if (selected) Icons.Default.Check else Icons.Default.Circle,
                     contentDescription = if (selected) "선택됨" else "선택 안 됨",
@@ -1256,6 +1433,14 @@ private fun NoteCard(
                             )
                         }
                         HorizontalDivider()
+                        DropdownMenuItem(
+                            text = { Text(if (note.favorite) "즐겨찾기 해제" else "즐겨찾기") },
+                            leadingIcon = { Icon(Icons.Default.Star, contentDescription = null) },
+                            onClick = {
+                                menuOpen = false
+                                onToggleFavorite()
+                            },
+                        )
                         DropdownMenuItem(
                             text = { Text("폴더로 이동") },
                             leadingIcon = {
@@ -2598,12 +2783,18 @@ private fun NoteScreen(
     var recordingFile by remember { mutableStateOf<java.io.File?>(null) }
     var voicePlayer by remember { mutableStateOf<android.media.MediaPlayer?>(null) }
     var playingFile by remember { mutableStateOf<String?>(null) }
+    // When each stroke landed while recording, saved beside the audio.
+    var recordingStartedAt by remember { mutableStateOf(0L) }
+    val recordingEvents = remember { mutableListOf<RecordingTimeline.Event>() }
+    var playingTimeline by remember { mutableStateOf<List<RecordingTimeline.Event>>(emptyList()) }
     fun stopRecording() {
         val active = recorder ?: return
         val valid = runCatching { active.stop() }.isSuccess
         active.release()
         recorder = null
         if (!valid) recordingFile?.delete()
+        else recordingFile?.let { RecordingTimeline.save(it, recordingEvents.toList()) }
+        recordingEvents.clear()
         recordingFile = null
         voiceRevision++
     }
@@ -2627,6 +2818,8 @@ private fun NoteScreen(
         if (started) {
             recordingFile = file
             recorder = active
+            recordingEvents.clear()
+            recordingStartedAt = android.os.SystemClock.elapsedRealtime()
         } else {
             active.release()
             file.delete()
@@ -2874,6 +3067,10 @@ private fun NoteScreen(
     // A multiple of fit-to-width, which is the 100% anybody means.
     var zoom by remember { mutableFloatStateOf(1f) }
     var canvas by remember { mutableStateOf<InkCanvasView?>(null) }
+    val study = remember(note.id) { MaskStudy(store.studyFile(note.id)) }
+    var studyRevision by remember { mutableIntStateOf(0) }
+    var session by remember { mutableStateOf<StudySession?>(null) }
+    var renamingMask by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var selectedText by remember { mutableStateOf<String?>(null) }
     var selectedPdf by remember { mutableStateOf<PdfSelection?>(null) }
     var selectionPreview by remember { mutableStateOf<Bitmap?>(null) }
@@ -3284,6 +3481,15 @@ private fun NoteScreen(
                     view.onUndo = { canvas?.undo(); edits++ }
                     view.onRedo = { canvas?.redo(); edits++ }
                     view.referenceOpen = referenceOpen
+                    view.onLinkUrl = { url -> webUrl = url }
+                    view.onStrokesCommitted = { pageIndex, strokes ->
+                        if (recorder != null) {
+                            val at = android.os.SystemClock.elapsedRealtime() - recordingStartedAt
+                            for (stroke in strokes) {
+                                recordingEvents += RecordingTimeline.Event(view.keyOf(pageIndex, stroke), at)
+                            }
+                        }
+                    }
                     view.onOpenReference = { cx, cy ->
                         // Whichever note it was last pointed at stays pointed
                         // at. Closing the panel is putting a book down, not
@@ -3480,15 +3686,19 @@ private fun NoteScreen(
                                         }
                                         player.start()
                                     }.isSuccess
-                                    if (started) { voicePlayer = player; playingFile = file.path }
-                                    else { player.release(); playingFile = null }
+                                    if (started) {
+                                        voicePlayer = player; playingFile = file.path
+                                        playingTimeline = RecordingTimeline.load(file)
+                                    } else { player.release(); playingFile = null }
                                 }
                             }) { Text(if (playingFile == file.path) "정지" else "재생") }
                             TextButton(onClick = {
                                 if (playingFile == file.path) {
                                     voicePlayer?.release(); voicePlayer = null; playingFile = null
                                 }
-                                file.delete(); voiceRevision++
+                                file.delete()
+                                RecordingTimeline.fileFor(file).delete()
+                                voiceRevision++
                             }) { Text("삭제") }
                         }
                     }
@@ -3636,6 +3846,132 @@ private fun NoteScreen(
             )
         }
 
+        // Follow along: what was being written at this point of the recording
+        // is marked, and its page brought up.
+        LaunchedEffect(playingFile, playingTimeline, canvas) {
+            val view = canvas ?: return@LaunchedEffect
+            if (playingFile == null || playingTimeline.isEmpty()) {
+                view.setPlaybackHighlight(emptyMap())
+                view.onStrokeTapped = null
+                return@LaunchedEffect
+            }
+            val timeline = playingTimeline
+            fun pageOf(key: String) = view.document.pages.indexOfFirst { key.startsWith(it.id + ":") }
+            view.onStrokeTapped = { pageIndex, stroke ->
+                val key = view.keyOf(pageIndex, stroke)
+                val event = timeline.firstOrNull { it.key == key }
+                if (event != null) runCatching { voicePlayer?.seekTo(event.atMs.toInt()) }
+                event != null
+            }
+            var followed = -1
+            try {
+                while (true) {
+                    val player = voicePlayer ?: break
+                    val position = runCatching { player.currentPosition.toLong() }.getOrNull() ?: break
+                    val recent = RecordingTimeline.around(timeline, position, PLAYBACK_WINDOW_MS)
+                    view.setPlaybackHighlight(
+                        recent.groupBy { pageOf(it.key) }
+                            .filterKeys { it >= 0 }
+                            .mapValues { (_, events) -> events.map { it.key }.toSet() },
+                    )
+                    val newest = recent.lastOrNull()?.let { pageOf(it.key) } ?: -1
+                    if (newest >= 0 && newest != followed) {
+                        followed = newest
+                        if (newest != view.currentPageIndex()) view.scrollToPage(newest)
+                    }
+                    delay(PLAYBACK_TICK_MS)
+                }
+            } finally {
+                view.setPlaybackHighlight(emptyMap())
+                view.onStrokeTapped = null
+            }
+        }
+        if (playingFile != null && !showVoice) SkinSurface(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .windowInsetsPadding(ChromeInsets)
+                .padding(16.dp),
+            corner = 16.dp,
+        ) {
+            Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (playingTimeline.isEmpty()) "녹음 재생 중"
+                    else "녹음 재생 중 · 읽기 모드에서 필기를 누르면 그 시점으로",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                TextButton(onClick = {
+                    voicePlayer?.release(); voicePlayer = null; playingFile = null
+                }) { Text("정지") }
+            }
+        }
+        session?.let { run ->
+            StudyBar(
+                session = run,
+                name = canvas?.document?.pages?.getOrNull(run.pageIndex)?.let { page ->
+                    run.current?.let { maskIndex ->
+                        page.masks.getOrNull(maskIndex)?.let { study.record(MaskStudy.keyOf(page.id, it.stroke)).name }
+                    }
+                }.orEmpty(),
+                onShow = {
+                    run.current?.let { canvas?.setMaskRevealed(run.pageIndex, it, true) }
+                    session = run.copy(showing = true)
+                    edits++
+                },
+                onAnswer = { right ->
+                    val page = canvas?.document?.pages?.getOrNull(run.pageIndex)
+                    val maskIndex = run.current
+                    if (page != null && maskIndex != null) {
+                        page.masks.getOrNull(maskIndex)?.let { study.answer(MaskStudy.keyOf(page.id, it.stroke), right) }
+                        canvas?.setMaskRevealed(run.pageIndex, maskIndex, true)
+                    }
+                    session = run.copy(
+                        position = run.position + 1,
+                        showing = false,
+                        right = run.right + if (right) 1 else 0,
+                        wrong = run.wrong + if (right) 0 else 1,
+                        missed = if (right || maskIndex == null) run.missed else run.missed + maskIndex,
+                    )
+                    studyRevision++
+                    edits++
+                },
+                onRetryMissed = {
+                    canvas?.setMasksRevealed(run.pageIndex, false)
+                    session = StudySession(run.pageIndex, run.missed)
+                    edits++
+                },
+                onClose = { session = null },
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
+        }
+        renamingMask?.let { (index, maskIndex) ->
+            val page = canvas?.document?.pages?.getOrNull(index)
+            val mask = page?.masks?.getOrNull(maskIndex)
+            if (page == null || mask == null) {
+                renamingMask = null
+            } else {
+                val key = MaskStudy.keyOf(page.id, mask.stroke)
+                var name by remember(key) { mutableStateOf(study.record(key).name) }
+                AlertDialog(
+                    onDismissRequest = { renamingMask = null },
+                    title = { Text("마스크 이름") },
+                    text = {
+                        OutlinedTextField(
+                            value = name,
+                            onValueChange = { name = it },
+                            singleLine = true,
+                            placeholder = { Text("마스크 ${maskIndex + 1}") },
+                        )
+                    },
+                    confirmButton = { TextButton(onClick = {
+                        study.rename(key, name)
+                        studyRevision++
+                        renamingMask = null
+                    }) { Text("저장") } },
+                    dismissButton = { TextButton(onClick = { renamingMask = null }) { Text("취소") } },
+                )
+            }
+        }
+
         if (regionOcrBusy) AlertDialog(
             onDismissRequest = {}, title = { Text("선택한 필기를 읽는 중") }, confirmButton = {},
         )
@@ -3749,6 +4085,29 @@ private fun NoteScreen(
                 document = canvas?.document,
                 currentPage = currentPage,
                 edits = edits,
+                study = study,
+                studyRevision = studyRevision,
+                onRenameMask = { index, maskIndex -> renamingMask = index to maskIndex },
+                onAnswerMask = { index, maskIndex, right ->
+                    canvas?.document?.pages?.getOrNull(index)?.masks?.getOrNull(maskIndex)?.let { mask ->
+                        study.answer(MaskStudy.keyOf(canvas!!.document.pages[index].id, mask.stroke), right)
+                        studyRevision++
+                    }
+                },
+                onStudy = { index, wrongOnly ->
+                    val page = canvas?.document?.pages?.getOrNull(index)
+                    val queue = if (page == null) emptyList() else page.masks.indices.filter { maskIndex ->
+                        !wrongOnly || study.record(MaskStudy.keyOf(page.id, page.masks[maskIndex].stroke)).last ==
+                            MaskRecord.RESULT_WRONG
+                    }
+                    if (queue.isNotEmpty()) {
+                        canvas?.setMasksRevealed(index, false)
+                        canvas?.scrollToPage(index)
+                        session = StudySession(index, queue)
+                        showPages = false
+                        edits++
+                    }
+                },
                 userTemplates = remember(edits) { store.pageTemplates() },
                 onJump = { canvas?.scrollToPage(it) },
                 onReveal = { index, revealed ->
@@ -3937,6 +4296,62 @@ private fun NoteScreen(
             properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
         ) {
             panel(Modifier.fillMaxSize(0.85f))
+        }
+    }
+}
+
+/**
+ * A run through one page's tape: lift the strip to check, then say whether the
+ * answer was right. At the end, the misses can be gone over again on their own.
+ */
+@Composable
+private fun StudyBar(
+    session: StudySession,
+    name: String,
+    onShow: () -> Unit,
+    onAnswer: (Boolean) -> Unit,
+    onRetryMissed: () -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    SkinSurface(
+        modifier = modifier
+            .windowInsetsPadding(ChromeInsets)
+            .padding(16.dp),
+        corner = 16.dp,
+    ) {
+        Row(
+            Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (session.done) {
+                Text(
+                    "${session.queue.size}개 중 ${session.right}개 맞음",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                ToolbarDivider()
+                if (session.missed.isNotEmpty()) {
+                    TextButton(onClick = onRetryMissed) { Text("틀린 ${session.missed.size}개 다시") }
+                }
+            } else {
+                Text(
+                    "${session.position + 1} / ${session.queue.size}" +
+                        if (name.isNotBlank()) " · $name" else "",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                ToolbarDivider()
+                if (!session.showing) {
+                    TextButton(onClick = onShow) { Text("정답 보기") }
+                } else {
+                    TextButton(onClick = { onAnswer(true) }) {
+                        Text("맞음", color = Color(0xFF2E7D32))
+                    }
+                    TextButton(onClick = { onAnswer(false) }) {
+                        Text("틀림", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+            TextButton(onClick = onClose) { Text("끝내기") }
         }
     }
 }
@@ -4672,6 +5087,11 @@ private fun PageSidebar(
     onTemplate: (Int, String) -> Unit,
     onSetToc: (Int, String?) -> Unit,
     onHighlightToc: (Int, Boolean) -> Unit,
+    study: MaskStudy? = null,
+    studyRevision: Int = 0,
+    onRenameMask: (Int, Int) -> Unit = { _, _ -> },
+    onAnswerMask: (Int, Int, Boolean) -> Unit = { _, _, _ -> },
+    onStudy: (Int, Boolean) -> Unit = { _, _ -> },
 ) {
     val pages = document?.pages ?: return
     var tab by remember { mutableIntStateOf(0) }
@@ -4779,6 +5199,11 @@ private fun PageSidebar(
                                 onRevealMask(index, maskIndex, revealed)
                             },
                             onDeleteMask = { maskIndex -> onDeleteMask(index, maskIndex) },
+                            study = study,
+                            studyRevision = studyRevision,
+                            onRenameMask = { maskIndex -> onRenameMask(index, maskIndex) },
+                            onAnswerMask = { maskIndex, right -> onAnswerMask(index, maskIndex, right) },
+                            onStudy = { wrongOnly -> onStudy(index, wrongOnly) },
                         )
                     }
                 }
@@ -4903,9 +5328,18 @@ private fun MaskChip(
     onClear: () -> Unit,
     onRevealMask: (Int, Boolean) -> Unit,
     onDeleteMask: (Int) -> Unit,
+    study: MaskStudy? = null,
+    studyRevision: Int = 0,
+    onRenameMask: (Int) -> Unit = {},
+    onAnswerMask: (Int, Boolean) -> Unit = { _, _ -> },
+    onStudy: (Boolean) -> Unit = {},
 ) {
     val masks = page.masks
     val hidden = masks.count { !it.revealed }
+    val keys = remember(page, masks.size, studyRevision) {
+        masks.map { MaskStudy.keyOf(page.id, it.stroke) }
+    }
+    val records = remember(keys, studyRevision) { keys.map { study?.record(it) ?: MaskRecord() } }
     Column(
         Modifier
             .fillMaxWidth()
@@ -4935,6 +5369,15 @@ private fun MaskChip(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.outline,
                 )
+                if (masks.isNotEmpty() && study != null) {
+                    val right = records.count { it.last == MaskRecord.RESULT_RIGHT }
+                    val wrong = records.count { it.last == MaskRecord.RESULT_WRONG }
+                    Text(
+                        "맞음 $right · 틀림 $wrong",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline,
+                    )
+                }
             }
             if (masks.isNotEmpty()) {
                 IconButton(onClick = { onReveal(hidden > 0) }) {
@@ -4948,7 +5391,15 @@ private fun MaskChip(
                 }
             }
         }
+        if (masks.isNotEmpty() && study != null) Row(Modifier.padding(start = 16.dp)) {
+            TextButton(onClick = { onStudy(false) }) { Text("학습") }
+            TextButton(
+                onClick = { onStudy(true) },
+                enabled = records.any { it.last == MaskRecord.RESULT_WRONG },
+            ) { Text("틀린 것만") }
+        }
         for ((maskIndex, mask) in masks.withIndex()) {
+            val record = records.getOrNull(maskIndex) ?: MaskRecord()
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -4956,9 +5407,22 @@ private fun MaskChip(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    "마스크 ${maskIndex + 1}",
+                    when (record.last) {
+                        MaskRecord.RESULT_RIGHT -> "✓ "
+                        MaskRecord.RESULT_WRONG -> "✗ "
+                        else -> ""
+                    } + record.name.ifBlank { "마스크 ${maskIndex + 1}" },
                     style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier.weight(1f),
+                    color = when (record.last) {
+                        MaskRecord.RESULT_RIGHT -> Color(0xFF2E7D32)
+                        MaskRecord.RESULT_WRONG -> MaterialTheme.colorScheme.error
+                        else -> Color.Unspecified
+                    },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable(enabled = study != null) { onRenameMask(maskIndex) },
                 )
                 IconButton(
                     onClick = { onRevealMask(maskIndex, !mask.revealed) },

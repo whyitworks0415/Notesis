@@ -1122,6 +1122,41 @@ class InkCanvasView @JvmOverloads constructor(
     private var selectingPage = -1
     private var selectionAnchor: RectF? = null
     private var selectingText = false
+    private var readPressTime = 0L
+
+    /** Ink as it lands, for timing it against a recording. */
+    var onStrokesCommitted: ((Int, List<Stroke>) -> Unit)? = null
+
+    /**
+     * While set, a reading tap on handwriting is offered here first - how a
+     * recording seeks to when that ink was written. Return true to consume it.
+     */
+    var onStrokeTapped: ((Int, Stroke) -> Boolean)? = null
+
+    private val strokeKeys = java.util.WeakHashMap<Stroke, String>()
+    private var playbackHighlights: Set<Stroke> = emptySet()
+    private var playbackHighlightKeys: Map<Int, Set<String>> = emptyMap()
+
+    /** The stable key a recording timeline stores for a stroke. */
+    fun keyOf(pageIndex: Int, stroke: Stroke): String = strokeKeys.getOrPut(stroke) {
+        MaskStudy.keyOf(document.pages.getOrNull(pageIndex)?.id.orEmpty(), stroke)
+    }
+
+    /** Marks the strokes written around the current playback time; empty clears it. */
+    fun setPlaybackHighlight(keys: Map<Int, Set<String>>) {
+        if (keys == playbackHighlightKeys) return
+        playbackHighlightKeys = keys
+        val found: MutableSet<Stroke> = Collections.newSetFromMap(IdentityHashMap())
+        for ((pageIndex, pageKeys) in keys) {
+            val page = document.pages.getOrNull(pageIndex) ?: continue
+            for (stroke in page.strokes) if (keyOf(pageIndex, stroke) in pageKeys) found += stroke
+        }
+        playbackHighlights = found
+        dry.invalidate()
+    }
+
+    /** A web link tapped in a PDF; page links are followed here directly. */
+    var onLinkUrl: ((String) -> Unit)? = null
 
     // Shape, capture and picture gestures. Each is a start and an end in the
     // coordinates of one page, held only while the pen is down.
@@ -1968,7 +2003,9 @@ class InkCanvasView @JvmOverloads constructor(
                     return true
                 }
                 if (readMode && !eraserGesture) {
+                    readPressTime = event.eventTime
                     onDrawingChanged?.invoke(true)
+                    if (onStrokeTapped != null && tapStrokeAt(event.x, event.y, index)) return true
                     // Reading is where a covered answer gets looked at.
                     if (toggleMaskAt(event.x, event.y, index)) return true
                     pressX = event.x
@@ -2218,6 +2255,12 @@ class InkCanvasView @JvmOverloads constructor(
                     return true
                 }
                 if (selectingText) {
+                    // A quick tap that did not travel is also how a link is
+                    // followed; the word it selected is dropped if it was one.
+                    val pointer = event.actionIndex
+                    val tapped = event.eventTime - readPressTime < LINK_TAP_MS &&
+                        hypot(event.getX(pointer) - pressX, event.getY(pointer) - pressY) < touchSlop
+                    if (tapped) followLinkAt(selectingPage, pressX, pressY)
                     endStylus()
                     return true
                 }
@@ -3367,6 +3410,36 @@ class InkCanvasView @JvmOverloads constructor(
      * The hold won: throw away the stroke it started and select the word under
      * the pen instead.
      */
+    private fun followLinkAt(index: Int, screenX: Float, screenY: Float) {
+        val page = document.pages.getOrNull(index) ?: return
+        val source = pdf ?: return
+        if (page.background != PageBackground.PDF || page.pdfPageIndex < 0) return
+        val point = pageLocal(screenX, screenY, index)
+        val pdfIndex = page.pdfPageIndex
+        // Off the UI thread: the renderer lock can be held by a page render.
+        Thread {
+            val link = source.linkAt(pdfIndex, point.left, point.top) ?: return@Thread
+            post {
+                if (disposed) return@post
+                when (link) {
+                    is PdfLink.Web -> {
+                        clearSelection()
+                        onLinkUrl?.invoke(link.url)
+                    }
+                    is PdfLink.Page -> {
+                        val target = document.pages.indexOfFirst {
+                            it.background == PageBackground.PDF && it.pdfPageIndex == link.pdfPageIndex
+                        }
+                        if (target >= 0) {
+                            clearSelection()
+                            scrollToPage(target)
+                        }
+                    }
+                }
+            }
+        }.start()
+    }
+
     private fun beginTextSelection() {
         val index = selectingPage
         val source = pdf ?: return
@@ -3853,6 +3926,23 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     /** Lifts or lowers the strip under the finger. True when there was one. */
+    private fun tapStrokeAt(screenX: Float, screenY: Float, index: Int): Boolean {
+        val callback = onStrokeTapped ?: return false
+        val page = document.pages[index]
+        pageLocalInto(screenX, screenY, index, maskProbe)
+        val half = MASK_TAP_PX / currentScale() / 2f
+        val tip = ImmutableBox.fromCenterAndDimensions(
+            ImmutableVec(maskProbe[0], maskProbe[1]), half * 2f, half * 2f,
+        )
+        val candidates = dry.strokesIn(
+            page, maskProbe[0] - half, maskProbe[1] - half, maskProbe[0] + half, maskProbe[1] + half,
+        )
+        val stroke = with(Intersection) {
+            candidates.lastOrNull { tip.intersects(it.shape, IDENTITY) }
+        } ?: return false
+        return callback(index, stroke)
+    }
+
     private fun toggleMaskAt(screenX: Float, screenY: Float, index: Int): Boolean {
         val page = document.pages[index]
         if (page.masks.isEmpty()) return false
@@ -4267,6 +4357,7 @@ class InkCanvasView @JvmOverloads constructor(
         val finalizeStarted = penFinalizeStartedNanos
         penFinalizeStartedNanos = 0L
         val page = activePage
+        val committed = ArrayList<Stroke>(finished.size)
         if (page != null) {
             val group = nextEditGroup++
             for (wetStroke in finished.values) {
@@ -4291,25 +4382,30 @@ class InkCanvasView @JvmOverloads constructor(
                         Tool.ofBrushFamily(stroke.brush.family).isFreehandPen()
                     ) recognizeStroke(stroke) else null
                     if (shape != null) {
-                        val committed = shapeStrokes(
+                        val parts = shapeStrokes(
                             shape.kind, floatArrayOf(shape.fromX, shape.fromY),
                             floatArrayOf(shape.toX, shape.toY), stroke.brush,
                         )
-                        for (part in committed) {
+                        for (part in parts) {
                             page.strokes += part
                             undoStack += Edit.Drawn(page, part, group)
+                            committed += part
                         }
                     } else {
                         // Wet ink, shape recognition and the saved stroke now
                         // share the same stabilized streaming trajectory.
                         page.strokes += stroke
                         undoStack += Edit.Drawn(page, stroke, group)
+                        committed += stroke
                     }
                 }
             }
             redoStack.clear()
         }
         wet.removeFinishedStrokes(finished.keys)
+        if (page != null && committed.isNotEmpty()) {
+            onStrokesCommitted?.invoke(document.pages.indexOf(page), committed)
+        }
         if (page != null) afterEdit(page) else afterEdit()
         if (finalizeStarted != 0L) {
             latency.addPenFinalize(System.nanoTime() - finalizeStarted)
@@ -4631,6 +4727,7 @@ class InkCanvasView @JvmOverloads constructor(
                     scoped.translate(left, top)
                     drawPaper(scoped, page, i)
                     drawImages(scoped, page)
+                    if (playbackHighlights.isNotEmpty()) drawPlaybackHighlights(scoped, page)
 
                     // Page-level culling alone still redraws every stroke on a page
                     // that is only half on screen. A zoomed-in page of dense notes
@@ -4716,6 +4813,20 @@ class InkCanvasView @JvmOverloads constructor(
                 lastVisibleStrokes = visibleCount
                 lastDrawMs = (System.nanoTime() - started) / 1e6
                 latency.addDraw((lastDrawMs * 1e6).toLong(), visibleCount)
+            }
+        }
+
+        private val playbackPaint = Paint().apply { color = 0x66FFD54F }
+        private val playbackBox = RectF()
+
+        /** A soft band behind the ink being heard, under the strokes so they stay legible. */
+        private fun drawPlaybackHighlights(canvas: Canvas, page: Page) {
+            val pad = PLAYBACK_HIGHLIGHT_PAD / currentScale().coerceAtLeast(0.01f)
+            for (stroke in page.strokes) {
+                if (stroke !in playbackHighlights) continue
+                val box = stroke.shape.computeBoundingBox() ?: continue
+                playbackBox.set(box.xMin - pad, box.yMin - pad, box.xMax + pad, box.yMax + pad)
+                canvas.drawRoundRect(playbackBox, pad, pad, playbackPaint)
             }
         }
 
@@ -5078,6 +5189,8 @@ class InkCanvasView @JvmOverloads constructor(
         const val REFINE_MARGIN_PX = 160f
         const val MAX_UNDO_EDITS = 1000
         const val LASSO_DUPLICATE_OFFSET = 24f
+        const val LINK_TAP_MS = 350L
+        const val PLAYBACK_HIGHLIGHT_PAD = 6f
         const val BASE_TESSELLATION_SCALE = 1f
         const val EPSILON_SLOP = 0.00001f
         const val PREFETCH_SETTLE_MS = 280L
