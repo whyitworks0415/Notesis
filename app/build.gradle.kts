@@ -14,8 +14,8 @@ android {
         // dependable from Q onward, even though ink itself declares minSdk 23.
         minSdk = 29
         targetSdk = 36
-        versionCode = 86
-        versionName = "0.34.0"
+        versionCode = 87
+        versionName = "0.34.1"
         testInstrumentationRunner = "com.notesis.CustomizationInstrumentation"
         // Galaxy Tab is arm64. Shipping one ABI keeps the native ink lib small.
         ndk { abiFilters += "arm64-v8a" }

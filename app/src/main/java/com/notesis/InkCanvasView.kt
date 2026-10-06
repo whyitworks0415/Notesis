@@ -761,6 +761,12 @@ class InkCanvasView @JvmOverloads constructor(
             dry.invalidate()
         }
 
+    /** [stroke] sharing its mesh but with its on-screen brush, or null if that is the same brush. */
+    private fun meshTwinOf(stroke: Stroke): Stroke? {
+        val brush = screenBrush(stroke.brush)
+        return if (brush === stroke.brush) null else stroke.copy(brush)
+    }
+
     /** The brush Ink should draw [brush] with on screen; see [meshInk]. */
     private fun screenBrush(brush: Brush): Brush {
         if (!meshInk || Color.alpha(brush.colorIntArgb) != 255) return brush
@@ -1230,10 +1236,6 @@ class InkCanvasView @JvmOverloads constructor(
         val bitmap: Bitmap,
         val prefix: InkRenderPrefix<Stroke>,
         val meshRevision: Long,
-        /** Page-local area the bitmap covers. */
-        val region: RectF,
-        /** Screen pixels per page unit it was rasterised at. */
-        val scale: Float,
     )
     private var refineRunnablePosted = false
     private val refineRunnable = Runnable {
@@ -3126,6 +3128,7 @@ class InkCanvasView @JvmOverloads constructor(
             val loaded = ArrayList<Pair<Page, List<Stroke>>>(toLoad.size)
             val loadedMasks = ArrayList<Pair<Page, List<PageMask>>>(toLoad.size)
             val built = ArrayList<Triple<Page, List<Stroke>, List<Stroke>>>(work.size)
+            val twins = ArrayList<Pair<Stroke, Stroke?>>()
             var refinedCount = 0
             try {
                 for (page in toLoad) {
@@ -3150,6 +3153,20 @@ class InkCanvasView @JvmOverloads constructor(
                         refinedCount++
                     }
                     built += Triple(page, snapshot, rebuilt)
+                }
+                // The mesh-rendered twins of what was just built, made here
+                // rather than on the first frame that draws them: thousands of
+                // Brush and Stroke allocations in one onDraw was a visible hitch
+                // every time a dense page came on screen or was retessellated.
+                if (meshInk) {
+                    for ((_, strokes) in loaded) for (stroke in strokes) {
+                        if (obsolete()) return@submit
+                        twins += stroke to meshTwinOf(stroke)
+                    }
+                    for ((_, _, rebuilt) in built) for (stroke in rebuilt) {
+                        if (obsolete()) return@submit
+                        twins += stroke to meshTwinOf(stroke)
+                    }
                 }
             } finally {
                 if (refineStarted != 0L) {
@@ -3207,6 +3224,7 @@ class InkCanvasView @JvmOverloads constructor(
                 }
                 refiningPages = emptyList()
                 refineFuture = null
+                dry.adoptTwins(twins)
                 dry.postInvalidateOnAnimation()
                 if (loaded.isNotEmpty()) scheduleRefine()
             }
@@ -4532,22 +4550,26 @@ class InkCanvasView @JvmOverloads constructor(
             return playbackAllowed
         }
 
+        /** Takes twins prepared off the UI thread; a null twin means draw the stroke as is. */
+        fun adoptTwins(prepared: List<Pair<Stroke, Stroke?>>) {
+            for ((stroke, twin) in prepared) {
+                if (twin != null) meshTwins[stroke] = twin else noMeshTwin += stroke
+            }
+        }
+
         /** The stroke as it should be drawn on screen; see [meshInk]. */
         private fun onScreen(stroke: Stroke): Stroke {
             if (!meshInk) return stroke
             meshTwins[stroke]?.let { return it }
             if (stroke in noMeshTwin) return stroke
-            val brush = screenBrush(stroke.brush)
-            if (brush === stroke.brush) {
-                noMeshTwin += stroke
-                return stroke
-            }
-            return stroke.copy(brush).also { meshTwins[stroke] = it }
+            val twin = meshTwinOf(stroke)
+            if (twin == null) noMeshTwin += stroke else meshTwins[stroke] = twin
+            return twin ?: stroke
         }
 
         private val strokeIndexes = IdentityHashMap<Page, StrokeGrid>()
         private val textLayouts = java.util.WeakHashMap<PageImage, TextRender>()
-        private val inkBitmaps = object : LruCache<String, CachedInk>(64 * 1024 * 1024) {
+        private val inkBitmaps = object : LruCache<String, CachedInk>(48 * 1024 * 1024) {
             override fun sizeOf(key: String, value: CachedInk): Int = value.bitmap.byteCount
         }
         private val inkBitmapPending = HashSet<String>()
@@ -4575,129 +4597,75 @@ class InkCanvasView @JvmOverloads constructor(
             strokeIndexes[page]?.remove(page, strokes)
         }
 
-        /**
-         * A bitmap of the dense page's ink around what is on screen, drawn at
-         * exactly the zoom in use and aligned to the screen's pixel grid, so it
-         * blits 1:1. The old cache rasterised the whole page at the next power
-         * of two above the zoom - 1240x1754 at 2x is already past its 8 MP
-         * budget, so on an A4 page it only ever ran at exactly 100%.
-         */
-        private fun cachedInk(page: Page, visibleCount: Int, pageLeft: Float, pageTop: Float): CachedInk? {
-            if (!page.loaded || visibleCount < 250 || page.strokes.size < 300 || movingLasso) return null
-            val scale = currentScale()
-            if (scale <= 0f) return null
-            val visLeft = (viewport[0] - pageLeft).coerceAtLeast(0f)
-            val visTop = (viewport[1] - pageTop).coerceAtLeast(0f)
-            val visRight = (viewport[2] - pageLeft).coerceAtMost(page.width)
-            val visBottom = (viewport[3] - pageTop).coerceAtMost(page.height)
-            if (visRight <= visLeft || visBottom <= visTop) return null
-            val key = page.id
-            val stored = inkBitmaps.get(key)?.takeIf {
+        private fun cachedInk(page: Page, visibleCount: Int): CachedInk? {
+            if (!page.loaded || visibleCount < 250 || page.strokes.size < 300 || movingLasso ||
+                currentScale() < 1f) return null
+            val scale = tessellationBucket(currentScale())
+            val pixels = page.width.toDouble() * page.height * scale * scale
+            if (pixels > 8_000_000.0 || pixels <= 0.0) return null
+            val key = "${page.id}:$scale"
+            val cached = inkBitmaps.get(key)?.takeIf {
                 it.meshRevision == page.meshRevision && it.prefix.matches(page.strokes, page.revision)
             }
-            val cached = stored?.takeIf {
-                abs(it.scale / scale - 1f) < 0.001f &&
-                    it.region.left <= visLeft + 0.01f && it.region.top <= visTop + 0.01f &&
-                    it.region.right >= visRight - 0.01f && it.region.bottom >= visBottom - 0.01f
-            }
             if (cached != null && cached.prefix.strokes.size == page.strokes.size) return cached
-            if (inkBitmapPending.contains(key)) return cached
             // Keep the previous bitmap underneath the appended vector strokes.
             // Rebuilding a dense page between every pair of pen contacts is
             // quadratic in the amount of writing and competes with wet ink.
-            val idle = activeStylusPointer == null && !viewportInteracting && !zooming && !flinging &&
-                SystemClock.uptimeMillis() - lastInkEditMillis >= INK_CACHE_IDLE_MS
-            if (!idle) {
-                // Nothing else is guaranteed to draw again once the hand stops.
-                this@InkCanvasView.removeCallbacks(inkCacheRunnable)
-                this@InkCanvasView.postDelayed(inkCacheRunnable, INK_CACHE_IDLE_MS)
-                return cached
-            }
-            if (pageHasHighlighter(page)) return cached
-
-            // Region: the visible part plus a pan margin, snapped so its corners
-            // land on whole screen pixels at the current translation.
-            documentToScreen.getValues(matrixValues)
-            val tx = matrixValues[Matrix.MTRANS_X]
-            val ty = matrixValues[Matrix.MTRANS_Y]
-            fun regionFor(margin: Float): RectF {
-                val mx = (visRight - visLeft) * margin
-                val my = (visBottom - visTop) * margin
-                val l = (visLeft - mx).coerceAtLeast(0f)
-                val t = (visTop - my).coerceAtLeast(0f)
-                val r = (visRight + mx).coerceAtMost(page.width)
-                val b = (visBottom + my).coerceAtMost(page.height)
-                val sl = kotlin.math.floor((l + pageLeft) * scale + tx)
-                val st = kotlin.math.floor((t + pageTop) * scale + ty)
-                val sr = kotlin.math.ceil((r + pageLeft) * scale + tx)
-                val sb = kotlin.math.ceil((b + pageTop) * scale + ty)
-                return RectF(
-                    (sl - tx) / scale - pageLeft, (st - ty) / scale - pageTop,
-                    (sr - tx) / scale - pageLeft, (sb - ty) / scale - pageTop,
-                )
-            }
-            fun pixels(r: RectF): Double = (r.width() * scale).toDouble() * (r.height() * scale)
-            val region = regionFor(INK_CACHE_MARGIN).let {
-                if (pixels(it) > INK_CACHE_MAX_PIXELS) regionFor(0f) else it
-            }
-            if (pixels(region) > INK_CACHE_MAX_PIXELS || pixels(region) <= 0.0) return cached
-            inkBitmapPending.add(key)
-
-            val snapshot = page.strokes.toList()
-            val revision = page.revision
-            val meshRevision = page.meshRevision
-            val generation = inkBitmapGeneration
-            val viewportGeneration = viewportRenderGeneration
-            val workGeneration = inkCacheWorkGeneration
-            runCatching { refiner.execute {
-                val bitmap = runCatching {
-                    if (viewportGeneration != viewportRenderGeneration ||
-                        workGeneration != inkCacheWorkGeneration) return@runCatching null
-                    val width = Math.round(region.width() * scale).coerceAtLeast(1)
-                    val height = Math.round(region.height() * scale).coerceAtLeast(1)
-                    Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { image ->
-                        val target = Canvas(image)
-                        val transform = Matrix().apply {
-                            setTranslate(-region.left, -region.top)
-                            postScale(scale, scale)
-                        }
-                        val strokeRenderer = CanvasStrokeRenderer.create(PencilTextureStore)
-                        for (stroke in snapshot) {
-                            if (Thread.currentThread().isInterrupted ||
-                                viewportGeneration != viewportRenderGeneration ||
-                                workGeneration != inkCacheWorkGeneration
-                            ) {
-                                image.recycle()
-                                return@runCatching null
+            if (activeStylusPointer == null && !viewportInteracting && !zooming && !flinging &&
+                SystemClock.uptimeMillis() - lastInkEditMillis >= INK_CACHE_IDLE_MS &&
+                !pageHasHighlighter(page) &&
+                inkBitmapPending.add(key)
+            ) {
+                val snapshot = page.strokes.toList()
+                val revision = page.revision
+                val meshRevision = page.meshRevision
+                val generation = inkBitmapGeneration
+                val viewportGeneration = viewportRenderGeneration
+                val workGeneration = inkCacheWorkGeneration
+                runCatching { refiner.execute {
+                    val bitmap = runCatching {
+                        if (viewportGeneration != viewportRenderGeneration ||
+                            workGeneration != inkCacheWorkGeneration) return@runCatching null
+                        val width = (page.width * scale).toInt().coerceAtLeast(1)
+                        val height = (page.height * scale).toInt().coerceAtLeast(1)
+                        Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { image ->
+                            val target = Canvas(image)
+                            val transform = Matrix().apply { setScale(scale, scale) }
+                            val strokeRenderer = CanvasStrokeRenderer.create(PencilTextureStore)
+                            for (stroke in snapshot) {
+                                if (Thread.currentThread().isInterrupted ||
+                                    viewportGeneration != viewportRenderGeneration ||
+                                    workGeneration != inkCacheWorkGeneration
+                                ) {
+                                    image.recycle()
+                                    return@runCatching null
+                                }
+                                strokeRenderer.draw(target, stroke, transform)
                             }
-                            val box = stroke.shape.computeBoundingBox() ?: continue
-                            if (box.xMax < region.left || box.xMin > region.right ||
-                                box.yMax < region.top || box.yMin > region.bottom) continue
-                            strokeRenderer.draw(target, stroke, transform)
                         }
+                    }.getOrNull()
+                    // Build prefix membership on the worker too; publishing a
+                    // dense page should not allocate its identity table on UI.
+                    val rendered = bitmap?.let {
+                        val prefix = InkRenderPrefix(snapshot)
+                        prefix.matches(snapshot, revision)
+                        CachedInk(it, prefix, meshRevision)
                     }
-                }.getOrNull()
-                // Build prefix membership on the worker too; publishing a
-                // dense page should not allocate its identity table on UI.
-                val rendered = bitmap?.let {
-                    val prefix = InkRenderPrefix(snapshot)
-                    prefix.matches(snapshot, revision)
-                    CachedInk(it, prefix, meshRevision, region, scale)
-                }
-                post {
-                    inkBitmapPending.remove(key)
-                    val visible = visiblePages().any { it === page }
-                    if (!disposed && viewportGeneration == viewportRenderGeneration && visible &&
-                        workGeneration == inkCacheWorkGeneration &&
-                        generation == inkBitmapGeneration && page.revision == revision &&
-                        page.meshRevision == meshRevision &&
-                        page.strokes.size == snapshot.size && rendered != null
-                    ) {
-                        inkBitmaps.put(key, rendered)
-                        invalidate()
-                    } else bitmap?.recycle()
-                }
-            } }.onFailure { inkBitmapPending.remove(key) }
+                    post {
+                        inkBitmapPending.remove(key)
+                        val visible = visiblePages().any { it === page }
+                        if (!disposed && viewportGeneration == viewportRenderGeneration && visible &&
+                            workGeneration == inkCacheWorkGeneration &&
+                            generation == inkBitmapGeneration && page.revision == revision &&
+                            page.meshRevision == meshRevision &&
+                            page.strokes.size == snapshot.size && rendered != null
+                        ) {
+                            inkBitmaps.put(key, rendered)
+                            invalidate()
+                        } else bitmap?.recycle()
+                    }
+                } }.onFailure { inkBitmapPending.remove(key) }
+            }
             return cached
         }
 
@@ -4753,15 +4721,12 @@ class InkCanvasView @JvmOverloads constructor(
                         it.brush.family == Tool.HIGHLIGHTER.brushFamily()
                     }
                     val inkBitmap = if (!hasHighlighter && !lifted && playbackStrokeCount == null)
-                        cachedInk(page, visibleStrokes.size, left, top) else null
+                        cachedInk(page, visibleStrokes.size) else null
                     // Put highlighter ink on the chosen side of handwriting.
                     // Keep the source list in its original order within each
                     // layer so overlapping strokes still look predictable.
                     if (inkBitmap != null) {
-                        // Same scale and pixel-aligned, so no filtering: a
-                        // bilinear blit at a sub-pixel pan offset would soften
-                        // every edge by half a pixel.
-                        scoped.drawBitmap(inkBitmap.bitmap, null, inkBitmap.region, null)
+                        scoped.drawBitmap(inkBitmap.bitmap, null, pageRect, bitmapPaint)
                         for (stroke in visibleStrokes) {
                             if (!inkBitmap.prefix.contains(stroke)) scope.drawStroke(onScreen(stroke))
                         }
@@ -5183,8 +5148,6 @@ class InkCanvasView @JvmOverloads constructor(
         const val PAGE_TOP_MARGIN_PX = 24f
         const val REFINE_DEBOUNCE_MS = 200L
         private const val INK_CACHE_IDLE_MS = 700L
-        private const val INK_CACHE_MARGIN = 0.15f
-        private const val INK_CACHE_MAX_PIXELS = 8_000_000.0
         const val ZOOM_REPORT_INTERVAL_NS = 33_000_000L
         const val REFINE_MARGIN_PX = 160f
         const val MAX_UNDO_EDITS = 1000
