@@ -1614,6 +1614,8 @@ private fun PenDialog(
     onStabilizer: (Int) -> Unit,
     highlighterAboveInk: Boolean,
     onHighlighterAboveInk: (Boolean) -> Unit,
+    meshInk: Boolean,
+    onMeshInk: (Boolean) -> Unit,
     autoShapes: Boolean,
     onAutoShapes: (Boolean) -> Unit,
     axisSnap: Boolean,
@@ -1723,6 +1725,19 @@ private fun PenDialog(
                             onCheckedChange = onHighlighterAboveInk)
                         Spacer(Modifier.width(10.dp))
                         Text(if (highlighterAboveInk) "필기 위에 표시" else "필기 아래에 표시")
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SkinSwitch(checked = meshInk, onCheckedChange = onMeshInk)
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text("메시 렌더링 (실험)", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "불투명한 펜·필압 펜을 Ink 셰이더로 그립니다. 끄면 이전 방식(경로 채우기)으로 돌아갑니다",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.outline,
+                        )
                     }
                 }
                 Spacer(Modifier.height(10.dp))
@@ -2702,6 +2717,7 @@ private fun NoteScreen(
     var deferDetail by remember { mutableStateOf(penStore.deferDetail) }
     var stabilizer by remember { mutableIntStateOf(penStore.stabilizer) }
     var highlighterAboveInk by remember { mutableStateOf(penStore.highlighterAboveInk) }
+    var meshInk by remember { mutableStateOf(penStore.meshInk) }
     var autoShapes by remember { mutableStateOf(penStore.autoShapes) }
     var axisSnap by remember { mutableStateOf(penStore.axisSnap) }
     var dottedPattern by remember { mutableIntStateOf(penStore.dottedPattern) }
@@ -3194,6 +3210,7 @@ private fun NoteScreen(
                     view.deferDetail = deferDetail
                     view.stabilizer = stabilizer
                     view.highlighterAboveInk = highlighterAboveInk
+                    view.meshInk = meshInk
                     view.autoShapeRecognitionEnabled = autoShapes
                     view.axisSnapEnabled = axisSnap
                     view.dottedPattern = dottedPattern
@@ -3461,6 +3478,8 @@ private fun NoteScreen(
                 onHighlighterAboveInk = {
                     highlighterAboveInk = it; penStore.highlighterAboveInk = it
                 },
+                meshInk = meshInk,
+                onMeshInk = { meshInk = it; penStore.meshInk = it },
                 autoShapes = autoShapes,
                 onAutoShapes = { autoShapes = it; penStore.autoShapes = it },
                 axisSnap = axisSnap,
@@ -3617,6 +3636,8 @@ private fun NoteScreen(
                 onHighlighterAboveInk = {
                     highlighterAboveInk = it; penStore.highlighterAboveInk = it
                 },
+                meshInk = meshInk,
+                onMeshInk = { meshInk = it; penStore.meshInk = it },
                 autoShapes = autoShapes,
                 onAutoShapes = { autoShapes = it; penStore.autoShapes = it },
                 axisSnap = axisSnap,
@@ -3756,6 +3777,7 @@ private fun NoteScreen(
                 deferDetail = deferDetail,
                 stabilizer = stabilizer,
                 highlighterAboveInk = highlighterAboveInk,
+                meshInk = meshInk,
                 autoShapes = autoShapes,
                 axisSnap = axisSnap,
                 dottedPattern = dottedPattern,
@@ -3985,6 +4007,7 @@ private fun ReferencePanel(
     deferDetail: Boolean,
     stabilizer: Int,
     highlighterAboveInk: Boolean,
+    meshInk: Boolean,
     autoShapes: Boolean,
     axisSnap: Boolean,
     dottedPattern: Int,
@@ -4339,6 +4362,7 @@ private fun ReferencePanel(
                             v.deferDetail = deferDetail
                             v.stabilizer = stabilizer
                             v.highlighterAboveInk = highlighterAboveInk
+                            v.meshInk = meshInk
                             v.autoShapeRecognitionEnabled = autoShapes
                             v.axisSnapEnabled = axisSnap
                             v.dottedPattern = dottedPattern

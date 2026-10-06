@@ -372,26 +372,45 @@ enum class Tool {
 
     companion object {
         @OptIn(ExperimentalInkCustomBrushApi::class)
-        private val pen by lazy {
-            val stock = StockBrushes.marker()
+        private fun roundTip(stock: BrushFamily): BrushFamily {
             val coat = stock.coats.first()
-            // A filled path uses the same outline rule as the PDF exporter and
-            // CanvasPathRenderer antialiases both wet and committed ink.
-            val rounded = stock.copy(coat = coat.copy(tip = coat.tip.copy(
+            return stock.copy(coat = coat.copy(tip = coat.tip.copy(
                 scaleX = 1f, scaleY = 1f, cornerRounding = 1f,
                 slantDegrees = 0f, pinch = 0f, rotationDegrees = 0f,
             )))
-            merged(rounded)
+        }
+
+        // The saved families. DISCARD makes CanvasStrokeRenderer fill the
+        // outline as an antialiased Path, the same rule the PDF exporter uses.
+        private val pen by lazy { merged(roundTip(StockBrushes.marker())) }
+        private val pressurePen by lazy { merged(roundTip(StockBrushes.pressurePen())) }
+
+        // Screen-only twins: same tip, so Stroke.copy keeps the mesh, but a
+        // self-overlap the mesh renderer accepts. Its shader antialiases in
+        // screen space; the Path fill above is left to the GPU path renderer.
+        // Overlap only shows through translucent ink, so opaque pens lose
+        // nothing. Never saved - see [storedFamilyOf].
+        @OptIn(ExperimentalInkCustomBrushApi::class)
+        private val penMesh by lazy {
+            withSelfOverlap(roundTip(StockBrushes.marker()), SelfOverlap.ANY)
         }
         @OptIn(ExperimentalInkCustomBrushApi::class)
-        private val pressurePen by lazy {
-            val stock = StockBrushes.pressurePen()
-            val coat = stock.coats.first()
-            val rounded = stock.copy(coat = coat.copy(tip = coat.tip.copy(
-                scaleX = 1f, scaleY = 1f, cornerRounding = 1f,
-                slantDegrees = 0f, pinch = 0f, rotationDegrees = 0f,
-            )))
-            merged(rounded)
+        private val pressurePenMesh by lazy {
+            withSelfOverlap(roundTip(StockBrushes.pressurePen()), SelfOverlap.ANY)
+        }
+
+        /** The mesh-rendered twin of a saved pen family, or null for any other family. */
+        fun meshFamilyOf(family: BrushFamily): BrushFamily? = when (family) {
+            pen -> penMesh
+            pressurePen -> pressurePenMesh
+            else -> null
+        }
+
+        /** Undo [meshFamilyOf], so notes on disk keep the families they always had. */
+        fun storedFamilyOf(family: BrushFamily): BrushFamily = when (family) {
+            penMesh -> pen
+            pressurePenMesh -> pressurePen
+            else -> family
         }
         @OptIn(ExperimentalInkCustomBrushApi::class)
         private val pencil by lazy {
@@ -464,11 +483,14 @@ enum class Tool {
          * hand crossed its own line, and tape shows every seam - the ink library
          * calls it self overlap, and DISCARD is the "merge" of the two options.
          */
+        private fun merged(family: BrushFamily): BrushFamily =
+            withSelfOverlap(family, SelfOverlap.DISCARD)
+
         @OptIn(ExperimentalInkCustomBrushApi::class)
-        private fun merged(family: BrushFamily): BrushFamily {
+        private fun withSelfOverlap(family: BrushFamily, overlap: SelfOverlap): BrushFamily {
             val coat = family.coats.firstOrNull() ?: return family
             val paints = coat.paintPreferences.map { paint ->
-                BrushPaint(paint.textureLayers, paint.colorFunctions, SelfOverlap.DISCARD)
+                BrushPaint(paint.textureLayers, paint.colorFunctions, overlap)
             }
             if (paints.isEmpty()) return family
             return family.copy(coat = coat.copy(paintPreferences = paints))
@@ -478,7 +500,7 @@ enum class Tool {
         fun ofBrushFamily(family: BrushFamily): Tool = when (family) {
             highlighter -> HIGHLIGHTER
             masking -> MASK
-            pressurePen -> PRESSURE_PEN
+            pressurePen, pressurePenMesh -> PRESSURE_PEN
             pencil -> PENCIL
             dotted -> DOTTED
             dashed -> DASHED
@@ -638,6 +660,24 @@ class InkCanvasView @JvmOverloads constructor(
             field = value
             dry.invalidate()
         }
+
+    /**
+     * Draw opaque pen and pressure-pen ink with Ink's mesh shader instead of a
+     * filled Path. Screen only: saved strokes keep their family either way.
+     */
+    var meshInk: Boolean = true
+        set(value) {
+            if (field == value) return
+            field = value
+            dry.invalidate()
+        }
+
+    /** The brush Ink should draw [brush] with on screen; see [meshInk]. */
+    private fun screenBrush(brush: Brush): Brush {
+        if (!meshInk || Color.alpha(brush.colorIntArgb) != 255) return brush
+        val family = Tool.meshFamilyOf(brush.family) ?: return brush
+        return brush.copy(family = family)
+    }
 
     /** Diameter of the eraser tip, in page units, like [strokeWidth]. */
     var eraserWidth: Float = 24f
@@ -1786,7 +1826,7 @@ class InkCanvasView @JvmOverloads constructor(
                     activeStrokeId = wet.startStroke(
                         event = event,
                         pointerId = pointerId,
-                        brush = currentBrush(),
+                        brush = screenBrush(currentBrush()),
                         // "World" here is the page, so the finished stroke comes
                         // back in page-local coordinates and stays with its page.
                         motionEventToWorldTransform = screenToPage(index),
@@ -3868,7 +3908,11 @@ class InkCanvasView @JvmOverloads constructor(
         val page = activePage
         if (page != null) {
             val group = nextEditGroup++
-            for (finishedStroke in finished.values) {
+            for (wetStroke in finished.values) {
+                // Back to the saved family; the tip is unchanged, so the mesh is reused.
+                val storedFamily = Tool.storedFamilyOf(wetStroke.brush.family)
+                val finishedStroke = if (storedFamily === wetStroke.brush.family) wetStroke
+                    else wetStroke.copy(wetStroke.brush.copy(family = storedFamily))
                 val finishedTool = Tool.ofBrushFamily(finishedStroke.brush.family)
                 val stroke = when {
                     finishedTool == Tool.PEN ->
@@ -3990,6 +4034,25 @@ class InkCanvasView @JvmOverloads constructor(
             style = Paint.Style.STROKE
             strokeWidth = 1.5f * resources.displayMetrics.density
             color = 0xCC2459B8.toInt()
+        }
+
+        // Twins share the stroke's inputs and mesh, so they cost a Brush and a
+        // Stroke wrapper each. Weak keys: a stroke that leaves the page goes.
+        private val meshTwins = java.util.WeakHashMap<Stroke, Stroke>()
+        private val noMeshTwin: MutableSet<Stroke> =
+            Collections.newSetFromMap(java.util.WeakHashMap())
+
+        /** The stroke as it should be drawn on screen; see [meshInk]. */
+        private fun onScreen(stroke: Stroke): Stroke {
+            if (!meshInk) return stroke
+            meshTwins[stroke]?.let { return it }
+            if (stroke in noMeshTwin) return stroke
+            val brush = screenBrush(stroke.brush)
+            if (brush === stroke.brush) {
+                noMeshTwin += stroke
+                return stroke
+            }
+            return stroke.copy(brush).also { meshTwins[stroke] = it }
         }
 
         private val strokeIndexes = IdentityHashMap<Page, StrokeGrid>()
@@ -4151,12 +4214,12 @@ class InkCanvasView @JvmOverloads constructor(
                     if (inkBitmap != null) {
                         scoped.drawBitmap(inkBitmap.bitmap, null, pageRect, bitmapPaint)
                         for (stroke in visibleStrokes) {
-                            if (!inkBitmap.prefix.contains(stroke)) scope.drawStroke(stroke)
+                            if (!inkBitmap.prefix.contains(stroke)) scope.drawStroke(onScreen(stroke))
                         }
                     } else if (!hasHighlighter) {
                         for (stroke in visibleStrokes) {
                             if (lifted && stroke in lassoStrokes) continue
-                            scope.drawStroke(stroke)
+                            scope.drawStroke(onScreen(stroke))
                         }
                     } else for (pass in 0..1) {
                         val highlightPass = if (pass == 0) !highlighterAboveInk else highlighterAboveInk
@@ -4165,14 +4228,14 @@ class InkCanvasView @JvmOverloads constructor(
                         for (stroke in visibleStrokes) {
                             if (lifted && stroke in lassoStrokes) continue
                             val highlight = stroke.brush.family == Tool.HIGHLIGHTER.brushFamily()
-                            if (highlight == highlightPass) scope.drawStroke(stroke)
+                            if (highlight == highlightPass) scope.drawStroke(onScreen(stroke))
                         }
                         if (layer >= 0) scoped.restoreToCount(layer)
                     }
                     if (lifted) {
                         scoped.save()
                         scoped.translate(lassoDx, lassoDy)
-                        for (stroke in lassoStrokes) scope.drawStroke(stroke)
+                        for (stroke in lassoStrokes) scope.drawStroke(onScreen(stroke))
                         scoped.restore()
                     }
                     if (i == lassoPage) drawLasso(scoped)
