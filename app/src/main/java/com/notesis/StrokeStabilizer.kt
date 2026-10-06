@@ -40,6 +40,8 @@ internal class AdaptiveStrokeStabilizer {
     private var lastTimeMillis = 0L
     private var lastDx = 0f
     private var lastDy = 0f
+    private var tangentX = 0f
+    private var tangentY = 0f
     private var samples = 0
     private var stableDirections = 0
 
@@ -52,6 +54,8 @@ internal class AdaptiveStrokeStabilizer {
         lastTimeMillis = timeMillis
         lastDx = 0f
         lastDy = 0f
+        tangentX = 0f
+        tangentY = 0f
         samples = 1
         stableDirections = 0
         predictionAllowed = false
@@ -79,8 +83,14 @@ internal class AdaptiveStrokeStabilizer {
         ) {
             ((dx * lastDx + dy * lastDy) / (distance * previousDistance)).coerceIn(-1f, 1f)
         } else 1f
+        // Compare with the established trajectory, rather than the previous
+        // noisy digitizer step. Alternating subpixel zigzags are not corners.
+        val tangentLength = hypot(tangentX, tangentY)
+        val trajectoryCosine = if (distance >= MIN_DIRECTION_DISTANCE && tangentLength >= MIN_DIRECTION_DISTANCE) {
+            ((dx * tangentX + dy * tangentY) / (distance * tangentLength)).coerceIn(-1f, 1f)
+        } else cosine
         corner = distance >= MIN_DIRECTION_DISTANCE &&
-            previousDistance >= MIN_DIRECTION_DISTANCE && cosine < CORNER_COSINE
+            previousDistance >= MIN_DIRECTION_DISTANCE && trajectoryCosine < CORNER_COSINE
         val startReverseSpike = samples < START_WINDOW_SAMPLES && cosine < START_REVERSE_COSINE &&
             maxOf(distance, previousDistance) > MIN_START_SPIKE_DISTANCE &&
             maxOf(distance, previousDistance) > minOf(distance, previousDistance) * 1.45f
@@ -106,8 +116,26 @@ internal class AdaptiveStrokeStabilizer {
             // sample quickly so it cannot leave a hook behind.
             if (startReverseSpike) alpha = maxOf(alpha, START_RETURN_ALPHA)
             if (finalSample) alpha = maxOf(alpha, FINAL_ALPHA)
-            x += (rawX - x) * alpha.coerceIn(MIN_ALPHA, 1f)
-            y += (rawY - y) * alpha.coerceIn(MIN_ALPHA, 1f)
+            val follow = alpha.coerceIn(MIN_ALPHA, 1f)
+            val errorX = rawX - x
+            val errorY = rawY - y
+            if (tangentLength >= MIN_DIRECTION_DISTANCE && !corner && !startReverseSpike && !finalSample) {
+                val tx = tangentX / tangentLength
+                val ty = tangentY / tangentLength
+                val along = errorX * tx + errorY * ty
+                val across = -errorX * ty + errorY * tx
+                // Fast movement releases longitudinal lag, while lateral
+                // sensor noise remains damped. Keep the user's curve, not its
+                // individual noisy segments, as the local direction.
+                val turning = ((0.96f - trajectoryCosine) / 0.35f).coerceIn(0f, 1f)
+                val lateral = minOf(follow, 1f - amount * 0.90f * (1f - turning))
+                    .coerceAtLeast(MIN_ALPHA)
+                x += along * tx * follow - across * ty * lateral
+                y += along * ty * follow + across * tx * lateral
+            } else {
+                x += errorX * follow
+                y += errorY * follow
+            }
         }
 
         stableDirections = when {
@@ -120,6 +148,12 @@ internal class AdaptiveStrokeStabilizer {
         predictionAllowed = samples >= MIN_PREDICTION_SAMPLES &&
             stableDirections >= MIN_STABLE_DIRECTIONS && !corner && !startReverseSpike
         if (distance >= MIN_DIRECTION_DISTANCE) {
+            if (tangentLength < MIN_DIRECTION_DISTANCE || corner || startReverseSpike) {
+                tangentX = dx; tangentY = dy
+            } else {
+                tangentX += (dx - tangentX) * 0.30f
+                tangentY += (dy - tangentY) * 0.30f
+            }
             lastDx = dx
             lastDy = dy
         }

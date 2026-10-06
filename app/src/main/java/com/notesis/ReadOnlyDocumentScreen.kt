@@ -23,11 +23,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.ChevronLeft
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.Description
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -161,7 +156,7 @@ internal fun ReadOnlyDocumentScreen(
                 TopAppBar(
                     navigationIcon = {
                         IconButton(onClick = onBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "문서 닫기")
+                            Icon(Reicons.ArrowBack, contentDescription = "문서 닫기")
                         }
                     },
                     title = {
@@ -191,12 +186,12 @@ internal fun ReadOnlyDocumentScreen(
                             IconButton(
                                 onClick = { sectionIndex = (sectionIndex - 1).coerceAtLeast(0) },
                                 enabled = sectionIndex > 0,
-                            ) { Icon(Icons.Default.ChevronLeft, contentDescription = "이전") }
+                            ) { Icon(Reicons.ChevronLeft, contentDescription = "이전") }
                             Text("${sectionIndex + 1} / ${document.sections.size}")
                             IconButton(
                                 onClick = { sectionIndex = (sectionIndex + 1).coerceAtMost(document.sections.lastIndex) },
                                 enabled = sectionIndex < document.sections.lastIndex,
-                            ) { Icon(Icons.Default.ChevronRight, contentDescription = "다음") }
+                            ) { Icon(Reicons.ChevronRight, contentDescription = "다음") }
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
@@ -239,7 +234,7 @@ private fun FailedDocument(message: String, modifier: Modifier = Modifier) {
     Box(modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(
-                Icons.Default.Description,
+                Reicons.Description,
                 contentDescription = null,
                 modifier = Modifier.size(52.dp),
                 tint = MaterialTheme.colorScheme.error,

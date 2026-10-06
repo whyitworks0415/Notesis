@@ -133,7 +133,7 @@ internal class SpotiGlassShader(context: Context) {
         shader.setFloatUniform("u_lightSpread", 0.5f)
         shader.setFloatUniform("u_imageOffset", 0f, 0f)
         shader.setFloatUniform("u_imageSize", resolution.width, resolution.height)
-        shader.setFloatUniform("u_honorBackdropAlpha", 0f)
+        shader.setFloatUniform("u_honorBackdropAlpha", 1f)
         shader.setFloatUniform("u_shapeAaPx", density)
         shader.setFloatUniform("u_shapeScale", frame.scale.x, frame.scale.y)
         shader.setFloatUniform("u_xformRow", 1f, 0f, 0f, 1f)

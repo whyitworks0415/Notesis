@@ -11,10 +11,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -128,10 +124,10 @@ private fun ChromeSample(skin: Skin, look: SkinSettings) {
                 SkinSurface(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(18.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Edit, contentDescription = null)
+                            Icon(Reicons.Edit, contentDescription = null)
                             Spacer(Modifier.width(10.dp))
                             Icon(
-                                Icons.Default.Search,
+                                Reicons.Search,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -159,7 +155,7 @@ private fun ChromeSample(skin: Skin, look: SkinSettings) {
                             Button(onClick = {}) { Text("적용") }
                             Spacer(Modifier.width(12.dp))
                             OutlinedButton(onClick = {}) {
-                                Icon(Icons.Default.Delete, contentDescription = null)
+                                Icon(Reicons.Delete, contentDescription = null)
                                 Text(" 삭제")
                             }
                         }

@@ -7,6 +7,35 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class StrokeStabilizerTest {
+    @Test fun `fast thin pen suppresses lateral jitter without trailing behind`() {
+        val filter = AdaptiveStrokeStabilizer()
+        filter.reset(20, 0f, 0f, 0)
+        var energy = 0.0
+        for (i in 1..120) {
+            filter.add(i * 6f, if (i % 2 == 0) 0.8f else -0.8f, i * 4L)
+            if (i > 10) energy += filter.y * filter.y
+            assertTrue("Fast pen lagged by ${i * 6f - filter.x}", i * 6f - filter.x < 2f)
+        }
+        assertTrue("Lateral jitter remained", sqrt(energy / 110) < 0.55)
+    }
+
+    @Test fun `small circle remains round and closed after smoothing`() {
+        val filter = AdaptiveStrokeStabilizer()
+        filter.reset(20, 24f, 0f, 0)
+        var error = 0.0
+        for (i in 1..120) {
+            val angle = i * Math.PI * 2 / 120
+            val noise = if (i % 2 == 0) 0.6 else -0.6
+            filter.add(((24 + noise) * kotlin.math.cos(angle)).toFloat(),
+                ((24 + noise) * kotlin.math.sin(angle)).toFloat(), i * 8L,
+                finalSample = i == 120)
+            val radius = kotlin.math.hypot(filter.x, filter.y)
+            error += (radius - 24) * (radius - 24)
+        }
+        assertTrue("Circle radius changed", sqrt(error / 120) < 0.6)
+        assertTrue("Circle endpoint drifted", kotlin.math.hypot(filter.x - 24f, filter.y) < 1f)
+    }
+
     private fun run(
         strength: Int,
         points: List<Pair<Float, Float>>,

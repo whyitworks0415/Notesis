@@ -9,6 +9,7 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.toggleable
@@ -19,14 +20,12 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import com.kyant.backdrop.drawBackdrop
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.isActive
@@ -59,7 +58,8 @@ private fun rememberControlMotion(target: Float, held: Boolean, travel: Float): 
     }
     // The ticker survives value updates: retarget the same springs, preserving
     // their velocities. Poll only while held or settling.
-    LaunchedEffect(motion, travel) {
+    val latestTravel by rememberUpdatedState(travel)
+    LaunchedEffect(motion) {
         var observed = -1
         var previous = 0L
         while (isActive) {
@@ -70,7 +70,7 @@ private fun rememberControlMotion(target: Float, held: Boolean, travel: Float): 
                 if (!motion.running) continue
             }
             val now = withFrameNanos { it }
-            if (previous != 0L) motion.tick(now / 1e9, (now - previous) / 1e9, travel)
+            if (previous != 0L) motion.tick(now / 1e9, (now - previous) / 1e9, latestTravel)
             revision++
             previous = now
         }
@@ -91,11 +91,10 @@ private fun ControlScene(
 ) {
     val look = LocalSkinSettings.current
     val scheme = MaterialTheme.colorScheme
-    val backdrop = LocalSpotiGlassHostBackdrop.current ?: LocalLiquidGlassBackdrop.current
     val response = look.spotiglassResponse
     val moving = motion.running && Build.VERSION.SDK_INT >= 33
     val white = Color.White.copy(alpha = if (enabled) 1f else 0.5f)
-    var scene = modifier.spotiGlassLens(moving) { size, density ->
+    val scene = modifier.spotiGlassLens(moving) { size, density ->
         val start = (if (slider) 29f else 31f) * density
         val travel = (size.width - start * 2).coerceAtLeast(0f)
         val visual = if (rtl) 1 - motion.position else motion.position
@@ -113,9 +112,7 @@ private fun ControlScene(
             dispersion = 0.002f * (look.dispersion / 0.35f),
         )
     }
-    if (moving) scene = if (backdrop != null) scene.drawBackdrop(backdrop,
-        shape = { RectangleShape }, effects = {}, highlight = null, shadow = null)
-    else scene.background(scheme.surface)
+    // Capture only the track, never a rectangular patch of the dialog/page.
     Canvas(scene) {
         val inset = (if (slider) 10f else 10.5f).dp.toPx()
         val start = (if (slider) 29f else 31f).dp.toPx()
@@ -166,7 +163,7 @@ internal fun SpotiGlassSlider(
     val travel = (width - 2 * inset).coerceAtLeast(1f)
     val motion = rememberControlMotion(fraction, held && enabled, travel / density.density)
     fun report(f: Float) { change(spotiSliderValue(f, valueRange, steps)) }
-    ControlScene(modifier.height(48.dp).onSizeChanged { width = it.width }
+    ControlScene(modifier.fillMaxWidth().height(48.dp).onSizeChanged { width = it.width }
         .semantics(mergeDescendants = true) {
             contentDescription = "$label ${valueFormatter(value)}"
             progressBarRangeInfo = ProgressBarRangeInfo(value, valueRange, steps)

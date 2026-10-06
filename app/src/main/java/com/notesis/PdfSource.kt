@@ -34,16 +34,39 @@ data class PdfSelection(
  * PdfRenderer allows exactly one open page at a time and is not thread safe, so
  * every call into it is serialised onto one background thread. Rendering costs
  * tens of milliseconds, which is a visible stutter if it happens while
- * scrolling - so a miss returns nothing, the page draws blank, and [onReady]
- * fires once the bitmap has landed in the cache.
+ * scrolling. A small independent page preview remains underneath sharp images
+ * and tiles, and [onReady] fires when a better image lands in the cache.
  */
+/** Where a link in a PDF leads. */
+sealed interface PdfLink {
+    data class Web(val url: String) : PdfLink
+
+    /** A zero-based page of the same PDF. */
+    data class Page(val pdfPageIndex: Int) : PdfLink
+}
+
 class PdfSource private constructor(
     private val descriptor: ParcelFileDescriptor,
     private val renderer: PdfRenderer,
+    private val pageLinks: Map<Int, List<PdfPageLink>>,
     cacheBytes: Int,
 ) : AutoCloseable {
 
     val pageCount: Int = renderer.pageCount
+
+    /** Internal destination under a finger, if this PDF declares one there. */
+    fun linkedPageAt(pageIndex: Int, x: Float, y: Float, tolerance: Float = 0f): Int? =
+        (indexedLinkAt(pageIndex, x, y, tolerance) as? PdfLink.Page)?.pdfPageIndex
+
+    /** Pre-indexed links do not wait for the PDF render worker or require Android 15. */
+    fun indexedLinkAt(pageIndex: Int, x: Float, y: Float, tolerance: Float = 0f): PdfLink? {
+        if (closed || pageIndex !in 0 until pageCount) return null
+        val link = pageLinks[pageIndex]
+            ?.asReversed()
+            ?.firstOrNull { it.contains(x, y, tolerance) }
+            ?: return null
+        return link.webUrl?.let { PdfLink.Web(it) } ?: PdfLink.Page(link.targetPageIndex)
+    }
 
     /** Set by the active canvas; null for exports, thumbnails, and normal use. */
     @Volatile var diagnostics: LatencyStats? = null
@@ -66,14 +89,19 @@ class PdfSource private constructor(
 
     @Volatile private var viewportGeneration = 0
     @Volatile private var wantedPages: Set<Int> = emptySet()
-    @Volatile private var wantedWidthBucket = 0
 
     @Volatile
     private var closed = false
 
-    // [cacheBytes] is one total budget. Half still fits one 2048px A4 page at
-    // the minimum budget; the other half keeps a screenful of sharp tiles.
-    private val cache = object : LruCache<Long, Bitmap>((cacheBytes / 2).coerceAtLeast(1)) {
+    // [cacheBytes] remains one total budget. Detail space fits a 2048px A4
+    // page at the minimum budget and keeps a screenful of sharp tiles.
+    // A separate low-resolution floor survives sharp page/tile cache churn.
+    private val previewBytes = (cacheBytes / 8).coerceAtLeast(1)
+    private val previewCache = object : LruCache<Int, Bitmap>(previewBytes) {
+        override fun sizeOf(key: Int, value: Bitmap): Int = value.byteCount
+    }
+    private val detailBytes = (cacheBytes - previewBytes).coerceAtLeast(2)
+    private val cache = object : LruCache<Long, Bitmap>((detailBytes / 2).coerceAtLeast(1)) {
         override fun sizeOf(key: Long, value: Bitmap) = value.byteCount
     }
 
@@ -86,7 +114,7 @@ class PdfSource private constructor(
 
     private val pendingTiles = mutableMapOf<TileKey, Int>()
 
-    private val tileCache = object : LruCache<TileKey, Bitmap>((cacheBytes - cacheBytes / 2).coerceAtLeast(1)) {
+    private val tileCache = object : LruCache<TileKey, Bitmap>((detailBytes - detailBytes / 2).coerceAtLeast(1)) {
         override fun sizeOf(key: TileKey, value: Bitmap) = value.byteCount
     }
 
@@ -103,12 +131,10 @@ class PdfSource private constructor(
         val ordered = pageIndices.filter { it in 0 until pageCount }.distinct()
         if (ordered.isEmpty()) return
         val wanted = ordered.toSet()
-        val widthBucket = bucketFor(widthPx)
         synchronized(stateLock) {
             if (closed) return
-            if (wanted != wantedPages || widthBucket != wantedWidthBucket) {
+            if (wanted != wantedPages) {
                 wantedPages = wanted
-                wantedWidthBucket = widthBucket
                 viewportGeneration++
                 // Work that has not opened PdfRenderer yet is disposable. A
                 // queue reset is what makes the stopped-at page genuinely jump
@@ -138,6 +164,11 @@ class PdfSource private constructor(
      */
     fun bitmap(index: Int, wantPx: Int, request: Boolean = true): Bitmap? {
         val width = bucketFor(wantPx)
+        if (closed || index !in 0 until pageCount) return null
+        val preview = previewCache.get(index)
+        if (preview == null) request(keyOf(index, PREVIEW_WIDTH)) {
+            renderWholePage(index, PREVIEW_WIDTH)
+        }
         val key = keyOf(index, width)
         cache.get(key)?.let { return it }
         // Reuse a sharper cached page when zooming out. Looking only for a
@@ -148,7 +179,7 @@ class PdfSource private constructor(
         finerThan(index, width)?.let { return it }
         val fallback = coarserThan(index, width)
         if (request) request(key) { renderWholePage(index, width) }
-        return fallback
+        return fallback ?: preview
     }
 
     /**
@@ -328,6 +359,28 @@ class PdfSource private constructor(
             }.getOrNull()
         }
 
+    /**
+     * The link under a page-local world point: a web address, or another page
+     * of the same PDF (a table of contents, a footnote, a "see page 12").
+     * Prefer the portable index, with native Android 15 links as a fallback.
+     */
+    fun linkAt(index: Int, worldX: Float, worldY: Float): PdfLink? {
+        indexedLinkAt(index, worldX, worldY)?.let { return it }
+        if (Build.VERSION.SDK_INT < 35) return null
+        if (closed || index !in 0 until pageCount) return null
+        return synchronized(renderLock) { runCatching {
+            renderer.openPage(index).use { page ->
+                val x = worldX / POINTS_TO_WORLD
+                val y = worldY / POINTS_TO_WORLD
+                page.linkContents.firstOrNull { link -> link.bounds.any { it.contains(x, y) } }
+                    ?.let { return PdfLink.Web(it.uri.toString()) }
+                page.gotoLinks.firstOrNull { link -> link.bounds.any { it.contains(x, y) } }
+                    ?.let { return PdfLink.Page(it.destination.pageNumber) }
+                null
+            }
+        }.getOrNull() }
+    }
+
     private fun toPagePoint(world: RectF) = Point(
         (world.left / POINTS_TO_WORLD).toInt(),
         (world.top / POINTS_TO_WORLD).toInt(),
@@ -365,13 +418,13 @@ class PdfSource private constructor(
         synchronized(stateLock) {
             if (closed) return
             generation = viewportGeneration
-            val page = (key shr 32).toInt()
             if (!shouldEnqueueRender(pending[key], generation)) return
             pending[key] = generation
         }
         val accepted = runCatching { worker.execute {
             val page = (key shr 32).toInt()
-            val bitmap = if (cache.get(key) == null && isRelevant(page, generation)) {
+            val alreadyCached = if (key.toInt() == PREVIEW_WIDTH) previewCache.get(page) != null else cache.get(key) != null
+            val bitmap = if (!alreadyCached && isRelevant(page, generation)) {
                 runCatching { render() }.getOrNull()
             } else null
             synchronized(stateLock) {
@@ -379,8 +432,12 @@ class PdfSource private constructor(
             }
             if (bitmap != null) {
                 val keep = synchronized(stateLock) {
-                    if (shouldPublishRender(generation, viewportGeneration, closed)) {
-                        if (key >= 0) cache.put(key, bitmap)
+                    // Whole-page images are immutable and useful as fallback
+                    // even if zoom/page priority changed during native render.
+                    val page = (key shr 32).toInt()
+                    val preview = key.toInt() == PREVIEW_WIDTH
+                    if (!closed && (preview || generation == viewportGeneration || page in wantedPages)) {
+                        if (preview) previewCache.put(page, bitmap) else cache.put(key, bitmap)
                         true
                     } else false
                 }
@@ -428,9 +485,11 @@ class PdfSource private constructor(
         if (closed) return null
         runCatching {
             renderer.openPage(index).use { page ->
-                val height = (widthPx * page.height.toFloat() / page.width)
+                val renderWidth = if (widthPx == PREVIEW_WIDTH) minOf(widthPx,
+                    (PREVIEW_MAX_HEIGHT * page.width.toFloat() / page.height).toInt().coerceAtLeast(1)) else widthPx
+                val height = (renderWidth * page.height.toFloat() / page.width)
                     .toInt().coerceAtLeast(1)
-                newBitmap(widthPx, height).also {
+                newBitmap(renderWidth, height).also {
                     measuredRender(it.width.toLong() * it.height) {
                         page.render(it, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                     }
@@ -506,6 +565,7 @@ class PdfSource private constructor(
         // single process-wide closer once the current render returns.
         worker.shutdownNow()
         cache.evictAll()
+        previewCache.evictAll()
         tileCache.evictAll()
         closeWorker.execute {
             synchronized(renderLock) {
@@ -519,6 +579,8 @@ class PdfSource private constructor(
         /** PDF points are 1/72"; pages are laid out at 150dpi like a blank page. */
         const val POINTS_TO_WORLD = 150f / 72f
 
+        private const val PREVIEW_WIDTH = 384
+        private const val PREVIEW_MAX_HEIGHT = 1024
         private const val MIN_PAGE_WIDTH = 1024
         /** 2048 x ~2900 x 4B is about 24MB - past this, crops are cheaper. */
         private const val MAX_PAGE_WIDTH = 2048
@@ -555,9 +617,10 @@ class PdfSource private constructor(
         fun open(file: File, cacheBytes: Int = MIN_CACHE_BYTES): PdfSource? {
             if (!file.isFile) return null
             return runCatching {
+                val links = loadPdfPageLinks(file)
                 val descriptor =
                     ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
-                PdfSource(descriptor, PdfRenderer(descriptor), cacheBytes)
+                PdfSource(descriptor, PdfRenderer(descriptor), links, cacheBytes)
             }.getOrNull()
         }
     }

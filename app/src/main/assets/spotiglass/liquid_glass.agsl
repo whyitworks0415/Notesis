@@ -477,6 +477,9 @@ float4 finalSample(
     float coverage = shapeMask * texA;
     float4 base = float4(refrColor * shapeMask, coverage);
     base.rgb = applyLensTint(base.rgb, shapeMask, u_lensColor, u_borderAlpha);
+    // Tint contributes coverage even when the captured control is transparent.
+    float tintA = clamp(u_lensColor.a * u_borderAlpha, 0.0, 1.0);
+    base.a = coverage * (1.0 - tintA) + shapeMask * tintA;
     return base;
 }
 float computeShapeMask(float shapeDistPx) {

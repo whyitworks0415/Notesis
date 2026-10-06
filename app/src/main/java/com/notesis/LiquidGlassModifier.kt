@@ -28,6 +28,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
@@ -59,8 +60,15 @@ internal val LocalLiquidGlassEffectsAllowed = compositionLocalOf<Boolean?> { nul
 fun rememberLiquidGlassBackdrop(): LayerBackdrop = rememberLayerBackdrop()
 
 /** 컨트롤이 굴절시킬 배경을 기록합니다. 컨트롤 자체에는 붙이지 않습니다. */
-fun Modifier.captureLiquidGlassBackdrop(backdrop: LayerBackdrop): Modifier =
-    layerBackdrop(backdrop)
+fun Modifier.captureLiquidGlassBackdrop(backdrop: LayerBackdrop, paused: (() -> Boolean)? = null): Modifier {
+    if (paused == null) return layerBackdrop(backdrop)
+    // The page's screen origin is supplied by SpotiPopupBackdrop. Avoid a
+    // second page recording and full-screen texture upload during input.
+    return this.drawWithContent {
+        drawContent()
+        if (!paused()) backdrop.graphicsLayer.record { this@drawWithContent.drawContent() }
+    }
+}
 
 /** Backdrop을 하위 Liquid Glass 컨트롤에 전달합니다. */
 @Composable

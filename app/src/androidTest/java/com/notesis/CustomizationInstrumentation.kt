@@ -25,12 +25,26 @@ import kotlin.math.sin
 
 /** Native ink and Android text rendering cannot be exercised by plain JVM tests. */
 class CustomizationInstrumentation : Instrumentation() {
-    override fun onCreate(arguments: Bundle?) { super.onCreate(arguments); start() }
+    private var renderOnly = false
+    private var settingsOnly = false
+    private var integrationOnly = false
+    private var benchmarkStrokes = 24
+    override fun onCreate(arguments: Bundle?) {
+        renderOnly = arguments?.getString("suite") == "render"
+        settingsOnly = arguments?.getString("suite") == "settings"
+        integrationOnly = arguments?.getString("suite") == "integration"
+        benchmarkStrokes = arguments?.getString("strokes")?.toIntOrNull()?.coerceIn(24, 1200) ?: 24
+        super.onCreate(arguments); start()
+    }
 
     private fun onMain(block: () -> Unit) {
         var failure: Throwable? = null
         runOnMainSync { try { block() } catch (error: Throwable) { failure = error } }
         failure?.let { throw it }
+    }
+
+    private fun progress(label: String) {
+        sendStatus(0, Bundle().apply { putString("stream", "CHECK $label\n") })
     }
 
     @androidx.annotation.RequiresApi(33)
@@ -105,6 +119,13 @@ class CustomizationInstrumentation : Instrumentation() {
         check(restControl.getPixel(200, 80) == Color.WHITE) { "Rest control did not restore its solid white cover" }
         check(heldControl.getPixel(200, 80) == source.getPixel(200, 80)) { "Held control retained the opaque rest cover" }
         check(heldControl.getPixel(10, 10) == source.getPixel(10, 10))
+        // A transparent control capture must not turn into an opaque rectangle.
+        source.eraseColor(Color.TRANSPARENT)
+        val transparent = render(frame.copy(fill = androidx.compose.ui.graphics.Color.Transparent))
+        check(Color.alpha(transparent.getPixel(200, 80)) == 0) { "Glass punched an opaque hole through a transparent capture" }
+        check(Color.alpha(transparent.getPixel(10, 10)) == 0)
+        val solidThumb = render(frame.copy(fill = androidx.compose.ui.graphics.Color.White, progress = 0f, presence = 0f))
+        check(solidThumb.getPixel(200, 80) == Color.WHITE) { "Rest thumb lost tint coverage" }
         File(targetContext.cacheDir, "spotiglass-shader-test.png").outputStream().use {
             stretched.compress(Bitmap.CompressFormat.PNG, 100, it)
         }
@@ -116,10 +137,28 @@ class CustomizationInstrumentation : Instrumentation() {
     override fun onStart() {
         val output = Bundle()
         try {
+            if (settingsOnly) {
+                checkToolSettingsUi()
+                output.putString("stream", "PASS settings slider, fluorescent palette opacity and eraser controls\n")
+                finish(Activity.RESULT_OK, output)
+                return
+            }
+            if (renderOnly) {
+                checkRenderingUi(benchmarkStrokes)
+                output.putString("stream", "PASS attached rendering and sustained synthetic stylus benchmark\n")
+                finish(Activity.RESULT_OK, output)
+                return
+            }
             val isolated = object : ContextWrapper(targetContext) {
                 override fun getFilesDir(): File = File(targetContext.cacheDir, "customization-test").apply { mkdirs() }
                 override fun getSharedPreferences(name: String, mode: Int) =
                     super.getSharedPreferences("customization-test-$name", mode)
+            }
+            if (integrationOnly) {
+                checkCloudIntegration(NoteStore(isolated), isolated)
+                output.putString("stream", "PASS cloud integration: editing, v2 reload, library, study, recording and portable PDF links\n")
+                finish(Activity.RESULT_OK, output)
+                return
             }
             isolated.getSharedPreferences("pens", Context.MODE_PRIVATE).edit().clear().commit()
             val pens = PenStore(isolated)
@@ -143,7 +182,15 @@ class CustomizationInstrumentation : Instrumentation() {
             check(SkinSettings.fromJson("{\"spotiglassToolbarOpacity\":-1}").spotiglassToolbarOpacity == 0f)
             check(SkinSettings.fromJson("{\"spotiglassClarity\":2,\"spotiglassResponse\":-1}")
                 .let { it.spotiglassClarity == 1f && it.spotiglassResponse == 0f })
+            progress("glass shader")
             if (android.os.Build.VERSION.SDK_INT >= 33) checkSpotiGlassShader()
+            progress("settings UI")
+            checkToolSettingsUi()
+            progress("attached ink rendering")
+            checkRenderingUi()
+            progress("icon gallery")
+            checkReiconUi()
+            progress("text and PDF roundtrip")
             val content = TextBoxContent("한글 텍스트\n수식 x² + y² = 1", 32f, Color.BLUE)
             val bitmap = renderTextBox(content)
             check(bitmap.width > 20 && bitmap.height > 20)
@@ -186,10 +233,17 @@ class CustomizationInstrumentation : Instrumentation() {
                 check(preview != null && preview.width > 0)
                 preview.recycle()
             } ?: error("PDF roundtrip")
+            progress("native ink and storage regressions")
             verifyIntermittentContactSpurs()
             verifyStationaryPenStarts()
             verifyPenAntialiasing()
+            verifyToolIdentity(store, isolated)
+            verifySmoothPenRendering()
+            verifyScaledInkCache()
+            verifyPdfFallback()
             verifyVectorStrokeOverlap(store, isolated)
+            progress("cloud integration")
+            checkCloudIntegration(store, isolated)
             store.delete(note.id)
             bitmap.recycle()
             changedBitmap.recycle()
@@ -272,6 +326,140 @@ class CustomizationInstrumentation : Instrumentation() {
             check(point.x == 100.25f && point.elapsedTimeMillis == stationaryCount * 2L)
             check(withoutStationaryStart(clean) === clean)
         }
+    }
+
+    private fun verifySmoothPenRendering() {
+        val bitmap = Bitmap.createBitmap(1000, 550, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.WHITE)
+        val renderer = CanvasStrokeRenderer.create(PencilTextureStore)
+        val label = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.DKGRAY; textSize = 22f
+        }
+        for ((row, strength) in listOf(0, 20).withIndex()) {
+            canvas.drawText(if (strength == 0) "Raw input" else "Direction-aware smoothing 20%", 24f, 28f + row * 260f, label)
+            val filter = AdaptiveStrokeStabilizer()
+            val inputs = MutableStrokeInputBatch()
+            for (i in 0..360) {
+                val angle = i * Math.PI / 36.0
+                val jitter = if (i % 2 == 0) 0.7f else -0.7f
+                val x = 35f + i * 0.9f + 21f * kotlin.math.cos(angle).toFloat()
+                val y = 62f + 32f * kotlin.math.sin(angle).toFloat() + jitter
+                if (i == 0) filter.reset(strength, x, y, 0)
+                else filter.add(x, y, i * 4L, finalSample = i == 360)
+                inputs.add(InputToolType.STYLUS, filter.x, filter.y, i * 4L)
+            }
+            val brush = Brush.createWithColorIntArgb(Tool.PEN.brushFamily(), Color.BLACK, 0.7f, 0.01f)
+            val stroke = Stroke(brush, inputs.toImmutable())
+            check(stroke.inputs.size == 361) { "Smoothing lost loop input samples" }
+            val transform = Matrix().apply { setScale(2.4f, 2.4f); postTranslate(20f, 38f + row * 260f) }
+            val saved = canvas.save()
+            canvas.concat(transform)
+            renderer.draw(canvas, stroke, transform)
+            canvas.restoreToCount(saved)
+            var inkPixels = 0
+            for (y in 100 + row * 260 until 255 + row * 260) for (x in 100 until 900) {
+                if (Color.red(bitmap.getPixel(x, y)) < 220) inkPixels++
+            }
+            check(inkPixels > 1000) { "Thin pen comparison row $row is blank" }
+        }
+        File(targetContext.cacheDir, "smooth-pen-comparison.png").outputStream().use {
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
+        }
+        bitmap.recycle()
+    }
+
+    private fun verifyScaledInkCache() {
+        val inputs = MutableStrokeInputBatch().apply {
+            add(InputToolType.STYLUS, 15.4f, 20.6f, 0L)
+            add(InputToolType.STYLUS, 105.3f, 94.7f, 24L)
+        }
+        val stroke = Stroke(Brush.createWithColorIntArgb(Tool.PEN.brushFamily(), Color.BLACK,
+            0.7f, 0.01f), inputs.toImmutable())
+        val bitmap = rasterizeInk(256, 256, 2f, listOf(stroke)) ?: error("ink cache")
+        try {
+            var maxX = 0
+            var partial = 0
+            for (y in 0 until bitmap.height) for (x in 0 until bitmap.width) {
+                val alpha = Color.alpha(bitmap.getPixel(x, y))
+                if (alpha > 0) maxX = maxOf(maxX, x)
+                if (alpha in 1..254) partial++
+            }
+            check(maxX in 209..213) { "Raster cache did not apply page scale: $maxX" }
+            check(partial > 150) { "Thin cached pen lost edge coverage: $partial" }
+            File(targetContext.cacheDir, "scaled-ink-cache.png").outputStream().use {
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
+            }
+        } finally { bitmap.recycle() }
+        check(rasterizeInk(256, 256, 2f, listOf(stroke)) { true } == null)
+    }
+
+    private fun verifyToolIdentity(store: NoteStore, context: Context) {
+        for (tool in Tool.entries.filter { it != Tool.ERASER }) {
+            check(Tool.ofBrushFamily(tool.brushFamily()) == tool) { "Brush identity collided for $tool" }
+        }
+        check(Tool.PEN.brushFamily() != Tool.HIGHLIGHTER.brushFamily())
+        val note = store.create("브러시 식별 회귀 검사")
+        try {
+            val document = store.load(note.id)
+            val page = document.pages.single()
+            page.loaded = true; page.dirty = true
+            for ((index, tool) in listOf(Tool.PEN, Tool.HIGHLIGHTER, Tool.MASK).withIndex()) {
+                val input = MutableStrokeInputBatch().apply {
+                    add(InputToolType.STYLUS, 100f, 100f + index * 30f, 0L)
+                    add(InputToolType.STYLUS, 400f, 100f + index * 30f, 20L)
+                }
+                val color = if (tool == Tool.HIGHLIGHTER) 0x66FFEB3B else Color.RED
+                page.strokes += Stroke(Brush.createWithColorIntArgb(tool.brushFamily(), color, 5f, 0.02f), input.toImmutable())
+            }
+            store.save(note.id, note.title, document)
+            val restored = store.load(note.id)
+            val restoredStrokes = store.loadPage(note.id, restored.pages.single(), 0.02f)
+            check(restoredStrokes.map { Tool.ofBrushFamily(it.brush.family) } ==
+                listOf(Tool.PEN, Tool.HIGHLIGHTER, Tool.MASK)) { "Reload lost drawing tool identity" }
+            val strokeFile = File(context.filesDir, "notes/${note.id}/pages/${page.id}.bin")
+            java.io.RandomAccessFile(strokeFile, "rw").use {
+                it.seek(4); it.writeInt(1)
+                it.seek(NoteStore.HEADER_BYTES); it.writeInt(Tool.HIGHLIGHTER.ordinal)
+            }
+            val legacy = store.loadPage(note.id, restored.pages.single(), 0.02f)
+            check(Tool.ofBrushFamily(legacy.first().brush.family) == Tool.PEN) { "Legacy opaque pen remained a highlight" }
+            check(Tool.ofBrushFamily(legacy[1].brush.family) == Tool.HIGHLIGHTER)
+        } finally { store.delete(note.id) }
+    }
+
+    private fun verifyPdfFallback() {
+        val file = File(targetContext.cacheDir, "pdf-fallback-regression.pdf")
+        val document = android.graphics.pdf.PdfDocument()
+        try {
+            repeat(3) { index ->
+                val page = document.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(595, 842, index + 1).create())
+                page.canvas.drawColor(listOf(Color.RED, Color.GREEN, Color.BLUE)[index])
+                document.finishPage(page)
+            }
+            file.outputStream().use { document.writeTo(it) }
+        } finally { document.close() }
+        PdfSource.open(file)?.use { pdf ->
+            fun awaitSharp(index: Int) {
+                val deadline = android.os.SystemClock.uptimeMillis() + 15_000
+                while (pdf.bitmap(index, 2048, request = false)?.width != 2048) {
+                    check(android.os.SystemClock.uptimeMillis() < deadline) { "PDF render timeout page $index" }
+                    Thread.sleep(20)
+                }
+            }
+            pdf.prioritizePages(listOf(0), 2048)
+            awaitSharp(0)
+            // Rapid bucket changes must not cancel an immutable page render.
+            repeat(20) { pdf.prioritizePages(listOf(0), if (it % 2 == 0) 1024 else 2048) }
+            for (index in 1..2) { pdf.prioritizePages(listOf(index), 2048); awaitSharp(index) }
+            val fallback = pdf.bitmap(0, 2048, request = false) ?: error("Evicted page flashed white")
+            check(fallback.width < 1024) { "Fixture did not evict the sharp page" }
+            for (width in listOf(1024, 2048, 4096, 1024)) {
+                val image = pdf.bitmap(0, width, request = false) ?: error("Pinch lost PDF fallback")
+                val pixel = image.getPixel(image.width / 2, image.height / 2)
+                check(Color.red(pixel) > 240 && Color.green(pixel) < 15) { "PDF fallback became blank" }
+            }
+        } ?: error("PDF fallback fixture")
     }
 
     @OptIn(ExperimentalInkCustomBrushApi::class)

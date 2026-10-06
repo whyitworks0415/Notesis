@@ -125,6 +125,7 @@ fun LiquidGlassSlider(
 
     Box(
         modifier
+            .fillMaxWidth()
             .height(44.dp)
             .onSizeChanged { trackWidth = it.width }
             .semantics(mergeDescendants = true) {

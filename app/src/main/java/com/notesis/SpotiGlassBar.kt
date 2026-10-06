@@ -58,7 +58,7 @@ internal fun spotiGlassPosition(x: Float, width: Float, count: Int, rtl: Boolean
 }
 
 /** MornyeTabBar port: frosted capsule, flat resting pill, raised travelling
- * lens. The upstream shader refracts the capsule AND the colored icon shell.
+ * lens. The capsule and icon shells share one optical capture.
  * MIT source and licenses: assets/spotiglass/upstream.
  */
 @Composable
@@ -103,7 +103,8 @@ fun SpotiGlassBar(
         val paddingPx = with(density) { padding.toPx() }
         // Retargeting a drag never cancels/restarts the frame clock. Frame state
         // is read in drawing only, so icons and touch targets keep their layout.
-        LaunchedEffect(motion, cell.value) {
+        val latestCell by rememberUpdatedState(cell.value)
+        LaunchedEffect(motion) {
             var observed = -1
             var last = 0L
             while (isActive) {
@@ -114,7 +115,7 @@ fun SpotiGlassBar(
                     if (!motion.running) continue
                 }
                 val now = withFrameNanos { it }
-                if (last != 0L) motion.tick(now / 1e9, (now - last) / 1e9, cell.value)
+                if (last != 0L) motion.tick(now / 1e9, (now - last) / 1e9, latestCell)
                 frameRevision++
                 last = now
             }
@@ -161,7 +162,7 @@ fun SpotiGlassBar(
                 .spotiGlassSurface(SpotiGlassShape(look.spotiglassCorner.dp), look, navigation = true))
         }
         // The same frosted capsule remains in the source at rest and on press.
-        // Refract the bar and its icons together; never punch through to the page
+        // Refract the capsule and both icon shells in the same optical scene.
         // or swap between two backdrop surfaces during animation.
         val scene = Modifier.fillMaxSize().spotiGlassLens(lensAllowed, active = { moving() }) { _, _ -> lensFrame() }
         Box(scene) {

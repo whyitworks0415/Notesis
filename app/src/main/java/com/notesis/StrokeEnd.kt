@@ -95,6 +95,11 @@ internal fun withoutContactSpurs(stroke: Stroke): Stroke {
     return Stroke(stroke.brush, clean)
 }
 
+internal const val STATIONARY_START_MS = 100L
+
+/** Movement, in page units, that counts as the tip actually leaving the contact point. */
+internal fun stationaryStartThreshold(width: Float): Float = (width * 0.15f).coerceIn(0.04f, 0.3f)
+
 /**
  * A fixed-width pen can receive dozens of nearly stationary digitizer samples
  * before the tip actually moves. Their tiny reversals make Ink's start outline
@@ -107,11 +112,11 @@ internal fun withoutStationaryStart(stroke: Stroke): Stroke {
     val first = StrokeInput()
     val sample = StrokeInput()
     inputs.populate(0, first)
-    val threshold = (stroke.brush.size * 0.15f).coerceIn(0.04f, 0.3f)
+    val threshold = stationaryStartThreshold(stroke.brush.size)
     var firstMovement = -1
     for (index in 1 until inputs.size) {
         inputs.populate(index, sample)
-        if (sample.elapsedTimeMillis - first.elapsedTimeMillis > 100L) break
+        if (sample.elapsedTimeMillis - first.elapsedTimeMillis > STATIONARY_START_MS) break
         if (hypot(sample.x - first.x, sample.y - first.y) >= threshold) {
             firstMovement = index
             break

@@ -356,6 +356,10 @@ data class NoteMeta(
      *  start and where they go back to if their folder is emptied out. */
     val folder: String = "",
     val kind: NoteKind = NoteKind.INK,
+    /** Pinned to the front of the list. */
+    val favorite: Boolean = false,
+    /** When it went into the trash, or 0 for a note that is not in it. */
+    val trashedAt: Long = 0L,
 )
 
 /**
@@ -470,11 +474,50 @@ class NoteStore(context: Context) {
         }
     }
 
-    fun list(): List<NoteMeta> =
-        root.listFiles { f -> f.isDirectory }
+    fun list(): List<NoteMeta> {
+        purgeTrashOnce()
+        return root.listFiles { f -> f.isDirectory && !File(f, TRASHED).isFile }
             ?.mapNotNull { readMeta(it) }
             ?.sortedByDescending { it.modified }
             ?: emptyList()
+    }
+
+    // ---- trash and favourites ------------------------------------------------
+    // Kept as marker files beside meta.json rather than in it: every save
+    // rewrites meta.json from the document and would drop keys it does not know.
+
+    /** Deleting goes here first; [TRASH_DAYS] later it is gone for good. */
+    fun moveToTrash(id: String) {
+        runCatching { File(root, "$id/$TRASHED").writeText(System.currentTimeMillis().toString()) }
+    }
+
+    fun restoreFromTrash(id: String) {
+        File(root, "$id/$TRASHED").delete()
+    }
+
+    fun trashed(): List<NoteMeta> =
+        root.listFiles { f -> f.isDirectory && File(f, TRASHED).isFile }
+            ?.mapNotNull { readMeta(it) }
+            ?.sortedByDescending { it.trashedAt }
+            ?: emptyList()
+
+    fun emptyTrash() {
+        trashed().forEach { delete(it.id) }
+    }
+
+    fun setFavorite(id: String, favorite: Boolean) {
+        val marker = File(root, "$id/$FAVORITE")
+        if (favorite) runCatching { marker.writeText("1") } else marker.delete()
+    }
+
+    @Volatile private var trashPurged = false
+
+    private fun purgeTrashOnce() {
+        if (trashPurged) return
+        trashPurged = true
+        val cutoff = System.currentTimeMillis() - TRASH_DAYS * 24L * 60L * 60L * 1000L
+        trashed().filter { it.trashedAt in 1 until cutoff }.forEach { delete(it.id) }
+    }
 
     fun create(
         title: String, background: PageBackground = PageBackground.BLANK,
@@ -661,15 +704,56 @@ class NoteStore(context: Context) {
      * Notes whose title, extracted PDF text, or recognised handwriting contains
      * [query].
      */
-    fun search(query: String): List<NoteMeta> {
+    fun search(query: String): List<NoteMeta> = searchWithPages(query).map { it.first }
+
+    private val searchIndex by lazy { SearchIndex(appContext) }
+
+    /**
+     * Notes matching [query], each with the pages its text was found on, in
+     * page order. Page text comes from [SearchIndex], which only rereads files
+     * that changed since the last search.
+     */
+    fun searchWithPages(query: String): List<Pair<NoteMeta, List<PageHit>>> {
         val needle = query.trim()
-        if (needle.isEmpty()) return list()
-        return list().filter { meta ->
-            if (meta.kind == NoteKind.MARKDOWN) return@filter meta.title.contains(needle, true) ||
-                runCatching { loadMarkdown(meta.id).contains(needle, true) }.getOrDefault(false)
+        if (needle.isEmpty()) return list().map { it to emptyList() }
+        val notes = list()
+        for (meta in notes) {
+            if (meta.kind == NoteKind.MARKDOWN) continue
             ensureTextIndex(meta.id)
-            meta.title.contains(needle, ignoreCase = true) || textContains(meta.id, needle)
+            runCatching { searchIndex.sync(meta.id, File(root, "${meta.id}/pages")) }
         }
+        val found = runCatching { searchIndex.find(needle) }.getOrDefault(emptyMap())
+        return notes.mapNotNull { meta ->
+            if (meta.kind == NoteKind.MARKDOWN) {
+                val match = meta.title.contains(needle, true) ||
+                    runCatching { loadMarkdown(meta.id).contains(needle, true) }.getOrDefault(false)
+                return@mapNotNull if (match) meta to emptyList() else null
+            }
+            val files = found[meta.id].orEmpty()
+            if (files.isEmpty() && !meta.title.contains(needle, ignoreCase = true)) return@mapNotNull null
+            val order = pageOrder(meta.id)
+            val hits = files
+                .map { (file, snippet) ->
+                    val pageId = SearchIndex.pageIdOf(file)
+                    PageHit(pageId, order[pageId] ?: -1, snippet)
+                }
+                .filter { it.pageIndex >= 0 }
+                .distinctBy { it.pageId }
+                .sortedBy { it.pageIndex }
+            meta to hits
+        }
+    }
+
+    /** Page id to position, read from meta.json without decoding any strokes. */
+    private fun pageOrder(id: String): Map<String, Int> {
+        val json = runCatching { JSONObject(File(root, "$id/meta.json").readText()) }.getOrNull()
+            ?: return emptyMap()
+        val array = json.optJSONArray("pages") ?: return emptyMap()
+        val order = HashMap<String, Int>(array.length())
+        for (i in 0 until array.length()) {
+            array.optJSONObject(i)?.optString("id")?.takeIf { it.isNotEmpty() }?.let { order[it] = i }
+        }
+        return order
     }
 
     /**
@@ -696,12 +780,6 @@ class NoteStore(context: Context) {
         source.close()
     }
 
-    private fun textContains(id: String, needle: String): Boolean =
-        File(root, "$id/pages")
-            .listFiles { file -> file.name.endsWith(".txt") || file.name.endsWith(INK_INDEX) }
-            ?.any { runCatching { it.readText().contains(needle, true) }.getOrDefault(false) }
-            ?: false
-
     /** Where a page's recognised handwriting is kept, beside its strokes. */
     fun inkIndexFile(id: String, pageId: String): File =
         File(root, "$id/pages/$pageId$INK_INDEX")
@@ -718,9 +796,13 @@ class NoteStore(context: Context) {
 
     fun delete(id: String) {
         File(root, id).deleteRecursively()
+        runCatching { searchIndex.removeNote(id) }
     }
 
     fun pdfFile(id: String): File = File(root, "$id/doc.pdf")
+
+    /** Study progress on the note's tape; see [MaskStudy]. */
+    fun studyFile(id: String): File = File(root, "$id/study.json")
 
     fun recordings(id: String): List<File> =
         File(root, "$id/recordings").listFiles { file -> file.isFile && file.extension == "m4a" }
@@ -1438,6 +1520,10 @@ class NoteStore(context: Context) {
                 thumbnail = thumbnailOf(dir),
                 folder = json.optString("folder", ""),
                 kind = if (json.optString("kind") == NoteKind.MARKDOWN.name) NoteKind.MARKDOWN else NoteKind.INK,
+                favorite = File(dir, FAVORITE).isFile,
+                trashedAt = File(dir, TRASHED).takeIf { it.isFile }
+                    ?.let { runCatching { it.readText().trim().toLong() }.getOrDefault(it.lastModified()) }
+                    ?: 0L,
             )
         }.getOrNull()
     }
@@ -1507,10 +1593,17 @@ class NoteStore(context: Context) {
         val strokes = mutableListOf<Stroke>()
         runCatching {
             DataInputStream(file.inputStream().buffered()).use { input ->
-                if (input.readInt() != MAGIC || input.readInt() != VERSION) return emptyList()
+                if (input.readInt() != MAGIC) return emptyList()
+                val storedVersion = input.readInt()
+                if (storedVersion !in 1..VERSION) return emptyList()
                 repeat(input.readInt()) {
-                    val tool = Tool.entries[input.readInt()]
+                    val storedTool = Tool.entries[input.readInt()]
                     val color = input.readInt()
+                    // Earlier identical pen/highlighter families wrote opaque
+                    // normal pens with the highlighter ordinal. Restore their
+                    // source-over rendering; translucent highlights stay intact.
+                    val tool = if (storedVersion == 1 && storedTool == Tool.HIGHLIGHTER && color ushr 24 == 255)
+                        Tool.PEN else storedTool
                     val size = input.readFloat()
                     // The stored epsilon is read but not used: geometry is rebuilt
                     // from the raw inputs on every load, so a note written when the
@@ -1546,13 +1639,16 @@ class NoteStore(context: Context) {
         const val THUMB_WIDTH = 480
         const val MAX_IMAGE_PX = 2048
         const val INK_INDEX = ".ink"
+        const val TRASHED = "trashed"
+        const val FAVORITE = "favorite"
+        const val TRASH_DAYS = 30
         const val ARCHIVE_MARK = "notesis.json"
         const val ARCHIVE_VERSION = 1
         const val THUMB_INTERVAL_MS = 20_000L
         /** Finer outlines than the live viewport, where PDF zoom has no fixed limit. */
         private const val PDF_EXPORT_EPSILON = 0.02f
         private const val SAVE_ATTEMPTS = 3
-        const val VERSION = 1
+        const val VERSION = 2
     }
 }
 

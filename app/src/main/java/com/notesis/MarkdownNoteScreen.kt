@@ -6,10 +6,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -67,7 +63,7 @@ internal fun MarkdownNoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> 
             SkinSurface(flush = true) {
                 TopAppBar(
                     navigationIcon = { IconButton(onClick = { save(); onBack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "뒤로가기")
+                        Icon(Reicons.ArrowBack, "뒤로가기")
                     } },
                     title = {
                         Column {
@@ -79,7 +75,7 @@ internal fun MarkdownNoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> 
                     },
                     actions = {
                         IconButton(onClick = { preview = !preview }) {
-                            Icon(if (preview) Icons.Default.Edit else Icons.Default.Visibility,
+                            Icon(if (preview) Reicons.Edit else Reicons.Visibility,
                                 if (preview) "편집" else "미리보기")
                         }
                         TextButton(onClick = { save() }, enabled = dirty) { Text("저장") }

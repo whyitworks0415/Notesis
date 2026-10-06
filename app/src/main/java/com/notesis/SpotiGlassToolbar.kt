@@ -20,9 +20,6 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.outlined.Brush
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -121,17 +118,17 @@ private fun Modifier.spotiToolbarGlass(circle: Boolean = false): Modifier {
         surfaceOpacity = if (circle) null else look.spotiglassToolbarOpacity)
 }
 private fun SpotiToolbarTool.icon(): ImageVector = when (this) {
-    SpotiToolbarTool.READ -> Icons.Default.TouchApp
-    SpotiToolbarTool.PEN -> Icons.Default.Create
-    SpotiToolbarTool.PENCIL -> Icons.Outlined.Brush
-    SpotiToolbarTool.HIGHLIGHTER -> Icons.Default.Highlight
-    SpotiToolbarTool.MASK -> Icons.Default.VisibilityOff
-    SpotiToolbarTool.ERASE -> Icons.Default.Delete
-    SpotiToolbarTool.SHAPE -> Icons.Default.Category
-    SpotiToolbarTool.TEXT -> Icons.Default.TextFields
-    SpotiToolbarTool.LASSO -> Icons.Default.Gesture
-    SpotiToolbarTool.CAPTURE -> Icons.Default.CropFree
-    SpotiToolbarTool.AI -> Icons.Default.AutoAwesome
+    SpotiToolbarTool.READ -> Reicons.TouchApp
+    SpotiToolbarTool.PEN -> Reicons.Create
+    SpotiToolbarTool.PENCIL -> Reicons.Brush
+    SpotiToolbarTool.HIGHLIGHTER -> Reicons.Highlight
+    SpotiToolbarTool.MASK -> Reicons.VisibilityOff
+    SpotiToolbarTool.ERASE -> Reicons.Eraser
+    SpotiToolbarTool.SHAPE -> Reicons.Category
+    SpotiToolbarTool.TEXT -> Reicons.TextFields
+    SpotiToolbarTool.LASSO -> Reicons.Gesture
+    SpotiToolbarTool.CAPTURE -> Reicons.CropFree
+    SpotiToolbarTool.AI -> Reicons.AutoAwesome
 }
 
 internal data class SpotiToolbarAction(
@@ -260,8 +257,9 @@ internal fun SpotiGlassToolbar(
     val skin = LocalSkin.current
     val effects = skin != Skin.MATERIAL && rememberLiquidGlassEffectsAllowed() && !LocalSkinSettings.current.highContrast
     val popupBackdrop = LocalSpotiPopupBackdrop.current ?: LocalLiquidGlassBackdrop.current
-    ThemedToolbarFrame(skin, modifier
-        .animateContentSize(if (effects) spring(0.95f, 360f) else tween(0))) {
+    // animateContentSize clips its layer, including stable corner shadows.
+    // Width already has one animation clock in the host; do not animate twice.
+    ThemedToolbarFrame(skin, modifier) {
         if (sizeLevel == 0 && skin == Skin.SPOTIGLASS) Box(Modifier.matchParentSize().spotiToolbarGlass())
         CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides androidx.compose.ui.unit.Dp.Unspecified) {
             Column(Modifier.then(if (docked && sizeLevel == 0) Modifier.windowInsetsPadding(
@@ -274,7 +272,7 @@ internal fun SpotiGlassToolbar(
                 }
                 Box {
                     if (sizeLevel == 3) {
-                        SpotiActionButton("도구·기능 메뉴", Icons.Default.Menu,
+                        SpotiActionButton("도구·기능 메뉴", Reicons.Menu,
                             Modifier.size(52.dp).pointerInput(Unit) {
                                 detectDragGestures { change, delta -> change.consume(); onDrag(delta) }
                             }, iconOnly = true, persistentGlass = true, onClick = { menu(ToolbarMenu.FUNCTIONS) })
@@ -300,7 +298,7 @@ internal fun SpotiGlassToolbar(
                               }
                             }
                             if (sizeLevel == 0) Box(Modifier.width(360.dp)) { penOptions(360.dp) }
-                            SpotiActionButton("기능", Icons.Default.Tune, selected = open,
+                            SpotiActionButton("기능", Reicons.Tune, selected = open,
                                 modifier = Modifier.size(if (sizeLevel == 0) 44.dp else 52.dp), iconOnly = true,
                                 persistentGlass = sizeLevel != 0, plain = sizeLevel == 0,
                                 onClick = { menu(ToolbarMenu.FUNCTIONS) })
@@ -338,7 +336,7 @@ internal fun SpotiGlassToolbar(
                                                 ToolbarMenu.MORE -> "더보기"
                                             }, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                                             IconButton(onClick = { open = false }, Modifier.size(32.dp)) {
-                                                Icon(Icons.Default.Close, "기능 메뉴 닫기")
+                                                Icon(Reicons.Close, "기능 메뉴 닫기")
                                             }
                                         }
                                         if (page == ToolbarMenu.FUNCTIONS || page == ToolbarMenu.SIZES) {
@@ -358,8 +356,8 @@ internal fun SpotiGlassToolbar(
                                                 TextButton(onClick = { page = ToolbarMenu.TOOLS }) { Text("모든 도구") }
                                             }
                                             SpotiMenuGrid((actions.filter { it.slot != null } + listOf(
-                                                SpotiToolbarAction("노트 바꾸기", Icons.Default.Description, slot = 3) { page = ToolbarMenu.NOTES },
-                                                SpotiToolbarAction("AI", Icons.Default.AutoAwesome, slot = 9) { page = ToolbarMenu.AI },
+                                                SpotiToolbarAction("노트 바꾸기", Reicons.Description, slot = 3) { page = ToolbarMenu.NOTES },
+                                                SpotiToolbarAction("AI", Reicons.AutoAwesome, slot = 9) { page = ToolbarMenu.AI },
                                             )).sortedBy { it.slot }, onAction = { action ->
                                                 if (action.label != "노트 바꾸기" && action.label != "AI") open = false
                                                 action.onClick()

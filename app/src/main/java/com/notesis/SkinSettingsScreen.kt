@@ -19,14 +19,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -88,13 +80,13 @@ fun SkinSettingsScreen(
             TopAppBar(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로")
+                        Icon(Reicons.ArrowBack, contentDescription = "뒤로")
                     }
                 },
                 title = { Text("화면 설정") },
                 actions = {
                     IconButton(onClick = { onChange(SkinSettings()) }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "기본값으로")
+                        Icon(Reicons.Refresh, contentDescription = "기본값으로")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
@@ -169,7 +161,7 @@ fun SkinSettingsScreen(
                         )
                     }
                     if (option == skin) {
-                        Icon(Icons.Default.Check, contentDescription = null)
+                        Icon(Reicons.Check, contentDescription = null)
                     }
                 }
             }
@@ -395,10 +387,10 @@ private fun Preview() {
                         style = MaterialTheme.typography.labelLarge)
                     SpotiGlassBar(
                         items = listOf(
-                            SpotiGlassItem("노트", Icons.Default.Description),
-                            SpotiGlassItem("검색", Icons.Default.Search),
-                            SpotiGlassItem("도구", Icons.Default.Edit),
-                            SpotiGlassItem("설정", Icons.Default.Settings),
+                            SpotiGlassItem("노트", Reicons.Description),
+                            SpotiGlassItem("검색", Reicons.Search),
+                            SpotiGlassItem("도구", Reicons.Edit),
+                            SpotiGlassItem("설정", Reicons.Settings),
                         ),
                         selectedIndex = tab,
                         onSelected = { tab = it },
@@ -476,7 +468,7 @@ private fun AccentPresets(current: Int, onPick: (Int) -> Unit) {
             ) {
                 if (argb == current) {
                     Icon(
-                        Icons.Default.Check,
+                        Reicons.Check,
                         contentDescription = null,
                         tint = Color.White,
                         modifier = Modifier.size(18.dp),
