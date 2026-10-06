@@ -79,6 +79,7 @@ import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.FilterCenterFocus
 import androidx.compose.material.icons.filled.FitScreen
+import androidx.compose.material.icons.filled.Flare
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -124,6 +125,7 @@ import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.Brush
 import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.ZoomOutMap
 import androidx.compose.material.icons.outlined.Edit
@@ -141,6 +143,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -1599,6 +1602,38 @@ private fun ToolChip(
  * HSV - which is how people actually describe a colour - with alpha on its own
  * strip, because a highlighter is exactly a pen whose alpha is not 255.
  */
+/** Tapping the eraser already in hand: whole strokes, or only what it passes over. */
+@Composable
+private fun EraserDialog(partial: Boolean, onPartial: (Boolean) -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("지우개") },
+        text = {
+            Column {
+                Row {
+                    FilterChip(
+                        selected = !partial,
+                        onClick = { onPartial(false) },
+                        label = { Text("획 지우개") },
+                        modifier = Modifier.padding(end = 8.dp),
+                    )
+                    FilterChip(
+                        selected = partial,
+                        onClick = { onPartial(true) },
+                        label = { Text("부분 지우개") },
+                    )
+                }
+                Text(
+                    if (partial) "지나간 부분만 지우고 나머지는 남깁니다" else "닿은 획을 통째로 지웁니다",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline,
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("닫기") } },
+    )
+}
+
 @Composable
 private fun PenDialog(
     mode: EditMode,
@@ -2622,6 +2657,7 @@ private fun NoteScreen(
     var straightLine by remember { mutableStateOf(false) }
     /** True while the colour and thickness of the tool in hand is being set. */
     var editingPen by remember { mutableStateOf(false) }
+    var editingEraser by remember { mutableStateOf(false) }
     var lassoCount by remember { mutableIntStateOf(0) }
     var regionOcrText by remember { mutableStateOf<String?>(null) }
     var regionOcrBusy by remember { mutableStateOf(false) }
@@ -2718,6 +2754,7 @@ private fun NoteScreen(
     var stabilizer by remember { mutableIntStateOf(penStore.stabilizer) }
     var highlighterAboveInk by remember { mutableStateOf(penStore.highlighterAboveInk) }
     var meshInk by remember { mutableStateOf(penStore.meshInk) }
+    var partialEraser by remember { mutableStateOf(penStore.partialEraser) }
     var autoShapes by remember { mutableStateOf(penStore.autoShapes) }
     var axisSnap by remember { mutableStateOf(penStore.axisSnap) }
     var dottedPattern by remember { mutableIntStateOf(penStore.dottedPattern) }
@@ -2812,6 +2849,7 @@ private fun NoteScreen(
         label = "상단 바 모드 너비",
     )
     var showLatency by remember { mutableStateOf(false) }
+    var laser by remember { mutableStateOf(false) }
     var showPages by remember { mutableStateOf(false) }
     var showSkinSettings by remember { mutableStateOf(false) }
     var pageLayout by remember { mutableStateOf(penStore.pageLayout) }
@@ -2994,7 +3032,9 @@ private fun NoteScreen(
                 canvas?.clearLassoSelection()
                 // Tapping the tool already in hand opens its settings rather
                 // than dropping it: there is no unset mode to fall back to.
-                if (mode == picked) editingPen = picked.tints else mode = picked
+                if (mode != picked) mode = picked
+                else if (picked == EditMode.ERASE) editingEraser = true
+                else editingPen = picked.tints
             },
             onShape = {
                 shapeKind = it
@@ -3026,6 +3066,8 @@ private fun NoteScreen(
             zoomLabel = "${(zoom * 100).roundToInt()}%",
             onToggleFullscreen = { fullscreen = !fullscreen },
             onToggleLatency = { showLatency = !showLatency },
+            laser = laser,
+            onToggleLaser = { laser = !laser },
             recording = recorder != null,
             onVoice = { showVoice = true },
             noteRotation = noteRotation,
@@ -3211,6 +3253,8 @@ private fun NoteScreen(
                     view.stabilizer = stabilizer
                     view.highlighterAboveInk = highlighterAboveInk
                     view.meshInk = meshInk
+                    view.partialEraser = partialEraser
+                    view.laserMode = laser
                     view.autoShapeRecognitionEnabled = autoShapes
                     view.axisSnapEnabled = axisSnap
                     view.dottedPattern = dottedPattern
@@ -3453,6 +3497,13 @@ private fun NoteScreen(
             )
         }
 
+        if (editingEraser) {
+            EraserDialog(
+                partial = partialEraser,
+                onPartial = { partialEraser = it; penStore.partialEraser = it },
+                onDismiss = { editingEraser = false },
+            )
+        }
         if (editingPen) {
             PenDialog(
                 mode = mode,
@@ -3567,6 +3618,18 @@ private fun NoteScreen(
                             ?: "인식 모델을 사용할 수 없습니다"
                         regionOcrBusy = false
                     }
+                },
+                onTransform = { factor, degrees ->
+                    canvas?.transformLassoSelection(factor, degrees)
+                    edits++
+                },
+                onRecolor = {
+                    canvas?.recolorLassoSelection(settings.getValue(EditMode.PEN).colorArgb)
+                    edits++
+                },
+                onDuplicate = {
+                    canvas?.duplicateLassoSelection()
+                    edits++
                 },
                 onDone = { canvas?.clearLassoSelection() },
                 modifier = Modifier.align(Alignment.BottomCenter),
@@ -3716,6 +3779,10 @@ private fun NoteScreen(
                     canvas?.movePage(index, delta)
                     edits++
                 },
+                onDuplicate = {
+                    canvas?.duplicatePage(it)
+                    edits++
+                },
                 onBackground = { index, background ->
                     canvas?.setBackground(index, background)
                     edits++
@@ -3778,6 +3845,7 @@ private fun NoteScreen(
                 stabilizer = stabilizer,
                 highlighterAboveInk = highlighterAboveInk,
                 meshInk = meshInk,
+                partialEraser = partialEraser,
                 autoShapes = autoShapes,
                 axisSnap = axisSnap,
                 dottedPattern = dottedPattern,
@@ -3873,12 +3941,15 @@ private fun NoteScreen(
     }
 }
 
-/** What the loop caught, and the two things worth doing with it. */
+/** What the loop caught, and what can be done with it. */
 @Composable
 private fun LassoActions(
     count: Int,
     onDelete: () -> Unit,
     onOcr: (() -> Unit)? = null,
+    onTransform: ((scale: Float, degrees: Float) -> Unit)? = null,
+    onRecolor: (() -> Unit)? = null,
+    onDuplicate: (() -> Unit)? = null,
     onDone: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -3889,11 +3960,30 @@ private fun LassoActions(
         corner = 16.dp,
     ) {
         Row(
-            Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            Modifier
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("$count 획 · 끌어서 이동", style = MaterialTheme.typography.bodyMedium)
             ToolbarDivider()
+            if (onTransform != null) {
+                IconButton(onClick = { onTransform(0.8f, 0f) }) {
+                    Icon(Icons.Default.Remove, contentDescription = "축소")
+                }
+                IconButton(onClick = { onTransform(1.25f, 0f) }) {
+                    Icon(Icons.Default.Add, contentDescription = "확대")
+                }
+                IconButton(onClick = { onTransform(1f, 15f) }) {
+                    Icon(Icons.Default.RotateRight, contentDescription = "15° 회전")
+                }
+            }
+            if (onRecolor != null) IconButton(onClick = onRecolor) {
+                Icon(Icons.Default.Palette, contentDescription = "현재 펜 색으로")
+            }
+            if (onDuplicate != null) IconButton(onClick = onDuplicate) {
+                Icon(Icons.Default.ContentCopy, contentDescription = "복제")
+            }
             TextButton(onClick = onDelete) {
                 Icon(Icons.Default.Delete, contentDescription = null)
                 Text(" 삭제")
@@ -4008,6 +4098,7 @@ private fun ReferencePanel(
     stabilizer: Int,
     highlighterAboveInk: Boolean,
     meshInk: Boolean,
+    partialEraser: Boolean,
     autoShapes: Boolean,
     axisSnap: Boolean,
     dottedPattern: Int,
@@ -4363,6 +4454,7 @@ private fun ReferencePanel(
                             v.stabilizer = stabilizer
                             v.highlighterAboveInk = highlighterAboveInk
                             v.meshInk = meshInk
+                            v.partialEraser = partialEraser
                             v.autoShapeRecognitionEnabled = autoShapes
                             v.axisSnapEnabled = axisSnap
                             v.dottedPattern = dottedPattern
@@ -4372,6 +4464,11 @@ private fun ReferencePanel(
                         LassoActions(
                             count = popupLassoCount,
                             onDelete = { view?.deleteLassoSelection() },
+                            onTransform = { factor, degrees ->
+                                view?.transformLassoSelection(factor, degrees)
+                            },
+                            onRecolor = { view?.recolorLassoSelection(pen.colorArgb) },
+                            onDuplicate = { view?.duplicateLassoSelection() },
                             onDone = { view?.clearLassoSelection() },
                             modifier = Modifier.align(Alignment.BottomCenter),
                         )
@@ -4570,6 +4667,7 @@ private fun PageSidebar(
     onAdd: () -> Unit,
     onDelete: (Int) -> Unit,
     onMove: (Int, Int) -> Unit,
+    onDuplicate: (Int) -> Unit,
     onBackground: (Int, PageBackground) -> Unit,
     onTemplate: (Int, String) -> Unit,
     onSetToc: (Int, String?) -> Unit,
@@ -4653,6 +4751,7 @@ private fun PageSidebar(
                             onJump = { onJump(index) },
                             onDelete = { onDelete(index) },
                             onMove = { delta -> onMove(index, delta) },
+                            onDuplicate = { onDuplicate(index) },
                             onBackground = { onBackground(index, it) },
                             userTemplates = userTemplates,
                             onTemplate = { onTemplate(index, it) },
@@ -4896,6 +4995,7 @@ private fun PageChip(
     onJump: () -> Unit,
     onDelete: () -> Unit,
     onMove: (Int) -> Unit,
+    onDuplicate: () -> Unit,
     onBackground: (PageBackground) -> Unit,
     userTemplates: List<UserPageTemplate>,
     onTemplate: (String) -> Unit,
@@ -4961,6 +5061,10 @@ private fun PageChip(
             DropdownMenuItem(
                 text = { Text("뒤 페이지로") },
                 onClick = { onMove(1); menu = false },
+            )
+            DropdownMenuItem(
+                text = { Text("페이지 복제") },
+                onClick = { onDuplicate(); menu = false },
             )
             if (page.background != PageBackground.PDF) {
                 DropdownMenuItem(
@@ -5059,6 +5163,8 @@ private fun Toolbar(
     onScreenSettings: () -> Unit,
     onDragBar: (Offset) -> Unit,
     modifier: Modifier = Modifier,
+    laser: Boolean = false,
+    onToggleLaser: () -> Unit = {},
 ) {
     val topRow: @Composable () -> Unit = {
         // ---- top row: the note, and what is done to the whole of it
@@ -5163,6 +5269,13 @@ private fun Toolbar(
                     contentDescription = "전체화면",
                 )
             }
+            IconButton(onClick = onToggleLaser) {
+                Icon(
+                    Icons.Default.Flare,
+                    contentDescription = "레이저 포인터",
+                    tint = if (laser) Color(0xFFFF3B30) else LocalContentColor.current,
+                )
+            }
             OtherNotesButton(otherNotes, onOpenNote)
         }
     }
@@ -5188,6 +5301,7 @@ private fun Toolbar(
                 add(SpotiToolbarAction("전체화면", Icons.Default.Fullscreen, selected = fullscreen, slot = 2, onClick = onToggleFullscreen))
                 add(SpotiToolbarAction("노트 회전", Icons.Default.ScreenRotation, slot = 7, onClick = onRotate))
                 add(SpotiToolbarAction("캡쳐", Icons.Default.CropFree, slot = 5, onClick = { onMode(EditMode.CAPTURE) }))
+                add(SpotiToolbarAction("레이저 포인터", Icons.Default.Flare, selected = laser, onClick = onToggleLaser))
                 add(SpotiToolbarAction("필기 설정", Icons.Default.Create, slot = 4, onClick = {
                     if (!mode.tints) onMode(EditMode.PEN)
                     onEditPen()
