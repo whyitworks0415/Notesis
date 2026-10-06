@@ -137,6 +137,23 @@ private const val MAX_GRID_CELLS_PER_STROKE = 64
 /** Below this fraction of the tip width, the previous eraser tip still covers the move. */
 private const val ERASER_SAMPLE_DISTANCE_FRACTION = 0.08f
 
+/**
+ * A page's committed ink recorded once into a hardware display list.
+ *
+ * Ink's mesh renderer sets a dozen shader uniforms and makes several JNI calls
+ * per stroke per draw, so redrawing a dense page directly cost tens of
+ * milliseconds every frame it moved. The mesh shader depends on the zoom but
+ * not on the pan, so a recording made at one zoom can be replayed at any scroll
+ * position for the price of a single draw call.
+ */
+private class InkNode(val node: android.graphics.RenderNode) {
+    var scale = 0f
+    var prefix: InkRenderPrefix<Stroke>? = null
+    var meshRevision = Long.MIN_VALUE
+    var meshInk = false
+    var highlighterAbove = false
+}
+
 /** Whether a page held highlighter ink, as of the stroke list it was computed for. */
 private class HighlightState(val revision: Long, val meshRevision: Long, val size: Int, val has: Boolean)
 
@@ -1457,6 +1474,7 @@ class InkCanvasView @JvmOverloads constructor(
         removeCallbacks(refineRunnable)
         removeCallbacks(prefetchRunnable)
         removeCallbacks(inkCacheRunnable)
+        dry.discardInkNodes()
         disposed = true
         refineRequestSerial++
         viewportRenderGeneration++
@@ -4557,6 +4575,92 @@ class InkCanvasView @JvmOverloads constructor(
             }
         }
 
+        private val inkNodes = object : LinkedHashMap<Page, InkNode>(8, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Page, InkNode>): Boolean {
+                val evict = size > MAX_INK_NODES
+                if (evict) eldest.value.node.discardDisplayList()
+                return evict
+            }
+        }
+        private val nodeRenderer = CanvasStrokeRenderer.create(PencilTextureStore)
+        private val nodeTransform = Matrix()
+
+        fun discardInkNodes() {
+            for (ink in inkNodes.values) ink.node.discardDisplayList()
+            inkNodes.clear()
+        }
+
+        /**
+         * The page's ink node, re-recorded when it no longer matches. Strokes
+         * appended since the recording are left for the caller to draw, so a
+         * pen-up on a dense page does not re-record the whole page; that waits
+         * until writing pauses. During a pinch or fling a recording made at the
+         * previous zoom is replayed scaled rather than re-recorded every frame.
+         */
+        private fun inkNodeFor(page: Page, scale: Float): InkNode {
+            val ink = inkNodes.getOrPut(page) { InkNode(android.graphics.RenderNode("ink")) }
+            val strokes = page.strokes
+            val prefix = ink.prefix
+            val sameContent = prefix != null && ink.meshRevision == page.meshRevision &&
+                ink.meshInk == meshInk && ink.highlighterAbove == highlighterAboveInk &&
+                prefix.matches(strokes, page.revision)
+            var record = !sameContent
+            if (!record) {
+                val recorded = prefix!!.strokes.size
+                val appended = strokes.size - recorded
+                if (appended > 0) {
+                    val idle = activeStylusPointer == null &&
+                        SystemClock.uptimeMillis() - lastInkEditMillis >= INK_CACHE_IDLE_MS
+                    val family = Tool.HIGHLIGHTER.brushFamily()
+                    // Appended highlighter would land on the wrong side of the
+                    // recorded ink and miss its multiply layer; record it in.
+                    record = idle || appended > MAX_NODE_APPENDED ||
+                        (recorded until strokes.size).any { strokes[it].brush.family == family }
+                }
+            }
+            if (!record && abs(ink.scale / scale - 1f) >= 0.001f && !zooming && !viewportInteracting && !flinging) {
+                record = true
+            }
+            if (record) recordInk(ink, page, scale)
+            return ink
+        }
+
+        private fun recordInk(ink: InkNode, page: Page, scale: Float) {
+            val snapshot = page.strokes.toList()
+            val width = kotlin.math.ceil(page.width * scale).toInt().coerceAtLeast(1)
+            val height = kotlin.math.ceil(page.height * scale).toInt().coerceAtLeast(1)
+            ink.node.setPosition(0, 0, width, height)
+            val canvas = ink.node.beginRecording(width, height)
+            try {
+                canvas.scale(scale, scale)
+                nodeTransform.setScale(scale, scale)
+                if (!pageHasHighlighter(page)) {
+                    for (stroke in snapshot) nodeRenderer.draw(canvas, onScreen(stroke), nodeTransform)
+                } else {
+                    val family = Tool.HIGHLIGHTER.brushFamily()
+                    for (pass in 0..1) {
+                        val highlightPass = if (pass == 0) !highlighterAboveInk else highlighterAboveInk
+                        val layer = if (highlightPass) {
+                            canvas.saveLayer(0f, 0f, page.width, page.height, highlighterMultiply)
+                        } else -1
+                        for (stroke in snapshot) {
+                            if ((stroke.brush.family == family) == highlightPass) {
+                                nodeRenderer.draw(canvas, onScreen(stroke), nodeTransform)
+                            }
+                        }
+                        if (layer >= 0) canvas.restoreToCount(layer)
+                    }
+                }
+            } finally {
+                ink.node.endRecording()
+            }
+            ink.scale = scale
+            ink.prefix = InkRenderPrefix(snapshot).also { it.matches(snapshot, page.revision) }
+            ink.meshRevision = page.meshRevision
+            ink.meshInk = meshInk
+            ink.highlighterAbove = highlighterAboveInk
+        }
+
         /** The stroke as it should be drawn on screen; see [meshInk]. */
         private fun onScreen(stroke: Stroke): Stroke {
             if (!meshInk) return stroke
@@ -4578,6 +4682,7 @@ class InkCanvasView @JvmOverloads constructor(
         fun clearStrokeIndexes() {
             strokeIndexes.clear()
             highlightStates.clear()
+            discardInkNodes()
             textLayouts.clear()
             inkBitmaps.evictAll()
             inkBitmapPending.clear()
@@ -4720,12 +4825,28 @@ class InkCanvasView @JvmOverloads constructor(
                     val hasHighlighter = pageHasHighlighter(page) && visibleStrokes.any {
                         it.brush.family == Tool.HIGHLIGHTER.brushFamily()
                     }
-                    val inkBitmap = if (!hasHighlighter && !lifted && playbackStrokeCount == null)
-                        cachedInk(page, visibleStrokes.size) else null
+                    val inkNode = if (scoped.isHardwareAccelerated && !lifted && playbackStrokeCount == null)
+                        inkNodeFor(page, currentScale()) else null
+                    val inkBitmap = if (inkNode == null && !hasHighlighter && !lifted &&
+                        playbackStrokeCount == null) cachedInk(page, visibleStrokes.size) else null
                     // Put highlighter ink on the chosen side of handwriting.
                     // Keep the source list in its original order within each
                     // layer so overlapping strokes still look predictable.
-                    if (inkBitmap != null) {
+                    if (inkNode != null) {
+                        // Recorded in pixels at its own zoom; undo that scale so
+                        // it lands on the page exactly at the zoom in use.
+                        val inverse = 1f / inkNode.scale
+                        scoped.save()
+                        scoped.scale(inverse, inverse)
+                        scoped.drawRenderNode(inkNode.node)
+                        scoped.restore()
+                        val prefix = inkNode.prefix
+                        if (prefix != null && prefix.strokes.size != page.strokes.size) {
+                            for (stroke in visibleStrokes) {
+                                if (!prefix.contains(stroke)) scope.drawStroke(onScreen(stroke))
+                            }
+                        }
+                    } else if (inkBitmap != null) {
                         scoped.drawBitmap(inkBitmap.bitmap, null, pageRect, bitmapPaint)
                         for (stroke in visibleStrokes) {
                             if (!inkBitmap.prefix.contains(stroke)) scope.drawStroke(onScreen(stroke))
@@ -5154,6 +5275,10 @@ class InkCanvasView @JvmOverloads constructor(
         const val LASSO_DUPLICATE_OFFSET = 24f
         const val LINK_TAP_MS = 350L
         const val PLAYBACK_HIGHLIGHT_PAD = 6f
+        /** Pages whose ink recordings are kept; the rest re-record when they come back. */
+        const val MAX_INK_NODES = 6
+        /** Strokes drawn live on top of a recording before it is re-recorded anyway. */
+        const val MAX_NODE_APPENDED = 48
         const val BASE_TESSELLATION_SCALE = 1f
         const val EPSILON_SLOP = 0.00001f
         const val PREFETCH_SETTLE_MS = 280L
