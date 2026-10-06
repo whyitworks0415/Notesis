@@ -10,7 +10,7 @@ import androidx.ink.brush.TextureBitmapStore
 /** Shared texture source used by both live and committed Ink renderers. */
 object PencilTextureStore : TextureBitmapStore {
     private val graphite: Bitmap by lazy {
-        val size = 128
+        val size = GRAPHITE_TILE
         val pixels = IntArray(size * size)
         for (y in 0 until size) for (x in 0 until size) {
             val alpha = graphiteGrainAlpha(x, y)
