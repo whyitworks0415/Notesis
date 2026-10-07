@@ -5,6 +5,10 @@ import android.content.Intent
 import android.os.SystemClock
 import android.view.InputDevice
 import android.view.MotionEvent
+import androidx.ink.brush.Brush
+import androidx.ink.brush.InputToolType
+import androidx.ink.strokes.MutableStrokeInputBatch
+import androidx.ink.strokes.Stroke
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,10 +21,14 @@ import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 
 /** Attached hardware View: checks capture cost and collects synthetic pen timings. */
-internal fun Instrumentation.checkRenderingUi(strokeCount: Int = 24) {
+internal fun Instrumentation.checkRenderingUi(strokeCount: Int = 24, denseStrokes: Int = 0) {
     val activity = startActivitySync(Intent(targetContext, MainActivity::class.java)
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
     val report = StringBuilder()
+    runOnMainSync {
+        // Avoid the API 36 emulator's task-snapshot mapper crash at teardown.
+        activity.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+    }
     try {
         val draws = AtomicInteger()
         var paused by mutableStateOf(false)
@@ -56,6 +64,22 @@ internal fun Instrumentation.checkRenderingUi(strokeCount: Int = 24) {
         val store = NoteStore(targetContext)
         val note = store.create("입력 성능 검사")
         val document = store.load(note.id)
+        if (denseStrokes > 0) {
+            val page = document.pages.single()
+            val brush = Brush.createWithColorIntArgb(Tool.PEN.brushFamily(), android.graphics.Color.BLACK,
+                2.5f, STROKE_EPSILON)
+            repeat(denseStrokes) { index ->
+                val points = MutableStrokeInputBatch().apply {
+                    repeat(12) { point -> add(InputToolType.STYLUS,
+                        12f + (index % 30) * 40f + point * 1.8f,
+                        15f + (index / 30) * 17f + kotlin.math.sin(point * 0.5f) * 4f,
+                        point * 4L) }
+                }
+                page.strokes += Stroke(brush, points.toImmutable())
+            }
+            page.loaded = true
+            page.revision++
+        }
         lateinit var ink: InkCanvasView
         try {
             runOnMainSync {
@@ -95,17 +119,14 @@ internal fun Instrumentation.checkRenderingUi(strokeCount: Int = 24) {
                 Thread.sleep(30)
             }
             Thread.sleep(600)
-            check(document.pages.sumOf { it.strokes.size } >= strokeCount) { "Synthetic pen lost strokes" }
+            check(document.pages.sumOf { it.strokes.size } >= denseStrokes + strokeCount) { "Synthetic pen lost strokes" }
+            report.appendLine("Mesh-enabled attached canvas with $denseStrokes existing strokes")
             val sorted = timings.sorted()
             fun percentile(fraction: Double) = sorted[((sorted.size - 1) * fraction).toInt()] / 1e6
             report.appendLine("Synthetic stylus dispatch n=${sorted.size}: p50=${percentile(0.5)}ms p95=${percentile(0.95)}ms p99=${percentile(0.99)}ms")
             report.appendLine(ink.latency.render(document.pages.sumOf { it.strokes.size }))
-            uiAutomation.takeScreenshot()?.let { image ->
-                File(targetContext.cacheDir, "rendering-ui.png").outputStream().use {
-                    image.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
-                }
-                image.recycle()
-            }
+            // MeshCacheChecks captures the GPU pixels separately; this secure
+            // test window intentionally has no system screenshot/thumbnail.
             runOnMainSync { ink.latencyMonitoringEnabled = false }
         } finally { store.delete(note.id) }
     } finally {

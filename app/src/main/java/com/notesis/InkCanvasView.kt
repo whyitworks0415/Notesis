@@ -173,6 +173,7 @@ private class StrokeGrid {
     private val included = java.util.BitSet()
     private val result = ArrayList<Stroke>()
     private var revision = Long.MIN_VALUE
+    private var meshRevision = Long.MIN_VALUE
     private var indexedSize = 0
     private var firstStroke: Stroke? = null
     private var lastStroke: Stroke? = null
@@ -215,11 +216,12 @@ private class StrokeGrid {
         val strokes = page.strokes
         val endpointsMatch = indexedSize == 0 || strokes.isNotEmpty() &&
             firstStroke === strokes.first() && lastStroke === strokes.last()
-        if (revision == page.revision && indexedSize == strokes.size && endpointsMatch) return
+        if (revision == page.revision && meshRevision == page.meshRevision &&
+            indexedSize == strokes.size && endpointsMatch) return
 
         // The dominant edit is one stroke appended at pen-up. Index just that
         // suffix; erase, lasso, load-at-front, and retessellation rebuild once.
-        val appendOnly = strokes.size > indexedSize &&
+        val appendOnly = meshRevision == page.meshRevision && strokes.size > indexedSize &&
             (indexedSize == 0 || strokes.getOrNull(indexedSize - 1) === lastStroke)
         if (!appendOnly) {
             cells.clear()
@@ -236,6 +238,7 @@ private class StrokeGrid {
         firstStroke = strokes.firstOrNull()
         lastStroke = strokes.lastOrNull()
         revision = page.revision
+        meshRevision = page.meshRevision
     }
 
     fun remove(page: Page, removed: Collection<Stroke>) {
@@ -257,6 +260,7 @@ private class StrokeGrid {
         firstStroke = page.strokes.firstOrNull()
         lastStroke = page.strokes.lastOrNull()
         revision = page.revision
+        meshRevision = page.meshRevision
     }
 
     private fun index(stroke: Stroke, order: Int) {
@@ -778,6 +782,7 @@ class InkCanvasView @JvmOverloads constructor(
         set(value) {
             if (field == value) return
             field = value
+            dry.clearInkTiles()
             dry.invalidate()
         }
 
@@ -1206,6 +1211,7 @@ class InkCanvasView @JvmOverloads constructor(
         Collections.newSetFromMap(IdentityHashMap())
     private val lassoBounds = RectF()
     private var movingLasso = false
+    private var liftedLassoStrokes: Set<Stroke>? = null
     private val lassoGrab = floatArrayOf(0f, 0f)
     private var lassoDx = 0f
     private var lassoDy = 0f
@@ -3765,6 +3771,9 @@ class InkCanvasView @JvmOverloads constructor(
             lassoBounds.contains(shapeStart[0], shapeStart[1])
         ) {
             movingLasso = true
+            liftedLassoStrokes = Collections.newSetFromMap(IdentityHashMap<Stroke, Boolean>()).apply {
+                addAll(lassoStrokes)
+            }
             lassoGrab[0] = shapeStart[0]
             lassoGrab[1] = shapeStart[1]
             lassoDx = 0f
@@ -3816,7 +3825,17 @@ class InkCanvasView @JvmOverloads constructor(
         val page = document.pages[index]
         lassoStrokes.clear()
         lassoBounds.setEmpty()
-        for (stroke in page.strokes) {
+        var left = Float.POSITIVE_INFINITY
+        var top = Float.POSITIVE_INFINITY
+        var right = Float.NEGATIVE_INFINITY
+        var bottom = Float.NEGATIVE_INFINITY
+        for (point in 0 until lassoPath.size step 2) {
+            left = minOf(left, lassoPath[point])
+            right = maxOf(right, lassoPath[point])
+            top = minOf(top, lassoPath[point + 1])
+            bottom = maxOf(bottom, lassoPath[point + 1])
+        }
+        for (stroke in dry.strokesIn(page, left, top, right, bottom)) {
             val box = stroke.shape.computeBoundingBox() ?: continue
             // The centre decides. Requiring every corner inside makes a lasso
             // that is hard to satisfy; the centre is what people aim at.
@@ -3837,6 +3856,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     private fun finishLassoMove() {
         movingLasso = false
+        liftedLassoStrokes = null
         val page = document.pages.getOrNull(lassoPage) ?: return
         val dx = lassoDx
         val dy = lassoDy
@@ -3998,6 +4018,8 @@ class InkCanvasView @JvmOverloads constructor(
 
     fun clearLassoSelection() {
         val had = lassoStrokes.isNotEmpty()
+        movingLasso = false
+        liftedLassoStrokes = null
         lassoStrokes.clear()
         lassoBounds.setEmpty()
         lassoDx = 0f
@@ -4633,7 +4655,18 @@ class InkCanvasView @JvmOverloads constructor(
         fun discardInkNodes() {
             for (ink in inkNodes.values) ink.node.discardDisplayList()
             inkNodes.clear()
+            inkTiles.clear()
         }
+
+        private val inkTileViewport = RectF()
+        private val inkTiles = InkTileCache(
+            byteBudget = if (context.getSystemService(android.app.ActivityManager::class.java)
+                    ?.isLowRamDevice == true) 24 * 1024 * 1024 else 48 * 1024 * 1024,
+            screenStroke = ::onScreen,
+            query = ::strokesIn,
+        )
+
+        fun clearInkTiles() = inkTiles.clear()
 
         /**
          * The page's ink node, re-recorded when it no longer matches. Strokes
@@ -4646,7 +4679,7 @@ class InkCanvasView @JvmOverloads constructor(
             val ink = inkNodes.getOrPut(page) { InkNode(android.graphics.RenderNode("ink")) }
             val strokes = page.strokes
             val prefix = ink.prefix
-            val sameContent = prefix != null && ink.meshRevision == page.meshRevision &&
+            val sameContent = ink.node.hasDisplayList() && prefix != null && ink.meshRevision == page.meshRevision &&
                 ink.meshInk == meshInk && ink.highlighterAbove == highlighterAboveInk &&
                 prefix.matches(strokes, page.revision)
             var record = !sameContent
@@ -4860,14 +4893,24 @@ class InkCanvasView @JvmOverloads constructor(
                     val hasHighlighter = pageHasHighlighter(page) && visibleStrokes.any {
                         it.brush.family == Tool.HIGHLIGHTER.brushFamily()
                     }
-                    val inkNode = if (scoped.isHardwareAccelerated && !lifted && playbackStrokeCount == null)
+                    val tiledInk = scoped.isHardwareAccelerated && meshInk &&
+                        page.strokes.size >= 256 && playbackStrokeCount == null
+                    val inkNode = if (!tiledInk && scoped.isHardwareAccelerated && !lifted && playbackStrokeCount == null)
                         inkNodeFor(page, currentScale()) else null
-                    val inkBitmap = if (inkNode == null && !hasHighlighter && !lifted &&
+                    val inkBitmap = if (!tiledInk && inkNode == null && !hasHighlighter && !lifted &&
                         playbackStrokeCount == null) cachedInk(page, visibleStrokes.size) else null
                     // Put highlighter ink on the chosen side of handwriting.
                     // Keep the source list in its original order within each
                     // layer so overlapping strokes still look predictable.
-                    if (inkNode != null) {
+                    if (tiledInk) {
+                        inkTileViewport.set(visibleLeft, visibleTop, visibleRight, visibleBottom)
+                        val interacting = zooming || viewportInteracting || flinging
+                        val idle = activeStylusPointer == null && !interacting &&
+                            SystemClock.uptimeMillis() - lastInkEditMillis >= INK_CACHE_IDLE_MS
+                        inkTiles.draw(scoped, page, currentScale(), inkTileViewport,
+                            interacting, idle, hasHighlighter, highlighterAboveInk, highlighterMultiply,
+                            if (lifted) liftedLassoStrokes else null)
+                    } else if (inkNode != null) {
                         // Recorded in pixels at its own zoom; undo that scale so
                         // it lands on the page exactly at the zoom in use.
                         val inverse = 1f / inkNode.scale
@@ -4934,6 +4977,7 @@ class InkCanvasView @JvmOverloads constructor(
                 lastVisibleStrokes = visibleCount
                 lastDrawMs = (System.nanoTime() - started) / 1e6
                 latency.addDraw((lastDrawMs * 1e6).toLong(), visibleCount)
+                latency.addInkCache(inkTiles.stats())
             }
         }
 

@@ -28,11 +28,13 @@ class CustomizationInstrumentation : Instrumentation() {
     private var renderOnly = false
     private var settingsOnly = false
     private var integrationOnly = false
+    private var meshOnly = false
     private var benchmarkStrokes = 24
     override fun onCreate(arguments: Bundle?) {
         renderOnly = arguments?.getString("suite") == "render"
         settingsOnly = arguments?.getString("suite") == "settings"
         integrationOnly = arguments?.getString("suite") == "integration"
+        meshOnly = arguments?.getString("suite") == "mesh"
         benchmarkStrokes = arguments?.getString("strokes")?.toIntOrNull()?.coerceIn(24, 1200) ?: 24
         super.onCreate(arguments); start()
     }
@@ -137,6 +139,13 @@ class CustomizationInstrumentation : Instrumentation() {
     override fun onStart() {
         val output = Bundle()
         try {
+            if (meshOnly) {
+                checkMeshCache()
+                checkRenderingUi(denseStrokes = 3000)
+                output.putString("stream", "PASS dense mesh GPU cache, pixels, appends, erase and zoom\n")
+                finish(Activity.RESULT_OK, output)
+                return
+            }
             if (settingsOnly) {
                 checkToolSettingsUi()
                 output.putString("stream", "PASS settings slider, fluorescent palette opacity and eraser controls\n")
@@ -187,7 +196,9 @@ class CustomizationInstrumentation : Instrumentation() {
             progress("settings UI")
             checkToolSettingsUi()
             progress("attached ink rendering")
-            checkRenderingUi()
+            checkRenderingUi(denseStrokes = 3000)
+            progress("dense mesh GPU cache")
+            checkMeshCache()
             progress("icon gallery")
             checkReiconUi()
             progress("text and PDF roundtrip")

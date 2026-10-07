@@ -41,6 +41,10 @@ class LatencyStats(private val capacity: Int = 512) {
     private var lastRefinedStrokes = 0
     private var lastPdfPixels = 0L
     private var lastVisibleStrokes = 0
+    private var inkCacheTiles = 0
+    private var inkCacheBytes = 0
+    private var inkCacheRecorded = 0L
+    private var inkCacheFrameRecorded = 0L
 
     private var previousAllocatedBytes = -1L
     private var previousGcCount = -1L
@@ -87,6 +91,15 @@ class LatencyStats(private val capacity: Int = 512) {
             metrics[PerformanceMetric.DENSE_DRAW.ordinal].add(latencyNanos)
         }
         lastVisibleStrokes = visibleStrokeCount
+    }
+
+    @Synchronized
+    internal fun addInkCache(stats: InkTileCache.Stats) {
+        if (!enabled) return
+        inkCacheTiles = stats.tiles
+        inkCacheBytes = stats.layerBytes
+        inkCacheFrameRecorded = (stats.recordedStrokes - inkCacheRecorded).coerceAtLeast(0L)
+        inkCacheRecorded = stats.recordedStrokes
     }
 
     @Synchronized
@@ -173,6 +186,8 @@ class LatencyStats(private val capacity: Int = 512) {
             pdf,
             draw,
             dense,
+            "mesh cache %d타일 %.1fMB   이번 화면 재기록 %d획".format(
+                inkCacheTiles, inkCacheBytes / BYTES_PER_MIB, inkCacheFrameRecorded),
             "input %.0fHz   total %d획".format(lastInputRateHz, strokeCount),
             "$frame   $lead",
             allocation,
@@ -210,6 +225,10 @@ class LatencyStats(private val capacity: Int = 512) {
         lastRefinedStrokes = 0
         lastPdfPixels = 0L
         lastVisibleStrokes = 0
+        inkCacheTiles = 0
+        inkCacheBytes = 0
+        inkCacheRecorded = 0L
+        inkCacheFrameRecorded = 0L
         gcEvents = 0L
     }
 

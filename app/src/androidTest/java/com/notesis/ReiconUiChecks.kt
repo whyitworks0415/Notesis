@@ -20,6 +20,7 @@ internal fun Instrumentation.checkReiconUi() {
     check(icons.all { it.second.name.startsWith("Reicon.") && it.second.root.size > 0 })
     val activity = startActivitySync(Intent(targetContext, MainActivity::class.java)
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+    runOnMainSync { activity.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE) }
     try {
         runOnMainSync {
             activity.setContent {

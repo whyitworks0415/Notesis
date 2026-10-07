@@ -65,7 +65,10 @@ internal fun Instrumentation.checkToolSettingsUi() {
     runOnMainSync {
         activity.setShowWhenLocked(true)
         activity.setTurnScreenOn(true)
-        activity.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // API 36 emulator mapper crashes while persisting task thumbnails.
+        // Keep this test window out of that unrelated system readback path.
+        activity.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+            android.view.WindowManager.LayoutParams.FLAG_SECURE)
         (activity.getSystemService(android.content.Context.KEYGUARD_SERVICE) as android.app.KeyguardManager)
             .requestDismissKeyguard(activity, null)
     }
@@ -83,6 +86,8 @@ internal fun Instrumentation.checkToolSettingsUi() {
                 }
             }
         }
+        waitForIdleSync()
+        Thread.sleep(250)
         val slider = awaitNode { it.rangeInfo != null }
         val bounds = Rect().also(slider::getBoundsInScreen)
         check(bounds.width() > 200) { "Default slider collapsed: $bounds" }
