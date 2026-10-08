@@ -152,7 +152,13 @@ internal class CompatWetInkView(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         if (!visibleStroke) return
-        runCatching { renderer.draw(canvas, stroke, pageToScreen) }
+        // The renderer's matrix describes screen resolution for its shader;
+        // the canvas still needs the page-to-screen placement of the vertices.
+        val saved = canvas.save()
+        try {
+            canvas.concat(pageToScreen)
+            runCatching { renderer.draw(canvas, stroke, pageToScreen) }
+        } finally { canvas.restoreToCount(saved) }
     }
 
     private companion object {

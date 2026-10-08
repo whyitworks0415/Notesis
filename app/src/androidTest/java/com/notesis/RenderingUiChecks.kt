@@ -88,6 +88,7 @@ internal fun Instrumentation.checkRenderingUi(strokeCount: Int = 24, denseStroke
                         InkCanvasView(context).also {
                             ink = it
                             it.open(document, null)
+                            it.compatWetInk = true
                             it.stabilizer = 0
                             it.latencyMonitoringEnabled = true
                         }

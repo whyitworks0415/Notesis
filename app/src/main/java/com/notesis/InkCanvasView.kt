@@ -4906,6 +4906,7 @@ class InkCanvasView @JvmOverloads constructor(
             // out - the renderer then draws a stroke magnified 8x as though it
             // were at 1:1, which is exactly what made zoomed-in ink look soft and
             // bend its corners.
+            inkTiles.beginFrame()
             renderer.drawWithStrokes(canvas) { scoped, scope ->
                 for (i in document.pagesIntersecting(viewport[1], viewport[3])) {
                     val page = document.pages.getOrNull(i) ?: continue
@@ -5017,6 +5018,7 @@ class InkCanvasView @JvmOverloads constructor(
                     scoped.restore()
                 }
             }
+            inkTiles.endFrame()
             if (eraserCursorVisible) {
                 val radius = (eraserWidth * currentScale() / 2f).coerceAtLeast(0.5f)
                 canvas.drawCircle(eraserCursorX, eraserCursorY, radius, eraserCursorFill)

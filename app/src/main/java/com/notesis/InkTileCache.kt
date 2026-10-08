@@ -48,6 +48,8 @@ internal class InkTileCache(
 
     private val tiles = LinkedHashMap<Key, Tile>(32, 0.75f, true)
     private val pages = LinkedHashMap<Page, PageState>(8, 0.75f, true)
+    private val frameTiles = HashSet<Key>()
+    private val framePages = HashSet<Page>()
     private val renderer = CanvasStrokeRenderer.create(PencilTextureStore)
     private val transform = Matrix()
     private val bounds = RectF()
@@ -67,6 +69,41 @@ internal class InkTileCache(
         tiles.values.forEach(::discard)
         tiles.clear()
         pages.clear()
+        frameTiles.clear()
+        framePages.clear()
+    }
+
+    fun beginFrame() {
+        frameTiles.clear()
+        framePages.clear()
+    }
+
+    /** Recorded canvas commands still reference these nodes until GPU playback. */
+    fun endFrame() {
+        val oldPages = pages.entries.iterator()
+        while (pages.size > 6 && oldPages.hasNext()) {
+            val page = oldPages.next().key
+            if (page in framePages) continue
+            discardPage(page)
+            oldPages.remove()
+        }
+        val oldTiles = tiles.entries.iterator()
+        while ((layerBytes > byteBudget || tiles.size > MAX_TILES) && oldTiles.hasNext()) {
+            val tile = oldTiles.next().value
+            if (tile.key in frameTiles) continue
+            discard(tile)
+            oldTiles.remove()
+        }
+        // The visible frame wins over the cache budget. Only off-screen entries
+        // may be discarded; deleting a queued node makes that ink disappear.
+    }
+
+    private fun visibleTiles(viewport: RectF, scale: Float): Long {
+        val columns = ceil(viewport.right * scale / TILE_PX).toLong() -
+            floor(viewport.left * scale / TILE_PX).toLong()
+        val rows = ceil(viewport.bottom * scale / TILE_PX).toLong() -
+            floor(viewport.top * scale / TILE_PX).toLong()
+        return columns.coerceAtLeast(0) * rows.coerceAtLeast(0)
     }
 
     private fun discard(tile: Tile) {
@@ -118,9 +155,15 @@ internal class InkTileCache(
     }
 
     /** Compare content once per edit, rather than scanning the page per tile. */
-    private fun sync(page: Page, requestedScale: Float, interacting: Boolean, excluded: Set<Stroke>?): PageState {
+    private fun sync(page: Page, requestedScale: Float, interacting: Boolean, excluded: Set<Stroke>?,
+        viewport: RectF, passes: Int): PageState {
         val state = pages.getOrPut(page) { PageState() }
-        val scale = if (state.scale > 0f && interacting) state.scale else requestedScale
+        // Reusing the old resolution is cheap for a small pinch. After a deep
+        // zoom-out it can require hundreds of oversized tiles in one frame.
+        val keepScale = state.scale > 0f && interacting && requestedScale >= state.scale / 2f &&
+            visibleTiles(viewport, state.scale) * passes <=
+            minOf(MAX_TILES, (byteBudget / TILE_BYTES).coerceAtLeast(1))
+        val scale = if (keepScale) state.scale else requestedScale
         if (state.scale == 0f || abs(state.scale / scale - 1f) >= 0.001f ||
             state.meshRevision != page.meshRevision || state.excluded !== excluded) {
             discardPage(page)
@@ -166,11 +209,6 @@ internal class InkTileCache(
             state.strokes = current.toList()
             state.revision = page.revision
             state.meshRevision = page.meshRevision
-        }
-        while (pages.size > 6) {
-            val oldest = pages.entries.iterator()
-            discardPage(oldest.next().key)
-            oldest.remove()
         }
         return state
     }
@@ -227,19 +265,23 @@ internal class InkTileCache(
         interacting: Boolean, consolidate: Boolean, hasHighlighter: Boolean,
         highlighterAbove: Boolean, multiply: Paint, excluded: Set<Stroke>? = null) {
         if (viewport.isEmpty) return
-        val state = sync(page, scale, interacting, excluded)
+        framePages += page
+        val passes = if (hasHighlighter) 2 else 1
+        val state = sync(page, scale, interacting, excluded, viewport, passes)
         val recordedScale = state.scale
         val firstX = floor(viewport.left * recordedScale / TILE_PX).toInt()
         val firstY = floor(viewport.top * recordedScale / TILE_PX).toInt()
         val lastX = ceil(viewport.right * recordedScale / TILE_PX).toInt() - 1
         val lastY = ceil(viewport.bottom * recordedScale / TILE_PX).toInt() - 1
-        for (pass in 0 until if (hasHighlighter) 2 else 1) {
+        for (pass in 0 until passes) {
             val highlight = hasHighlighter && if (pass == 0) !highlighterAbove else highlighterAbove
             // Multiply is applied against the paper/ink outside the cached
             // layers. Applying it inside an isolated tile loses the backdrop.
             val layer = if (highlight) canvas.saveLayer(viewport, multiply) else -1
             for (y in firstY..lastY) for (x in firstX..lastX) {
-                val tile = tileFor(Key(page, x, y, highlight), state, consolidate)
+                val key = Key(page, x, y, highlight)
+                frameTiles += key
+                val tile = tileFor(key, state, consolidate)
                 if (!tile.hasInk && !tile.delta.hasDisplayList()) continue
                 canvas.save()
                 canvas.scale(1f / recordedScale, 1f / recordedScale)
@@ -254,14 +296,10 @@ internal class InkTileCache(
             }
             if (layer >= 0) canvas.restoreToCount(layer)
         }
-        val iterator = tiles.entries.iterator()
-        while ((layerBytes > byteBudget || tiles.size > 128) && iterator.hasNext()) {
-            discard(iterator.next().value)
-            iterator.remove()
-        }
     }
 
     companion object {
+        private const val MAX_TILES = 128
         private const val TILE_PX = 512
         private const val GUTTER_PX = 2
         private const val EXTENT_PX = TILE_PX + 2 * GUTTER_PX

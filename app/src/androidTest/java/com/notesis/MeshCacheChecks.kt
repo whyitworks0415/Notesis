@@ -53,12 +53,13 @@ internal fun Instrumentation.checkMeshCache(strokeCount: Int = 3000) {
         if (family == null || Color.alpha(stroke.brush.colorIntArgb) != 255) stroke
         else stroke.copy(stroke.brush.copy(family = family))
     }
-    val cache = InkTileCache(screenStroke = ::screen, query = { p, left, top, right, bottom ->
+    val query: (Page, Float, Float, Float, Float) -> List<Stroke> = { p, left, top, right, bottom ->
         p.strokes.filter {
             val box = it.shape.computeBoundingBox()
             box != null && box.xMax >= left && box.xMin <= right && box.yMax >= top && box.yMin <= bottom
         }
-    })
+    }
+    var cache = InkTileCache(screenStroke = ::screen, query = query)
     val renderer = CanvasStrokeRenderer.create(PencilTextureStore)
     val transform = Matrix()
     val multiply = Paint().apply { blendMode = BlendMode.MULTIPLY }
@@ -106,7 +107,8 @@ internal fun Instrumentation.checkMeshCache(strokeCount: Int = 3000) {
         } finally { reference.endRecording() }
     }
 
-    fun frame(cached: Boolean, capture: Boolean = false): Pair<Long, Bitmap?> {
+    fun frame(cached: Boolean, capture: Boolean = false,
+        preview: ((Canvas) -> Unit)? = null): Pair<Long, Bitmap?> {
         val start = System.nanoTime()
         val outputRoot = if (cached) root else referenceRoot
         val outputHardware = if (cached) hardware else referenceHardware
@@ -115,12 +117,15 @@ internal fun Instrumentation.checkMeshCache(strokeCount: Int = 3000) {
         try {
             canvas.drawColor(Color.WHITE)
             canvas.translate(-panX * scale, -panY * scale)
-            if (cached) {
+            if (preview != null) preview(canvas)
+            else if (cached) {
+                cache.beginFrame()
                 canvas.scale(scale, scale)
                 cache.draw(canvas, page, scale, RectF(panX, panY,
                     minOf(page.width, panX + width / scale), minOf(page.height, panY + height / scale)),
                     interacting, consolidate, hasHighlighter = true, highlighterAbove = above,
                     multiply = multiply, excluded = excluded)
+                cache.endFrame()
             } else canvas.drawRenderNode(reference)
         } finally { outputRoot.endRecording() }
         outputHardware.createRenderRequest().setWaitForPresent(true).syncAndDraw()
@@ -231,9 +236,67 @@ internal fun Instrumentation.checkMeshCache(strokeCount: Int = 3000) {
         scale = 8f
         panX = 493f; panY = 502f
         compare("deep zoom")
+        interacting = true
+        consolidate = false
+        scale = 1f
+        panX = 0f; panY = 0f
+        compare("deep zoom out during pinch")
+        interacting = false
+        consolidate = true
+        compare("deep zoom out settled")
         check(cache.stats().layerBytes <= 48 * 1024 * 1024) { "Tile cache exceeded memory budget" }
+        repeat(3) { cycle ->
+            interacting = false
+            scale = 16f
+            panX = 493f; panY = 502f
+            compare("repeat deep zoom $cycle")
+            interacting = true
+            scale = 0.5f
+            panX = 0f; panY = 0f
+            compare("repeat deep zoom out $cycle")
+        }
+        interacting = false
+        scale = 1f
+        // Even when visible ink itself exceeds a small cache budget, the GPU
+        // must retain every node referenced by this frame, not just the LRU tail.
+        cache.clear()
+        cache = InkTileCache(byteBudget = 2 * 1024 * 1024, screenStroke = ::screen, query = query)
+        compare("visible tiles under memory pressure")
+        val budgetFrameRecordings = cache.stats().recordings
+        repeat(3) { frame(true) }
+        check(cache.stats().recordings == budgetFrameRecordings) { "Visible tiles thrashed under memory pressure" }
         cache.clear()
         check(cache.stats().tiles == 0 && cache.stats().layerBytes == 0)
+        for (previewScale in listOf(1f, 8f, 0.5f)) {
+            lateinit var previewView: CompatWetInkView
+            runOnMainSync {
+                previewView = CompatWetInkView(targetContext).apply { layout(0, 0, width, height) }
+                val toPage = Matrix().apply {
+                    setScale(1f / previewScale, 1f / previewScale)
+                    postTranslate(-20f, -30f)
+                }
+                val brush = Brush.createWithColorIntArgb(Tool.PEN.brushFamily(), Color.BLUE, 2.5f, 0.025f)
+                val down = android.view.MotionEvent.obtain(0L, 0L, android.view.MotionEvent.ACTION_DOWN,
+                    400f, 300f, 0)
+                val up = android.view.MotionEvent.obtain(0L, 20L, android.view.MotionEvent.ACTION_UP,
+                    450f, 330f, 0)
+                try {
+                    previewView.start(down, 0, brush, toPage)
+                    previewView.finish(up, 0)
+                } finally { down.recycle(); up.recycle() }
+            }
+            val preview = frame(true, true) { canvas -> runOnMainSync { previewView.draw(canvas) } }.second!!
+            try {
+                val pixel = preview.getPixel(425, 315)
+                check(Color.red(pixel) + Color.green(pixel) < 450) {
+                    "Compatible wet ink missed screen coordinates at ${previewScale}x: ${Integer.toHexString(pixel)}"
+                }
+                report.appendLine("compatible wet ink ${previewScale}x: screen-position pixel=${Integer.toHexString(pixel)}")
+            } finally {
+                preview.recycle()
+                runOnMainSync { previewView.clear() }
+            }
+        }
     } finally {
         cache.clear()
         hardware.destroy()
