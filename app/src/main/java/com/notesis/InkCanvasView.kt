@@ -1047,6 +1047,25 @@ class InkCanvasView @JvmOverloads constructor(
     private var pdf: PdfSource? = null
 
     private val wet = InProgressStrokesView(context)
+    private val compatWet = CompatWetInkView(context)
+    private var compatWetStrokeId: InProgressStrokeId? = null
+
+    /**
+     * Also draw the stroke being written through an ordinary View, for tablets
+     * whose front-buffer layer only appears at pen-up; see [CompatWetInkView].
+     */
+    var compatWetInk: Boolean = frontBufferInkUnreliable()
+        set(value) {
+            if (field == value) return
+            field = value
+            if (!value) cancelCompatWet(compatWetStrokeId)
+        }
+
+    private fun cancelCompatWet(strokeId: InProgressStrokeId?) {
+        if (strokeId == null || strokeId != compatWetStrokeId) return
+        compatWetStrokeId = null
+        compatWet.clear()
+    }
     private val predictionHead = PredictionHeadView(context)
     private val laser = LaserView(context)
     private var laserPointer: Int? = null
@@ -1344,6 +1363,7 @@ class InkCanvasView @JvmOverloads constructor(
         isClickable = true
         addView(dry, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(wet, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        addView(compatWet, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(predictionHead, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(laser, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         wet.textureBitmapStore = PencilTextureStore
@@ -1890,6 +1910,24 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        // Samsung reports a touch made with the S Pen side button held through
+        // its own action codes instead of DOWN/MOVE/UP with a button state, so
+        // without this the barrel-button eraser never sees a single event.
+        val sideButtonAction = samsungSidePenAction(event.actionMasked)
+            ?: run {
+                samsungSideButton = false
+                return onTouch(event)
+            }
+        samsungSideButton = true
+        val normalized = MotionEvent.obtain(event)
+        normalized.action = sideButtonAction
+        return try { onTouch(normalized) } finally { normalized.recycle() }
+    }
+
+    /** True while the gesture in progress came in as Samsung's side-button actions. */
+    private var samsungSideButton = false
+
+    private fun onTouch(event: MotionEvent): Boolean {
         val stylus = event.getToolType(event.actionIndex) == MotionEvent.TOOL_TYPE_STYLUS
         if (!stylus && activeStylusPointer == null && laserPointer == null) return onFingers(event)
         if (!latencyMonitoringEnabled) return onStylus(event)
@@ -1984,7 +2022,7 @@ class InkCanvasView @JvmOverloads constructor(
                     Choreographer.getInstance().postFrameCallback(frameCallback)
                 }
                 activePage = document.pages[index]
-                val eraserGesture = event.isEraserGesture()
+                val eraserGesture = event.isEraserGesture() || samsungSideButton
                 if (readMode && eraserGesture) {
                     onDrawingChanged?.invoke(true)
                     readingWithButton = true
@@ -2076,17 +2114,23 @@ class InkCanvasView @JvmOverloads constructor(
                     // Recording eraser/lasso/shape gestures ran its filter at
                     // full S Pen rate even though those tools never call predict().
                     if (predictionEnabled) predictor.record(event)
+                    // Keep front-buffer authoring on the stable path renderer.
+                    // Mesh twins are used by the committed-ink RenderNodes;
+                    // asynchronous mesh draws must not outlive the wet surface.
+                    val brush = currentBrush()
+                    // "World" here is the page, so the finished stroke comes
+                    // back in page-local coordinates and stays with its page.
+                    val toPage = screenToPage(index)
                     activeStrokeId = wet.startStroke(
                         event = event,
                         pointerId = pointerId,
-                        // Keep front-buffer authoring on the stable path renderer.
-                        // Mesh twins are used by the committed-ink RenderNodes;
-                        // asynchronous mesh draws must not outlive the wet surface.
-                        brush = currentBrush(),
-                        // "World" here is the page, so the finished stroke comes
-                        // back in page-local coordinates and stays with its page.
-                        motionEventToWorldTransform = screenToPage(index),
+                        brush = brush,
+                        motionEventToWorldTransform = toPage,
                     )
+                    if (compatWetInk) {
+                        compatWet.start(event, pointerId, brush, toPage)
+                        compatWetStrokeId = activeStrokeId
+                    }
                     holdingStationaryStart = tool == Tool.PEN && !stabilizingStroke && dottedPattern == 0
                     stationaryStartX = event.getX(event.actionIndex)
                     stationaryStartY = event.getY(event.actionIndex)
@@ -2216,6 +2260,7 @@ class InkCanvasView @JvmOverloads constructor(
                         )
                     }
                     wet.addToStroke(inkEvent, pointerId, strokeId, predicted)
+                    if (compatWetStrokeId == strokeId) compatWet.add(inkEvent, pointerId, predicted)
                     updatePredictionHead(inkEvent, predicted, pointerId, leadMs)
                 } finally {
                     if (predicted !== rawPrediction) predicted?.recycle()
@@ -2311,6 +2356,7 @@ class InkCanvasView @JvmOverloads constructor(
                             try {
                                 if (predictionEnabled) predictor.record(history)
                                 wet.addToStroke(history, pointerId, strokeId, null)
+                                if (compatWetStrokeId == strokeId) compatWet.add(history, pointerId, null)
                             } finally { history.recycle() }
                         }
                     }
@@ -2335,6 +2381,7 @@ class InkCanvasView @JvmOverloads constructor(
                         if (predictionEnabled) predictor.record(end)
                         pendingStrokeCommits.add(strokeId)
                         wet.finishStroke(end, pointerId, strokeId)
+                        if (compatWetStrokeId == strokeId) compatWet.finish(end, pointerId)
                     } finally {
                         if (end !== event) end.recycle()
                     }
@@ -2352,6 +2399,7 @@ class InkCanvasView @JvmOverloads constructor(
                 predictionHead.clear()
                 if (predictionEnabled && activeStrokeId != null) predictor.record(event)
                 activeStrokeId?.let { wet.cancelStroke(it, event) }
+                cancelCompatWet(activeStrokeId)
                 if (erasing) finishEraseGesture()
                 endStylus()
                 return true
@@ -3532,6 +3580,7 @@ class InkCanvasView @JvmOverloads constructor(
         val source = pdf ?: return
         if (index !in document.pages.indices) return
         activeStrokeId?.let { wet.cancelStroke(it) }
+        cancelCompatWet(activeStrokeId)
         activeStrokeId = null
         selectingText = true
 
@@ -4506,6 +4555,7 @@ class InkCanvasView @JvmOverloads constructor(
             redoStack.clear()
         }
         wet.removeFinishedStrokes(finished.keys)
+        cancelCompatWet(compatWetStrokeId?.takeIf { it in finished.keys })
         if (page != null && committed.isNotEmpty()) {
             onStrokesCommitted?.invoke(document.pages.indexOf(page), committed)
         }
@@ -5450,6 +5500,24 @@ internal fun shouldProcessEraserMove(
     val minimumDistance = eraserWidth * ERASER_SAMPLE_DISTANCE_FRACTION
     return dx * dx + dy * dy >= minimumDistance * minimumDistance
 }
+
+/**
+ * Samsung's S Pen actions for a touch made with the side button held:
+ * 211 down, 212 up, 213 move, 214 cancel. Returns the standard action, or null
+ * for any other action.
+ */
+internal fun samsungSidePenAction(actionMasked: Int): Int? = when (actionMasked) {
+    SAMSUNG_ACTION_PEN_DOWN -> MotionEvent.ACTION_DOWN
+    SAMSUNG_ACTION_PEN_UP -> MotionEvent.ACTION_UP
+    SAMSUNG_ACTION_PEN_MOVE -> MotionEvent.ACTION_MOVE
+    SAMSUNG_ACTION_PEN_CANCEL -> MotionEvent.ACTION_CANCEL
+    else -> null
+}
+
+private const val SAMSUNG_ACTION_PEN_DOWN = 211
+private const val SAMSUNG_ACTION_PEN_UP = 212
+private const val SAMSUNG_ACTION_PEN_MOVE = 213
+private const val SAMSUNG_ACTION_PEN_CANCEL = 214
 
 /** True while the barrel button is held, or the pen is flipped to its eraser end. */
 private fun MotionEvent.isEraserGesture(): Boolean =

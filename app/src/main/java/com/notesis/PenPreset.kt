@@ -151,6 +151,11 @@ class PenStore(context: Context) {
         get() = prefs.getBoolean("partialEraser", false)
         set(value) = prefs.edit().putBoolean("partialEraser", value).apply()
 
+    /** See [InkCanvasView.compatWetInk]; on by default where the front buffer is known to fail. */
+    var compatWetInk: Boolean
+        get() = prefs.getBoolean("compatWetInk", frontBufferInkUnreliable())
+        set(value) = prefs.edit().putBoolean("compatWetInk", value).apply()
+
     /** Screen rendering only - see [InkCanvasView.meshInk]. */
     var meshInk: Boolean
         get() = prefs.getBoolean("meshInk", true)
