@@ -29,12 +29,14 @@ class CustomizationInstrumentation : Instrumentation() {
     private var settingsOnly = false
     private var integrationOnly = false
     private var meshOnly = false
+    private var gesturesOnly = false
     private var benchmarkStrokes = 24
     override fun onCreate(arguments: Bundle?) {
         renderOnly = arguments?.getString("suite") == "render"
         settingsOnly = arguments?.getString("suite") == "settings"
         integrationOnly = arguments?.getString("suite") == "integration"
         meshOnly = arguments?.getString("suite") == "mesh"
+        gesturesOnly = arguments?.getString("suite") == "gestures"
         benchmarkStrokes = arguments?.getString("strokes")?.toIntOrNull()?.coerceIn(24, 1200) ?: 24
         super.onCreate(arguments); start()
     }
@@ -139,6 +141,12 @@ class CustomizationInstrumentation : Instrumentation() {
     override fun onStart() {
         val output = Bundle()
         try {
+            if (gesturesOnly) {
+                checkCanvasGestures()
+                output.putString("stream", "PASS eraser targets, scribble-out, circle to lasso, whole-only lasso, clipboard, page undo and keys\n")
+                finish(Activity.RESULT_OK, output)
+                return
+            }
             if (meshOnly) {
                 checkMeshCache()
                 checkRenderingUi(denseStrokes = 3000)
@@ -201,6 +209,8 @@ class CustomizationInstrumentation : Instrumentation() {
             checkMeshCache()
             progress("icon gallery")
             checkReiconUi()
+            progress("canvas gestures")
+            checkCanvasGestures()
             progress("text and PDF roundtrip")
             val content = TextBoxContent("한글 텍스트\n수식 x² + y² = 1", 32f, Color.BLUE)
             val bitmap = renderTextBox(content)

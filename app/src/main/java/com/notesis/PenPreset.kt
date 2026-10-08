@@ -30,6 +30,25 @@ data class PenPreset(
         if (pressure && tool == Tool.PEN) Tool.PRESSURE_PEN else tool
 }
 
+/** What the eraser takes and which pen gestures do more than write. See InkCanvasView. */
+data class CanvasGestures(
+    val eraseInk: Boolean = true,
+    val eraseHighlighter: Boolean = true,
+    val eraseTape: Boolean = true,
+    val scribbleErase: Boolean = false,
+    val circleToLasso: Boolean = false,
+    val lassoWholeOnly: Boolean = false,
+)
+
+fun InkCanvasView.applyGestures(gestures: CanvasGestures) {
+    eraseInk = gestures.eraseInk
+    eraseHighlighter = gestures.eraseHighlighter
+    eraseTape = gestures.eraseTape
+    scribbleErase = gestures.scribbleErase
+    circleToLasso = gestures.circleToLasso
+    lassoWholeOnly = gestures.lassoWholeOnly
+}
+
 /**
  * Each tool's own settings, kept in preferences rather than in a note - how a
  * pen is set belongs to the person, not to the page they happen to have open.
@@ -150,6 +169,24 @@ class PenStore(context: Context) {
     var partialEraser: Boolean
         get() = prefs.getBoolean("partialEraser", false)
         set(value) = prefs.edit().putBoolean("partialEraser", value).apply()
+
+    var gestures: CanvasGestures
+        get() = CanvasGestures(
+            eraseInk = prefs.getBoolean("eraseInk", true),
+            eraseHighlighter = prefs.getBoolean("eraseHighlighter", true),
+            eraseTape = prefs.getBoolean("eraseTape", true),
+            scribbleErase = prefs.getBoolean("scribbleErase", false),
+            circleToLasso = prefs.getBoolean("circleToLasso", false),
+            lassoWholeOnly = prefs.getBoolean("lassoWholeOnly", false),
+        )
+        set(value) = prefs.edit()
+            .putBoolean("eraseInk", value.eraseInk)
+            .putBoolean("eraseHighlighter", value.eraseHighlighter)
+            .putBoolean("eraseTape", value.eraseTape)
+            .putBoolean("scribbleErase", value.scribbleErase)
+            .putBoolean("circleToLasso", value.circleToLasso)
+            .putBoolean("lassoWholeOnly", value.lassoWholeOnly)
+            .apply()
 
     /** See [InkCanvasView.compatWetInk]; on by default where the front buffer is known to fail. */
     var compatWetInk: Boolean

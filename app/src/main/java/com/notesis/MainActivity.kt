@@ -1755,6 +1755,8 @@ internal fun PenDialog(
     onPartialEraser: (Boolean) -> Unit = {},
     compatWetInk: Boolean = false,
     onCompatWetInk: (Boolean) -> Unit = {},
+    gestures: CanvasGestures = CanvasGestures(),
+    onGestures: (CanvasGestures) -> Unit = {},
 ) {
     val start = pen
     val hsv = remember(pen) {
@@ -1790,6 +1792,19 @@ internal fun PenDialog(
                     }
                     Text(if (partialEraser) "지나간 부분만 지웁니다" else "닿은 획을 통째로 지웁니다",
                         style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(10.dp))
+                    Text("지울 대상", style = MaterialTheme.typography.bodyMedium)
+                    Row {
+                        SettingsChoiceChip(selected = gestures.eraseInk,
+                            onClick = { onGestures(gestures.copy(eraseInk = !gestures.eraseInk)) },
+                            label = "펜", modifier = Modifier.padding(end = 8.dp))
+                        SettingsChoiceChip(selected = gestures.eraseHighlighter,
+                            onClick = { onGestures(gestures.copy(eraseHighlighter = !gestures.eraseHighlighter)) },
+                            label = "형광펜", modifier = Modifier.padding(end = 8.dp))
+                        SettingsChoiceChip(selected = gestures.eraseTape,
+                            onClick = { onGestures(gestures.copy(eraseTape = !gestures.eraseTape)) },
+                            label = "테이프")
+                    }
                 }
                 if (mode.tints) {
                     TextButton(onClick = { paletteOpen = true }) { Text("색 팔레트") }
@@ -1844,6 +1859,18 @@ internal fun PenDialog(
                         SkinSwitch(checked = autoShapes, onCheckedChange = onAutoShapes)
                         Spacer(Modifier.width(10.dp))
                         Text("자동 도형 인식")
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SkinSwitch(checked = gestures.scribbleErase,
+                            onCheckedChange = { onGestures(gestures.copy(scribbleErase = it)) })
+                        Spacer(Modifier.width(10.dp))
+                        Text("낙서로 지우기")
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SkinSwitch(checked = gestures.circleToLasso,
+                            onCheckedChange = { onGestures(gestures.copy(circleToLasso = it)) })
+                        Spacer(Modifier.width(10.dp))
+                        Text("원을 그리고 멈추면 선택")
                     }
                     Text("선 스타일", style = MaterialTheme.typography.bodyMedium)
                     Row(Modifier.horizontalScroll(rememberScrollState())) {
@@ -2908,6 +2935,10 @@ private fun NoteScreen(
     var meshInk by remember { mutableStateOf(penStore.meshInk) }
     var compatWetInk by remember { mutableStateOf(penStore.compatWetInk) }
     var partialEraser by remember { mutableStateOf(penStore.partialEraser) }
+    var gestures by remember { mutableStateOf(penStore.gestures) }
+    fun setGestures(value: CanvasGestures) { gestures = value; penStore.gestures = value }
+    /** Bumped on copy and cut so the paste bar sees the clipboard change. */
+    var clipRevision by remember { mutableIntStateOf(0) }
     var autoShapes by remember { mutableStateOf(penStore.autoShapes) }
     var axisSnap by remember { mutableStateOf(penStore.axisSnap) }
     var dottedPattern by remember { mutableIntStateOf(penStore.dottedPattern) }
@@ -3410,6 +3441,7 @@ private fun NoteScreen(
                     view.meshInk = meshInk
                     view.compatWetInk = compatWetInk
                     view.partialEraser = partialEraser
+                    view.applyGestures(gestures)
                     view.laserMode = laser
                     view.autoShapeRecognitionEnabled = autoShapes
                     view.axisSnapEnabled = axisSnap
@@ -3697,6 +3729,8 @@ private fun NoteScreen(
                 onCompatWetInk = { compatWetInk = it; penStore.compatWetInk = it },
                 partialEraser = partialEraser,
                 onPartialEraser = { partialEraser = it; penStore.partialEraser = it },
+                gestures = gestures,
+                onGestures = { setGestures(it) },
                 autoShapes = autoShapes,
                 onAutoShapes = { autoShapes = it; penStore.autoShapes = it },
                 axisSnap = axisSnap,
@@ -3794,7 +3828,27 @@ private fun NoteScreen(
                     canvas?.duplicateLassoSelection()
                     edits++
                 },
+                onCopy = {
+                    canvas?.copyLassoSelection()
+                    clipRevision++
+                },
+                onCut = {
+                    canvas?.cutLassoSelection()
+                    clipRevision++
+                    edits++
+                },
                 onDone = { canvas?.clearLassoSelection() },
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
+        } else if (mode == EditMode.LASSO) {
+            PasteBar(
+                clipRevision = clipRevision,
+                wholeOnly = gestures.lassoWholeOnly,
+                onWholeOnly = { setGestures(gestures.copy(lassoWholeOnly = it)) },
+                onPaste = {
+                    canvas?.paste(it)
+                    edits++
+                },
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
         }
@@ -4161,6 +4215,7 @@ private fun NoteScreen(
                 meshInk = meshInk,
                 compatWetInk = compatWetInk,
                 partialEraser = partialEraser,
+                gestures = gestures,
                 autoShapes = autoShapes,
                 axisSnap = axisSnap,
                 dottedPattern = dottedPattern,
@@ -4321,6 +4376,8 @@ private fun LassoActions(
     onTransform: ((scale: Float, degrees: Float) -> Unit)? = null,
     onRecolor: (() -> Unit)? = null,
     onDuplicate: (() -> Unit)? = null,
+    onCopy: (() -> Unit)? = null,
+    onCut: (() -> Unit)? = null,
     onDone: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -4355,12 +4412,60 @@ private fun LassoActions(
             if (onDuplicate != null) IconButton(onClick = onDuplicate) {
                 Icon(Reicons.ContentCopy, contentDescription = "복제")
             }
+            if (onCopy != null) TextButton(onClick = onCopy) { Text("복사") }
+            if (onCut != null) TextButton(onClick = onCut) { Text("잘라내기") }
             TextButton(onClick = onDelete) {
                 Icon(Reicons.Delete, contentDescription = null)
                 Text(" 삭제")
             }
             if (onOcr != null) TextButton(onClick = onOcr) { Text("OCR") }
             TextButton(onClick = onDone) { Text("완료") }
+        }
+    }
+}
+
+/**
+ * The lasso in hand with nothing caught: how the next loop selects, and what
+ * was copied, the newest pasted with one tap and the rest of the last ten
+ * from the list beside it.
+ */
+@Composable
+private fun PasteBar(
+    clipRevision: Int,
+    wholeOnly: Boolean,
+    onWholeOnly: (Boolean) -> Unit,
+    onPaste: (InkClipboard.Clip) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val clips = remember(clipRevision) { InkClipboard.clips.toList() }
+    var open by remember { mutableStateOf(false) }
+    SkinSurface(
+        modifier = modifier
+            .windowInsetsPadding(ChromeInsets)
+            .padding(16.dp),
+        corner = 16.dp,
+    ) {
+        Row(
+            Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SettingsChoiceChip(selected = wholeOnly, onClick = { onWholeOnly(!wholeOnly) },
+                label = "완전히 포함된 것만")
+            if (clips.isNotEmpty()) {
+                ToolbarDivider()
+                TextButton(onClick = { onPaste(clips.first()) }) { Text("붙여넣기") }
+                Box {
+                    TextButton(onClick = { open = true }) { Text("클립보드 ${clips.size}") }
+                    DropdownMenu(open, onDismissRequest = { open = false }) {
+                        clips.forEachIndexed { index, clip ->
+                            DropdownMenuItem(
+                                text = { Text("${index + 1}. ${clip.strokes.size} 획") },
+                                onClick = { open = false; onPaste(clip) },
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -4471,6 +4576,7 @@ private fun ReferencePanel(
     meshInk: Boolean,
     compatWetInk: Boolean,
     partialEraser: Boolean,
+    gestures: CanvasGestures,
     autoShapes: Boolean,
     axisSnap: Boolean,
     dottedPattern: Int,
@@ -4828,6 +4934,7 @@ private fun ReferencePanel(
                             v.meshInk = meshInk
                             v.compatWetInk = compatWetInk
                             v.partialEraser = partialEraser
+                            v.applyGestures(gestures)
                             v.autoShapeRecognitionEnabled = autoShapes
                             v.axisSnapEnabled = axisSnap
                             v.dottedPattern = dottedPattern
