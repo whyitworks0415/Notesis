@@ -1753,6 +1753,8 @@ internal fun PenDialog(
     onMeshInk: (Boolean) -> Unit = {},
     partialEraser: Boolean = false,
     onPartialEraser: (Boolean) -> Unit = {},
+    compatWetInk: Boolean = false,
+    onCompatWetInk: (Boolean) -> Unit = {},
 ) {
     val start = pen
     val hsv = remember(pen) {
@@ -1885,6 +1887,19 @@ internal fun PenDialog(
                         )
                     }
                   }
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SkinSwitch(checked = compatWetInk, onCheckedChange = onCompatWetInk)
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text("호환 필기 표시", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "쓰는 동안 획이 보이지 않고 펜을 떼야 나타나면 켜세요. Galaxy Tab S6 Lite에서는 기본으로 켜집니다",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.outline,
+                        )
+                    }
                 }
                 Spacer(Modifier.height(10.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2891,6 +2906,7 @@ private fun NoteScreen(
     var stabilizer by remember { mutableIntStateOf(penStore.stabilizer) }
     var highlighterAboveInk by remember { mutableStateOf(penStore.highlighterAboveInk) }
     var meshInk by remember { mutableStateOf(penStore.meshInk) }
+    var compatWetInk by remember { mutableStateOf(penStore.compatWetInk) }
     var partialEraser by remember { mutableStateOf(penStore.partialEraser) }
     var autoShapes by remember { mutableStateOf(penStore.autoShapes) }
     var axisSnap by remember { mutableStateOf(penStore.axisSnap) }
@@ -3392,6 +3408,7 @@ private fun NoteScreen(
                     view.stabilizer = stabilizer
                     view.highlighterAboveInk = highlighterAboveInk
                     view.meshInk = meshInk
+                    view.compatWetInk = compatWetInk
                     view.partialEraser = partialEraser
                     view.laserMode = laser
                     view.autoShapeRecognitionEnabled = autoShapes
@@ -3676,6 +3693,8 @@ private fun NoteScreen(
                 },
                 meshInk = meshInk,
                 onMeshInk = { meshInk = it; penStore.meshInk = it },
+                compatWetInk = compatWetInk,
+                onCompatWetInk = { compatWetInk = it; penStore.compatWetInk = it },
                 partialEraser = partialEraser,
                 onPartialEraser = { partialEraser = it; penStore.partialEraser = it },
                 autoShapes = autoShapes,
@@ -3971,6 +3990,8 @@ private fun NoteScreen(
                 },
                 meshInk = meshInk,
                 onMeshInk = { meshInk = it; penStore.meshInk = it },
+                compatWetInk = compatWetInk,
+                onCompatWetInk = { compatWetInk = it; penStore.compatWetInk = it },
                 autoShapes = autoShapes,
                 onAutoShapes = { autoShapes = it; penStore.autoShapes = it },
                 axisSnap = axisSnap,
@@ -4138,6 +4159,7 @@ private fun NoteScreen(
                 stabilizer = stabilizer,
                 highlighterAboveInk = highlighterAboveInk,
                 meshInk = meshInk,
+                compatWetInk = compatWetInk,
                 partialEraser = partialEraser,
                 autoShapes = autoShapes,
                 axisSnap = axisSnap,
@@ -4447,6 +4469,7 @@ private fun ReferencePanel(
     stabilizer: Int,
     highlighterAboveInk: Boolean,
     meshInk: Boolean,
+    compatWetInk: Boolean,
     partialEraser: Boolean,
     autoShapes: Boolean,
     axisSnap: Boolean,
@@ -4803,6 +4826,7 @@ private fun ReferencePanel(
                             v.stabilizer = stabilizer
                             v.highlighterAboveInk = highlighterAboveInk
                             v.meshInk = meshInk
+                            v.compatWetInk = compatWetInk
                             v.partialEraser = partialEraser
                             v.autoShapeRecognitionEnabled = autoShapes
                             v.axisSnapEnabled = axisSnap
