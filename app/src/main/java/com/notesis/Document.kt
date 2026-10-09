@@ -715,6 +715,30 @@ class NoteStore(context: Context) {
         return NoteMeta(id, title, System.currentTimeMillis(), 1, 0)
     }
 
+    /**
+     * A note with one picture per page, in [streams]' order: each page is A4
+     * wide and as tall as its picture needs.
+     */
+    fun createFromImages(title: String, streams: List<() -> java.io.InputStream?>): NoteMeta? {
+        val id = UUID.randomUUID().toString()
+        File(root, "$id/pages").mkdirs()
+        val pages = streams.mapNotNull { open ->
+            val added = runCatching { open()?.use { addImage(id, it) } }.getOrNull() ?: return@mapNotNull null
+            val height = (Page.A4_WIDTH / added.second.coerceAtLeast(0.05f)).coerceIn(100f, Page.A4_HEIGHT * 6f)
+            Page(width = Page.A4_WIDTH, height = height).also {
+                it.images += PageImage(added.first, 0f, 0f, Page.A4_WIDTH, height)
+            }
+        }
+        if (pages.isEmpty()) {
+            File(root, id).deleteRecursively()
+            return null
+        }
+        val document = Document(pages.toMutableList())
+        writeMeta(id, title, document)
+        writeAutoThumbnail(id, document)
+        return readMeta(File(root, id))
+    }
+
     fun createMarkdown(title: String, text: String = "", folder: String = ""): NoteMeta {
         val id = UUID.randomUUID().toString()
         val dir = File(root, id).apply { mkdirs() }

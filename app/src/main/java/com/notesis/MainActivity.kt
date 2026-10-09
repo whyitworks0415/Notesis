@@ -652,6 +652,50 @@ private fun NoteListScreen(
     val indexer = remember { InkIndexer(context) }
     DisposableEffect(Unit) { onDispose { indexer.close() } }
 
+    // Pictures for a new note: picked, put in order, then one per page.
+    var orderingImages by remember { mutableStateOf<List<Uri>?>(null) }
+    val pickImages = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) orderingImages = uris
+    }
+    var askingUrl by remember { mutableStateOf(false) }
+    orderingImages?.let { uris ->
+        ImageOrderDialog(uris, onDismiss = { orderingImages = null }) { ordered ->
+            orderingImages = null
+            busy = "이미지로 노트를 만드는 중"
+            scope.launch {
+                val created = withContext(Dispatchers.IO) {
+                    store.createFromImages("이미지 노트", ordered.map { uri -> { context.contentResolver.openInputStream(uri) } })
+                }
+                busy = null
+                revision++
+                if (created != null) onOpen(created) else report = "이미지를 읽지 못했습니다"
+            }
+        }
+    }
+    if (askingUrl) {
+        var address by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { askingUrl = false },
+            title = { Text("웹페이지로 노트 만들기") },
+            text = { OutlinedTextField(address, { address = it.trim() }, label = { Text("https://…") }, singleLine = true) },
+            confirmButton = { TextButton(enabled = address.contains('.'), onClick = {
+                askingUrl = false
+                busy = "웹페이지를 읽는 중"
+                scope.launch {
+                    val page = withContext(Dispatchers.IO) { fetchWebPage(address) }
+                    busy = null
+                    if (page == null) { report = "웹페이지를 읽지 못했습니다"; return@launch }
+                    val created = withContext(Dispatchers.IO) {
+                        store.createMarkdown(page.title.take(80), "# ${page.title}\n\n출처: $address\n\n${page.text}")
+                    }
+                    revision++
+                    onOpen(created)
+                }
+            }) { Text("만들기") } },
+            dismissButton = { TextButton(onClick = { askingUrl = false }) { Text("취소") } },
+        )
+    }
+
     val pickPdf = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments(),
     ) { uris: List<Uri> ->
@@ -834,6 +878,18 @@ private fun NoteListScreen(
                     onClick = { importMarkdown.launch(arrayOf("text/markdown", "text/plain", "application/octet-stream")) },
                     icon = Reicons.Description,
                     contentDescription = "Markdown 가져오기",
+                    modifier = Modifier.padding(bottom = 12.dp),
+                )
+                GlassFab(
+                    onClick = { pickImages.launch(arrayOf("image/*")) },
+                    icon = Reicons.AddPhotoAlternate,
+                    contentDescription = "이미지로 새 노트",
+                    modifier = Modifier.padding(bottom = 12.dp),
+                )
+                GlassFab(
+                    onClick = { askingUrl = true },
+                    icon = Reicons.Language,
+                    contentDescription = "웹페이지로 새 노트",
                     modifier = Modifier.padding(bottom = 12.dp),
                 )
                 GlassFab(
@@ -1626,6 +1682,38 @@ internal fun UnlockDialog(lock: NoteLock, title: String, onUnlocked: () -> Unit,
             TextButton(onClick = { if (lock.check(password)) onUnlocked() else wrong = true },
                 enabled = password.isNotEmpty()) { Text("열기") }
         },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+    )
+}
+
+/** The picked pictures in the order they will become pages; ▲▼ to change it. */
+@Composable
+private fun ImageOrderDialog(uris: List<Uri>, onDismiss: () -> Unit, onConfirm: (List<Uri>) -> Unit) {
+    val context = LocalContext.current
+    val order = remember { mutableStateListOf<Uri>().apply { addAll(uris) } }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("이미지 ${order.size}장 순서") },
+        text = {
+            LazyColumn(Modifier.heightIn(max = 420.dp)) {
+                items(order.toList(), key = { it.toString() }) { uri ->
+                    val at = order.indexOf(uri)
+                    val thumb = remember(uri) {
+                        runCatching {
+                            context.contentResolver.loadThumbnail(uri, android.util.Size(160, 160), null)
+                        }.getOrNull()
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("${at + 1}", Modifier.width(28.dp))
+                        if (thumb != null) Image(thumb.asImageBitmap(), null, Modifier.size(56.dp), contentScale = ContentScale.Crop)
+                        Spacer(Modifier.weight(1f))
+                        TextButton(enabled = at > 0, onClick = { order.add(at - 1, order.removeAt(at)) }) { Text("▲") }
+                        TextButton(enabled = at < order.lastIndex, onClick = { order.add(at + 1, order.removeAt(at)) }) { Text("▼") }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { onConfirm(order.toList()) }) { Text("만들기") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
     )
 }
