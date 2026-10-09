@@ -411,6 +411,11 @@ data class NoteMeta(
     val favorite: Boolean = false,
     /** When it went into the trash, or 0 for a note that is not in it. */
     val trashedAt: Long = 0L,
+    val tags: List<String> = emptyList(),
+    /** A colour to tell it apart in the list, or 0 for none. */
+    val label: Int = 0,
+    /** Behind the master password. See [NoteLock]. */
+    val locked: Boolean = false,
 )
 
 /**
@@ -478,9 +483,15 @@ class NoteStore(context: Context) {
         return true
     }
 
-    /** Deleting a folder keeps its notes at the top level. */
-    fun deleteFolder(name: String) {
-        list().filter { it.folder == name }.forEach { setFolder(it.id, "") }
+    /**
+     * Deleting a folder sends its notes to the trash, still filed under it, so
+     * restoring one brings the folder back with it. [keepNotes] moves them to
+     * the top level instead.
+     */
+    fun deleteFolder(name: String, keepNotes: Boolean = false) {
+        list().filter { it.folder == name }.forEach {
+            if (keepNotes) setFolder(it.id, "") else moveToTrash(it.id)
+        }
         writeFolders(savedFolders().filterNot { it == name })
     }
 
@@ -555,6 +566,27 @@ class NoteStore(context: Context) {
     fun emptyTrash() {
         trashed().forEach { delete(it.id) }
     }
+
+    fun setTags(id: String, tags: List<String>) {
+        val clean = tags.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        val file = File(root, "$id/$TAGS")
+        if (clean.isEmpty()) file.delete() else runCatching { file.writeText(JSONArray(clean).toString()) }
+    }
+
+    /** Every tag on a note that is not in the trash, for the filter row. */
+    fun allTags(): List<String> = list().flatMap { it.tags }.distinct().sorted()
+
+    fun setLabel(id: String, color: Int) {
+        val file = File(root, "$id/$LABEL")
+        if (color == 0) file.delete() else runCatching { file.writeText(color.toString()) }
+    }
+
+    fun setLocked(id: String, locked: Boolean) {
+        val marker = File(root, "$id/$LOCKED")
+        if (locked) runCatching { marker.writeText("1") } else marker.delete()
+    }
+
+    fun isLocked(id: String): Boolean = File(root, "$id/$LOCKED").isFile
 
     fun setFavorite(id: String, favorite: Boolean) {
         val marker = File(root, "$id/$FAVORITE")
@@ -1587,6 +1619,13 @@ class NoteStore(context: Context) {
                 trashedAt = File(dir, TRASHED).takeIf { it.isFile }
                     ?.let { runCatching { it.readText().trim().toLong() }.getOrDefault(it.lastModified()) }
                     ?: 0L,
+                tags = File(dir, TAGS).takeIf { it.isFile }?.let { file ->
+                    runCatching { JSONArray(file.readText()).let { a -> (0 until a.length()).map(a::getString) } }
+                        .getOrNull()
+                }.orEmpty(),
+                label = File(dir, LABEL).takeIf { it.isFile }
+                    ?.let { runCatching { it.readText().trim().toInt() }.getOrNull() } ?: 0,
+                locked = File(dir, LOCKED).isFile,
             )
         }.getOrNull()
     }
@@ -1708,7 +1747,10 @@ class NoteStore(context: Context) {
         const val INK_INDEX = ".ink"
         const val TRASHED = "trashed"
         const val FAVORITE = "favorite"
-        const val TRASH_DAYS = 30
+        const val TRASH_DAYS = 14
+        const val TAGS = "tags.json"
+        const val LABEL = "label"
+        const val LOCKED = "locked"
         const val ARCHIVE_MARK = "notesis.json"
         const val ARCHIVE_VERSION = 1
         const val THUMB_INTERVAL_MS = 20_000L

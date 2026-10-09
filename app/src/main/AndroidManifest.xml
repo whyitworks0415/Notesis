@@ -4,6 +4,7 @@
     <!-- The side panel is a WebView; looking things up is the whole point. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <application
         android:label="Notesis"
         android:icon="@mipmap/ic_launcher"

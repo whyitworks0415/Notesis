@@ -82,6 +82,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.material3.SuggestionChip
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -224,6 +227,26 @@ class MainActivity : ComponentActivity() {
             ProvideSkin(skin, look) {
                 var openNote by remember { mutableStateOf<NoteMeta?>(null) }
                 var pickedDocument by remember { mutableStateOf<ViewerRequest?>(null) }
+                // A locked note opens only past the master password, once per run of the app.
+                val noteLock = remember { NoteLock(this@MainActivity) }
+                val unlocked = remember { mutableStateListOf<String>() }
+                var unlocking by remember { mutableStateOf<NoteMeta?>(null) }
+                fun requestOpen(meta: NoteMeta?) {
+                    if (meta != null && store.isLocked(meta.id) && meta.id !in unlocked) unlocking = meta
+                    else openNote = meta
+                }
+                unlocking?.let { target ->
+                    UnlockDialog(
+                        lock = noteLock,
+                        title = target.title,
+                        onUnlocked = {
+                            unlocked += target.id
+                            unlocking = null
+                            openNote = target
+                        },
+                        onDismiss = { unlocking = null },
+                    )
+                }
                 val viewedDocument = incomingViewerRequest ?: pickedDocument
                 val note = openNote ?: incomingImportedNote
                 if (viewedDocument != null) {
@@ -253,7 +276,8 @@ class MainActivity : ComponentActivity() {
                         store = store,
                         onSettings = { settingsOpen = true },
                         onOpenDocument = { pickedDocument = it },
-                        onOpen = { incomingImportedNote = null; openNote = it },
+                        onOpen = { incomingImportedNote = null; requestOpen(it) },
+                        noteLock = noteLock,
                     )
                 } else if (note.kind == NoteKind.MARKDOWN) {
                     key(note.id) {
@@ -276,7 +300,7 @@ class MainActivity : ComponentActivity() {
                             skin = it
                             prefs.skin = it
                         },
-                        onOpenNote = { openNote = it },
+                        onOpenNote = { requestOpen(it) },
                         onLookChange = { look = it; lookStore.save(it) },
                         onBack = { openNote = null; incomingImportedNote = null },
                     )
@@ -349,6 +373,7 @@ private fun NoteListScreen(
     onSettings: () -> Unit,
     onOpenDocument: (ViewerRequest) -> Unit,
     onOpen: (NoteMeta) -> Unit,
+    noteLock: NoteLock? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -379,6 +404,11 @@ private fun NoteListScreen(
     var pageHits by remember { mutableStateOf<Map<String, List<PageHit>>>(emptyMap()) }
     var showTrash by remember { mutableStateOf(false) }
     var sortMenu by remember { mutableStateOf(false) }
+    var tagFilter by remember { mutableStateOf<String?>(null) }
+    val allTags = remember(revision) { store.allTags() }
+    var taggingNote by remember { mutableStateOf<NoteMeta?>(null) }
+    var labelingNote by remember { mutableStateOf<NoteMeta?>(null) }
+    var lockingNote by remember { mutableStateOf<NoteMeta?>(null) }
     // Which note the image picker, once it comes back, belongs to.
     var thumbnailFor by remember { mutableStateOf<NoteMeta?>(null) }
     val homeStore = remember { PenStore(context) }
@@ -450,7 +480,8 @@ private fun NoteListScreen(
         delay(SEARCH_DEBOUNCE_MS)
         val found = withContext(Dispatchers.IO) { store.searchWithPages(query) }
         results = found.map { it.first }
-        pageHits = found.filter { it.second.isNotEmpty() }.associate { it.first.id to it.second }
+        // A locked note can be found by name, but what is written in it stays behind the lock.
+        pageHits = found.filter { it.second.isNotEmpty() && !it.first.locked }.associate { it.first.id to it.second }
     }
     // Blank is the top level. Searching reaches across every folder, because
     // the point of searching is not knowing where a thing is.
@@ -462,7 +493,8 @@ private fun NoteListScreen(
     var folderMenu by remember { mutableStateOf(false) }
     val folders = remember(revision) { store.folders() }
     // Favourites first, then the chosen order within each group.
-    val shown = (results ?: notes.filter { it.folder == folder }).sortedWith(
+    val shown = (results ?: if (tagFilter != null) notes.filter { tagFilter in it.tags }
+        else notes.filter { it.folder == folder }).sortedWith(
         compareByDescending<NoteMeta> { it.favorite }.then(
             when (librarySort) {
                 LIBRARY_SORT_TITLE -> compareBy { it.title.lowercase() }
@@ -505,6 +537,21 @@ private fun NoteListScreen(
             }
             busy = null
             report = if (ok) "노트 ${ids.size}개를 백업했습니다" else "내보내지 못했습니다"
+        }
+    }
+
+    val saveSelectedArchive = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip"),
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val ids = selectedIds.toList()
+        busy = "선택한 노트 내보내는 중"
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                context.contentResolver.openOutputStream(uri)?.use { store.exportArchive(ids, it) } ?: false
+            }
+            busy = null
+            report = if (ok) "노트 ${ids.size}개를 내보냈습니다" else "내보내지 못했습니다"
         }
     }
 
@@ -832,9 +879,24 @@ private fun NoteListScreen(
             ) {
                 // Folders sit above the notes rather than beside them: they
                 // are a place, not another note.
-                if (results == null && folder.isBlank() && folders.isNotEmpty()) {
+                if (results == null && folder.isBlank() && folders.isNotEmpty() && tagFilter == null) {
                     item(span = { GridItemSpan(maxLineSpan) }) {
                         FolderRow(folders) { folder = it }
+                    }
+                }
+                // Tags cut across folders, so picking one shows every note that carries it.
+                if (results == null && allTags.isNotEmpty()) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Row(Modifier.horizontalScroll(rememberScrollState())) {
+                            allTags.forEach { tag ->
+                                FilterChip(
+                                    selected = tagFilter == tag,
+                                    onClick = { tagFilter = if (tagFilter == tag) null else tag },
+                                    label = { Text("#$tag") },
+                                    modifier = Modifier.padding(end = 6.dp),
+                                )
+                            }
+                        }
                     }
                 }
                 // Where in each note the text was found; opening one goes
@@ -904,6 +966,15 @@ private fun NoteListScreen(
                             store.setFavorite(note.id, !note.favorite)
                             revision++
                         },
+                        onTags = { taggingNote = note },
+                        onLabel = { labelingNote = note },
+                        onLock = {
+                            // Locking with a password already set needs nothing more; the rest asks first.
+                            if (!note.locked && noteLock?.hasPassword == true) {
+                                store.setLocked(note.id, true)
+                                revision++
+                            } else lockingNote = note
+                        },
                         onIndex = {
                             busy = "필기를 읽는 중"
                             scope.launch {
@@ -948,6 +1019,9 @@ private fun NoteListScreen(
                     }
                 }, enabled = selectedIds.count { id -> notes.any { it.id == id && it.kind == NoteKind.INK } } >= 2) {
                     Text("합치기")
+                }
+                TextButton(onClick = { saveSelectedArchive.launch("Notesis-선택-백업") }, enabled = selectedIds.isNotEmpty()) {
+                    Text("내보내기")
                 }
                 TextButton(onClick = { bulkDelete = true }, enabled = selectedIds.isNotEmpty()) {
                     Text("삭제")
@@ -1032,14 +1106,24 @@ private fun NoteListScreen(
     if (deletingFolder) AlertDialog(
         onDismissRequest = { deletingFolder = false },
         title = { Text("폴더 삭제") },
-        text = { Text("폴더의 노트는 전체 노트로 이동합니다.") },
+        text = { Text("폴더와 노트를 휴지통으로 옮깁니다. 노트를 복원하면 폴더도 다시 생깁니다.") },
         confirmButton = { TextButton(onClick = {
             store.deleteFolder(folder)
             folder = ""
             revision++
             deletingFolder = false
-        }) { Text("삭제") } },
-        dismissButton = { TextButton(onClick = { deletingFolder = false }) { Text("취소") } },
+        }) { Text("휴지통으로") } },
+        dismissButton = {
+            Row {
+                TextButton(onClick = {
+                    store.deleteFolder(folder, keepNotes = true)
+                    folder = ""
+                    revision++
+                    deletingFolder = false
+                }) { Text("노트는 남기기") }
+                TextButton(onClick = { deletingFolder = false }) { Text("취소") }
+            }
+        },
     )
 
     if (importing) {
@@ -1094,6 +1178,82 @@ private fun NoteListScreen(
                 })
             },
         )
+    }
+
+    taggingNote?.let { target ->
+        var text by remember(target.id) { mutableStateOf(target.tags.joinToString(", ")) }
+        AlertDialog(
+            onDismissRequest = { taggingNote = null },
+            title = { Text("태그") },
+            text = {
+                Column {
+                    OutlinedTextField(value = text, onValueChange = { text = it },
+                        label = { Text("쉼표로 구분") }, singleLine = true)
+                    if (allTags.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState()).padding(top = 8.dp)) {
+                        allTags.forEach { tag ->
+                            SuggestionChip(onClick = {
+                                val current = text.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+                                if (tag !in current) text = (current + tag).joinToString(", ")
+                            }, label = { Text("#$tag") }, modifier = Modifier.padding(end = 6.dp))
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = {
+                store.setTags(target.id, text.split(','))
+                taggingNote = null
+                revision++
+            }) { Text("저장") } },
+            dismissButton = { TextButton(onClick = { taggingNote = null }) { Text("취소") } },
+        )
+    }
+
+    labelingNote?.let { target ->
+        AlertDialog(
+            onDismissRequest = { labelingNote = null },
+            title = { Text("색 라벨") },
+            text = {
+                Row(Modifier.horizontalScroll(rememberScrollState())) {
+                    (listOf(0) + NOTE_LABELS).forEach { color ->
+                        Box(
+                            Modifier
+                                .padding(4.dp)
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(if (color == 0) MaterialTheme.colorScheme.surfaceVariant else Color(color))
+                                .border(if (target.label == color) 3.dp else 1.dp,
+                                    MaterialTheme.colorScheme.outline, CircleShape)
+                                .clickable {
+                                    store.setLabel(target.id, color)
+                                    labelingNote = null
+                                    revision++
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) { if (color == 0) Text("없음", style = MaterialTheme.typography.labelSmall) }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { labelingNote = null }) { Text("닫기") } },
+        )
+    }
+
+    lockingNote?.let { target ->
+        val lock = noteLock ?: return@let
+        if (target.locked) {
+            // Taking a lock off asks for the password, or anyone could.
+            UnlockDialog(lock, target.title, onUnlocked = {
+                store.setLocked(target.id, false)
+                lockingNote = null
+                revision++
+            }, onDismiss = { lockingNote = null })
+        } else if (!lock.hasPassword) {
+            SetPasswordDialog(onSet = { password, hint ->
+                lock.setPassword(password, hint)
+                store.setLocked(target.id, true)
+                lockingNote = null
+                revision++
+            }, onDismiss = { lockingNote = null })
+        }
     }
 
     if (showTrash) TrashDialog(
@@ -1155,6 +1315,72 @@ private fun SearchHitRow(note: NoteMeta, hit: PageHit, onOpen: () -> Unit) {
             )
         }
     }
+}
+
+internal val NOTE_LABELS = listOf(
+    0xFFE53935.toInt(), 0xFFFB8C00.toInt(), 0xFFFDD835.toInt(), 0xFF43A047.toInt(),
+    0xFF1E88E5.toInt(), 0xFF8E24AA.toInt(), 0xFF6D4C41.toInt(), 0xFF546E7A.toInt(),
+)
+
+/** The master password, typed twice, and a hint for the day it is forgotten. */
+@Composable
+private fun SetPasswordDialog(onSet: (String, String) -> Unit, onDismiss: () -> Unit) {
+    var first by remember { mutableStateOf("") }
+    var second by remember { mutableStateOf("") }
+    var hint by remember { mutableStateOf("") }
+    val ok = first.length >= 4 && first == second
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("노트 잠금 암호 만들기") },
+        text = {
+            Column {
+                Text("모든 잠긴 노트가 이 암호 하나를 씁니다. 이 기기에만 저장되며 잊으면 복구할 수 없습니다.",
+                    style = MaterialTheme.typography.bodySmall)
+                OutlinedTextField(first, { first = it }, label = { Text("암호 (4자 이상)") }, singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
+                OutlinedTextField(second, { second = it }, label = { Text("암호 확인") }, singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    isError = second.isNotEmpty() && second != first)
+                OutlinedTextField(hint, { hint = it }, label = { Text("힌트 (선택)") }, singleLine = true)
+            }
+        },
+        confirmButton = { TextButton(onClick = { onSet(first, hint.trim()) }, enabled = ok) { Text("잠그기") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+    )
+}
+
+/** Asks for the master password, or the device's fingerprint or face first where there is one. */
+@Composable
+internal fun UnlockDialog(lock: NoteLock, title: String, onUnlocked: () -> Unit, onDismiss: () -> Unit) {
+    val activity = LocalContext.current as? android.app.Activity
+    var password by remember { mutableStateOf("") }
+    var wrong by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (activity != null) lock.askBiometric(activity, "\"$title\" 열기") { passed -> if (passed) onUnlocked() }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("잠긴 노트") },
+        text = {
+            Column {
+                Text(title, style = MaterialTheme.typography.bodyMedium)
+                OutlinedTextField(password, { password = it; wrong = false }, label = { Text("암호") },
+                    singleLine = true, isError = wrong,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
+                if (wrong && lock.hint.isNotBlank()) Text("힌트: ${lock.hint}", style = MaterialTheme.typography.bodySmall)
+                else if (wrong) Text("암호가 맞지 않습니다", color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { if (lock.check(password)) onUnlocked() else wrong = true },
+                enabled = password.isNotEmpty()) { Text("열기") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+    )
 }
 
 /** Deleted notes, restorable until they age out after [NoteStore.TRASH_DAYS] days. */
@@ -1238,6 +1464,9 @@ private fun NoteCard(
     onIndex: () -> Unit,
     onFile: () -> Unit,
     onToggleFavorite: () -> Unit,
+    onTags: () -> Unit = {},
+    onLabel: () -> Unit = {},
+    onLock: () -> Unit = {},
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     // Keyed on the file's timestamp, so replacing the picture redraws the card
@@ -1289,7 +1518,7 @@ private fun NoteCard(
                     .background(Color(0xFFFDFCF8)),
                 contentAlignment = Alignment.Center,
             ) {
-                if (preview != null) {
+                if (preview != null && !note.locked) {
                     Image(
                         bitmap = preview.asImageBitmap(),
                         contentDescription = null,
@@ -1312,6 +1541,19 @@ private fun NoteCard(
                     contentDescription = "즐겨찾기",
                     tint = Color(0xFFF5B400),
                     modifier = Modifier.align(Alignment.TopStart).padding(10.dp),
+                )
+                if (note.locked) Icon(
+                    Icons.Filled.Lock,
+                    contentDescription = "잠긴 노트",
+                    tint = MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.size(36.dp),
+                )
+                if (note.label != 0) Box(
+                    Modifier
+                        .align(Alignment.BottomStart)
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .background(Color(note.label)),
                 )
                 if (selectionMode) Icon(
                     if (selected) Reicons.Check else Reicons.Circle,
@@ -1337,6 +1579,13 @@ private fun NoteCard(
                         "${dateFormat.format(Date(note.modified))} · ${note.pageCount}쪽",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.outline,
+                    )
+                    if (note.tags.isNotEmpty()) Text(
+                        note.tags.joinToString(" ") { "#$it" },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
                 Box {
@@ -1383,6 +1632,20 @@ private fun NoteCard(
                                 menuOpen = false
                                 onToggleFavorite()
                             },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("태그") },
+                            onClick = { menuOpen = false; onTags() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("색 라벨") },
+                            leadingIcon = { Icon(Reicons.Palette, contentDescription = null) },
+                            onClick = { menuOpen = false; onLabel() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(if (note.locked) "잠금 해제" else "암호로 잠그기") },
+                            leadingIcon = { Icon(Icons.Filled.Lock, contentDescription = null) },
+                            onClick = { menuOpen = false; onLock() },
                         )
                         DropdownMenuItem(
                             text = { Text("폴더로 이동") },
