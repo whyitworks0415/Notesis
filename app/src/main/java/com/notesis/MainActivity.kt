@@ -3845,7 +3845,8 @@ private fun NoteScreen(
     var showPages by remember { mutableStateOf(false) }
     var goToPage by remember { mutableStateOf(false) }
     var showSkinSettings by remember { mutableStateOf(false) }
-    var pageLayout by remember { mutableStateOf(penStore.pageLayout) }
+    var pageLayout by remember { mutableStateOf(penStore.pageLayoutOf(note.id)) }
+    var noteMenu by remember { mutableStateOf(false) }
     var edits by remember { mutableIntStateOf(0) }
     val indexedRevisions = remember(note.id) { mutableMapOf<String, Long>() }
     val resumePage = remember(note.id, note.pageCount) {
@@ -3867,6 +3868,14 @@ private fun NoteScreen(
     // A multiple of fit-to-width, which is the 100% anybody means.
     var zoom by remember { mutableFloatStateOf(1f) }
     var canvas by remember { mutableStateOf<InkCanvasView?>(null) }
+    val takePhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { taken ->
+        val file = java.io.File(context.cacheDir, "shared/camera.jpg")
+        if (!taken || !file.isFile) return@rememberLauncherForActivityResult
+        scope.launch {
+            val added = withContext(Dispatchers.IO) { file.inputStream().use { store.addImage(note.id, it) } }
+            if (added != null) { canvas?.insertImage(added.first, added.second); edits++ }
+        }
+    }
     if (rulerAngle) {
         var text by remember { mutableStateOf("") }
         var inches by remember { mutableStateOf(canvas?.rulerInches == true) }
@@ -4123,6 +4132,11 @@ private fun NoteScreen(
             onTable = { editingTable = PageImage() },
             onEditTools = { editingTools = true },
             onZoomBox = { if (zoomBox && referenceOpen) { referenceOpen = false; zoomBox = false } else openZoomBox(canvas?.currentPageIndex() ?: 0) },
+            onNoteMenu = { noteMenu = true },
+            onCamera = {
+                val file = java.io.File(context.cacheDir, "shared/camera.jpg").apply { parentFile?.mkdirs() }
+                takePhoto.launch(androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".files", file))
+            },
             onQuickColor = { rgb ->
                 val alpha = pen.colorArgb and 0xFF000000.toInt()
                 settings = settings + (mode to pen.copy(colorArgb = (rgb and 0xFFFFFF) or alpha))
@@ -5106,6 +5120,60 @@ private fun NoteScreen(
             )
         }
         if (editingTools) ToolbarEditDialog(onDismiss = { editingTools = false })
+        if (noteMenu) {
+            val meta = remember(edits) { store.list().firstOrNull { it.id == note.id } ?: note }
+            var confirmDelete by remember { mutableStateOf(false) }
+            var filing by remember { mutableStateOf(false) }
+            AlertDialog(
+                onDismissRequest = { noteMenu = false },
+                title = { Text(note.title) },
+                text = {
+                    Column {
+                        Text("보기 방식", style = MaterialTheme.typography.bodyMedium)
+                        Row(Modifier.horizontalScroll(rememberScrollState())) {
+                            listOf(PageLayoutMode.VERTICAL to "세로 스크롤", PageLayoutMode.HORIZONTAL to "가로 스크롤",
+                                PageLayoutMode.SPREAD_2X1 to "두 쪽", PageLayoutMode.GRID_2X2 to "네 쪽").forEach { (layout, label) ->
+                                SettingsChoiceChip(selected = pageLayout == layout, onClick = {
+                                    pageLayout = layout
+                                    penStore.setPageLayoutOf(note.id, layout)
+                                    canvas?.setPageLayout(layout)
+                                }, label = label, modifier = Modifier.padding(end = 6.dp))
+                            }
+                        }
+                        HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                        TextButton(onClick = { store.setFavorite(note.id, !meta.favorite); edits++ }) {
+                            Text(if (meta.favorite) "즐겨찾기 해제" else "즐겨찾기")
+                        }
+                        TextButton(onClick = { filing = true }) { Text("폴더로 이동") }
+                        TextButton(onClick = {
+                            noteMenu = false
+                            canvas?.let { view -> exportingPages = view.snapshotPages(view.document.pages.indices.toList()) }
+                            savePagesPdf.launch(safeFileName(note.title) + ".pdf")
+                        }) { Text("PDF로 내보내기") }
+                        TextButton(enabled = meta.locked || NoteLock(context).hasPassword, onClick = {
+                            store.setLocked(note.id, !meta.locked); edits++
+                        }) { Text(if (meta.locked) "잠금 해제" else "암호로 잠그기") }
+                        TextButton(onClick = { confirmDelete = true }) {
+                            Text("휴지통으로", color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                },
+                confirmButton = { TextButton(onClick = { noteMenu = false }) { Text("닫기") } },
+            )
+            if (filing) FolderDialog(current = meta.folder, folders = remember { store.folders() },
+                onDismiss = { filing = false }, onPick = { store.setFolder(note.id, it); filing = false; edits++ })
+            if (confirmDelete) AlertDialog(
+                onDismissRequest = { confirmDelete = false },
+                title = { Text("이 노트를 휴지통으로 옮길까요?") },
+                confirmButton = { TextButton(onClick = {
+                    confirmDelete = false
+                    noteMenu = false
+                    store.moveToTrash(note.id)
+                    onBack()
+                }) { Text("옮기기") } },
+                dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("취소") } },
+            )
+        }
         if (showInput) InputSettingsDialog(gestures, onGestures = { setGestures(it) }, onDismiss = { showInput = false })
 
         pressMenu?.let { at ->
@@ -7234,6 +7302,8 @@ private fun Toolbar(
     onEditTools: () -> Unit = {},
     onQuickColor: (Int) -> Unit = {},
     onZoomBox: () -> Unit = {},
+    onNoteMenu: () -> Unit = {},
+    onCamera: () -> Unit = {},
 ) {
     val topRow: @Composable () -> Unit = {
         // ---- top row: the note, and what is done to the whole of it
@@ -7353,6 +7423,7 @@ private fun Toolbar(
             IconButton(onClick = onAddPage) {
                 Icon(Reicons.Add, contentDescription = "페이지 추가")
             }
+            IconButton(onClick = onNoteMenu) { Icon(Reicons.MoreVert, contentDescription = "노트 · 보기 방식") }
             OtherNotesButton(otherNotes, onOpenNote)
         }
     }
@@ -7396,6 +7467,8 @@ private fun Toolbar(
                 add(SpotiToolbarAction("손가락·제스처", Reicons.TouchApp, onClick = onInputSettings))
                 add(SpotiToolbarAction("도구 편집", Reicons.Tune, onClick = onEditTools))
                 add(SpotiToolbarAction("확대 필기창", Reicons.ZoomOutMap, onClick = onZoomBox))
+                add(SpotiToolbarAction("노트 · 보기 방식", Reicons.MoreVert, onClick = onNoteMenu))
+                add(SpotiToolbarAction("사진 찍어 넣기", Reicons.Image, onClick = onCamera))
                 add(SpotiToolbarAction("UI · 화면 설정", Reicons.AutoAwesomeMosaic, slot = 6, onClick = onScreenSettings))
                 add(SpotiToolbarAction("화면 맞추기 · $zoomLabel", Reicons.ZoomOutMap, onClick = onFitWidth))
                 add(SpotiToolbarAction("인터넷", Reicons.Language, onClick = { onWeb(SEARCH_HOME) }))

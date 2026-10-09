@@ -1705,7 +1705,22 @@ class InkCanvasView @JvmOverloads constructor(
         dry.invalidate()
     }
 
+    /**
+     * A pen stroke that starts at the screen's edge is writing, not the system's
+     * back gesture. Android honours up to 200dp of each edge; ask for the middle.
+     */
+    private fun excludeEdgesFromBackGesture(w: Int, h: Int) {
+        val band = (resources.displayMetrics.density * EDGE_EXCLUSION_DP).toInt()
+        val tall = (resources.displayMetrics.density * 200).toInt().coerceAtMost(h)
+        val top = (h - tall) / 2
+        systemGestureExclusionRects = listOf(
+            android.graphics.Rect(0, top, band, top + tall),
+            android.graphics.Rect(w - band, top, w, top + tall),
+        )
+    }
+
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        excludeEdgesFromBackGesture(w, h)
         super.onSizeChanged(w, h, oldw, oldh)
         if (!fitted && w > 0) {
             fitWidth()
@@ -6760,6 +6775,7 @@ class InkCanvasView @JvmOverloads constructor(
         const val SHAPE_STEP_MS = 8L
         const val RULER_GAP_PX = 1.5f
         const val SNAP_ALIGN_PX = 10f
+        const val EDGE_EXCLUSION_DP = 32f
         const val DOUBLE_TAP_ZOOM = 2f
         const val STRIKE_HEIGHT = 0.08f
         // Page units are A4 at 150dpi, so a real millimetre of page is this many of them.

@@ -212,6 +212,15 @@ class PenStore(context: Context) {
         get() = prefs.getInt("dottedPattern", 0).coerceIn(0, 3)
         set(value) = prefs.edit().putInt("dottedPattern", value.coerceIn(0, 3)).apply()
 
+    /** This note's own way of laying pages out, or the app-wide one it has not been given. */
+    fun pageLayoutOf(noteId: String): PageLayoutMode =
+        prefs.getString("layout:$noteId", null)?.let { name -> PageLayoutMode.entries.firstOrNull { it.name == name } }
+            ?: pageLayout
+
+    fun setPageLayoutOf(noteId: String, mode: PageLayoutMode) {
+        prefs.edit().putString("layout:$noteId", mode.name).apply()
+    }
+
     var pageLayout: PageLayoutMode
         get() = runCatching { PageLayoutMode.valueOf(
             prefs.getString("pageLayout", PageLayoutMode.VERTICAL.name)!!,
