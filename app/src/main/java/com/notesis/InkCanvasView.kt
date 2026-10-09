@@ -4822,6 +4822,17 @@ class InkCanvasView @JvmOverloads constructor(
         InkClipboard.push(lassoStrokes.toList(), lassoBounds, pictures)
     }
 
+    /** The selection as a clip and a small picture of it, for keeping in the library. */
+    internal fun lassoClipWithPreview(): Pair<InkClipboard.Clip, Bitmap?>? {
+        val page = document.pages.getOrNull(lassoPage) ?: return null
+        if (!hasLassoSelection()) return null
+        val pictures = lassoImages.map { it.copy() to imageLoader?.invoke(it.id) }
+        val clip = InkClipboard.Clip(lassoStrokes.toList(), RectF(lassoBounds), pictures)
+        val preview = renderRegion(RectF(lassoBounds).apply { inset(-8f, -8f) }, page.width, page.height, -1,
+            lassoStrokes.toList(), pictures)
+        return clip to preview
+    }
+
     fun cutLassoSelection() {
         copyLassoSelection()
         deleteLassoSelection()

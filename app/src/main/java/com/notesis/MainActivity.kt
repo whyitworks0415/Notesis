@@ -1412,6 +1412,74 @@ internal fun TableDialog(rows: Int, cols: Int, onDismiss: () -> Unit, onSave: (I
     )
 }
 
+/** Objects kept for reuse: tap to paste, hold to tag or remove; tags filter the list. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+internal fun LibraryDialog(store: NoteStore, onPaste: (InkClipboard.Clip) -> Unit, onDismiss: () -> Unit) {
+    var revision by remember { mutableIntStateOf(0) }
+    val items = remember(revision) { store.library() }
+    var filter by remember { mutableStateOf<String?>(null) }
+    var editing by remember { mutableStateOf<NoteStore.LibraryItem?>(null) }
+    val tags = items.flatMap { it.tags }.distinct().sorted()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("라이브러리") },
+        text = {
+            Column {
+                if (tags.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState())) {
+                    tags.forEach { tag ->
+                        FilterChip(selected = filter == tag, onClick = { filter = if (filter == tag) null else tag },
+                            label = { Text("#$tag") }, modifier = Modifier.padding(end = 6.dp))
+                    }
+                }
+                if (items.isEmpty()) Text("올가미로 고른 뒤 '라이브러리에 추가'를 누르면 여기에 남습니다.",
+                    style = MaterialTheme.typography.bodySmall)
+                LazyVerticalGrid(GridCells.Adaptive(96.dp), Modifier.heightIn(max = 420.dp)) {
+                    items(items.filter { filter == null || filter in it.tags }, key = { it.id }) { item ->
+                        val preview = remember(item.id) {
+                            runCatching { android.graphics.BitmapFactory.decodeFile(item.preview.path) }.getOrNull()
+                        }
+                        Column(
+                            Modifier
+                                .padding(4.dp)
+                                .combinedClickable(
+                                    onClick = { store.libraryClip(item.id)?.let(onPaste) },
+                                    onLongClick = { editing = item },
+                                ),
+                        ) {
+                            Box(Modifier.size(88.dp).background(Color.White), contentAlignment = Alignment.Center) {
+                                if (preview != null) Image(preview.asImageBitmap(), null, contentScale = ContentScale.Fit)
+                            }
+                            if (item.tags.isNotEmpty()) Text(item.tags.joinToString(" ") { "#$it" },
+                                style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("닫기") } },
+    )
+    editing?.let { item ->
+        var text by remember(item.id) { mutableStateOf(item.tags.joinToString(", ")) }
+        AlertDialog(
+            onDismissRequest = { editing = null },
+            title = { Text("라이브러리 항목") },
+            text = { OutlinedTextField(text, { text = it }, label = { Text("태그 (쉼표로 구분)") }, singleLine = true) },
+            confirmButton = { TextButton(onClick = {
+                store.setLibraryTags(item.id, text.split(','))
+                editing = null
+                revision++
+            }) { Text("저장") } },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { store.deleteLibraryItem(item.id); editing = null; revision++ }) { Text("삭제") }
+                    TextButton(onClick = { editing = null }) { Text("취소") }
+                }
+            },
+        )
+    }
+}
+
 /** The master password, typed twice, and a hint for the day it is forgotten. */
 @Composable
 private fun SetPasswordDialog(onSet: (String, String) -> Unit, onDismiss: () -> Unit) {
@@ -3202,6 +3270,7 @@ private fun NoteScreen(
     val scope = rememberCoroutineScope()
     var showVoice by remember { mutableStateOf(false) }
     var showInput by remember { mutableStateOf(false) }
+    var showLibrary by remember { mutableStateOf(false) }
     /** Where a finger was held on the page, in screen pixels, while its menu is up. */
     var pressMenu by remember { mutableStateOf<Offset?>(null) }
     var playNextRecording by remember { mutableStateOf<String?>(null) }
@@ -4428,6 +4497,14 @@ private fun NoteScreen(
                     canvas?.lockLassoSelection(locked)
                     edits++
                 },
+                onAddToLibrary = {
+                    val kept = canvas?.lassoClipWithPreview()
+                    if (kept != null) scope.launch {
+                        val id = withContext(Dispatchers.IO) { store.addToLibrary(kept.first, kept.second) }
+                        Toast.makeText(context, if (id != null) "라이브러리에 추가했습니다" else "추가하지 못했습니다",
+                            Toast.LENGTH_SHORT).show()
+                    }
+                },
                 grouped = edits.let { canvas?.lassoSelectionGrouped() == true },
                 onGroup = { grouped ->
                     canvas?.groupLassoSelection(grouped)
@@ -4447,9 +4524,15 @@ private fun NoteScreen(
                 },
                 gestures = gestures,
                 onGestures = { setGestures(it) },
+                onLibrary = { showLibrary = true },
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
         }
+        if (showLibrary) LibraryDialog(store, onPaste = { clip ->
+            showLibrary = false
+            canvas?.paste(clip)
+            edits++
+        }, onDismiss = { showLibrary = false })
 
         // Follow along: what was being written at this point of the recording
         // is marked, and its page brought up.
@@ -5125,6 +5208,7 @@ private fun LassoActions(
     onCut: (() -> Unit)? = null,
     locked: Boolean = false,
     onLock: ((Boolean) -> Unit)? = null,
+    onAddToLibrary: (() -> Unit)? = null,
     grouped: Boolean = false,
     onGroup: ((Boolean) -> Unit)? = null,
     onDone: () -> Unit,
@@ -5163,6 +5247,7 @@ private fun LassoActions(
             }
             if (onCopy != null) TextButton(onClick = onCopy) { Text("복사") }
             if (onCut != null) TextButton(onClick = onCut) { Text("잘라내기") }
+            if (onAddToLibrary != null) TextButton(onClick = onAddToLibrary) { Text("라이브러리에 추가") }
             if (onGroup != null) TextButton(onClick = { onGroup(!grouped) }) {
                 Text(if (grouped) "그룹 해제" else "그룹")
             }
@@ -5192,6 +5277,7 @@ private fun PasteBar(
     onPaste: (InkClipboard.Clip) -> Unit,
     gestures: CanvasGestures = CanvasGestures(),
     onGestures: (CanvasGestures) -> Unit = {},
+    onLibrary: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val clips = remember(clipRevision) { InkClipboard.clips.toList() }
@@ -5208,6 +5294,7 @@ private fun PasteBar(
                 .padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            TextButton(onClick = onLibrary) { Text("라이브러리") }
             SettingsChoiceChip(selected = wholeOnly, onClick = { onWholeOnly(!wholeOnly) },
                 label = "완전히 포함된 것만")
             SettingsChoiceChip(selected = gestures.snapToAlign,

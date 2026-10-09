@@ -587,6 +587,76 @@ class NoteStore(context: Context) {
         trashed().forEach { delete(it.id) }
     }
 
+    // ---- reusable library ------------------------------------------------------
+    // Objects kept for reuse across pages and notes, one directory each:
+    // strokes.bin in the page format, the pictures' PNGs, preview.png and item.json.
+
+    private val libraryRoot = File(appContext.filesDir, "library").apply { mkdirs() }
+
+    data class LibraryItem(val id: String, val tags: List<String>, val preview: File, val created: Long)
+
+    fun library(): List<LibraryItem> =
+        libraryRoot.listFiles { f -> f.isDirectory }?.mapNotNull { dir ->
+            val json = runCatching { JSONObject(File(dir, "item.json").readText()) }.getOrNull() ?: return@mapNotNull null
+            val tags = json.optJSONArray("tags")?.let { a -> (0 until a.length()).map(a::getString) }.orEmpty()
+            LibraryItem(dir.name, tags, File(dir, "preview.png"), json.optLong("created"))
+        }?.sortedByDescending { it.created }.orEmpty()
+
+    /** Keeps [clip] for good, with a picture of it for the list. Returns its id. */
+    internal fun addToLibrary(clip: InkClipboard.Clip, preview: Bitmap?): String? = runCatching {
+        val id = UUID.randomUUID().toString()
+        val dir = File(libraryRoot, id).apply { mkdirs() }
+        writeStrokes(File(dir, "strokes.bin"), clip.strokes)
+        val images = JSONArray()
+        clip.images.forEachIndexed { i, (image, bitmap) ->
+            bitmap?.let { b -> File(dir, "$i.png").outputStream().use { b.compress(Bitmap.CompressFormat.PNG, 100, it) } }
+            images.put(JSONObject().put("x", image.x.toDouble()).put("y", image.y.toDouble())
+                .put("w", image.width.toDouble()).put("h", image.height.toDouble())
+                .put("rotation", image.rotation.toDouble()).put("opacity", image.opacity.toDouble()))
+        }
+        preview?.let { b -> File(dir, "preview.png").outputStream().use { b.compress(Bitmap.CompressFormat.PNG, 90, it) } }
+        File(dir, "item.json").writeText(JSONObject()
+            .put("created", System.currentTimeMillis())
+            .put("tags", JSONArray())
+            .put("bounds", JSONArray(listOf(clip.bounds.left, clip.bounds.top, clip.bounds.right, clip.bounds.bottom)
+                .map { it.toDouble() }))
+            .put("images", images).toString())
+        id
+    }.getOrNull()
+
+    /** A kept item as a clip, ready to paste anywhere. */
+    internal fun libraryClip(id: String): InkClipboard.Clip? = runCatching {
+        val dir = File(libraryRoot, id)
+        val json = JSONObject(File(dir, "item.json").readText())
+        val b = json.getJSONArray("bounds")
+        val images = json.optJSONArray("images") ?: JSONArray()
+        InkClipboard.Clip(
+            readStrokes(File(dir, "strokes.bin")),
+            android.graphics.RectF(b.getDouble(0).toFloat(), b.getDouble(1).toFloat(),
+                b.getDouble(2).toFloat(), b.getDouble(3).toFloat()),
+            (0 until images.length()).map { i ->
+                val item = images.getJSONObject(i)
+                PageImage(x = item.optDouble("x").toFloat(), y = item.optDouble("y").toFloat(),
+                    width = item.optDouble("w").toFloat(), height = item.optDouble("h").toFloat(),
+                    opacity = item.optDouble("opacity", 1.0).toFloat(), rotation = item.optDouble("rotation", 0.0).toFloat()) to
+                    BitmapFactory.decodeFile(File(dir, "$i.png").path)
+            },
+        )
+    }.getOrNull()
+
+    fun setLibraryTags(id: String, tags: List<String>) {
+        val file = File(libraryRoot, "$id/item.json")
+        runCatching {
+            val json = JSONObject(file.readText())
+            json.put("tags", JSONArray(tags.map { it.trim() }.filter { it.isNotEmpty() }.distinct()))
+            file.writeText(json.toString())
+        }
+    }
+
+    fun deleteLibraryItem(id: String) {
+        File(libraryRoot, id).deleteRecursively()
+    }
+
     fun setTags(id: String, tags: List<String>) {
         val clean = tags.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
         val file = File(root, "$id/$TAGS")
