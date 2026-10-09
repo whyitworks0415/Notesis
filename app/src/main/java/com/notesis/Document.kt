@@ -41,7 +41,11 @@ class PageImage(
  * to cover what is under it. Tapping one turns it into its own outline, so what
  * it covers can be read without taking the tape off.
  */
-class PageMask(val stroke: Stroke) {
+class PageMask(stroke: Stroke) {
+    /** Replaced only when the whole page is turned. */
+    var stroke: Stroke = stroke
+        internal set
+
     /**
      * Lifted to look at what is underneath. Deliberately not saved: reopening a
      * note should put every strip back down, which is the point of covering
@@ -86,6 +90,9 @@ class Page(
     /** Optional table-of-contents entry attached to this page's stable ID. */
     var tocTitle: String? = null,
     var tocHighlighted: Boolean = false,
+    /** How deep the outline entry sits: 0 at the top, each step one level in. */
+    var tocLevel: Int = 0,
+    var bookmarked: Boolean = false,
     /** Pictures, drawn over the background and under the ink. */
     val images: MutableList<PageImage> = mutableListOf(),
     /** Masking tape, drawn over everything, because covering is the job. */
@@ -674,7 +681,8 @@ class NoteStore(context: Context) {
                             id = pageId, width = old.width, height = old.height,
                             background = old.background, templateId = old.templateId,
                             pdfPageIndex = pdfIndex, tocTitle = old.tocTitle,
-                            tocHighlighted = old.tocHighlighted, images = images,
+                            tocHighlighted = old.tocHighlighted, tocLevel = old.tocLevel,
+                            bookmarked = old.bookmarked, images = images,
                         ).also {
                             it.loaded = false
                             it.dirty = false
@@ -832,6 +840,8 @@ class NoteStore(context: Context) {
                 pdfPageIndex = entry.optInt("pdf", -1),
                 tocTitle = entry.optString("tocTitle", "").ifBlank { null },
                 tocHighlighted = entry.optBoolean("tocHighlighted", false),
+                tocLevel = entry.optInt("tocLevel", 0),
+                bookmarked = entry.optBoolean("bookmark", false),
             )
             page.images.addAll(imagesFrom(entry))
             // Strokes are left on disk until the page is actually needed.
@@ -930,6 +940,8 @@ class NoteStore(context: Context) {
                 pdfPageIndex = live.pdfPageIndex,
                 tocTitle = live.tocTitle,
                 tocHighlighted = live.tocHighlighted,
+                tocLevel = live.tocLevel,
+                bookmarked = live.bookmarked,
                 images = live.images.map { image ->
                     PageImage(image.id, image.x, image.y, image.width, image.height, image.textContent)
                 }.toMutableList(),
@@ -1488,6 +1500,8 @@ class NoteStore(context: Context) {
                     .put("pdf", page.pdfPageIndex)
                     .put("tocTitle", page.tocTitle ?: "")
                     .put("tocHighlighted", page.tocHighlighted)
+                    .put("tocLevel", page.tocLevel)
+                    .put("bookmark", page.bookmarked)
                     .put("strokes", if (page.loaded) page.strokes.size else page.savedStrokeCount)
                     .put("images", imagesToJson(page)),
             )

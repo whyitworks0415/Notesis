@@ -79,6 +79,10 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -3035,6 +3039,7 @@ private fun NoteScreen(
     var showLatency by remember { mutableStateOf(false) }
     var laser by remember { mutableStateOf(false) }
     var showPages by remember { mutableStateOf(false) }
+    var goToPage by remember { mutableStateOf(false) }
     var showSkinSettings by remember { mutableStateOf(false) }
     var pageLayout by remember { mutableStateOf(penStore.pageLayout) }
     var edits by remember { mutableIntStateOf(0) }
@@ -3058,6 +3063,9 @@ private fun NoteScreen(
     // A multiple of fit-to-width, which is the 100% anybody means.
     var zoom by remember { mutableFloatStateOf(1f) }
     var canvas by remember { mutableStateOf<InkCanvasView?>(null) }
+    if (goToPage) canvas?.let { view ->
+        GoToPageDialog(view.document.pages.size, onGo = { view.scrollToPage(it) }, onDismiss = { goToPage = false })
+    }
     val study = remember(note.id) { MaskStudy(store.studyFile(note.id)) }
     var studyRevision by remember { mutableIntStateOf(0) }
     var session by remember { mutableStateOf<StudySession?>(null) }
@@ -3471,6 +3479,27 @@ private fun NoteScreen(
                     view.eraserWidth = eraserWidth
                     view.onUndo = { canvas?.undo(); edits++ }
                     view.onRedo = { canvas?.redo(); edits++ }
+                    view.onShortcut = { keyCode, event ->
+                        val command = event.isCtrlPressed || event.isMetaPressed
+                        val digit = keyCode - android.view.KeyEvent.KEYCODE_1
+                        when {
+                            // The toolbar's order, so Ctrl+3 is the third tool you can see.
+                            command && !event.isAltPressed && digit in 0..8 -> {
+                                SpotiToolbarTool.entries.mapNotNull { it.mode }.getOrNull(digit)?.let { picked ->
+                                    canvas?.clearSelection()
+                                    canvas?.clearImageSelection()
+                                    canvas?.clearLassoSelection()
+                                    mode = picked
+                                }
+                                true
+                            }
+                            command && event.isAltPressed && keyCode == android.view.KeyEvent.KEYCODE_G -> {
+                                goToPage = true
+                                true
+                            }
+                            else -> false
+                        }
+                    }
                     view.referenceOpen = referenceOpen
                     view.onLinkUrl = { url -> webUrl = url }
                     view.onStrokesCommitted = { pageIndex, strokes ->
@@ -4165,6 +4194,22 @@ private fun NoteScreen(
                 },
                 onHighlightToc = { index, highlighted ->
                     canvas?.setPageTocHighlighted(index, highlighted)
+                    edits++
+                },
+                onTocLevel = { index, level ->
+                    canvas?.setPageTocLevel(index, level)
+                    edits++
+                },
+                onBookmark = { index, marked ->
+                    canvas?.setPageBookmarked(index, marked)
+                    edits++
+                },
+                onRotate = { index, clockwise ->
+                    canvas?.rotatePage(index, clockwise)
+                    edits++
+                },
+                onBackgroundAll = { background, templateId ->
+                    canvas?.setBackgroundAll(background, templateId)
                     edits++
                 },
             )
@@ -5152,6 +5197,10 @@ private fun PageSidebar(
     onTemplate: (Int, String) -> Unit,
     onSetToc: (Int, String?) -> Unit,
     onHighlightToc: (Int, Boolean) -> Unit,
+    onTocLevel: (Int, Int) -> Unit = { _, _ -> },
+    onBookmark: (Int, Boolean) -> Unit = { _, _ -> },
+    onRotate: (Int, Boolean) -> Unit = { _, _ -> },
+    onBackgroundAll: (PageBackground, String?) -> Unit = { _, _ -> },
     study: MaskStudy? = null,
     studyRevision: Int = 0,
     onRenameMask: (Int, Int) -> Unit = { _, _ -> },
@@ -5161,6 +5210,10 @@ private fun PageSidebar(
     val pages = document?.pages ?: return
     var tab by remember { mutableIntStateOf(0) }
     var editingPage by remember { mutableStateOf<Page?>(null) }
+    var bookmarksOnly by remember { mutableStateOf(false) }
+    var tocQuery by remember { mutableStateOf("") }
+    var goingTo by remember { mutableStateOf(false) }
+    if (goingTo) GoToPageDialog(pages.size, onGo = { onJump(it) }, onDismiss = { goingTo = false })
     var tocName by remember { mutableStateOf("") }
     fun editToc(page: Page) {
         editingPage = page
@@ -5212,6 +5265,30 @@ private fun PageSidebar(
                 contentPadding = PaddingValues(10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                if (tab == 1 && pages.any { it.tocTitle != null }) {
+                    item {
+                        OutlinedTextField(
+                            value = tocQuery,
+                            onValueChange = { tocQuery = it },
+                            placeholder = { Text("목차 검색") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+                if (tab == 0) {
+                    item {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            FilterChip(
+                                selected = bookmarksOnly,
+                                onClick = { bookmarksOnly = !bookmarksOnly },
+                                label = { Text("북마크만") },
+                            )
+                            Spacer(Modifier.weight(1f))
+                            TextButton(onClick = { goingTo = true }) { Text("쪽 이동") }
+                        }
+                    }
+                }
                 if (tab == 1 && pages.none { it.tocTitle != null }) {
                     item {
                         Text(
@@ -5223,7 +5300,14 @@ private fun PageSidebar(
                     }
                 }
                 items(
-                    if (tab == 1) pages.filter { it.tocTitle != null } else pages,
+                    when {
+                        tab == 1 -> pages.filter { page ->
+                            val title = page.tocTitle
+                            title != null && (tocQuery.isBlank() || title.contains(tocQuery.trim(), ignoreCase = true))
+                        }
+                        tab == 0 && bookmarksOnly -> pages.filter { it.bookmarked }
+                        else -> pages
+                    },
                     key = { it.id },
                 ) { page ->
                     val index = pages.indexOf(page)
@@ -5241,6 +5325,9 @@ private fun PageSidebar(
                             userTemplates = userTemplates,
                             onTemplate = { onTemplate(index, it) },
                             onEditToc = { editToc(page) },
+                            onBookmark = { onBookmark(index, !page.bookmarked) },
+                            onRotate = { clockwise -> onRotate(index, clockwise) },
+                            onBackgroundAll = { onBackgroundAll(page.background, page.templateId) },
                         )
                     } else if (tab == 1) {
                         TocChip(
@@ -5251,6 +5338,8 @@ private fun PageSidebar(
                             onEdit = { editToc(page) },
                             onHighlight = { onHighlightToc(index, !page.tocHighlighted) },
                             onDelete = { onSetToc(index, null) },
+                            onIndent = { onTocLevel(index, page.tocLevel + 1) },
+                            onOutdent = { onTocLevel(index, page.tocLevel - 1) },
                         )
                     } else {
                         MaskChip(
@@ -5321,6 +5410,32 @@ private fun chipFill(selected: Boolean): Color = when {
     else -> Color.White.copy(alpha = 0.34f)
 }
 
+/** Page number in, page index out. Shared by the page panel and the Ctrl+Alt+G shortcut. */
+@Composable
+internal fun GoToPageDialog(pageCount: Int, onGo: (Int) -> Unit, onDismiss: () -> Unit) {
+    var text by remember { mutableStateOf("") }
+    val target = text.toIntOrNull()?.takeIf { it in 1..pageCount }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("쪽 이동") },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it.filter(Char::isDigit).take(6) },
+                label = { Text("1–$pageCount") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { target?.let { onGo(it - 1) }; onDismiss() }, enabled = target != null) {
+                Text("이동")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+    )
+}
+
 @Composable
 private fun TocChip(
     index: Int,
@@ -5330,11 +5445,14 @@ private fun TocChip(
     onEdit: () -> Unit,
     onHighlight: () -> Unit,
     onDelete: () -> Unit,
+    onIndent: () -> Unit = {},
+    onOutdent: () -> Unit = {},
 ) {
     val highlighted = page.tocHighlighted
     val colors = MaterialTheme.colorScheme
     Row(
         modifier = Modifier
+            .padding(start = (page.tocLevel.coerceAtMost(4) * 14).dp)
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
             .background(if (highlighted) colors.tertiaryContainer else chipFill(selected))
@@ -5369,6 +5487,12 @@ private fun TocChip(
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(text = { Text("이름 변경") }, onClick = {
                     menu = false; onEdit()
+                })
+                DropdownMenuItem(text = { Text("안으로") }, onClick = {
+                    menu = false; onIndent()
+                })
+                DropdownMenuItem(text = { Text("밖으로") }, enabled = page.tocLevel > 0, onClick = {
+                    menu = false; onOutdent()
                 })
                 DropdownMenuItem(text = { Text("목차 삭제") }, onClick = {
                     menu = false; onDelete()
@@ -5529,6 +5653,9 @@ private fun PageChip(
     userTemplates: List<UserPageTemplate>,
     onTemplate: (String) -> Unit,
     onEditToc: () -> Unit,
+    onBookmark: () -> Unit = {},
+    onRotate: (Boolean) -> Unit = {},
+    onBackgroundAll: () -> Unit = {},
 ) {
     var menu by remember { mutableStateOf(false) }
     Box {
@@ -5578,6 +5705,18 @@ private fun PageChip(
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
+        IconButton(
+            onClick = onBookmark,
+            modifier = Modifier.align(Alignment.TopEnd).size(36.dp),
+        ) {
+            Icon(
+                if (page.bookmarked) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
+                contentDescription = if (page.bookmarked) "북마크 해제" else "북마크",
+                tint = if (page.bookmarked) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.outline,
+                modifier = Modifier.size(18.dp),
+            )
+        }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             DropdownMenuItem(
                 text = { Text(if (page.tocTitle == null) "목차 설정" else "목차 이름 변경") },
@@ -5595,7 +5734,21 @@ private fun PageChip(
                 text = { Text("페이지 복제") },
                 onClick = { onDuplicate(); menu = false },
             )
+            if (page.background != PageBackground.PDF && page.pdfPageIndex < 0) {
+                DropdownMenuItem(
+                    text = { Text("왼쪽으로 회전") },
+                    onClick = { onRotate(false); menu = false },
+                )
+                DropdownMenuItem(
+                    text = { Text("오른쪽으로 회전") },
+                    onClick = { onRotate(true); menu = false },
+                )
+            }
             if (page.background != PageBackground.PDF) {
+                DropdownMenuItem(
+                    text = { Text("이 배경을 모든 페이지에") },
+                    onClick = { onBackgroundAll(); menu = false },
+                )
                 DropdownMenuItem(
                     text = { Text("무지") },
                     onClick = { onBackground(PageBackground.BLANK); menu = false },

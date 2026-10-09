@@ -1374,7 +1374,14 @@ class InkCanvasView @JvmOverloads constructor(
         class PageRemoved(override val page: Page, val at: Int) : Edit
         class PageMoved(override val page: Page, val from: Int, val to: Int) : Edit
         /** Paper changed: background, template, and the height an infinite page takes. */
-        class PagePaper(override val page: Page, val before: PaperState, val after: PaperState) : Edit
+        class PagePaper(
+            override val page: Page,
+            val before: PaperState,
+            val after: PaperState,
+            val group: Long = 0L,
+        ) : Edit
+        /** A quarter turn of everything on a page; undone by the opposite turn. */
+        class PageRotated(override val page: Page, val clockwise: Boolean) : Edit
     }
 
     private data class PaperState(val background: PageBackground, val templateId: String?, val height: Float)
@@ -1633,7 +1640,11 @@ class InkCanvasView @JvmOverloads constructor(
      * A hardware keyboard: Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z or +Y, Ctrl/Cmd and +/-
      * to zoom, arrows to move, Alt+arrows and Page Up/Down for the next page.
      */
+    /** App-level keyboard commands the canvas does not own: tools, go-to-page. True when handled. */
+    var onShortcut: ((Int, KeyEvent) -> Boolean)? = null
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (onShortcut?.invoke(keyCode, event) == true) return true
         val command = event.isCtrlPressed || event.isMetaPressed
         val step = min(width, height) * KEY_PAN_FRACTION
         when {
@@ -1698,7 +1709,7 @@ class InkCanvasView @JvmOverloads constructor(
     /** A page that came back, moved or changed is brought into view; one that went, its neighbour. */
     private fun showPageEdit(edit: Edit) {
         if (edit !is Edit.PageInserted && edit !is Edit.PageRemoved &&
-            edit !is Edit.PageMoved && edit !is Edit.PagePaper) return
+            edit !is Edit.PageMoved && edit !is Edit.PagePaper && edit !is Edit.PageRotated) return
         val at = document.pages.indexOf(edit.page)
         scrollToPage(if (at >= 0) at else currentPage.coerceIn(document.pages.indices))
     }
@@ -1732,6 +1743,7 @@ class InkCanvasView @JvmOverloads constructor(
         is Edit.Erased -> group
         is Edit.MaskAdded -> group
         is Edit.MaskRemoved -> group
+        is Edit.PagePaper -> group
         else -> 0L
     }
 
@@ -1749,6 +1761,7 @@ class InkCanvasView @JvmOverloads constructor(
             is Edit.PageRemoved -> takePageOut(edit.page)
             is Edit.PageMoved -> movePageObject(edit.page, edit.to)
             is Edit.PagePaper -> { edit.page.setPaper(edit.after); document.invalidateLayout() }
+            is Edit.PageRotated -> turnPage(edit.page, edit.clockwise)
         }
     }
 
@@ -1791,6 +1804,7 @@ class InkCanvasView @JvmOverloads constructor(
             is Edit.PageRemoved -> putPageBack(edit.page, edit.at)
             is Edit.PageMoved -> movePageObject(edit.page, edit.from)
             is Edit.PagePaper -> { edit.page.setPaper(edit.before); document.invalidateLayout() }
+            is Edit.PageRotated -> turnPage(edit.page, !edit.clockwise)
         }
     }
 
@@ -1955,6 +1969,112 @@ class InkCanvasView @JvmOverloads constructor(
         val page = document.pages.getOrNull(index) ?: return
         if (page.background == PageBackground.PDF) return
         changePaper(page, page.paper().copy(background = PageBackground.CUSTOM, templateId = templateId))
+    }
+
+    /** One template for every page that can take one; a single undo puts them all back. */
+    fun setBackgroundAll(background: PageBackground, templateId: String? = null) {
+        val group = nextEditGroup++
+        var changed = false
+        for (page in document.pages) {
+            if (page.background == PageBackground.PDF) continue
+            val height = if (background == PageBackground.INFINITE) Page.A4_HEIGHT * 12f
+                else if (page.height > Page.A4_HEIGHT * 2f) Page.A4_HEIGHT else page.height
+            val before = page.paper()
+            val after = PaperState(background, templateId, height)
+            if (before == after) continue
+            page.setPaper(after)
+            undoStack += Edit.PagePaper(page, before, after, group)
+            changed = true
+        }
+        if (!changed) return
+        clearLassoSelection()
+        redoStack.clear()
+        document.invalidateLayout()
+        afterEdit(*document.pages.toTypedArray())
+    }
+
+    fun setPageBookmarked(index: Int, bookmarked: Boolean) {
+        val page = document.pages.getOrNull(index) ?: return
+        if (page.bookmarked == bookmarked) return
+        page.bookmarked = bookmarked
+        afterEdit()
+    }
+
+    /** Moves an outline entry in or out one level, never deeper than one below the entry above it. */
+    fun setPageTocLevel(index: Int, level: Int) {
+        val page = document.pages.getOrNull(index) ?: return
+        if (page.tocTitle == null) return
+        val above = document.pages.subList(0, index).lastOrNull { it.tocTitle != null }
+        val clamped = level.coerceIn(0, (above?.tocLevel ?: -1) + 1)
+        if (page.tocLevel == clamped) return
+        page.tocLevel = clamped
+        afterEdit()
+    }
+
+    /**
+     * Turns a page a quarter. PDF pages are left alone: the PDF draws itself
+     * the way it was printed, and ink turned over it would no longer line up.
+     */
+    fun rotatePage(index: Int, clockwise: Boolean) {
+        val page = document.pages.getOrNull(index) ?: return
+        if (page.background == PageBackground.PDF || page.pdfPageIndex >= 0) return
+        if (!ensureLoaded(page)) return
+        clearLassoSelection()
+        clearImageSelection()
+        turnPage(page, clockwise)
+        recordPageEdit(Edit.PageRotated(page, clockwise))
+        scrollToPage(document.pages.indexOf(page))
+    }
+
+    fun canRotatePage(index: Int): Boolean =
+        document.pages.getOrNull(index)?.let { it.background != PageBackground.PDF && it.pdfPageIndex < 0 } == true
+
+    /**
+     * Turns everything on [page] - and every stroke history still holds for it -
+     * so undoing an erase made before the turn puts the ink back where it now belongs.
+     * Pictures keep their own orientation; only where they sit turns.
+     */
+    private fun turnPage(page: Page, clockwise: Boolean) {
+        val w = page.width
+        val h = page.height
+        fun turn(x: Float, y: Float, out: FloatArray) {
+            if (clockwise) { out[0] = h - y; out[1] = x } else { out[0] = y; out[1] = w - x }
+        }
+        val replacements = IdentityHashMap<Stroke, Stroke>()
+        fun turned(stroke: Stroke): Stroke = replacements.getOrPut(stroke) { mapInputs(stroke, ::turn) }
+        for (i in page.strokes.indices) page.strokes[i] = turned(page.strokes[i])
+        val masks = Collections.newSetFromMap(IdentityHashMap<PageMask, Boolean>())
+        val images = Collections.newSetFromMap(IdentityHashMap<PageImage, Boolean>())
+        masks += page.masks
+        images += page.images
+        for (edit in undoStack + redoStack) {
+            if (edit.page !== page) continue
+            when (edit) {
+                is Edit.Drawn -> turned(edit.stroke)
+                is Edit.Erased -> edit.strokes.forEach { turned(it) }
+                is Edit.Moved -> { edit.before.forEach { turned(it) }; edit.after.forEach { turned(it) } }
+                is Edit.MaskAdded -> masks += edit.mask
+                is Edit.MaskRemoved -> masks += edit.mask
+                is Edit.ImageAdded -> images += edit.image
+                is Edit.ImageRemoved -> images += edit.image
+                is Edit.ImageReplaced -> { images += edit.before; images += edit.after }
+                else -> Unit
+            }
+        }
+        for (mask in masks) mask.stroke = turned(mask.stroke)
+        val center = FloatArray(2)
+        for (image in images) {
+            turn(image.x + image.width / 2f, image.y + image.height / 2f, center)
+            image.x = center[0] - image.width / 2f
+            image.y = center[1] - image.height / 2f
+        }
+        remapHistory(replacements)
+        page.savedOnDisk = 0
+        page.width = h
+        page.height = w
+        page.tessellatedFor = 0f
+        dry.dropStrokeIndex(page)
+        document.invalidateLayout()
     }
 
     fun currentPageIndex(): Int = currentPage
@@ -3582,7 +3702,8 @@ class InkCanvasView @JvmOverloads constructor(
                 // Pictures are not rebuilt when a page is re-tessellated.
                 is Edit.ImageAdded, is Edit.ImageRemoved, is Edit.ImageReplaced -> Unit
                 is Edit.MaskAdded, is Edit.MaskRemoved -> Unit
-                is Edit.PageInserted, is Edit.PageRemoved, is Edit.PageMoved, is Edit.PagePaper -> Unit
+                is Edit.PageInserted, is Edit.PageRemoved, is Edit.PageMoved, is Edit.PagePaper,
+                is Edit.PageRotated -> Unit
                 is Edit.Moved -> {
                     edit.before = edit.before.map { replacements[it] ?: it }
                     edit.after = edit.after.map { replacements[it] ?: it }
@@ -4208,6 +4329,9 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun swapStrokes(page: Page, from: List<Stroke>, to: List<Stroke>) {
+        // Replaced in place, so the file's prefix no longer matches: appending
+        // the next new stroke would leave these where they were on disk.
+        page.savedOnDisk = 0
         for (i in from.indices) {
             val at = page.strokes.indexOfFirst { it === from[i] }
             if (at >= 0) page.strokes[at] = to[i] else page.strokes += to[i]
