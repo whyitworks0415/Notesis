@@ -925,7 +925,7 @@ class NoteStore(context: Context) {
                             it.savedStrokeCount = old.savedStrokeCount
                             it.savedOnDisk = old.savedStrokeCount
                         }
-                        for (suffix in listOf(".bin", ".mask", ".txt", INK_INDEX)) {
+                        for (suffix in listOf(".bin", ".mask", ".txt", INK_INDEX, BOX_INDEX)) {
                             val source = File(root, "$id/pages/${old.id}$suffix")
                             if (source.isFile) source.copyTo(File(pagesDir, "$pageId$suffix"))
                         }
@@ -1157,7 +1157,7 @@ class NoteStore(context: Context) {
         // A page that was deleted this session leaves its file behind otherwise.
         val live = document.pages
             .flatMap {
-                listOf("${it.id}.bin", "${it.id}.mask", "${it.id}.txt", "${it.id}$INK_INDEX")
+                listOf("${it.id}.bin", "${it.id}.mask", "${it.id}.txt", "${it.id}$INK_INDEX", "${it.id}$BOX_INDEX")
             }
             .toSet()
         dir.listFiles()?.forEach { if (it.name !in live) it.delete() }
@@ -1810,7 +1810,24 @@ class NoteStore(context: Context) {
         }
     }
 
+    /**
+     * What was typed on each page - text boxes, sticky notes - kept beside the
+     * page for search, rewritten only when it changes.
+     */
+    private fun writeTypedIndex(id: String, document: Document) {
+        val dir = File(root, "$id/pages")
+        for (page in document.pages) {
+            val typed = page.images.mapNotNull { it.textContent?.text?.takeIf(String::isNotBlank) }.joinToString("\n")
+            val file = File(dir, page.id + BOX_INDEX)
+            if (typed.isEmpty()) { if (file.isFile) file.delete(); continue }
+            if (file.isFile && runCatching { file.readText() }.getOrNull() == typed) continue
+            dir.mkdirs()
+            runCatching { file.writeText(typed) }
+        }
+    }
+
     private fun writeMeta(id: String, title: String, document: Document) {
+        writeTypedIndex(id, document)
         val pages = JSONArray()
         for (page in document.pages) {
             pages.put(
@@ -1991,6 +2008,8 @@ class NoteStore(context: Context) {
         const val TRASHED = "trashed"
         const val FAVORITE = "favorite"
         const val TRASH_DAYS = 14
+        /** Typed text on a page, for search. */
+        const val BOX_INDEX = ".box"
         private const val MAX_OUTLINE_ENTRIES = 2000
         private const val MAX_OUTLINE_DEPTH = 6
         const val TAGS = "tags.json"

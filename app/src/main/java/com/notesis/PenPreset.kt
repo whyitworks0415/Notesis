@@ -52,6 +52,9 @@ const val TWO_IGNORED = 2
 const val TAP_NONE = 0
 const val TAP_UNDO = 1
 const val TAP_REDO = 2
+const val PEN_BUTTON_ERASE = 0
+const val PEN_BUTTON_LASER = 1
+const val PEN_BUTTON_LASSO = 2
 
 /** What the eraser takes and which pen gestures do more than write. See InkCanvasView. */
 data class CanvasGestures(
@@ -80,6 +83,8 @@ data class CanvasGestures(
     val threeFingerTap: Int = TAP_REDO,
     val longPressMenu: Boolean = true,
     val linkOverlay: Boolean = true,
+    val eraserReturns: Boolean = false,
+    val penButton: Int = PEN_BUTTON_ERASE,
 )
 
 fun InkCanvasView.applyGestures(gestures: CanvasGestures) {
@@ -106,6 +111,7 @@ fun InkCanvasView.applyGestures(gestures: CanvasGestures) {
     doubleTapZoom = gestures.doubleTapZoom
     twoFingerTap = gestures.twoFingerTap
     threeFingerTap = gestures.threeFingerTap
+    penButton = gestures.penButton
 }
 
 /**
@@ -267,6 +273,8 @@ class PenStore(context: Context) {
             threeFingerTap = prefs.getInt("threeFingerTap", TAP_REDO),
             longPressMenu = prefs.getBoolean("longPressMenu", true),
             linkOverlay = prefs.getBoolean("linkOverlay", true),
+            eraserReturns = prefs.getBoolean("eraserReturns", false),
+            penButton = prefs.getInt("penButton", PEN_BUTTON_ERASE),
         )
         set(value) = prefs.edit()
             .putBoolean("eraseInk", value.eraseInk)
@@ -294,6 +302,8 @@ class PenStore(context: Context) {
             .putInt("threeFingerTap", value.threeFingerTap)
             .putBoolean("longPressMenu", value.longPressMenu)
             .putBoolean("linkOverlay", value.linkOverlay)
+            .putBoolean("eraserReturns", value.eraserReturns)
+            .putInt("penButton", value.penButton)
             .apply()
 
     /** See [InkCanvasView.compatWetInk]; on by default where the front buffer is known to fail. */

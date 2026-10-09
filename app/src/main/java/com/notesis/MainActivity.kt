@@ -1378,6 +1378,9 @@ internal fun InputSettingsDialog(gestures: CanvasGestures, onGestures: (CanvasGe
                 toggle("한 손가락 두 번 탭으로 확대", gestures.doubleTapZoom) { onGestures(gestures.copy(doubleTapZoom = it)) }
                 toggle("길게 눌러 메뉴 열기", gestures.longPressMenu) { onGestures(gestures.copy(longPressMenu = it)) }
                 toggle("링크 객체에 파란 표시", gestures.linkOverlay) { onGestures(gestures.copy(linkOverlay = it)) }
+                toggle("지우개로 지운 뒤 이전 도구로", gestures.eraserReturns) { onGestures(gestures.copy(eraserReturns = it)) }
+                choices("펜 버튼 누르고 쓰기", listOf(PEN_BUTTON_ERASE to "지우개", PEN_BUTTON_LASER to "레이저",
+                    PEN_BUTTON_LASSO to "올가미"), gestures.penButton) { onGestures(gestures.copy(penButton = it)) }
                 Text("손바닥이 닿는다면 한 손가락을 '무시'로, 두 손가락을 '스크롤'로 두세요. 그리기 모드에서는 두 손가락으로 화면을 움직입니다.",
                     style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
             }
@@ -2562,6 +2565,16 @@ internal fun PenDialog(
                     onValueChange = { width = it },
                     valueRange = range,
                 )
+                if (mode == EditMode.ERASE) {
+                    // The eraser's reach, at the same scale as the pen preview.
+                    Box(Modifier.fillMaxWidth().height(64.dp), contentAlignment = Alignment.Center) {
+                        Box(
+                            Modifier
+                                .size(width.dp.coerceIn(4.dp, 60.dp))
+                                .border(2.dp, MaterialTheme.colorScheme.outline, CircleShape),
+                        )
+                    }
+                }
                 if (mode.tints) {
                     // The pen as it will draw: real thickness, real transparency.
                     Box(
@@ -3413,6 +3426,8 @@ private fun NoteScreen(
     val scope = rememberCoroutineScope()
     var showVoice by remember { mutableStateOf(false) }
     var showInput by remember { mutableStateOf(false) }
+    /** The last tool that was not the eraser, for going back to after an erase. */
+    var beforeEraser by remember { mutableStateOf(EditMode.PEN) }
     var showLibrary by remember { mutableStateOf(false) }
     var editingTools by remember { mutableStateOf(false) }
     var exportingPages by remember { mutableStateOf<List<Page>?>(null) }
@@ -4215,6 +4230,10 @@ private fun NoteScreen(
                     view.partialEraser = partialEraser
                     view.applyGestures(gestures)
                     view.laserMode = laser
+                    if (mode != EditMode.ERASE && mode in PenStore.DEFAULTS) beforeEraser = mode
+                    view.onEraseFinished = if (gestures.eraserReturns && mode == EditMode.ERASE) {
+                        { mode = beforeEraser }
+                    } else null
                     view.showLinkOverlay = gestures.linkOverlay
                     view.onLinkBackChanged = { canGoBack = it }
                     view.onOpenNoteLink = { noteId, pageIndex ->

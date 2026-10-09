@@ -924,6 +924,11 @@ class InkCanvasView @JvmOverloads constructor(
     }
     private var longPressFired = false
 
+    /** What holding the pen's barrel button while writing does: one of PEN_BUTTON_*. */
+    var penButton: Int = PEN_BUTTON_ERASE
+    /** An eraser gesture with the eraser tool has ended. */
+    var onEraseFinished: (() -> Unit)? = null
+
     /** Linked objects wear a pale blue wash so they can be found. */
     var showLinkOverlay: Boolean = true
     /** A link to another note was followed: its id and the page index to open at. */
@@ -2541,6 +2546,18 @@ class InkCanvasView @JvmOverloads constructor(
                     Choreographer.getInstance().postFrameCallback(frameCallback)
                 }
                 activePage = document.pages[index]
+                // The barrel button held (not the pen turned to its eraser end) can mean something else.
+                val buttonHeld = samsungSideButton || (event.getToolType(event.actionIndex) != MotionEvent.TOOL_TYPE_ERASER &&
+                    event.isEraserGesture())
+                if (buttonHeld && !readMode && penButton == PEN_BUTTON_LASER) {
+                    activeStylusPointer = null
+                    return onLaser(event)
+                }
+                if (buttonHeld && !readMode && penButton == PEN_BUTTON_LASSO) {
+                    onDrawingChanged?.invoke(true)
+                    beginLasso(event, index)
+                    return true
+                }
                 val eraserGesture = event.isEraserGesture() || samsungSideButton
                 if (readMode && eraserGesture) {
                     onDrawingChanged?.invoke(true)
@@ -2919,6 +2936,7 @@ class InkCanvasView @JvmOverloads constructor(
                     eraseAlong(event, event.actionIndex, force = true)
                     finishEraseGesture()
                     endStylus()
+                    if (tool == Tool.ERASER) onEraseFinished?.invoke()
                     return true
                 }
                 activeStrokeId?.let { strokeId ->
