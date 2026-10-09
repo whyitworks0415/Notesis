@@ -63,7 +63,65 @@ internal enum class SpotiToolbarTool(val mode: EditMode?, val label: String) {
 internal fun spotiToolbarTools(level: Int): List<SpotiToolbarTool> = when (level) {
     2 -> listOf(SpotiToolbarTool.READ, SpotiToolbarTool.PEN, SpotiToolbarTool.HIGHLIGHTER, SpotiToolbarTool.MASK)
     3 -> emptyList()
-    else -> SpotiToolbarTool.entries
+    else -> ToolbarLayout.tools
+}
+
+/**
+ * Which tools the full bar shows, in what order. Snapshot state, so the bar
+ * redraws the moment it is edited; kept in preferences between runs. The
+ * keyboard's Ctrl+1..9 follows the same order.
+ */
+internal object ToolbarLayout {
+    var tools by mutableStateOf(SpotiToolbarTool.entries.toList())
+        private set
+
+    private fun prefs(context: android.content.Context) =
+        context.getSharedPreferences("pens", android.content.Context.MODE_PRIVATE)
+
+    fun load(context: android.content.Context) {
+        val saved = prefs(context).getString("toolbarTools", null) ?: return
+        tools = saved.split(',').mapNotNull { name -> SpotiToolbarTool.entries.firstOrNull { it.name == name } }
+            .ifEmpty { SpotiToolbarTool.entries.toList() }
+    }
+
+    fun set(context: android.content.Context, value: List<SpotiToolbarTool>) {
+        tools = value.ifEmpty { listOf(SpotiToolbarTool.PEN) }
+        prefs(context).edit().putString("toolbarTools", tools.joinToString(",") { it.name }).apply()
+    }
+}
+
+/** Tick the tools to show and move them up or down; the bar follows as you go. */
+@Composable
+internal fun ToolbarEditDialog(onDismiss: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val shown = ToolbarLayout.tools
+    val all = shown + SpotiToolbarTool.entries.filter { it !in shown }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("도구 편집") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                all.forEach { tool ->
+                    val on = tool in shown
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = on, onCheckedChange = {
+                            ToolbarLayout.set(context, if (on) shown - tool else shown + tool)
+                        })
+                        Text(tool.label, Modifier.weight(1f))
+                        val at = shown.indexOf(tool)
+                        TextButton(enabled = on && at > 0, onClick = {
+                            ToolbarLayout.set(context, shown.toMutableList().apply { add(at - 1, removeAt(at)) })
+                        }) { Text("▲") }
+                        TextButton(enabled = on && at in 0 until shown.lastIndex, onClick = {
+                            ToolbarLayout.set(context, shown.toMutableList().apply { add(at + 1, removeAt(at)) })
+                        }) { Text("▼") }
+                    }
+                }
+                Text("위에서부터 Ctrl+1~9로 고를 수 있습니다.", style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("닫기") } },
+    )
 }
 
 internal fun spotiToolbarWidth(level: Int) = when (level) {

@@ -195,6 +195,7 @@ class MainActivity : ComponentActivity() {
         val store = NoteStore(this)
         noteStore = store
         val prefs = PenStore(this)
+        ToolbarLayout.load(this)
         val lookStore = SkinSettingsStore(this)
         acceptDocumentIntent(intent)
         setContent {
@@ -3346,6 +3347,7 @@ private fun NoteScreen(
     var showVoice by remember { mutableStateOf(false) }
     var showInput by remember { mutableStateOf(false) }
     var showLibrary by remember { mutableStateOf(false) }
+    var editingTools by remember { mutableStateOf(false) }
     var exportingPages by remember { mutableStateOf<List<Page>?>(null) }
     /** Pages picked to go to another note, and whether they leave this one. */
     var sendingPages by remember { mutableStateOf<Pair<List<Int>, Boolean>?>(null) }
@@ -3932,6 +3934,7 @@ private fun NoteScreen(
                 showTextBox = true
             },
             onTable = { editingTable = PageImage() },
+            onEditTools = { editingTools = true },
             onInputSettings = { showInput = true },
             recording = recorder != null,
             onVoice = { showVoice = true },
@@ -4169,7 +4172,7 @@ private fun NoteScreen(
                         when {
                             // The toolbar's order, so Ctrl+3 is the third tool you can see.
                             command && !event.isAltPressed && digit in 0..8 -> {
-                                SpotiToolbarTool.entries.mapNotNull { it.mode }.getOrNull(digit)?.let { picked ->
+                                ToolbarLayout.tools.mapNotNull { it.mode }.getOrNull(digit)?.let { picked ->
                                     canvas?.clearSelection()
                                     canvas?.clearImageSelection()
                                     canvas?.clearLassoSelection()
@@ -4902,6 +4905,7 @@ private fun NoteScreen(
                 onDismiss = { editingPicture = 0; edits++ },
             )
         }
+        if (editingTools) ToolbarEditDialog(onDismiss = { editingTools = false })
         if (showInput) InputSettingsDialog(gestures, onGestures = { setGestures(it) }, onDismiss = { showInput = false })
 
         pressMenu?.let { at ->
@@ -7026,6 +7030,7 @@ private fun Toolbar(
     onInputSettings: () -> Unit = {},
     onStickyNote: () -> Unit = {},
     onTable: () -> Unit = {},
+    onEditTools: () -> Unit = {},
 ) {
     val topRow: @Composable () -> Unit = {
         // ---- top row: the note, and what is done to the whole of it
@@ -7186,6 +7191,7 @@ private fun Toolbar(
                 add(SpotiToolbarAction("스티키 노트", Reicons.Description, onClick = onStickyNote))
                 add(SpotiToolbarAction("표", Reicons.AutoAwesomeMosaic, onClick = onTable))
                 add(SpotiToolbarAction("손가락·제스처", Reicons.TouchApp, onClick = onInputSettings))
+                add(SpotiToolbarAction("도구 편집", Reicons.Tune, onClick = onEditTools))
                 add(SpotiToolbarAction("UI · 화면 설정", Reicons.AutoAwesomeMosaic, slot = 6, onClick = onScreenSettings))
                 add(SpotiToolbarAction("화면 맞추기 · $zoomLabel", Reicons.ZoomOutMap, onClick = onFitWidth))
                 add(SpotiToolbarAction("인터넷", Reicons.Language, onClick = { onWeb(SEARCH_HOME) }))
