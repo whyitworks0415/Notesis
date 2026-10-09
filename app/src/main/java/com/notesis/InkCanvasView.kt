@@ -1104,6 +1104,31 @@ class InkCanvasView @JvmOverloads constructor(
     }
     private val predictionHead = PredictionHeadView(context)
     private val laser = LaserView(context)
+    private val ruler = RulerView(context).apply { visibility = GONE }
+
+    /** The straightedge laid on the screen, or null for none. */
+    var rulerKind: RulerKind? = null
+        set(value) {
+            field = value
+            if (value != null) ruler.kind = value
+            ruler.visibility = if (value == null) GONE else VISIBLE
+        }
+
+    var rulerInches: Boolean
+        get() = ruler.inches
+        set(value) { ruler.inches = value }
+
+    /** The ruler asked to go away: pinched shut or dragged off the screen. */
+    var onRulerClosed: (() -> Unit)?
+        get() = ruler.onClosed
+        set(value) { ruler.onClosed = value }
+
+    fun setRulerDegrees(degrees: Float) = ruler.setDegrees(degrees)
+
+    /** The edge the pen is drawing along, and the line so far in page units. */
+    private var rulerEdge: RulerEdge? = null
+    private val rulerPoints = ArrayList<FloatArray>()
+    private val rulerScratch = FloatArray(2)
     private var laserPointer: Int? = null
     private val dry = DryLayer(context)
     /** Android chooses its own horizon, so an overlong result is clipped locally. */
@@ -1462,6 +1487,7 @@ class InkCanvasView @JvmOverloads constructor(
         addView(compatWet, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(predictionHead, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(laser, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        addView(ruler, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         wet.textureBitmapStore = PencilTextureStore
         // InProgressStrokesView chooses its front-buffer implementation for
         // supported hardware. Do not force the deprecated high-latency helper;
@@ -2138,6 +2164,7 @@ class InkCanvasView @JvmOverloads constructor(
         viewportRenderGeneration++
         clampTransform()
         documentToScreen.invert(screenToDocument)
+        ruler.pxPerMm = currentScale() * Page.A4_WIDTH / A4_MM_WIDTH
         // Input can arrive several times inside one display interval. Ask for
         // one paint on the next vsync instead of repeatedly invalidating now.
         dry.postInvalidateOnAnimation()
@@ -2243,7 +2270,10 @@ class InkCanvasView @JvmOverloads constructor(
         // Keyboard shortcuts need focus; a keyboard can be attached at any time.
         if (event.actionMasked == MotionEvent.ACTION_DOWN && !isFocused) requestFocus()
         val stylus = event.getToolType(event.actionIndex) == MotionEvent.TOOL_TYPE_STYLUS
-        if (!stylus && activeStylusPointer == null && laserPointer == null) return onFingers(event)
+        if (!stylus && activeStylusPointer == null && laserPointer == null) {
+            if (ruler.onFinger(event)) return true
+            return onFingers(event)
+        }
         if (!latencyMonitoringEnabled) return onStylus(event)
         Trace.beginSection(when (event.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> TRACE_STYLUS_DOWN
@@ -2381,6 +2411,19 @@ class InkCanvasView @JvmOverloads constructor(
                     onDrawingChanged?.invoke(true)
                     beginImageGesture(event, index)
                     return true
+                }
+                if (rulerKind != null && !readMode && !eraserGesture && tool != Tool.ERASER) {
+                    val edge = ruler.edgeAt(event.x, event.y)
+                    if (edge != null) {
+                        onDrawingChanged?.invoke(true)
+                        rulerEdge = edge
+                        shapePage = index
+                        drawingShape = true
+                        rulerPoints.clear()
+                        addRulerPoint(event.x, event.y)
+                        dry.invalidate()
+                        return true
+                    }
                 }
                 val shape = shapeKind
                 if (shape != null && !readMode && !eraserGesture &&
@@ -2524,6 +2567,14 @@ class InkCanvasView @JvmOverloads constructor(
                 }
                 if (drawingLasso) {
                     appendLassoSamples(event, index)
+                    return true
+                }
+                if (drawingShape && rulerEdge != null) {
+                    for (h in 0 until event.historySize) {
+                        addRulerPoint(event.getHistoricalX(index, h), event.getHistoricalY(index, h))
+                    }
+                    addRulerPoint(event.getX(index), event.getY(index))
+                    dry.postInvalidateOnAnimation()
                     return true
                 }
                 if (drawingShape) {
@@ -4065,15 +4116,31 @@ class InkCanvasView @JvmOverloads constructor(
      * a drawn rectangle is ink like any other and erases, saves and zooms the
      * same way. Nothing new has to know what a shape is.
      */
+    /**
+     * Lays screen (x, y) against the ruler edge in hand and keeps it in page
+     * units. A straight edge needs only its two ends; an arc keeps its path.
+     */
+    private fun addRulerPoint(x: Float, y: Float) {
+        val edge = rulerEdge ?: return
+        ruler.project(edge, x, y, strokeWidth * currentScale() / 2f + RULER_GAP_PX, rulerScratch)
+        val point = FloatArray(2)
+        pageLocalInto(rulerScratch[0], rulerScratch[1], shapePage, point)
+        if (!edge.isArc && rulerPoints.size >= 2) rulerPoints[1] = point else rulerPoints += point
+    }
+
     private fun finishShape() {
         val kind = shapeKind
         val page = document.pages.getOrNull(shapePage)
         drawingShape = false
-        if (kind == null || page == null) {
+        val ruled = rulerEdge != null
+        rulerEdge = null
+        if ((kind == null && !ruled) || page == null) {
+            rulerPoints.clear()
             dry.invalidate()
             return
         }
-        val points = shapePoints(kind, shapeStart, shapeEnd)
+        val points = if (ruled) rulerPoints.toList() else shapePoints(kind!!, shapeStart, shapeEnd)
+        rulerPoints.clear()
         if (points.size < 2) {
             dry.invalidate()
             return
@@ -4082,7 +4149,7 @@ class InkCanvasView @JvmOverloads constructor(
         // A straight line drawn with the mask tool covers exactly like any
         // other strip of tape - it goes on the mask list, not the ink list, or
         // it could never be lifted to read what is underneath.
-        for (stroke in shapeStrokes(kind, shapeStart, shapeEnd, currentBrush())) {
+        for (stroke in strokesThrough(points, currentBrush())) {
             if (tool == Tool.MASK) {
                 val mask = PageMask(stroke)
                 page.masks += mask
@@ -4096,8 +4163,10 @@ class InkCanvasView @JvmOverloads constructor(
         afterEdit(page)
     }
 
-    private fun shapeStrokes(kind: ShapeKind, from: FloatArray, to: FloatArray, brush: Brush): List<Stroke> {
-        val points = shapePoints(kind, from, to)
+    private fun shapeStrokes(kind: ShapeKind, from: FloatArray, to: FloatArray, brush: Brush): List<Stroke> =
+        strokesThrough(shapePoints(kind, from, to), brush)
+
+    private fun strokesThrough(points: List<FloatArray>, brush: Brush): List<Stroke> {
         if (points.size < 2) return emptyList()
         val inputs = MutableStrokeInputBatch()
         points.forEachIndexed { index, point ->
@@ -5897,11 +5966,12 @@ class InkCanvasView @JvmOverloads constructor(
 
         /** The shape as it is being dragged out, before it becomes a stroke. */
         private fun drawShapePreview(canvas: Canvas) {
-            val kind = shapeKind ?: return
-            val points = shapePoints(kind, shapeStart, shapeEnd)
+            val kind = shapeKind
+            if (kind == null && rulerEdge == null) return
+            val points = if (rulerEdge != null) rulerPoints else shapePoints(kind!!, shapeStart, shapeEnd)
             if (points.size < 2) return
             // Squared up: a red guide round the box says the sides are now equal.
-            squaredShapeEnd(kind, shapeStart, shapeEnd)?.let { end ->
+            if (kind != null && rulerEdge == null) squaredShapeEnd(kind, shapeStart, shapeEnd)?.let { end ->
                 overlay.color = 0xFFE53935.toInt()
                 overlay.strokeWidth = 1.5f / currentScale()
                 overlay.pathEffect = lassoDashes(currentScale())
@@ -6127,6 +6197,9 @@ class InkCanvasView @JvmOverloads constructor(
         const val DETAIL_THRESHOLD_PX = 2048
         const val SHADOW = 4f
         const val SHAPE_STEP_MS = 8L
+        const val RULER_GAP_PX = 1.5f
+        // Page units are A4 at 150dpi, so a real millimetre of page is this many of them.
+        const val A4_MM_WIDTH = 210f
         const val IMAGE_INSERT_FRACTION = 0.5f
         const val IMAGE_HANDLE_PX = 22f
         const val IMAGE_MIN_SIZE = 32f

@@ -3082,6 +3082,8 @@ private fun NoteScreen(
     )
     var showLatency by remember { mutableStateOf(false) }
     var laser by remember { mutableStateOf(false) }
+    var ruler by remember { mutableStateOf<RulerKind?>(null) }
+    var rulerAngle by remember { mutableStateOf(false) }
     var showPages by remember { mutableStateOf(false) }
     var goToPage by remember { mutableStateOf(false) }
     var showSkinSettings by remember { mutableStateOf(false) }
@@ -3107,6 +3109,38 @@ private fun NoteScreen(
     // A multiple of fit-to-width, which is the 100% anybody means.
     var zoom by remember { mutableFloatStateOf(1f) }
     var canvas by remember { mutableStateOf<InkCanvasView?>(null) }
+    if (rulerAngle) {
+        var text by remember { mutableStateOf("") }
+        var inches by remember { mutableStateOf(canvas?.rulerInches == true) }
+        AlertDialog(
+            onDismissRequest = { rulerAngle = false },
+            title = { Text("자 설정") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = text,
+                        onValueChange = { text = it.filter { c -> c.isDigit() || c == '.' || c == '-' }.take(6) },
+                        label = { Text("각도 (°)") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SettingsChoiceChip(selected = !inches, onClick = { inches = false }, label = "mm",
+                            modifier = Modifier.padding(end = 8.dp))
+                        SettingsChoiceChip(selected = inches, onClick = { inches = true }, label = "inch")
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    text.toFloatOrNull()?.let { canvas?.setRulerDegrees(it) }
+                    canvas?.rulerInches = inches
+                    rulerAngle = false
+                }) { Text("적용") }
+            },
+            dismissButton = { TextButton(onClick = { rulerAngle = false }) { Text("취소") } },
+        )
+    }
     if (goToPage) canvas?.let { view ->
         GoToPageDialog(view.document.pages.size, onGo = { view.scrollToPage(it) }, onDismiss = { goToPage = false })
     }
@@ -3306,6 +3340,14 @@ private fun NoteScreen(
             onToggleLatency = { showLatency = !showLatency },
             laser = laser,
             onToggleLaser = { laser = !laser },
+            ruler = ruler,
+            onRuler = { picked ->
+                if (picked != null && picked == ruler) rulerAngle = true else ruler = picked
+            },
+            onAddPage = {
+                canvas?.let { it.addPage(it.currentPageIndex()); it.scrollToPage(it.currentPageIndex() + 1) }
+                edits++
+            },
             recording = recorder != null,
             onVoice = { showVoice = true },
             noteRotation = noteRotation,
@@ -3496,6 +3538,8 @@ private fun NoteScreen(
                     view.partialEraser = partialEraser
                     view.applyGestures(gestures)
                     view.laserMode = laser
+                    view.rulerKind = ruler
+                    view.onRulerClosed = { ruler = null }
                     view.autoShapeRecognitionEnabled = autoShapes
                     view.axisSnapEnabled = axisSnap
                     view.dottedPattern = dottedPattern
@@ -5950,6 +5994,9 @@ private fun Toolbar(
     modifier: Modifier = Modifier,
     laser: Boolean = false,
     onToggleLaser: () -> Unit = {},
+    ruler: RulerKind? = null,
+    onRuler: (RulerKind?) -> Unit = {},
+    onAddPage: () -> Unit = {},
 ) {
     val topRow: @Composable () -> Unit = {
         // ---- top row: the note, and what is done to the whole of it
@@ -6061,6 +6108,10 @@ private fun Toolbar(
                     tint = if (laser) Color(0xFFFF3B30) else LocalContentColor.current,
                 )
             }
+            RulerButton(ruler, onRuler)
+            IconButton(onClick = onAddPage) {
+                Icon(Reicons.Add, contentDescription = "페이지 추가")
+            }
             OtherNotesButton(otherNotes, onOpenNote)
         }
     }
@@ -6087,6 +6138,11 @@ private fun Toolbar(
                 add(SpotiToolbarAction("노트 회전", Reicons.ScreenRotation, slot = 7, onClick = onRotate))
                 add(SpotiToolbarAction("캡쳐", Reicons.CropFree, slot = 5, onClick = { onMode(EditMode.CAPTURE) }))
                 add(SpotiToolbarAction("레이저 포인터", Reicons.FilterCenterFocus, selected = laser, onClick = onToggleLaser))
+                for (kind in RulerKind.entries) {
+                    add(SpotiToolbarAction(rulerLabel(kind), Reicons.Remove, selected = ruler == kind,
+                        onClick = { onRuler(if (ruler == kind) null else kind) }))
+                }
+                add(SpotiToolbarAction("페이지 추가", Reicons.Add, onClick = onAddPage))
                 add(SpotiToolbarAction("필기 설정", Reicons.Create, slot = 4, onClick = {
                     if (mode !in PenStore.DEFAULTS) onMode(EditMode.PEN)
                     onEditPen()
@@ -6131,6 +6187,33 @@ private fun Toolbar(
                 TextButton(onClick = onTogglePages) { Text(pageLabel) }
               }
             })
+}
+
+internal fun rulerLabel(kind: RulerKind): String = when (kind) {
+    RulerKind.RULER -> "자"
+    RulerKind.TRIANGLE -> "삼각자"
+    RulerKind.PROTRACTOR -> "각도기"
+}
+
+/** Lays a ruler, set square or protractor on the screen; tapping the one in hand again asks for its angle. */
+@Composable
+private fun RulerButton(ruler: RulerKind?, onRuler: (RulerKind?) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) {
+            Icon(Reicons.Remove, contentDescription = "자",
+                tint = if (ruler != null) MaterialTheme.colorScheme.primary else LocalContentColor.current)
+        }
+        DropdownMenu(open, onDismissRequest = { open = false }) {
+            for (kind in RulerKind.entries) {
+                DropdownMenuItem(
+                    text = { Text((if (ruler == kind) "✓ " else "") + rulerLabel(kind)) },
+                    onClick = { open = false; onRuler(kind) },
+                )
+            }
+            if (ruler != null) DropdownMenuItem(text = { Text("치우기") }, onClick = { open = false; onRuler(null) })
+        }
+    }
 }
 
 /** Jumps straight to another note without going back through the list. */
