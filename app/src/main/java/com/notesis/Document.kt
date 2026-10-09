@@ -34,7 +34,51 @@ class PageImage(
     var width: Float = 0f,
     var height: Float = 0f,
     val textContent: TextBoxContent? = null,
-)
+    /** Left alone by the lasso and the eraser unless they are told otherwise. */
+    var locked: Boolean = false,
+    /** Objects sharing a nonzero group are selected together. See [StrokeTags]. */
+    var group: Int = 0,
+    var opacity: Float = 1f,
+) {
+    /** Everything carried over, with whatever is named changed. */
+    fun copy(
+        id: String = this.id,
+        x: Float = this.x,
+        y: Float = this.y,
+        width: Float = this.width,
+        height: Float = this.height,
+        textContent: TextBoxContent? = this.textContent,
+    ) = PageImage(id, x, y, width, height, textContent, locked, group, opacity)
+}
+
+/**
+ * Lock and group for a stroke. A Stroke is the ink library's immutable object
+ * and has nowhere to put either, so they live beside it, keyed by identity
+ * (Stroke does not override equals), and ride in the high bits of the tool
+ * field when a page is written. Bit 0 is locked; the rest is the group.
+ */
+internal object StrokeTags {
+    private val tags = java.util.Collections.synchronizedMap(java.util.WeakHashMap<Stroke, Int>())
+
+    fun of(stroke: Stroke): Int = tags[stroke] ?: 0
+    fun set(stroke: Stroke, tag: Int) { if (tag == 0) tags.remove(stroke) else tags[stroke] = tag }
+    fun locked(stroke: Stroke): Boolean = of(stroke) and 1 != 0
+    fun group(stroke: Stroke): Int = of(stroke) ushr 1
+    fun tag(locked: Boolean, group: Int): Int = ((group and MAX_GROUP) shl 1) or (if (locked) 1 else 0)
+
+    /** The tool field as written: the ordinal in the low byte, the tag above it. */
+    fun pack(ordinal: Int, tag: Int): Int = (ordinal and 0xFF) or (tag shl 8)
+    fun ordinalOf(packed: Int): Int = packed and 0xFF
+    fun tagOf(packed: Int): Int = packed ushr 8
+
+    /** A stroke rebuilt from another (moved, turned, re-meshed) is still the same object to the user. */
+    fun carry(from: Stroke, to: Stroke) { if (from !== to) of(from).let { if (it != 0) set(to, it) } }
+
+    // ponytail: random ids, collisions are one in four million per pair of groups on a page.
+    fun newGroup(): Int = 1 + java.util.concurrent.ThreadLocalRandom.current().nextInt(MAX_GROUP)
+
+    const val MAX_GROUP = 0x3FFFFF
+}
 
 /**
  * Masking tape: a stroke drawn like any other, in an opaque colour, whose job is
@@ -674,8 +718,7 @@ class NoteStore(context: Context) {
                                 imageFile(newId, imageId).also { it.parentFile?.mkdirs() }
                                     .let { source.copyTo(it) }
                             }
-                            PageImage(imageId, image.x, image.y, image.width, image.height,
-                                image.textContent)
+                            image.copy(id = imageId)
                         }.toMutableList()
                         val page = Page(
                             id = pageId, width = old.width, height = old.height,
@@ -943,7 +986,7 @@ class NoteStore(context: Context) {
                 tocLevel = live.tocLevel,
                 bookmarked = live.bookmarked,
                 images = live.images.map { image ->
-                    PageImage(image.id, image.x, image.y, image.width, image.height, image.textContent)
+                    image.copy()
                 }.toMutableList(),
                 masks = live.masks.map { mask ->
                     PageMask(mask.stroke).also { it.revealed = mask.revealed }
@@ -1045,7 +1088,10 @@ class NoteStore(context: Context) {
                     .put("w", image.width.toDouble())
                     .put("h", image.height.toDouble())
                     .put("text", image.textContent?.let { content -> JSONObject()
-                        .put("value", content.text).put("size", content.size.toDouble()).put("color", content.color) }),
+                        .put("value", content.text).put("size", content.size.toDouble()).put("color", content.color) })
+                    .put("locked", image.locked)
+                    .put("group", image.group)
+                    .put("opacity", image.opacity.toDouble()),
             )
         }
         return array
@@ -1066,6 +1112,9 @@ class NoteStore(context: Context) {
                     TextBoxContent(content.optString("value"), content.optDouble("size", 32.0).toFloat(),
                         content.optInt("color", 0xFF000000.toInt()))
                 },
+                locked = item.optBoolean("locked", false),
+                group = item.optInt("group", 0),
+                opacity = item.optDouble("opacity", 1.0).toFloat().coerceIn(0f, 1f),
             )
         }
         return images
@@ -1578,7 +1627,8 @@ class NoteStore(context: Context) {
 
     private fun writeStroke(out: DataOutputStream, stroke: Stroke) {
         val brush = stroke.brush
-        out.writeInt(Tool.ofBrushFamily(brush.family).ordinal)
+        // The ordinal never needs more than the low byte; the tags ride above it.
+        out.writeInt(StrokeTags.pack(Tool.ofBrushFamily(brush.family).ordinal, StrokeTags.of(stroke)))
         out.writeInt(brush.colorIntArgb)
         out.writeFloat(brush.size)
         out.writeFloat(brush.epsilon)
@@ -1611,7 +1661,8 @@ class NoteStore(context: Context) {
                 val storedVersion = input.readInt()
                 if (storedVersion !in 1..VERSION) return emptyList()
                 repeat(input.readInt()) {
-                    val storedTool = Tool.entries[input.readInt()]
+                    val rawTool = input.readInt()
+                    val storedTool = Tool.entries[StrokeTags.ordinalOf(rawTool)]
                     val color = input.readInt()
                     // Earlier identical pen/highlighter families wrote opaque
                     // normal pens with the highlighter ordinal. Restore their
@@ -1636,7 +1687,9 @@ class NoteStore(context: Context) {
                         ),
                         inputs,
                     )
-                    strokes += if (tool == Tool.PEN) withoutStationaryStart(stroke) else stroke
+                    val loaded = if (tool == Tool.PEN) withoutStationaryStart(stroke) else stroke
+                    StrokeTags.set(loaded, StrokeTags.tagOf(rawTool))
+                    strokes += loaded
                 }
             }
         }

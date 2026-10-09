@@ -1761,6 +1761,7 @@ internal fun PenDialog(
     onCompatWetInk: (Boolean) -> Unit = {},
     gestures: CanvasGestures = CanvasGestures(),
     onGestures: (CanvasGestures) -> Unit = {},
+    onClearPage: (() -> Unit)? = null,
 ) {
     val start = pen
     val hsv = remember(pen) {
@@ -1808,6 +1809,24 @@ internal fun PenDialog(
                         SettingsChoiceChip(selected = gestures.eraseTape,
                             onClick = { onGestures(gestures.copy(eraseTape = !gestures.eraseTape)) },
                             label = "테이프")
+                    }
+                    Row(Modifier.padding(top = 6.dp)) {
+                        SettingsChoiceChip(selected = gestures.eraseImages,
+                            onClick = { onGestures(gestures.copy(eraseImages = !gestures.eraseImages)) },
+                            label = "이미지", modifier = Modifier.padding(end = 8.dp))
+                        SettingsChoiceChip(selected = gestures.eraseText,
+                            onClick = { onGestures(gestures.copy(eraseText = !gestures.eraseText)) },
+                            label = "텍스트 상자", modifier = Modifier.padding(end = 8.dp))
+                        SettingsChoiceChip(selected = gestures.eraseLocked,
+                            onClick = { onGestures(gestures.copy(eraseLocked = !gestures.eraseLocked)) },
+                            label = "잠긴 객체")
+                    }
+                    if (onClearPage != null) {
+                        Spacer(Modifier.height(10.dp))
+                        TextButton(onClick = onClearPage) {
+                            Icon(Reicons.Delete, contentDescription = null)
+                            Text(" 현재 페이지 모두 지우기")
+                        }
                     }
                 }
                 if (mode.tints) {
@@ -3421,6 +3440,7 @@ private fun NoteScreen(
                                     .decodeFile(store.imageFile(note.id, imageId).path)
                             }.getOrNull()?.also { imageCache.put(imageId, it) }
                         }
+                        imageAdder = { bitmap -> store.addImage(note.id, bitmap)?.first }
                         templateLoader = { templateId ->
                             runCatching { android.graphics.BitmapFactory.decodeFile(
                                 store.templateFile(templateId).path) }.getOrNull()
@@ -3760,6 +3780,11 @@ private fun NoteScreen(
                 onPartialEraser = { partialEraser = it; penStore.partialEraser = it },
                 gestures = gestures,
                 onGestures = { setGestures(it) },
+                onClearPage = {
+                    canvas?.let { it.clearPage(it.currentPageIndex()) }
+                    edits++
+                    editingPen = false
+                },
                 autoShapes = autoShapes,
                 onAutoShapes = { autoShapes = it; penStore.autoShapes = it },
                 axisSnap = axisSnap,
@@ -3866,6 +3891,16 @@ private fun NoteScreen(
                     clipRevision++
                     edits++
                 },
+                locked = edits.let { canvas?.lassoSelectionLocked() == true },
+                onLock = { locked ->
+                    canvas?.lockLassoSelection(locked)
+                    edits++
+                },
+                grouped = edits.let { canvas?.lassoSelectionGrouped() == true },
+                onGroup = { grouped ->
+                    canvas?.groupLassoSelection(grouped)
+                    edits++
+                },
                 onDone = { canvas?.clearLassoSelection() },
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
@@ -3878,6 +3913,8 @@ private fun NoteScreen(
                     canvas?.paste(it)
                     edits++
                 },
+                gestures = gestures,
+                onGestures = { setGestures(it) },
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
         }
@@ -4423,6 +4460,10 @@ private fun LassoActions(
     onDuplicate: (() -> Unit)? = null,
     onCopy: (() -> Unit)? = null,
     onCut: (() -> Unit)? = null,
+    locked: Boolean = false,
+    onLock: ((Boolean) -> Unit)? = null,
+    grouped: Boolean = false,
+    onGroup: ((Boolean) -> Unit)? = null,
     onDone: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -4438,7 +4479,7 @@ private fun LassoActions(
                 .padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("$count 획 · 끌어서 이동", style = MaterialTheme.typography.bodyMedium)
+            Text("$count 개 · 끌어서 이동", style = MaterialTheme.typography.bodyMedium)
             ToolbarDivider()
             if (onTransform != null) {
                 IconButton(onClick = { onTransform(0.8f, 0f) }) {
@@ -4459,6 +4500,12 @@ private fun LassoActions(
             }
             if (onCopy != null) TextButton(onClick = onCopy) { Text("복사") }
             if (onCut != null) TextButton(onClick = onCut) { Text("잘라내기") }
+            if (onGroup != null) TextButton(onClick = { onGroup(!grouped) }) {
+                Text(if (grouped) "그룹 해제" else "그룹")
+            }
+            if (onLock != null) TextButton(onClick = { onLock(!locked) }) {
+                Text(if (locked) "잠금 해제" else "잠금")
+            }
             TextButton(onClick = onDelete) {
                 Icon(Reicons.Delete, contentDescription = null)
                 Text(" 삭제")
@@ -4480,6 +4527,8 @@ private fun PasteBar(
     wholeOnly: Boolean,
     onWholeOnly: (Boolean) -> Unit,
     onPaste: (InkClipboard.Clip) -> Unit,
+    gestures: CanvasGestures = CanvasGestures(),
+    onGestures: (CanvasGestures) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val clips = remember(clipRevision) { InkClipboard.clips.toList() }
@@ -4491,11 +4540,40 @@ private fun PasteBar(
         corner = 16.dp,
     ) {
         Row(
-            Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            Modifier
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             SettingsChoiceChip(selected = wholeOnly, onClick = { onWholeOnly(!wholeOnly) },
                 label = "완전히 포함된 것만")
+            ToolbarDivider()
+            var types by remember { mutableStateOf(false) }
+            Box {
+                TextButton(onClick = { types = true }) { Text("선택 대상") }
+                DropdownMenu(types, onDismissRequest = { types = false }) {
+                    listOf(
+                        "펜" to gestures.lassoInk,
+                        "형광펜" to gestures.lassoHighlighter,
+                        "이미지" to gestures.lassoPictures,
+                        "텍스트 상자" to gestures.lassoText,
+                        "잠긴 객체" to gestures.selectLocked,
+                    ).forEachIndexed { index, (label, on) ->
+                        DropdownMenuItem(
+                            text = { Text((if (on) "✓ " else "    ") + label) },
+                            onClick = {
+                                onGestures(when (index) {
+                                    0 -> gestures.copy(lassoInk = !on)
+                                    1 -> gestures.copy(lassoHighlighter = !on)
+                                    2 -> gestures.copy(lassoPictures = !on)
+                                    3 -> gestures.copy(lassoText = !on)
+                                    else -> gestures.copy(selectLocked = !on)
+                                })
+                            },
+                        )
+                    }
+                }
+            }
             if (clips.isNotEmpty()) {
                 ToolbarDivider()
                 TextButton(onClick = { onPaste(clips.first()) }) { Text("붙여넣기") }
@@ -4504,7 +4582,7 @@ private fun PasteBar(
                     DropdownMenu(open, onDismissRequest = { open = false }) {
                         clips.forEachIndexed { index, clip ->
                             DropdownMenuItem(
-                                text = { Text("${index + 1}. ${clip.strokes.size} 획") },
+                                text = { Text("${index + 1}. ${clip.size} 개") },
                                 onClick = { open = false; onPaste(clip) },
                             )
                         }

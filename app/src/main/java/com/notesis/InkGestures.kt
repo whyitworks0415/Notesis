@@ -77,14 +77,21 @@ internal fun isLassoLoop(gap: Float, width: Float, height: Float, minExtent: Flo
  * the strokes with the note format if a library that outlives the app is wanted.
  */
 internal object InkClipboard {
-    class Clip(val strokes: List<Stroke>, val bounds: RectF)
+    class Clip(
+        val strokes: List<Stroke>,
+        val bounds: RectF,
+        /** Pictures with their pixels, so a paste into another note can store its own copy. */
+        val images: List<Pair<PageImage, android.graphics.Bitmap?>> = emptyList(),
+    ) {
+        val size: Int get() = strokes.size + images.size
+    }
 
     const val MAX_CLIPS = 10
     val clips = ArrayDeque<Clip>()
 
-    fun push(strokes: List<Stroke>, bounds: RectF) {
-        if (strokes.isEmpty()) return
-        clips.addFirst(Clip(strokes, RectF(bounds)))
+    fun push(strokes: List<Stroke>, bounds: RectF, images: List<Pair<PageImage, android.graphics.Bitmap?>> = emptyList()) {
+        if (strokes.isEmpty() && images.isEmpty()) return
+        clips.addFirst(Clip(strokes, RectF(bounds), images))
         while (clips.size > MAX_CLIPS) clips.removeLast()
     }
 }

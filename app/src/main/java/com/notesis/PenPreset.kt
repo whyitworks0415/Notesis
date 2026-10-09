@@ -38,6 +38,14 @@ data class CanvasGestures(
     val scribbleErase: Boolean = false,
     val circleToLasso: Boolean = false,
     val lassoWholeOnly: Boolean = false,
+    val lassoInk: Boolean = true,
+    val lassoHighlighter: Boolean = true,
+    val lassoPictures: Boolean = true,
+    val lassoText: Boolean = true,
+    val selectLocked: Boolean = false,
+    val eraseLocked: Boolean = false,
+    val eraseImages: Boolean = false,
+    val eraseText: Boolean = false,
 )
 
 fun InkCanvasView.applyGestures(gestures: CanvasGestures) {
@@ -47,6 +55,14 @@ fun InkCanvasView.applyGestures(gestures: CanvasGestures) {
     scribbleErase = gestures.scribbleErase
     circleToLasso = gestures.circleToLasso
     lassoWholeOnly = gestures.lassoWholeOnly
+    lassoInk = gestures.lassoInk
+    lassoHighlighter = gestures.lassoHighlighter
+    lassoPictures = gestures.lassoPictures
+    lassoText = gestures.lassoText
+    selectLocked = gestures.selectLocked
+    eraseLocked = gestures.eraseLocked
+    eraseImages = gestures.eraseImages
+    eraseText = gestures.eraseText
 }
 
 /**
@@ -178,6 +194,14 @@ class PenStore(context: Context) {
             scribbleErase = prefs.getBoolean("scribbleErase", false),
             circleToLasso = prefs.getBoolean("circleToLasso", false),
             lassoWholeOnly = prefs.getBoolean("lassoWholeOnly", false),
+            lassoInk = prefs.getBoolean("lassoInk", true),
+            lassoHighlighter = prefs.getBoolean("lassoHighlighter", true),
+            lassoPictures = prefs.getBoolean("lassoPictures", true),
+            lassoText = prefs.getBoolean("lassoText", true),
+            selectLocked = prefs.getBoolean("selectLocked", false),
+            eraseLocked = prefs.getBoolean("eraseLocked", false),
+            eraseImages = prefs.getBoolean("eraseImages", false),
+            eraseText = prefs.getBoolean("eraseText", false),
         )
         set(value) = prefs.edit()
             .putBoolean("eraseInk", value.eraseInk)
@@ -186,6 +210,14 @@ class PenStore(context: Context) {
             .putBoolean("scribbleErase", value.scribbleErase)
             .putBoolean("circleToLasso", value.circleToLasso)
             .putBoolean("lassoWholeOnly", value.lassoWholeOnly)
+            .putBoolean("lassoInk", value.lassoInk)
+            .putBoolean("lassoHighlighter", value.lassoHighlighter)
+            .putBoolean("lassoPictures", value.lassoPictures)
+            .putBoolean("lassoText", value.lassoText)
+            .putBoolean("selectLocked", value.selectLocked)
+            .putBoolean("eraseLocked", value.eraseLocked)
+            .putBoolean("eraseImages", value.eraseImages)
+            .putBoolean("eraseText", value.eraseText)
             .apply()
 
     /** See [InkCanvasView.compatWetInk]; on by default where the front buffer is known to fail. */
