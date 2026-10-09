@@ -4777,6 +4777,15 @@ class InkCanvasView @JvmOverloads constructor(
         onLassoSelected?.invoke(lassoSelectionSize())
     }
 
+    /**
+     * Where the selection is - page, box - and a text size that matches the
+     * height of one line of it, for typed text taking its place.
+     */
+    fun lassoPlacement(): Triple<Int, RectF, Float>? {
+        if (!hasLassoSelection() || lassoBounds.isEmpty) return null
+        return Triple(lassoPage, RectF(lassoBounds), (lassoBounds.height() * 0.6f).coerceIn(14f, 72f))
+    }
+
     /** The link on the selection's group, if it has one. */
     fun lassoLink(): String? {
         val page = document.pages.getOrNull(lassoPage) ?: return null

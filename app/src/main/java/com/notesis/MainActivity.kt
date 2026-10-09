@@ -1392,6 +1392,10 @@ private fun SearchHitRow(note: NoteMeta, hit: PageHit, onOpen: () -> Unit) {
     }
 }
 
+/** "Fast" writing latency: the longest prediction lead offered. */
+internal const val FAST_LEAD_MS = 9
+internal const val WIDTH_STEP = 0.5f
+
 internal val NOTE_LABELS = listOf(
     0xFFE53935.toInt(), 0xFFFB8C00.toInt(), 0xFFFDD835.toInt(), 0xFF43A047.toInt(),
     0xFF1E88E5.toInt(), 0xFF8E24AA.toInt(), 0xFF6D4C41.toInt(), 0xFF546E7A.toInt(),
@@ -2580,6 +2584,23 @@ internal fun PenDialog(
                     }
                 }
                 Spacer(Modifier.height(10.dp))
+                // The same two settings below, as the three modes people ask for by name.
+                Text("필기 지연", style = MaterialTheme.typography.bodyMedium)
+                Row(Modifier.horizontalScroll(rememberScrollState())) {
+                    SettingsChoiceChip(selected = !prediction, onClick = { onPrediction(false) }, label = "끄기",
+                        modifier = Modifier.padding(end = 6.dp))
+                    SettingsChoiceChip(selected = prediction && predictionLeadMs == 0,
+                        onClick = { onPrediction(true); onPredictionLeadMs(0) }, label = "표준",
+                        modifier = Modifier.padding(end = 6.dp))
+                    SettingsChoiceChip(selected = prediction && predictionLeadMs == FAST_LEAD_MS,
+                        onClick = { onPrediction(true); onPredictionLeadMs(FAST_LEAD_MS) }, label = "빠름 · 실험적")
+                }
+                if (prediction && predictionLeadMs == FAST_LEAD_MS) Text(
+                    "빠름은 일부 기기에서 획 끝이 흔들리거나 불안정할 수 있습니다",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                Spacer(Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     SkinSwitch(checked = prediction, onCheckedChange = onPrediction)
                     Spacer(Modifier.width(10.dp))
@@ -2653,6 +2674,11 @@ internal fun PenDialog(
                 WidthControls(mode, width) {
                     width = it
                     if (it > range.endInclusive) maxWidth = it
+                }
+                Row {
+                    TextButton(onClick = { width = (width - WIDTH_STEP).coerceIn(range) }) { Text("−") }
+                    Text(widthLabel(width.coerceIn(range)), Modifier.align(Alignment.CenterVertically))
+                    TextButton(onClick = { width = (width + WIDTH_STEP).coerceIn(range) }) { Text("+") }
                 }
                 SkinSlider(
                     value = width.coerceIn(range),
@@ -5053,7 +5079,30 @@ private fun NoteScreen(
                 clipboard.setText(AnnotatedString(recognized))
                 regionOcrText = null
             }) { Text("복사") } },
-            dismissButton = { TextButton(onClick = { regionOcrText = null }) { Text("닫기") } },
+            dismissButton = {
+                Row {
+                    // The handwriting gives way to typed text where it stood.
+                    if (recognized.isNotBlank()) TextButton(onClick = {
+                        regionOcrText = null
+                        val place = canvas?.lassoPlacement()
+                        val content = TextBoxContent(recognized.trim(), size = place?.third ?: 32f)
+                        scope.launch {
+                            val result = withContext(Dispatchers.IO) { runCatching {
+                                val bitmap = renderTextBox(content)
+                                try { store.addImage(note.id, bitmap)?.let { Triple(it.first, bitmap.width, bitmap.height) } }
+                                finally { bitmap.recycle() }
+                            }.getOrNull() }
+                            if (result != null && place != null) {
+                                canvas?.deleteLassoSelection()
+                                canvas?.putTextBox(result.first, result.second, result.third, content,
+                                    at = Triple(place.first, place.second.left, place.second.top))
+                                edits++
+                            }
+                        }
+                    }) { Text("텍스트로 바꾸기") }
+                    TextButton(onClick = { regionOcrText = null }) { Text("닫기") }
+                }
+            },
         ) }
 
         if (showTextBox) TextBoxDialog(replacingText?.textContent ?: if (creatingSticky) STICKY_STYLE else null,
