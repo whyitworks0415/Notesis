@@ -1120,7 +1120,9 @@ class NoteStore(context: Context) {
                     .put("w", image.width.toDouble())
                     .put("h", image.height.toDouble())
                     .put("text", image.textContent?.let { content -> JSONObject()
-                        .put("value", content.text).put("size", content.size.toDouble()).put("color", content.color) })
+                        .put("value", content.text).put("size", content.size.toDouble()).put("color", content.color)
+                        .put("html", content.html ?: "").put("font", content.font).put("bg", content.background)
+                        .put("corner", content.corner.toDouble()).put("pad", content.padding.toDouble()) })
                     .put("locked", image.locked)
                     .put("group", image.group)
                     .put("opacity", image.opacity.toDouble()),
@@ -1142,7 +1144,12 @@ class NoteStore(context: Context) {
                 height = item.optDouble("h").toFloat(),
                 textContent = item.optJSONObject("text")?.let { content ->
                     TextBoxContent(content.optString("value"), content.optDouble("size", 32.0).toFloat(),
-                        content.optInt("color", 0xFF000000.toInt()))
+                        content.optInt("color", 0xFF000000.toInt()),
+                        html = content.optString("html", "").ifBlank { null },
+                        font = content.optString("font", ""),
+                        background = content.optInt("bg", 0),
+                        corner = content.optDouble("corner", 0.0).toFloat(),
+                        padding = content.optDouble("pad", TextBoxContent.DEFAULT_PADDING.toDouble()).toFloat())
                 },
                 locked = item.optBoolean("locked", false),
                 group = item.optInt("group", 0),

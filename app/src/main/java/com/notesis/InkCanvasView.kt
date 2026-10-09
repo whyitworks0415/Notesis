@@ -5884,28 +5884,14 @@ class InkCanvasView @JvmOverloads constructor(
                     val text = textLayouts.getOrPut(image) {
                         val logicalWidth = bitmap.width / 2f
                         val logicalHeight = bitmap.height / 2f
-                        val paint = TextPaint(
-                            Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG or Paint.LINEAR_TEXT_FLAG,
-                        ).apply {
-                            textSize = content.size
-                            color = content.color
-                        }
-                        val width = ((bitmap.width - 16) / 2).coerceAtLeast(1)
-                        TextRender(
-                            StaticLayout.Builder.obtain(content.text, 0, content.text.length, paint, width)
-                                .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-                                .setIncludePad(true)
-                                .build(),
-                            logicalWidth,
-                            logicalHeight,
-                        )
+                        val width = (logicalWidth - content.padding * 2f).toInt().coerceAtLeast(1)
+                        TextRender(textBoxLayout(content, width, 1f), logicalWidth, logicalHeight)
                     }
                     canvas.save()
                     canvas.clipRect(imageRect)
                     canvas.translate(imageRect.left, imageRect.top)
                     canvas.scale(image.width / text.logicalWidth, image.height / text.logicalHeight)
-                    canvas.translate(4f, 4f)
-                    text.layout.draw(canvas)
+                    drawTextBox(canvas, content, text.layout, text.logicalWidth, text.logicalHeight, 1f)
                     canvas.restore()
                 }
             }
