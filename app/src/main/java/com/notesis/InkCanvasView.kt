@@ -356,8 +356,6 @@ private class TextRender(
     val logicalHeight: Float,
 )
 
-/** The shapes the pen can be made to draw instead of following the hand. */
-enum class ShapeKind { LINE, ARROW, RECT, OVAL }
 
 enum class Tool {
     PEN,
@@ -745,6 +743,12 @@ class InkCanvasView @JvmOverloads constructor(
     var strokeWidth: Float = 5f
     var stabilizer: Int = 0
     var autoShapeRecognitionEnabled: Boolean = false
+
+    /** A pen stroke held still at its end for [CIRCLE_HOLD_MS] becomes the shape it looks like. */
+    var holdToDraw: Boolean = false
+    private var holdTracking = false
+    /** Set at pen-up when the hold was long enough; the commit that follows reads and clears it. */
+    private var recognizeOnFinish = false
     var axisSnapEnabled: Boolean = true
     var dottedPattern: Int = 0
     private var playbackPage = -1
@@ -2458,6 +2462,13 @@ class InkCanvasView @JvmOverloads constructor(
                     stationaryStartY = event.getY(event.actionIndex)
                     stationaryStartTime = event.eventTime
                     circleTracking = circleToLasso && tool.isFreehandPen() && !strokeIsMask
+                    holdTracking = holdToDraw && (tool.isFreehandPen() || tool == Tool.HIGHLIGHTER) && !strokeIsMask
+                    recognizeOnFinish = false
+                    if (holdTracking) {
+                        holdX = stationaryStartX
+                        holdY = stationaryStartY
+                        holdSince = event.eventTime
+                    }
                     if (circleTracking) {
                         lassoPage = index
                         lassoPath.clear()
@@ -2536,6 +2547,7 @@ class InkCanvasView @JvmOverloads constructor(
                     removeCallbacks(longPress)
                 }
                 if (circleTracking) trackCircle(event, index)
+                else if (holdTracking) trackHold(event.getX(index), event.getY(index), event.eventTime)
                 val strokeId = activeStrokeId ?: return false
                 if (latencyMonitoringEnabled) latency.addSamples(1 + event.historySize)
                 // Hold back the digitizer's near-stationary samples at contact,
@@ -3017,6 +3029,11 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun endStylus() {
+        if (holdTracking) {
+            holdTracking = false
+            recognizeOnFinish = activeStrokeId != null &&
+                SystemClock.uptimeMillis() - holdSince >= CIRCLE_HOLD_MS
+        }
         readingWithButton = false
         pendingTextPlacement = null
         removeCallbacks(longPress)
@@ -4094,64 +4111,18 @@ class InkCanvasView @JvmOverloads constructor(
         return listOf(Stroke(brush, inputs.toImmutable()))
     }
 
-    /** The outline of [kind], sampled densely enough that the brush follows it. */
+    /** The outline of [kind]; a nearly square box is made square. See [squaredEnd]. */
     private fun shapePoints(
         kind: ShapeKind,
         from: FloatArray,
         to: FloatArray,
     ): List<FloatArray> {
-        val x0 = from[0]
-        val y0 = from[1]
-        val x1 = to[0]
-        val y1 = to[1]
-        return when (kind) {
-            ShapeKind.LINE -> {
-                val dx = x1 - x0
-                val dy = y1 - y0
-                val length = hypot(dx, dy)
-                val snap = axisSnapEnabled && length > 20f &&
-                    min(abs(dx), abs(dy)) / length < 0.14f
-                listOf(floatArrayOf(x0, y0), floatArrayOf(
-                    if (snap && abs(dx) < abs(dy)) x0 else x1,
-                    if (snap && abs(dy) < abs(dx)) y0 else y1,
-                ))
-            }
-
-            ShapeKind.ARROW -> {
-                val angle = atan2(y1 - y0, x1 - x0)
-                // Barbs sized off the shaft, so a short arrow is not all head.
-                val barb = (hypot(x1 - x0, y1 - y0) * 0.22f).coerceIn(12f, 90f)
-                val left = angle + ARROW_SPREAD
-                val right = angle - ARROW_SPREAD
-                listOf(
-                    floatArrayOf(x0, y0),
-                    floatArrayOf(x1, y1),
-                    floatArrayOf(x1 - barb * cos(left), y1 - barb * sin(left)),
-                    floatArrayOf(x1, y1),
-                    floatArrayOf(x1 - barb * cos(right), y1 - barb * sin(right)),
-                )
-            }
-
-            ShapeKind.RECT -> listOf(
-                floatArrayOf(x0, y0),
-                floatArrayOf(x1, y0),
-                floatArrayOf(x1, y1),
-                floatArrayOf(x0, y1),
-                floatArrayOf(x0, y0),
-            )
-
-            ShapeKind.OVAL -> {
-                val cx = (x0 + x1) / 2f
-                val cy = (y0 + y1) / 2f
-                val rx = abs(x1 - x0) / 2f
-                val ry = abs(y1 - y0) / 2f
-                (0..OVAL_STEPS).map {
-                    val t = it * 2.0 * Math.PI / OVAL_STEPS
-                    floatArrayOf(cx + rx * cos(t).toFloat(), cy + ry * sin(t).toFloat())
-                }
-            }
-        }
+        val end = squaredShapeEnd(kind, from, to) ?: to
+        return shapeOutline(kind, from[0], from[1], end[0], end[1], axisSnapEnabled)
     }
+
+    private fun squaredShapeEnd(kind: ShapeKind, from: FloatArray, to: FloatArray): FloatArray? =
+        if (kind.squarable) squaredEnd(from[0], from[1], to[0], to[1]) else null
 
     // ---- lasso --------------------------------------------------------------
 
@@ -4208,12 +4179,15 @@ class InkCanvasView @JvmOverloads constructor(
     /** Keeps the pen's path for circle to lasso; never redraws, the wet ink is the picture. */
     private fun trackCircle(event: MotionEvent, pointerIndex: Int) {
         appendLassoSamples(event, pointerIndex, invalidate = false)
-        val x = event.getX(pointerIndex)
-        val y = event.getY(pointerIndex)
+        trackHold(event.getX(pointerIndex), event.getY(pointerIndex), event.eventTime)
+    }
+
+    /** Where the pen last came to rest, and since when. */
+    private fun trackHold(x: Float, y: Float, time: Long) {
         if (hypot(x - holdX, y - holdY) > touchSlop * HOLD_SLOP_FRACTION) {
             holdX = x
             holdY = y
-            holdSince = event.eventTime
+            holdSince = time
         }
     }
 
@@ -5192,9 +5166,17 @@ class InkCanvasView @JvmOverloads constructor(
                 } else if (scribbleErase && finishedTool.isFreehandPen() && scribbleOut(page, stroke, group)) {
                     // The scribble took the ink under it and is not kept itself.
                 } else {
-                    val shape = if (autoShapeRecognitionEnabled &&
-                        Tool.ofBrushFamily(stroke.brush.family).isFreehandPen()
-                    ) recognizeStroke(stroke) else null
+                    val shape = when {
+                        // A held highlighter only ever straightens: it marks lines of text.
+                        recognizeOnFinish && finishedTool == Tool.HIGHLIGHTER && stroke.inputs.size >= 2 -> {
+                            val first = stroke.inputs.get(0)
+                            val last = stroke.inputs.get(stroke.inputs.size - 1)
+                            RecognizedShape(ShapeKind.LINE, first.x, first.y, last.x, last.y)
+                        }
+                        (autoShapeRecognitionEnabled || recognizeOnFinish) &&
+                            Tool.ofBrushFamily(stroke.brush.family).isFreehandPen() -> recognizeStroke(stroke)
+                        else -> null
+                    }
                     if (shape != null) {
                         val parts = shapeStrokes(
                             shape.kind, floatArrayOf(shape.fromX, shape.fromY),
@@ -5216,6 +5198,7 @@ class InkCanvasView @JvmOverloads constructor(
             }
             redoStack.clear()
         }
+        recognizeOnFinish = false
         wet.removeFinishedStrokes(finished.keys)
         cancelCompatWet(compatWetStrokeId?.takeIf { it in finished.keys })
         if (page != null && committed.isNotEmpty()) {
@@ -5917,6 +5900,15 @@ class InkCanvasView @JvmOverloads constructor(
             val kind = shapeKind ?: return
             val points = shapePoints(kind, shapeStart, shapeEnd)
             if (points.size < 2) return
+            // Squared up: a red guide round the box says the sides are now equal.
+            squaredShapeEnd(kind, shapeStart, shapeEnd)?.let { end ->
+                overlay.color = 0xFFE53935.toInt()
+                overlay.strokeWidth = 1.5f / currentScale()
+                overlay.pathEffect = lassoDashes(currentScale())
+                canvas.drawRect(min(shapeStart[0], end[0]), min(shapeStart[1], end[1]),
+                    max(shapeStart[0], end[0]), max(shapeStart[1], end[1]), overlay)
+                overlay.pathEffect = null
+            }
             overlay.color = colorArgb
             overlay.strokeWidth = strokeWidth
             overlay.strokeCap = Paint.Cap.ROUND
@@ -6135,8 +6127,6 @@ class InkCanvasView @JvmOverloads constructor(
         const val DETAIL_THRESHOLD_PX = 2048
         const val SHADOW = 4f
         const val SHAPE_STEP_MS = 8L
-        const val OVAL_STEPS = 64
-        const val ARROW_SPREAD = 0.5f
         const val IMAGE_INSERT_FRACTION = 0.5f
         const val IMAGE_HANDLE_PX = 22f
         const val IMAGE_MIN_SIZE = 32f

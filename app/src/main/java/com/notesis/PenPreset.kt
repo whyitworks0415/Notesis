@@ -46,6 +46,7 @@ data class CanvasGestures(
     val eraseLocked: Boolean = false,
     val eraseImages: Boolean = false,
     val eraseText: Boolean = false,
+    val holdToDraw: Boolean = false,
 )
 
 fun InkCanvasView.applyGestures(gestures: CanvasGestures) {
@@ -63,6 +64,7 @@ fun InkCanvasView.applyGestures(gestures: CanvasGestures) {
     eraseLocked = gestures.eraseLocked
     eraseImages = gestures.eraseImages
     eraseText = gestures.eraseText
+    holdToDraw = gestures.holdToDraw
 }
 
 /**
@@ -202,6 +204,7 @@ class PenStore(context: Context) {
             eraseLocked = prefs.getBoolean("eraseLocked", false),
             eraseImages = prefs.getBoolean("eraseImages", false),
             eraseText = prefs.getBoolean("eraseText", false),
+            holdToDraw = prefs.getBoolean("holdToDraw", false),
         )
         set(value) = prefs.edit()
             .putBoolean("eraseInk", value.eraseInk)
@@ -218,6 +221,7 @@ class PenStore(context: Context) {
             .putBoolean("eraseLocked", value.eraseLocked)
             .putBoolean("eraseImages", value.eraseImages)
             .putBoolean("eraseText", value.eraseText)
+            .putBoolean("holdToDraw", value.holdToDraw)
             .apply()
 
     /** See [InkCanvasView.compatWetInk]; on by default where the front buffer is known to fail. */

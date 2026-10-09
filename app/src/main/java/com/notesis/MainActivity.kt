@@ -1884,6 +1884,12 @@ internal fun PenDialog(
                         Text("자동 도형 인식")
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        SkinSwitch(checked = gestures.holdToDraw,
+                            onCheckedChange = { onGestures(gestures.copy(holdToDraw = it)) })
+                        Spacer(Modifier.width(10.dp))
+                        Text("끝에서 멈추면 도형으로")
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         SkinSwitch(checked = gestures.scribbleErase,
                             onCheckedChange = { onGestures(gestures.copy(scribbleErase = it)) })
                         Spacer(Modifier.width(10.dp))
@@ -2201,16 +2207,35 @@ private fun ShapeButton(
 
 private fun shapeIcon(kind: ShapeKind): ImageVector = when (kind) {
     ShapeKind.LINE -> Reicons.Remove
-    ShapeKind.ARROW -> Reicons.TrendingUp
-    ShapeKind.RECT -> Reicons.CropSquare
-    ShapeKind.OVAL -> Reicons.Circle
+    ShapeKind.ARROW, ShapeKind.DOUBLE_ARROW -> Reicons.TrendingUp
+    ShapeKind.RECT, ShapeKind.CUBE -> Reicons.CropSquare
+    ShapeKind.OVAL, ShapeKind.CYLINDER -> Reicons.Circle
+    else -> Reicons.Category
 }
 
 private fun shapeLabel(kind: ShapeKind): String = when (kind) {
     ShapeKind.LINE -> "직선"
     ShapeKind.ARROW -> "화살표"
+    ShapeKind.DOUBLE_ARROW -> "양방향 화살표"
     ShapeKind.RECT -> "사각형"
     ShapeKind.OVAL -> "원"
+    ShapeKind.TRIANGLE -> "삼각형"
+    ShapeKind.RIGHT_TRIANGLE -> "직각삼각형"
+    ShapeKind.DIAMOND -> "마름모"
+    ShapeKind.PARALLELOGRAM -> "평행사변형"
+    ShapeKind.TRAPEZOID -> "사다리꼴"
+    ShapeKind.PENTAGON -> "오각형"
+    ShapeKind.HEXAGON -> "육각형"
+    ShapeKind.STAR -> "별"
+    ShapeKind.HEART -> "하트"
+    ShapeKind.ARC -> "호"
+    ShapeKind.SECTOR -> "부채꼴"
+    ShapeKind.SINE -> "사인 곡선"
+    ShapeKind.AXES -> "좌표축"
+    ShapeKind.BRACE -> "중괄호"
+    ShapeKind.BUBBLE -> "말풍선"
+    ShapeKind.CUBE -> "정육면체"
+    ShapeKind.CYLINDER -> "원기둥"
 }
 
 /** Opens one of the AI sites in the side panel. */
