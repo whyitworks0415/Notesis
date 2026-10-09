@@ -3554,6 +3554,7 @@ private fun NoteScreen(
     val scope = rememberCoroutineScope()
     var showVoice by remember { mutableStateOf(false) }
     var showInput by remember { mutableStateOf(false) }
+    var pullingForPage by remember { mutableStateOf(false) }
     var dictating by remember { mutableStateOf(false) }
     var shapeCorner by remember { mutableFloatStateOf(PenStore(context).shapeCornerRadius) }
     /** The last tool that was not the eraser, for going back to after an erase. */
@@ -4389,6 +4390,7 @@ private fun NoteScreen(
                     view.partialEraser = partialEraser
                     view.applyGestures(gestures)
                     view.laserMode = laser
+                    view.onPullForPage = { pullingForPage = it }
                     view.onEditTextBox = { replacingText = canvas?.selectedTextBox(); showTextBox = true }
                     view.shapeCornerRadius = shapeCorner
                     if (mode != EditMode.ERASE && mode in PenStore.DEFAULTS) beforeEraser = mode
@@ -5210,6 +5212,15 @@ private fun NoteScreen(
             )
         }
         if (editingTools) ToolbarEditDialog(onDismiss = { editingTools = false })
+        if (pullingForPage) Box(
+            Modifier
+                .align(if (pageLayout == PageLayoutMode.HORIZONTAL) Alignment.CenterEnd else Alignment.BottomCenter)
+                .padding(32.dp)
+                .size(56.dp)
+                .clip(CircleShape)
+                .background(Color(0xFF1E88E5)),
+            contentAlignment = Alignment.Center,
+        ) { Text("+", color = Color.White, style = MaterialTheme.typography.headlineMedium) }
         if (dictating) DictationDialog(
             onInsert = { text -> dictating = false; putTypedText(text) },
             onCopy = { text -> clipboard.setText(AnnotatedString(text)) },

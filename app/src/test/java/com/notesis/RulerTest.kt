@@ -30,6 +30,17 @@ class RulerTest {
     }
 
     @Test
+    fun nearATickLandsOnIt() {
+        val edge = rulerEdges(RulerKind.RULER, 400f)[0]
+        val out = FloatArray(2)
+        // Ten pixels a tick from the ruler's left end at -200: 52.5 from it is 2.5 off the 50 tick.
+        projectOnEdge(edge, -200f + 52.5f, edge.ay, 0f, out, tick = 10f)
+        assertEquals(-150f, out[0], 0.01f)
+        projectOnEdge(edge, -200f + 55f, edge.ay, 0f, out, tick = 10f)
+        assertEquals(-145f, out[0], 0.01f)
+    }
+
+    @Test
     fun farFromEveryEdgeWritesFreely() {
         assertNull(edgeNear(rulerEdges(RulerKind.RULER, 400f), 0f, 300f, 20f))
     }

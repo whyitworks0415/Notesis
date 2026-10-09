@@ -57,7 +57,7 @@ internal fun rulerEdges(kind: RulerKind, size: Float): List<RulerEdge> {
  * point out: onto the edge's line, or round the arc, pushed [offset] off the
  * body so the ink sits beside the ruler rather than under it.
  */
-internal fun projectOnEdge(edge: RulerEdge, x: Float, y: Float, offset: Float, out: FloatArray) {
+internal fun projectOnEdge(edge: RulerEdge, x: Float, y: Float, offset: Float, out: FloatArray, tick: Float = 0f) {
     if (edge.isArc) {
         val angle = atan2(y, x)
         // The protractor is the upper half only.
@@ -72,7 +72,12 @@ internal fun projectOnEdge(edge: RulerEdge, x: Float, y: Float, offset: Float, o
     val length = hypot(dx, dy)
     val ux = dx / length
     val uy = dy / length
-    val t = (x - edge.ax) * ux + (y - edge.ay) * uy
+    var t = (x - edge.ax) * ux + (y - edge.ay) * uy
+    // Close to a tick, the pen lands on it: lines measured on the ruler come out whole.
+    if (tick >= MIN_SNAP_TICK) {
+        val nearest = Math.round(t / tick) * tick
+        if (kotlin.math.abs(t - nearest) <= tick * TICK_SNAP_FRACTION) t = nearest
+    }
     var nx = -uy
     var ny = ux
     // Outward is away from the inside of the body.
@@ -185,7 +190,7 @@ internal class RulerView(context: Context) : View(context) {
     /** Screen (x, y) moved onto [edge], [offset] screen pixels off the body. */
     fun project(edge: RulerEdge, x: Float, y: Float, offset: Float, out: FloatArray) {
         toLocal(x, y, local)
-        projectOnEdge(edge, local[0], local[1], offset, local)
+        projectOnEdge(edge, local[0], local[1], offset, local, if (inches) pxPerMm * 25.4f / 16f else pxPerMm)
         toScreen(local[0], local[1], out)
     }
 
@@ -392,6 +397,10 @@ internal class RulerView(context: Context) : View(context) {
         const val PINCH_CLOSE = 0.45f
     }
 }
+
+/** Ticks closer together than this (screen px) are too fine to snap to. */
+internal const val MIN_SNAP_TICK = 4f
+internal const val TICK_SNAP_FRACTION = 0.3f
 
 /** How deep a straight ruler is, as a fraction of its length. */
 internal const val RULER_DEPTH = 0.16f

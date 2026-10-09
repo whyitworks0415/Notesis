@@ -932,6 +932,14 @@ class InkCanvasView @JvmOverloads constructor(
     /** An eraser gesture with the eraser tool has ended. */
     var onEraseFinished: (() -> Unit)? = null
 
+    /** The page is scrolled as far as it goes toward its end. */
+    private var atDocumentEnd = false
+    /** How far a finger has pulled on past the end, in screen pixels. */
+    private var pullPastEnd = 0f
+    private var pullArmed = false
+    /** A pull past the last page is far enough to add one (true), or let go (false). */
+    var onPullForPage: ((Boolean) -> Unit)? = null
+
     /** Linked objects wear a pale blue wash so they can be found. */
     var showLinkOverlay: Boolean = true
     /** A link to another note was followed: its id and the page index to open at. */
@@ -2412,6 +2420,12 @@ class InkCanvasView @JvmOverloads constructor(
             // reachable without fighting the edge.
             y.coerceIn(height - docHeight - height / 2f, height / 2f)
         }
+        // At the far end, a pull further on is asking for another page.
+        atDocumentEnd = if (document.layoutMode == PageLayoutMode.HORIZONTAL) {
+            docWidth > width && x <= width - docWidth + 1f
+        } else {
+            docHeight <= height || y <= height - docHeight - height / 2f + 1f
+        }
 
         matrixValues[Matrix.MTRANS_X] = x
         matrixValues[Matrix.MTRANS_Y] = y
@@ -3518,6 +3532,13 @@ class InkCanvasView @JvmOverloads constructor(
                 }
                 val panAllowed = if (event.pointerCount == 1) oneFinger == FINGER_SCROLL
                     else twoFingers != TWO_IGNORED
+                if (panAllowed && event.pointerCount == 1 && atDocumentEnd && onPullForPage != null) {
+                    val along = if (document.layoutMode == PageLayoutMode.HORIZONTAL) focus[0] - lastFocusX
+                        else focus[1] - lastFocusY
+                    pullPastEnd = (pullPastEnd - along).coerceAtLeast(0f)
+                    val armed = pullPastEnd > PULL_FOR_PAGE_PX * resources.displayMetrics.density
+                    if (armed != pullArmed) { pullArmed = armed; onPullForPage?.invoke(armed) }
+                } else if (!atDocumentEnd) pullPastEnd = 0f
                 if (panAllowed && (!scaleDetector.isInProgress || event.pointerCount > 1)) {
                     val multiplier = if (event.pointerCount == 1) {
                         viewportPanMultiplier.coerceIn(0.5f, 3f)
@@ -3537,6 +3558,15 @@ class InkCanvasView @JvmOverloads constructor(
 
             MotionEvent.ACTION_UP -> {
                 removeCallbacks(fingerLongPress)
+                if (pullArmed) {
+                    pullArmed = false
+                    pullPastEnd = 0f
+                    onPullForPage?.invoke(false)
+                    addPage(document.pages.lastIndex)
+                    scrollToPage(document.pages.lastIndex)
+                    return true
+                }
+                pullPastEnd = 0f
                 val endedZoom = zooming
                 val openedLink = !longPressFired && (unfoldTap(event) || objectLinkTap(event) ||
                     maybeOpenPdfLink(event.x, event.y))
@@ -6961,6 +6991,7 @@ class InkCanvasView @JvmOverloads constructor(
         const val SHAPE_STEP_MS = 8L
         const val RULER_GAP_PX = 1.5f
         const val SNAP_ALIGN_PX = 10f
+        const val PULL_FOR_PAGE_PX = 90f
         const val VERTEX_HANDLE_PX = 9f
         const val MAX_EDITABLE_INPUTS = 24
         const val EDGE_EXCLUSION_DP = 32f
