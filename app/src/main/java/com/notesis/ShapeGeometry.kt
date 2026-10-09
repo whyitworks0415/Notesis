@@ -172,6 +172,40 @@ internal fun shapeOutline(kind: ShapeKind, x0: Float, y0: Float, x1: Float, y1: 
     }
 }
 
+/** The polygon shapes whose corners can be rounded. */
+internal val ShapeKind.cornered: Boolean
+    get() = this in setOf(ShapeKind.RECT, ShapeKind.TRIANGLE, ShapeKind.RIGHT_TRIANGLE, ShapeKind.DIAMOND,
+        ShapeKind.PARALLELOGRAM, ShapeKind.TRAPEZOID, ShapeKind.PENTAGON, ShapeKind.HEXAGON, ShapeKind.STAR)
+
+/**
+ * A closed outline (first point repeated last) with every corner replaced by
+ * a curve starting [radius] before it and ending [radius] after, each cut no
+ * deeper than half of either side it joins.
+ */
+internal fun roundCorners(points: List<FloatArray>, radius: Float): List<FloatArray> {
+    if (radius <= 0f || points.size < 4) return points
+    val corners = points.dropLast(1)
+    val n = corners.size
+    val out = ArrayList<FloatArray>()
+    for (i in 0 until n) {
+        val prev = corners[(i - 1 + n) % n]
+        val at = corners[i]
+        val next = corners[(i + 1) % n]
+        val inLength = hypot(at[0] - prev[0], at[1] - prev[1])
+        val outLength = hypot(next[0] - at[0], next[1] - at[1])
+        if (inLength == 0f || outLength == 0f) continue
+        val r = minOf(radius, inLength / 2f, outLength / 2f)
+        val ax = at[0] + (prev[0] - at[0]) * r / inLength
+        val ay = at[1] + (prev[1] - at[1]) * r / inLength
+        val bx = at[0] + (next[0] - at[0]) * r / outLength
+        val by = at[1] + (next[1] - at[1]) * r / outLength
+        out += floatArrayOf(ax, ay)
+        out += curve(ax, ay, at[0], at[1], bx, by)
+    }
+    if (out.isNotEmpty()) out += out.first()
+    return out
+}
+
 /** A regular polygon of [corners] points; every other point pulled in to [inner] makes a star. */
 private fun polygon(cx: Float, cy: Float, rx: Float, ry: Float, corners: Int, inner: Float): List<FloatArray> =
     (0..corners).map {

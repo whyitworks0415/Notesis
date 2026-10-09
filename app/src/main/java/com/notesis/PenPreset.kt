@@ -244,6 +244,10 @@ class PenStore(context: Context) {
         get() = prefs.getBoolean("partialEraser", false)
         set(value) = prefs.edit().putBoolean("partialEraser", value).apply()
 
+    var shapeCornerRadius: Float
+        get() = prefs.getFloat("shapeCornerRadius", 0f)
+        set(value) = prefs.edit().putFloat("shapeCornerRadius", value).apply()
+
     /** The swatches on the bar, in the order they sit; opaque RGB, the tool keeps its alpha. */
     var quickColors: List<Int>
         get() = prefs.getString("quickColors", null)?.split(',')?.mapNotNull { it.toIntOrNull() }

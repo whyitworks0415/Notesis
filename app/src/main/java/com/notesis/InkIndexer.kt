@@ -84,7 +84,7 @@ class InkIndexer(private val context: Context) {
      */
     fun prepare(): Boolean {
         var ready = false
-        for (tag in LANGUAGES) {
+        for (tag in languages(context)) {
             if (recognizers.containsKey(tag)) {
                 ready = true
                 continue
@@ -154,12 +154,32 @@ class InkIndexer(private val context: Context) {
         recognizers.clear()
     }
 
-    private companion object {
+    companion object {
         /**
-         * Both, always. These notes mix Korean and English within a line, and a
-         * search index would rather hold two readings of a word than miss it.
+         * Korean and English by default: these notes mix them within a line, and
+         * a search index would rather hold two readings of a word than miss it.
          */
-        val LANGUAGES = listOf("ko", "en")
+        private val DEFAULT_LANGUAGES = listOf("ko", "en")
+
+        /** What can be picked: ML Kit language tags with how they are shown. */
+        val OFFERED = listOf(
+            "ko" to "한국어", "en" to "English", "ja" to "日本語", "zh-Hani-CN" to "中文(简体)",
+            "zh-Hani-TW" to "中文(繁體)", "de" to "Deutsch", "fr" to "Français", "es" to "Español",
+            "it" to "Italiano", "pt" to "Português", "ru" to "Русский", "vi" to "Tiếng Việt",
+            "th" to "ไทย", "id" to "Bahasa Indonesia", "ar" to "العربية", "hi" to "हिन्दी",
+            "tr" to "Türkçe", "pl" to "Polski", "nl" to "Nederlands", "uk" to "Українська",
+            "cs" to "Čeština", "el" to "Ελληνικά", "hu" to "Magyar", "fa" to "فارسی",
+        )
+
+        /** The languages handwriting is read in, first one first. */
+        fun languages(context: Context): List<String> =
+            context.getSharedPreferences("pens", Context.MODE_PRIVATE).getString("ocrLanguages", null)
+                ?.split(',')?.filter { it.isNotBlank() }?.takeIf { it.isNotEmpty() } ?: DEFAULT_LANGUAGES
+
+        fun setLanguages(context: Context, tags: List<String>) {
+            context.getSharedPreferences("pens", Context.MODE_PRIVATE).edit()
+                .putString("ocrLanguages", tags.distinct().joinToString(",")).apply()
+        }
     }
 }
 

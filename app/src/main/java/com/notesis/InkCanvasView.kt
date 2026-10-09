@@ -795,6 +795,9 @@ class InkCanvasView @JvmOverloads constructor(
     /** Set at pen-up when the hold was long enough; the commit that follows reads and clears it. */
     private var recognizeOnFinish = false
     var axisSnapEnabled: Boolean = true
+
+    /** How round a polygon shape's corners are drawn, in page units; 0 is sharp. */
+    var shapeCornerRadius: Float = 0f
     var dottedPattern: Int = 0
     private var playbackPage = -1
     private var playbackStrokeCount: Int? = null
@@ -4492,7 +4495,8 @@ class InkCanvasView @JvmOverloads constructor(
         to: FloatArray,
     ): List<FloatArray> {
         val end = squaredShapeEnd(kind, from, to) ?: to
-        return shapeOutline(kind, from[0], from[1], end[0], end[1], axisSnapEnabled)
+        val outline = shapeOutline(kind, from[0], from[1], end[0], end[1], axisSnapEnabled)
+        return if (kind.cornered && shapeCornerRadius > 0f) roundCorners(outline, shapeCornerRadius) else outline
     }
 
     private fun squaredShapeEnd(kind: ShapeKind, from: FloatArray, to: FloatArray): FloatArray? =

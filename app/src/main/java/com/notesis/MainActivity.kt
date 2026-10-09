@@ -2361,7 +2361,9 @@ internal fun PenDialog(
     onGestures: (CanvasGestures) -> Unit = {},
     onClearPage: (() -> Unit)? = null,
     onEyedropper: (() -> Unit)? = null,
+    onCornerRadius: (Float) -> Unit = {},
 ) {
+    val context = LocalContext.current
     val start = pen
     val hsv = remember(pen) {
         FloatArray(3).also { android.graphics.Color.colorToHSV(start.colorArgb, it) }
@@ -2535,6 +2537,10 @@ internal fun PenDialog(
                         Spacer(Modifier.width(10.dp))
                         Text("직선을 90° 간격으로 보정")
                     }
+                    val shapeStore = remember { PenStore(context) }
+                    var corner by remember { mutableFloatStateOf(shapeStore.shapeCornerRadius) }
+                    Text("다각형 모서리 둥글기 ${corner.roundToInt()}", style = MaterialTheme.typography.bodyMedium)
+                    SkinSlider(corner, { corner = it; shapeStore.shapeCornerRadius = it; onCornerRadius(it) }, 0f..120f)
                 }
                 if (mode == EditMode.HIGHLIGHTER) {
                     Spacer(Modifier.height(10.dp))
@@ -3516,6 +3522,7 @@ private fun NoteScreen(
     val scope = rememberCoroutineScope()
     var showVoice by remember { mutableStateOf(false) }
     var showInput by remember { mutableStateOf(false) }
+    var shapeCorner by remember { mutableFloatStateOf(PenStore(context).shapeCornerRadius) }
     /** The last tool that was not the eraser, for going back to after an erase. */
     var beforeEraser by remember { mutableStateOf(EditMode.PEN) }
     var showLibrary by remember { mutableStateOf(false) }
@@ -4334,6 +4341,7 @@ private fun NoteScreen(
                     view.partialEraser = partialEraser
                     view.applyGestures(gestures)
                     view.laserMode = laser
+                    view.shapeCornerRadius = shapeCorner
                     if (mode != EditMode.ERASE && mode in PenStore.DEFAULTS) beforeEraser = mode
                     view.onEraseFinished = if (gestures.eraserReturns && mode == EditMode.ERASE) {
                         { mode = beforeEraser }
@@ -4703,6 +4711,7 @@ private fun NoteScreen(
                     edits++
                     editingPen = false
                 },
+                onCornerRadius = { shapeCorner = it },
                 onEyedropper = {
                     val picking = mode
                     editingPen = false
@@ -5157,6 +5166,17 @@ private fun NoteScreen(
                         }) { Text(if (meta.locked) "잠금 해제" else "암호로 잠그기") }
                         TextButton(onClick = { confirmDelete = true }) {
                             Text("휴지통으로", color = MaterialTheme.colorScheme.error)
+                        }
+                        HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                        Text("필기 인식 언어 (앞쪽이 우선)", style = MaterialTheme.typography.bodyMedium)
+                        var languages by remember { mutableStateOf(InkIndexer.languages(context)) }
+                        Row(Modifier.horizontalScroll(rememberScrollState())) {
+                            InkIndexer.OFFERED.forEach { (tag, label) ->
+                                SettingsChoiceChip(selected = tag in languages, onClick = {
+                                    val next = if (tag in languages) languages - tag else languages + tag
+                                    if (next.isNotEmpty()) { languages = next; InkIndexer.setLanguages(context, next) }
+                                }, label = label, modifier = Modifier.padding(end = 6.dp))
+                            }
                         }
                     }
                 },

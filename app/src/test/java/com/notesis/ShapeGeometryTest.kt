@@ -27,4 +27,15 @@ class ShapeGeometryTest {
         assertEquals(-97.5f, end[1], 0.01f)
         assertNull(squaredEnd(0f, 0f, 100f, 60f))
     }
+
+    @Test
+    fun roundedSquareStaysClosedAndInsideItsCorners() {
+        val square = shapeOutline(ShapeKind.RECT, 0f, 0f, 100f, 100f, axisSnap = false)
+        val round = roundCorners(square, 20f)
+        assertTrue(round.size > square.size)
+        assertEquals(round.first()[0], round.last()[0], 0.001f)
+        assertEquals(round.first()[1], round.last()[1], 0.001f)
+        // No point reaches the sharp corner any more.
+        assertTrue(round.none { it[0] < 1f && it[1] < 1f })
+    }
 }
