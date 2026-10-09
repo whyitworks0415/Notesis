@@ -528,13 +528,13 @@ PDF 양식 작성, 암호화 PDF, PDF 표준 주석으로 저장되는 범위는
 - [x] IO-02 이미지 가져오기.
 - [ ] IO-03 `.notewise` 형식 가져오기.
 - [ ] IO-04 PDF·Notewise 파일과 폴더가 들어 있는 ZIP 가져오기.
-- [ ] IO-05 Word 계열: `.docx`, `.doc`, `.dot`, `.dotx` 가져오기.
+- [x] IO-05 Word 계열: `.docx`, `.doc`, `.dot`, `.dotx` 가져오기.
 - [ ] IO-06 텍스트·문서 계열: `.odt`, `.rtf`, `.txt`, `.md`, `.pages` 가져오기.
-- [ ] IO-07 Excel 계열: `.xls`, `.xlsx`, `.xlt`, `.xltx` 가져오기.
+- [x] IO-07 Excel 계열: `.xls`, `.xlsx`, `.xlt`, `.xltx` 가져오기.
 - [ ] IO-08 기타 표 계열: `.csv`, `.numbers`, `.ods` 가져오기.
-- [ ] IO-09 PowerPoint 계열: `.pptx`, `.ppt`, `.pps`, `.ppsx`, `.pot`, `.potx` 가져오기.
+- [x] IO-09 PowerPoint 계열: `.pptx`, `.ppt`, `.pps`, `.ppsx`, `.pot`, `.potx` 가져오기.
 - [ ] IO-10 기타 슬라이드 계열: `.odp`, `.key` 가져오기.
-- [ ] IO-11 문서를 새 노트로 가져오기.
+- [x] IO-11 문서를 새 노트로 가져오기.
 - [ ] IO-12 문서를 기존 노트에 가져오기.
 - [ ] IO-13 지원 파일을 넣을 위치를 선택하는 Flexible Imports 흐름.
 - [ ] IO-14 기존 노트에 Notewise 파일을 넣는 기능은 플랫폼·버전을 함께 확인하기. 3.5 기록에는 iOS 개선으로 명시.

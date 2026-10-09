@@ -261,6 +261,12 @@ class MainActivity : ComponentActivity() {
                             incomingViewerRequest = null
                             pickedDocument = null
                         },
+                        onImport = { title, markdown ->
+                            val created = store.createMarkdown(title.ifBlank { "가져온 문서" }, markdown)
+                            incomingViewerRequest = null
+                            pickedDocument = null
+                            openNote = created
+                        },
                     )
                 } else if (settingsOpen) {
                     SkinSettingsScreen(
