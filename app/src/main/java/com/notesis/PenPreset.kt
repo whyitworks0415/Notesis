@@ -229,6 +229,12 @@ class PenStore(context: Context) {
         get() = prefs.getBoolean("partialEraser", false)
         set(value) = prefs.edit().putBoolean("partialEraser", value).apply()
 
+    /** The swatches on the bar, in the order they sit; opaque RGB, the tool keeps its alpha. */
+    var quickColors: List<Int>
+        get() = prefs.getString("quickColors", null)?.split(',')?.mapNotNull { it.toIntOrNull() }
+            ?: listOf(0xFF000000.toInt(), 0xFF1E88E5.toInt(), 0xFFE53935.toInt(), 0xFF43A047.toInt())
+        set(value) = prefs.edit().putString("quickColors", value.distinct().take(MAX_QUICK_COLORS).joinToString(",")).apply()
+
     /** A recording that finishes starts the next one in the note's list. */
     var autoPlayNext: Boolean
         get() = prefs.getBoolean("autoPlayNext", false)
@@ -362,6 +368,7 @@ class PenStore(context: Context) {
     }
 
     companion object {
+        const val MAX_QUICK_COLORS = 8
         private const val KEY = "tools"
         private const val DOCKED = "docked"
         private const val PREDICTION = "prediction"

@@ -2771,6 +2771,57 @@ private fun AiButton(onWeb: (String) -> Unit) {
 }
 
 /**
+ * The bar's own swatches: tap one to write in it, tap the one in use for the
+ * full settings, + keeps the colour in hand, hold one to move or drop it.
+ */
+@Composable
+private fun QuickColors(current: Int, onPick: (Int) -> Unit, onSettings: () -> Unit) {
+    val context = LocalContext.current
+    val store = remember { PenStore(context) }
+    var colors by remember { mutableStateOf(store.quickColors) }
+    var menuFor by remember { mutableStateOf<Int?>(null) }
+    val currentRgb = current and 0xFFFFFF
+    fun save(next: List<Int>) { colors = next; store.quickColors = next }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        colors.forEachIndexed { index, rgb ->
+            val chosen = rgb and 0xFFFFFF == currentRgb
+            Box {
+                Box(
+                    Modifier
+                        .padding(horizontal = 2.dp)
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .background(Color(rgb or 0xFF000000.toInt()))
+                        .border(if (chosen) 3.dp else 1.dp,
+                            if (chosen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                            CircleShape)
+                        .semantics { contentDescription = "빠른 색상 #%06X".format(rgb and 0xFFFFFF) }
+                        .combinedClickable(
+                            onClick = { if (chosen) onSettings() else onPick(rgb) },
+                            onLongClick = { menuFor = index },
+                        ),
+                )
+                DropdownMenu(menuFor == index, onDismissRequest = { menuFor = null }) {
+                    DropdownMenuItem(text = { Text("앞으로") }, enabled = index > 0, onClick = {
+                        save(colors.toMutableList().apply { add(index - 1, removeAt(index)) }); menuFor = null
+                    })
+                    DropdownMenuItem(text = { Text("뒤로") }, enabled = index < colors.lastIndex, onClick = {
+                        save(colors.toMutableList().apply { add(index + 1, removeAt(index)) }); menuFor = null
+                    })
+                    DropdownMenuItem(text = { Text("삭제") }, onClick = {
+                        save(colors.filterIndexed { i, _ -> i != index }); menuFor = null
+                    })
+                }
+            }
+        }
+        if (colors.none { it and 0xFFFFFF == currentRgb } && colors.size < PenStore.MAX_QUICK_COLORS) {
+            TextButton(onClick = { save(colors + (currentRgb or 0xFF000000.toInt())) },
+                contentPadding = PaddingValues(horizontal = 4.dp)) { Text("+") }
+        }
+    }
+}
+
+/**
  * Ready-made colour sets. Picking one recolours the pen in hand and leaves its
  * alpha alone, so a highlighter stays a highlighter and a pen stays opaque.
  */
@@ -3935,6 +3986,10 @@ private fun NoteScreen(
             },
             onTable = { editingTable = PageImage() },
             onEditTools = { editingTools = true },
+            onQuickColor = { rgb ->
+                val alpha = pen.colorArgb and 0xFF000000.toInt()
+                settings = settings + (mode to pen.copy(colorArgb = (rgb and 0xFFFFFF) or alpha))
+            },
             onInputSettings = { showInput = true },
             recording = recorder != null,
             onVoice = { showVoice = true },
@@ -7031,6 +7086,7 @@ private fun Toolbar(
     onStickyNote: () -> Unit = {},
     onTable: () -> Unit = {},
     onEditTools: () -> Unit = {},
+    onQuickColor: (Int) -> Unit = {},
 ) {
     val topRow: @Composable () -> Unit = {
         // ---- top row: the note, and what is done to the whole of it
@@ -7208,6 +7264,7 @@ private fun Toolbar(
                 if (mode in PenStore.DEFAULTS) {
                     PenChip(pen, true, onEditPen)
                 }
+                if (mode.tints) QuickColors(pen.colorArgb, onQuickColor, onEditPen)
                 if (mode.tints) {
                     IconButton(onClick = onPalette, modifier = Modifier.size(32.dp)) {
                         Icon(Reicons.Palette, "색상 템플릿", Modifier.size(20.dp))
