@@ -2083,6 +2083,7 @@ internal fun PenDialog(
     }
     var width by remember(pen) { mutableFloatStateOf(start.width) }
     var pressure by remember(pen) { mutableStateOf(start.pressure) }
+    var nib by remember(pen) { mutableStateOf(start.nib) }
     var maxWidth by remember(pen) { mutableFloatStateOf(start.maxWidth) }
     var paletteOpen by remember { mutableStateOf(false) }
     val range = PenStore.widthRange(mode, start.copy(maxWidth = maxWidth))
@@ -2167,6 +2168,19 @@ internal fun PenDialog(
                         color = MaterialTheme.colorScheme.outline,
                     )
 
+                }
+                if (mode == EditMode.PEN) {
+                    Spacer(Modifier.height(10.dp))
+                    Text("펜 종류", style = MaterialTheme.typography.bodyMedium)
+                    Row(Modifier.horizontalScroll(rememberScrollState())) {
+                        PEN_NIBS.forEach { (tool, label) ->
+                            SettingsChoiceChip(selected = nib == tool, onClick = {
+                                nib = tool
+                                // Watercolour is a wash: it starts see-through.
+                                if (tool == Tool.WATERCOLOR && alpha > 0.6f) alpha = 0.45f
+                            }, label = label, modifier = Modifier.padding(end = 6.dp))
+                        }
+                    }
                 }
                 if (mode == EditMode.PEN || mode == EditMode.PENCIL) {
                     Spacer(Modifier.height(10.dp))
@@ -2379,6 +2393,7 @@ internal fun PenDialog(
                             width.coerceIn(range),
                             pressure,
                             maxWidth,
+                            nib,
                         ),
                     )
                 },

@@ -83,12 +83,12 @@
 ## 04. 펜·브러시·필기 지연
 
 - [x] PEN-01 Ball Pen 제공하기.
-- [ ] PEN-02 Fountain Pen 제공하기.
-- [ ] PEN-03 Calligraphy Pen 제공하기.
+- [x] PEN-02 Fountain Pen 제공하기.
+- [x] PEN-03 Calligraphy Pen 제공하기.
 - [x] PEN-04 연필 계열의 Creative Brush 제공하기.
-- [ ] PEN-05 수채화 계열의 Creative Brush 제공하기.
-- [ ] PEN-06 유화 계열 브러시 제공하기.
-- [ ] PEN-07 브러시 종류마다 선의 외형과 질감 구분하기.
+- [x] PEN-05 수채화 계열의 Creative Brush 제공하기.
+- [x] PEN-06 유화 계열 브러시 제공하기.
+- [x] PEN-07 브러시 종류마다 선의 외형과 질감 구분하기.
 - [x] PEN-08 필압을 반영한 필기 지원하기.
 - [ ] PEN-09 압력 민감도 설정하기.
 - [x] PEN-10 선 굵기를 슬라이더로 조절하기.

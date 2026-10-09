@@ -380,7 +380,16 @@ enum class Tool {
     /** Patterned lines remain one Ink stroke instead of hundreds of marks. */
     DOTTED,
     DASHED,
-    DASH_DOT;
+    DASH_DOT,
+
+    /** A pressure nib cut at an angle, so the line swells and thins with direction and weight. */
+    FOUNTAIN,
+    /** A flat nib held at 45 degrees: broad on the down-strokes, hairline across. */
+    CALLIGRAPHY,
+    /** Translucent wash whose overlaps build up, like layers of paint. */
+    WATERCOLOR,
+    /** A broad, squarish, pressure-loaded bristle laid on opaque. */
+    OIL;
 
     fun brushFamily(): BrushFamily = when (this) {
         HIGHLIGHTER -> highlighter
@@ -390,6 +399,10 @@ enum class Tool {
         DOTTED -> dotted
         DASHED -> dashed
         DASH_DOT -> dashDot
+        FOUNTAIN -> fountain
+        CALLIGRAPHY -> calligraphy
+        WATERCOLOR -> watercolor
+        OIL -> oil
         else -> pen
     }
 
@@ -474,6 +487,30 @@ enum class Tool {
             )))
         }
 
+        @OptIn(ExperimentalInkCustomBrushApi::class)
+        private fun nib(
+            stock: BrushFamily, id: String, scaleY: Float, rotation: Float, rounding: Float, overlap: SelfOverlap,
+        ): BrushFamily {
+            val coat = stock.coats.first()
+            return withSelfOverlap(stock.copy(coat = coat.copy(tip = coat.tip.copy(
+                scaleX = 1f, scaleY = scaleY, cornerRounding = rounding,
+                slantDegrees = 0f, pinch = 0f, rotationDegrees = rotation,
+            ))), overlap).copy(clientBrushFamilyId = id)
+        }
+
+        private val fountain by lazy {
+            nib(StockBrushes.pressurePen(), "notesis.fountain", 0.55f, -30f, 0.8f, SelfOverlap.DISCARD)
+        }
+        private val calligraphy by lazy {
+            nib(StockBrushes.marker(), "notesis.calligraphy", 0.18f, -45f, 0.25f, SelfOverlap.DISCARD)
+        }
+        private val watercolor by lazy {
+            nib(StockBrushes.pressurePen(), "notesis.watercolor", 1f, 0f, 1f, SelfOverlap.ACCUMULATE)
+        }
+        private val oil by lazy {
+            nib(StockBrushes.pressurePen(), "notesis.oil", 0.8f, 0f, 0.3f, SelfOverlap.DISCARD)
+        }
+
         /**
          * A centred round marker with merged self-overlap keeps a highlighter
          * aligned to the pen and avoids dark seams where it crosses itself.
@@ -531,13 +568,18 @@ enum class Tool {
             dotted -> DOTTED
             dashed -> DASHED
             dashDot -> DASH_DOT
+            fountain -> FOUNTAIN
+            calligraphy -> CALLIGRAPHY
+            watercolor -> WATERCOLOR
+            oil -> OIL
             else -> PEN
         }
     }
 }
 
 private fun Tool.isFreehandPen(): Boolean =
-    this == Tool.PEN || this == Tool.PRESSURE_PEN || this == Tool.PENCIL
+    this == Tool.PEN || this == Tool.PRESSURE_PEN || this == Tool.PENCIL || this == Tool.FOUNTAIN ||
+        this == Tool.CALLIGRAPHY || this == Tool.WATERCOLOR || this == Tool.OIL
 
 /**
  * The laser pointer's trail, in screen pixels. A fixed ring of samples that age

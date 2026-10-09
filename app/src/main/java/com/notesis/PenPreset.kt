@@ -24,11 +24,23 @@ data class PenPreset(
      * gives that fifth the whole track back.
      */
     val maxWidth: Float = 0f,
+    /** Which pen: one of [PEN_NIBS]. Pens only. */
+    val nib: Tool = Tool.PEN,
 ) {
-    /** The tool as it actually draws, which is where pressure is decided. */
-    fun drawingTool(): Tool =
-        if (pressure && tool == Tool.PEN) Tool.PRESSURE_PEN else tool
+    /** The tool as it actually draws, which is where pressure and the nib are decided. */
+    fun drawingTool(): Tool = when {
+        tool != Tool.PEN -> tool
+        nib != Tool.PEN -> nib
+        pressure -> Tool.PRESSURE_PEN
+        else -> Tool.PEN
+    }
 }
+
+/** The pens the pen tool can be, in the order the settings offer them. */
+val PEN_NIBS = listOf(
+    Tool.PEN to "볼펜", Tool.FOUNTAIN to "만년필", Tool.CALLIGRAPHY to "캘리그라피",
+    Tool.WATERCOLOR to "수채화", Tool.OIL to "유화",
+)
 
 // What one finger, two fingers and multi-finger double taps do. See InkCanvasView.
 const val FINGER_SCROLL = 0
@@ -320,6 +332,8 @@ class PenStore(context: Context) {
                     pressure = item.optBoolean("pressure", fallback.pressure),
                     maxWidth = item.optDouble("maxWidth", fallback.maxWidth.toDouble()).toFloat()
                         .takeIf { it.isFinite() }?.coerceIn(0f, widthRange(mode).endInclusive) ?: 0f,
+                    nib = runCatching { Tool.valueOf(item.optString("nib", "PEN")) }.getOrDefault(Tool.PEN)
+                        .takeIf { nib -> PEN_NIBS.any { it.first == nib } } ?: Tool.PEN,
                 )
             }.toMap()
         }.getOrNull().orEmpty()
@@ -337,7 +351,8 @@ class PenStore(context: Context) {
                     .put("color", pen.colorArgb)
                     .put("width", pen.width.toDouble())
                     .put("pressure", pen.pressure)
-                    .put("maxWidth", pen.maxWidth.toDouble()),
+                    .put("maxWidth", pen.maxWidth.toDouble())
+                    .put("nib", pen.nib.name),
             )
         }
         prefs.edit().putString(KEY, json.toString()).apply()
