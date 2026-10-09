@@ -85,6 +85,8 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.runtime.produceState
 import androidx.compose.material3.Checkbox
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material.icons.outlined.BookmarkBorder
@@ -689,11 +691,24 @@ private fun NoteListScreen(
             (look.blur > 0.1f || look.vibrancy > 0.01f),
     )
     val liquidBackdrop = if (currentSkin.isRefractive) rememberLiquidGlassBackdrop() else null
+    val searchFocus = remember { androidx.compose.ui.focus.FocusRequester() }
     CompositionLocalProvider(
         LocalBackdrop provides backdrop,
         LocalLiquidGlassBackdrop provides if (currentSkin.isRefractive) liquidBackdrop else null,
     ) {
     Scaffold(
+        // Ctrl+N a note, Ctrl+Shift+N a folder, Ctrl+F the search box.
+        modifier = Modifier.onPreviewKeyEvent { event ->
+            val native = event.nativeKeyEvent
+            if (native.action != android.view.KeyEvent.ACTION_DOWN || !(native.isCtrlPressed || native.isMetaPressed)) {
+                return@onPreviewKeyEvent false
+            }
+            when (native.keyCode) {
+                android.view.KeyEvent.KEYCODE_N -> { if (native.isShiftPressed) creatingFolder = true else naming = true; true }
+                android.view.KeyEvent.KEYCODE_F -> { runCatching { searchFocus.requestFocus() }; true }
+                else -> false
+            }
+        },
         topBar = {
             // Flush to the window edge, and the notes pass underneath it.
             SkinSurface(flush = true) {
@@ -782,6 +797,7 @@ private fun NoteListScreen(
                                 Icon(Reicons.Search, contentDescription = null)
                             },
                             modifier = Modifier
+                                .focusRequester(searchFocus)
                                 .weight(1f)
                                 .padding(end = 16.dp, top = 4.dp, bottom = 4.dp),
                         )
@@ -4237,6 +4253,10 @@ private fun NoteScreen(
                             }
                             command && event.isAltPressed && keyCode == android.view.KeyEvent.KEYCODE_G -> {
                                 goToPage = true
+                                true
+                            }
+                            command && keyCode == android.view.KeyEvent.KEYCODE_F -> {
+                                showPages = true
                                 true
                             }
                             else -> false
