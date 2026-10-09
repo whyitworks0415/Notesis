@@ -41,7 +41,24 @@ class PageImage(
     var opacity: Float = 1f,
     /** Degrees clockwise about the picture's middle. */
     var rotation: Float = 0f,
+    /** [BOX_NONE], or a container ([BOX_STICKY], [BOX_TABLE]) that carries what lies on it. */
+    var box: Int = BOX_NONE,
+    /** A folded sticky note: drawn as a small tab, its full size kept for unfolding. */
+    var collapsed: Boolean = false,
+    var expandedWidth: Float = 0f,
+    var expandedHeight: Float = 0f,
+    /** A table's grid, so it can be redrawn with more rows or columns. */
+    var rows: Int = 0,
+    var cols: Int = 0,
 ) {
+    companion object {
+        const val BOX_NONE = 0
+        const val BOX_STICKY = 1
+        const val BOX_TABLE = 2
+        /** The side of a folded sticky note, in page units. */
+        const val FOLDED_SIZE = 56f
+    }
+
     /** Everything carried over, with whatever is named changed. */
     fun copy(
         id: String = this.id,
@@ -50,7 +67,8 @@ class PageImage(
         width: Float = this.width,
         height: Float = this.height,
         textContent: TextBoxContent? = this.textContent,
-    ) = PageImage(id, x, y, width, height, textContent, locked, group, opacity, rotation)
+    ) = PageImage(id, x, y, width, height, textContent, locked, group, opacity, rotation,
+        box, collapsed, expandedWidth, expandedHeight, rows, cols)
 }
 
 /**
@@ -1124,11 +1142,18 @@ class NoteStore(context: Context) {
                     .put("text", image.textContent?.let { content -> JSONObject()
                         .put("value", content.text).put("size", content.size.toDouble()).put("color", content.color)
                         .put("html", content.html ?: "").put("font", content.font).put("bg", content.background)
-                        .put("corner", content.corner.toDouble()).put("pad", content.padding.toDouble()) })
+                        .put("corner", content.corner.toDouble()).put("pad", content.padding.toDouble())
+                        .put("min", content.minSize.toDouble()) })
                     .put("locked", image.locked)
                     .put("group", image.group)
                     .put("opacity", image.opacity.toDouble())
-                    .put("rotation", image.rotation.toDouble()),
+                    .put("rotation", image.rotation.toDouble())
+                    .put("box", image.box)
+                    .put("collapsed", image.collapsed)
+                    .put("ew", image.expandedWidth.toDouble())
+                    .put("eh", image.expandedHeight.toDouble())
+                    .put("rows", image.rows)
+                    .put("cols", image.cols),
             )
         }
         return array
@@ -1152,12 +1177,19 @@ class NoteStore(context: Context) {
                         font = content.optString("font", ""),
                         background = content.optInt("bg", 0),
                         corner = content.optDouble("corner", 0.0).toFloat(),
-                        padding = content.optDouble("pad", TextBoxContent.DEFAULT_PADDING.toDouble()).toFloat())
+                        padding = content.optDouble("pad", TextBoxContent.DEFAULT_PADDING.toDouble()).toFloat(),
+                        minSize = content.optDouble("min", 0.0).toFloat())
                 },
                 locked = item.optBoolean("locked", false),
                 group = item.optInt("group", 0),
                 opacity = item.optDouble("opacity", 1.0).toFloat().coerceIn(0f, 1f),
                 rotation = item.optDouble("rotation", 0.0).toFloat(),
+                box = item.optInt("box", PageImage.BOX_NONE),
+                collapsed = item.optBoolean("collapsed", false),
+                expandedWidth = item.optDouble("ew", 0.0).toFloat(),
+                expandedHeight = item.optDouble("eh", 0.0).toFloat(),
+                rows = item.optInt("rows", 0),
+                cols = item.optInt("cols", 0),
             )
         }
         return images

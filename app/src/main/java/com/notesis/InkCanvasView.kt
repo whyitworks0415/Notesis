@@ -3394,7 +3394,7 @@ class InkCanvasView @JvmOverloads constructor(
             MotionEvent.ACTION_UP -> {
                 removeCallbacks(fingerLongPress)
                 val endedZoom = zooming
-                val openedLink = !longPressFired && maybeOpenPdfLink(event.x, event.y)
+                val openedLink = !longPressFired && (unfoldTap(event) || maybeOpenPdfLink(event.x, event.y))
                 if (!openedLink) startFling()
                 viewportInteracting = false
                 viewportSpeedPxPerSecond = 0f
@@ -3425,6 +3425,12 @@ class InkCanvasView @JvmOverloads constructor(
             }
         }
         return true
+    }
+
+    private fun unfoldTap(event: MotionEvent): Boolean {
+        val duration = System.currentTimeMillis() - gestureStartTime
+        if (gestureMaxPointers != 1 || duration >= TAP_MAX_MS || gestureMoved >= TAP_SLOP_PX) return false
+        return unfoldAt(event.x, event.y)
     }
 
     /** A short one-finger tap follows a portable, pre-indexed PDF link. */
@@ -4523,6 +4529,7 @@ class InkCanvasView @JvmOverloads constructor(
                 if (image.group in groups && lassoImages.none { it === image }) lassoImages += image
             }
         }
+        for (container in lassoImages.filter { it.box != PageImage.BOX_NONE }) addContainedBy(page, container)
         recomputeLassoBounds()
         return hasLassoSelection()
     }
@@ -5022,14 +5029,15 @@ class InkCanvasView @JvmOverloads constructor(
     fun selectedTextBox(): PageImage? = selectedImage?.takeIf { it.textContent != null }
 
     fun putTextBox(imageId: String, bitmapWidth: Int, bitmapHeight: Int, content: TextBoxContent,
-        replacing: PageImage? = null, at: Triple<Int, Float, Float>? = null) {
+        replacing: PageImage? = null, at: Triple<Int, Float, Float>? = null, box: Int = PageImage.BOX_NONE) {
         val page = if (replacing != null) document.pages.firstOrNull { replacing in it.images } ?: return
             else document.pages.getOrNull(at?.first ?: currentPage) ?: return
         val boxWidth = bitmapWidth / 2f
         val boxHeight = bitmapHeight / 2f
-        val image = PageImage(imageId, replacing?.x ?: at?.second ?: (page.width - boxWidth).coerceAtLeast(0f) / 2f,
-            replacing?.y ?: at?.third ?: (page.height - boxHeight).coerceAtLeast(0f) / 2f,
-            boxWidth, boxHeight, content)
+        val image = replacing?.copy(id = imageId, width = boxWidth, height = boxHeight, textContent = content)
+            ?: PageImage(imageId, at?.second ?: (page.width - boxWidth).coerceAtLeast(0f) / 2f,
+                at?.third ?: (page.height - boxHeight).coerceAtLeast(0f) / 2f,
+                boxWidth, boxHeight, content, box = box)
         if (replacing != null) {
             val at = page.images.indexOf(replacing)
             page.images[at] = image
@@ -5057,7 +5065,11 @@ class InkCanvasView @JvmOverloads constructor(
 
     fun clearImageSelection() = select(null, null)
 
-    fun selectedPicture(): PageImage? = selectedImage?.takeIf { it.textContent == null }
+    fun selectedPicture(): PageImage? = selectedImage?.takeIf { it.textContent == null && it.box == PageImage.BOX_NONE }
+
+    fun selectedImageBox(): Int = selectedImage?.box ?: PageImage.BOX_NONE
+
+    fun selectedTable(): PageImage? = selectedImage?.takeIf { it.box == PageImage.BOX_TABLE }
 
     /**
      * Puts picture [imageId] where the part [area] (fractions of the selected
@@ -5131,6 +5143,101 @@ class InkCanvasView @JvmOverloads constructor(
         select(hit, page)
         resizingImage = hypot(x - (hit.x + hit.width), y - (hit.y + hit.height)) <= grab
         movingImage = !resizingImage
+        if (movingImage && hit.box != PageImage.BOX_NONE) {
+            // A container moves as a selection of itself and everything on it.
+            clearLassoSelection()
+            lassoPage = index
+            lassoImages += hit
+            addContainedBy(page, hit)
+            recomputeLassoBounds()
+            movingImage = false
+            movingLasso = true
+            liftedLassoStrokes = Collections.newSetFromMap(IdentityHashMap<Stroke, Boolean>()).apply { addAll(lassoStrokes) }
+            lassoGrab[0] = x
+            lassoGrab[1] = y
+            lassoDx = 0f
+            lassoDy = 0f
+        }
+    }
+
+    /** Ink and pictures whose middles lie on [container], added to the lasso selection. */
+    private fun addContainedBy(page: Page, container: PageImage) {
+        if (container.collapsed) return
+        val right = container.x + container.width
+        val bottom = container.y + container.height
+        for (stroke in dry.strokesIn(page, container.x, container.y, right, bottom)) {
+            val b = stroke.shape.computeBoundingBox() ?: continue
+            val cx = (b.xMin + b.xMax) / 2f
+            val cy = (b.yMin + b.yMax) / 2f
+            if (cx in container.x..right && cy in container.y..bottom && stroke !in lassoStrokes) lassoStrokes += stroke
+        }
+        for (image in page.images) {
+            if (image === container || lassoImages.any { it === image }) continue
+            val cx = image.x + image.width / 2f
+            val cy = image.y + image.height / 2f
+            if (cx in container.x..right && cy in container.y..bottom) lassoImages += image
+        }
+    }
+
+    /** Folds the selected sticky note to a tab, or unfolds it. */
+    fun toggleSelectedFolded() {
+        val image = selectedImage ?: return
+        val page = selectedImagePage ?: return
+        foldSticky(page, image)
+    }
+
+    private fun foldSticky(page: Page, image: PageImage) {
+        val at = page.images.indexOf(image)
+        if (at < 0 || image.box != PageImage.BOX_STICKY) return
+        val after = if (image.collapsed) image.copy(width = image.expandedWidth, height = image.expandedHeight)
+            .also { it.collapsed = false }
+        else image.copy(width = PageImage.FOLDED_SIZE, height = PageImage.FOLDED_SIZE).also {
+            it.collapsed = true
+            it.expandedWidth = image.width
+            it.expandedHeight = image.height
+        }
+        page.images[at] = after
+        undoStack += Edit.ImageReplaced(page, image, after, at)
+        redoStack.clear()
+        select(after, page)
+        afterEdit(page)
+    }
+
+    /** A finger tap on a folded sticky note opens it. True when there was one there. */
+    private fun unfoldAt(screenX: Float, screenY: Float): Boolean {
+        scratch[0] = screenX
+        scratch[1] = screenY
+        screenToDocument.mapPoints(scratch)
+        val index = document.pageAt(scratch[0], scratch[1])
+        if (index < 0) return false
+        val page = document.pages[index]
+        pageLocalInto(screenX, screenY, index, scratch)
+        val hit = page.images.lastOrNull {
+            it.collapsed && scratch[0] in it.x..(it.x + it.width) && scratch[1] in it.y..(it.y + it.height)
+        } ?: return false
+        foldSticky(page, hit)
+        clearImageSelection()
+        return true
+    }
+
+    /** Puts a table's freshly drawn grid where the selected one was, or new in the middle of the page. */
+    fun putTable(imageId: String, rows: Int, cols: Int, width: Float, height: Float, replacing: PageImage? = null) {
+        val page = if (replacing != null) document.pages.firstOrNull { replacing in it.images } ?: return
+            else document.pages.getOrNull(currentPage.coerceIn(document.pages.indices)) ?: return
+        val table = replacing?.copy(id = imageId, width = width, height = height)?.also { it.rows = rows; it.cols = cols }
+            ?: PageImage(imageId, (page.width - width) / 2f, (page.height - height) / 2f, width, height,
+                box = PageImage.BOX_TABLE, rows = rows, cols = cols)
+        if (replacing != null) {
+            val at = page.images.indexOf(replacing)
+            page.images[at] = table
+            undoStack += Edit.ImageReplaced(page, replacing, table, at)
+        } else {
+            page.images += table
+            undoStack += Edit.ImageAdded(page, table)
+        }
+        redoStack.clear()
+        select(table, page)
+        afterEdit(page)
     }
 
     private fun dragImage(event: MotionEvent, pointerIndex: Int) {
@@ -5786,6 +5893,7 @@ class InkCanvasView @JvmOverloads constructor(
 
         private val strokeIndexes = IdentityHashMap<Page, StrokeGrid>()
         private val textLayouts = java.util.WeakHashMap<PageImage, TextRender>()
+        private val foldPaint = Paint(Paint.ANTI_ALIAS_FLAG)
         private val inkBitmaps = object : LruCache<String, CachedInk>(48 * 1024 * 1024) {
             override fun sizeOf(key: String, value: CachedInk): Int = value.bitmap.byteCount
         }
@@ -6038,6 +6146,22 @@ class InkCanvasView @JvmOverloads constructor(
             val liftedPage = movingLasso && lassoImages.isNotEmpty() &&
                 document.pages.getOrNull(lassoPage) === page
             for (image in page.images) {
+                if (image.collapsed) {
+                    // Folded: a tab in the note's own colour, with its corner turned down.
+                    imageRect.set(image.x, image.y, image.x + image.width, image.y + image.height)
+                    if (liftedPage && lassoImages.any { it === image }) imageRect.offset(lassoDx, lassoDy)
+                    foldPaint.color = image.textContent?.background?.takeIf { it != 0 } ?: 0xFFFFF59D.toInt()
+                    canvas.drawRoundRect(imageRect, 6f, 6f, foldPaint)
+                    foldPaint.color = 0x33000000
+                    val corner = imageRect.width() * 0.35f
+                    canvas.drawPath(android.graphics.Path().apply {
+                        moveTo(imageRect.right - corner, imageRect.bottom)
+                        lineTo(imageRect.right, imageRect.bottom - corner)
+                        lineTo(imageRect.right - corner, imageRect.bottom - corner)
+                        close()
+                    }, foldPaint)
+                    continue
+                }
                 val bitmap = loader(image.id) ?: continue
                 imageRect.set(
                     image.x,

@@ -1366,6 +1366,52 @@ internal fun InputSettingsDialog(gestures: CanvasGestures, onGestures: (CanvasGe
     )
 }
 
+/** How a new sticky note starts: yellow, rounded, roomy, and square however little is written. */
+internal val STICKY_STYLE = TextBoxContent(
+    text = "", size = 28f, background = 0xFFFFF59D.toInt(), corner = 10f, padding = 18f, minSize = 260f,
+)
+internal const val TABLE_CELL_WIDTH = 220f
+internal const val TABLE_CELL_HEIGHT = 110f
+
+/** Rows, columns, line colour and an optional header row for a table. */
+@Composable
+internal fun TableDialog(rows: Int, cols: Int, onDismiss: () -> Unit, onSave: (Int, Int, Int, Int) -> Unit) {
+    var r by remember { mutableIntStateOf(rows) }
+    var c by remember { mutableIntStateOf(cols) }
+    var line by remember { mutableIntStateOf(0xFF616161.toInt()) }
+    var header by remember { mutableStateOf(true) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("표") },
+        text = {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("행 $r", Modifier.width(60.dp))
+                    TextButton(onClick = { if (r > 1) r-- }) { Text("−") }
+                    TextButton(onClick = { if (r < 30) r++ }) { Text("+") }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("열 $c", Modifier.width(60.dp))
+                    TextButton(onClick = { if (c > 1) c-- }) { Text("−") }
+                    TextButton(onClick = { if (c < 12) c++ }) { Text("+") }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SkinSwitch(checked = header, onCheckedChange = { header = it })
+                    Spacer(Modifier.width(8.dp))
+                    Text("첫 행 강조")
+                }
+                Text("선 색", style = MaterialTheme.typography.bodySmall)
+                ColorInput(line) { line = it }
+                Text("표 위에 쓰거나 붙인 내용은 표를 옮길 때 함께 움직입니다.", style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = { TextButton(onClick = {
+            onSave(r, c, line, if (header) (line and 0x00FFFFFF) or 0x22000000 else 0)
+        }) { Text("저장") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+    )
+}
+
 /** The master password, typed twice, and a hint for the day it is forgotten. */
 @Composable
 private fun SetPasswordDialog(onSet: (String, String) -> Unit, onDismiss: () -> Unit) {
@@ -3247,6 +3293,9 @@ private fun NoteScreen(
     var fullscreen by remember { mutableStateOf(false) }
     var imageSelected by remember { mutableStateOf(false) }
     var showTextBox by remember { mutableStateOf(false) }
+    var creatingSticky by remember { mutableStateOf(false) }
+    /** A table being made (an empty PageImage) or changed; null when neither. */
+    var editingTable by remember { mutableStateOf<PageImage?>(null) }
     /** 1 cropping the selected picture, 2 styling it, 0 neither. */
     var editingPicture by remember { mutableIntStateOf(0) }
     var pickingSticker by remember { mutableStateOf(false) }
@@ -3706,6 +3755,13 @@ private fun NoteScreen(
                 edits++
             },
             onSticker = { pickingSticker = true },
+            onStickyNote = {
+                creatingSticky = true
+                replacingText = null
+                textPosition = null
+                showTextBox = true
+            },
+            onTable = { editingTable = PageImage() },
             onInputSettings = { showInput = true },
             recording = recorder != null,
             onVoice = { showVoice = true },
@@ -4535,8 +4591,10 @@ private fun NoteScreen(
             dismissButton = { TextButton(onClick = { regionOcrText = null }) { Text("닫기") } },
         ) }
 
-        if (showTextBox) TextBoxDialog(replacingText?.textContent,
-            onDismiss = { showTextBox = false }, onSave = { content ->
+        if (showTextBox) TextBoxDialog(replacingText?.textContent ?: if (creatingSticky) STICKY_STYLE else null,
+            onDismiss = { showTextBox = false; creatingSticky = false }, onSave = { content ->
+                val box = if (creatingSticky) PageImage.BOX_STICKY else PageImage.BOX_NONE
+                creatingSticky = false
                 val replacing = replacingText
                 scope.launch {
                     val result = withContext(Dispatchers.IO) { runCatching {
@@ -4547,7 +4605,7 @@ private fun NoteScreen(
                         } finally { bitmap.recycle() }
                     } }
                     result.onSuccess { (id, width, height) ->
-                        canvas?.putTextBox(id, width, height, content, replacing, textPosition)
+                        canvas?.putTextBox(id, width, height, content, replacing, textPosition, box)
                         mode = EditMode.TEXT
                         edits++
                         showTextBox = false
@@ -4558,8 +4616,12 @@ private fun NoteScreen(
             })
 
         if (imageSelected) {
+            val selectedBox = edits.let { canvas?.selectedImageBox() ?: PageImage.BOX_NONE }
             ImageActions(
                 isText = canvas?.selectedTextBox() != null,
+                box = selectedBox,
+                onFold = { canvas?.toggleSelectedFolded(); edits++ },
+                onTable = { editingTable = canvas?.selectedTable() },
                 onEdit = { replacingText = canvas?.selectedTextBox(); showTextBox = true },
                 onDelete = {
                     canvas?.deleteSelectedImage()
@@ -4648,6 +4710,28 @@ private fun NoteScreen(
                     }
                 }
             }
+        }
+
+        editingTable?.let { table ->
+            TableDialog(table.rows.takeIf { it > 0 } ?: 3, table.cols.takeIf { it > 0 } ?: 3,
+                onDismiss = { editingTable = null },
+                onSave = { rows, cols, line, header ->
+                    val existing = table.takeIf { it.rows > 0 }
+                    editingTable = null
+                    scope.launch {
+                        // Wide enough for handwriting in each cell; a changed table keeps its size.
+                        val width = existing?.width ?: (cols * TABLE_CELL_WIDTH)
+                        val height = existing?.height ?: (rows * TABLE_CELL_HEIGHT)
+                        val added = withContext(Dispatchers.IO) {
+                            store.addImage(note.id, renderTable(rows, cols, (width * 2).toInt(), (height * 2).toInt(), line, header))
+                        }
+                        if (added != null) {
+                            canvas?.putTable(added.first, rows, cols, width, height, existing)
+                            mode = EditMode.IMAGE
+                            edits++
+                        }
+                    }
+                })
         }
 
         if (pickingSticker) StickerDialog(onPick = { sticker ->
@@ -5182,6 +5266,9 @@ private fun PasteBar(
 @Composable
 private fun ImageActions(
     isText: Boolean,
+    box: Int = PageImage.BOX_NONE,
+    onFold: () -> Unit = {},
+    onTable: () -> Unit = {},
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onDone: () -> Unit,
@@ -5200,8 +5287,14 @@ private fun ImageActions(
             Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(if (isText) "텍스트" else "사진", style = MaterialTheme.typography.bodyMedium)
-            if (isText) TextButton(onClick = onEdit) { Text("편집") }
+            Text(when (box) {
+                PageImage.BOX_STICKY -> "스티키 노트"
+                PageImage.BOX_TABLE -> "표"
+                else -> if (isText) "텍스트" else "사진"
+            }, style = MaterialTheme.typography.bodyMedium)
+            if (box == PageImage.BOX_STICKY) TextButton(onClick = onFold) { Text("접기·펼치기") }
+            if (box == PageImage.BOX_TABLE) TextButton(onClick = onTable) { Text("표 편집") }
+            else if (isText) TextButton(onClick = onEdit) { Text("편집") }
             else {
                 TextButton(onClick = onCrop) { Text("자르기") }
                 TextButton(onClick = onStyle) { Text("스타일") }
@@ -6546,6 +6639,8 @@ private fun Toolbar(
     onAddPage: () -> Unit = {},
     onSticker: () -> Unit = {},
     onInputSettings: () -> Unit = {},
+    onStickyNote: () -> Unit = {},
+    onTable: () -> Unit = {},
 ) {
     val topRow: @Composable () -> Unit = {
         // ---- top row: the note, and what is done to the whole of it
@@ -6659,6 +6754,8 @@ private fun Toolbar(
             }
             RulerButton(ruler, onRuler)
             IconButton(onClick = onSticker) { Text("😀") }
+            TextButton(onClick = onStickyNote) { Text("메모") }
+            TextButton(onClick = onTable) { Text("표") }
             IconButton(onClick = onInputSettings) { Icon(Reicons.TouchApp, contentDescription = "손가락·제스처") }
             IconButton(onClick = onAddPage) {
                 Icon(Reicons.Add, contentDescription = "페이지 추가")
@@ -6701,6 +6798,8 @@ private fun Toolbar(
                 }))
                 add(SpotiToolbarAction("사진", Reicons.AddPhotoAlternate, onClick = onPickImage))
                 add(SpotiToolbarAction("스티커", Reicons.AutoAwesome, onClick = onSticker))
+                add(SpotiToolbarAction("스티키 노트", Reicons.Description, onClick = onStickyNote))
+                add(SpotiToolbarAction("표", Reicons.AutoAwesomeMosaic, onClick = onTable))
                 add(SpotiToolbarAction("손가락·제스처", Reicons.TouchApp, onClick = onInputSettings))
                 add(SpotiToolbarAction("UI · 화면 설정", Reicons.AutoAwesomeMosaic, slot = 6, onClick = onScreenSettings))
                 add(SpotiToolbarAction("화면 맞추기 · $zoomLabel", Reicons.ZoomOutMap, onClick = onFitWidth))

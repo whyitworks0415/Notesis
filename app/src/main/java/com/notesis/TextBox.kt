@@ -49,6 +49,8 @@ data class TextBoxContent(
     val background: Int = 0,
     val corner: Float = 0f,
     val padding: Float = DEFAULT_PADDING,
+    /** The smallest the box is drawn, in page units; a sticky note is a square however short its text. */
+    val minSize: Float = 0f,
 ) {
     companion object {
         /** What every text box had before padding could be set, in page units. */
@@ -105,8 +107,8 @@ internal fun renderTextBox(content: TextBoxContent): Bitmap {
     val desired = Layout.getDesiredWidth(content.styledText(), textPaint(content, scale)).toInt().coerceIn(1, maxWidth)
     val layout = textBoxLayout(content, desired, scale)
     require(layout.height <= 8192) { "텍스트가 너무 깁니다. 상자를 나눠 주세요." }
-    val width = desired + pad * 2
-    val height = layout.height + pad * 2
+    val width = maxOf(desired + pad * 2, (content.minSize * scale).toInt())
+    val height = maxOf(layout.height + pad * 2, (content.minSize * scale).toInt())
     return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also {
         drawTextBox(Canvas(it), content, layout, width.toFloat(), height.toFloat(), scale)
     }
@@ -256,8 +258,24 @@ internal fun TextBoxDialog(initial: TextBoxContent?, onDismiss: () -> Unit, onSa
             onClick = {
                 val typed = editor?.text ?: return@TextButton
                 val html = if (typed.hasStyle()) Html.toHtml(typed, Html.TO_HTML_PARAGRAPH_LINES_CONSECUTIVE) else null
-                onSave(TextBoxContent(typed.toString(), parsedSize ?: 32f, color, html, font, background, corner, padding))
+                onSave(TextBoxContent(typed.toString(), parsedSize ?: 32f, color, html, font, background, corner, padding,
+                    initial?.minSize ?: 0f))
             }) { Text("저장") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
     )
+}
+
+/** A table's grid drawn [width] x [height] pixels, with the first row shaded as a header when [header] is on. */
+internal fun renderTable(rows: Int, cols: Int, width: Int, height: Int, line: Int, header: Int): Bitmap {
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    val rowHeight = height / rows.toFloat()
+    val colWidth = width / cols.toFloat()
+    if (header != 0) canvas.drawRect(0f, 0f, width.toFloat(), rowHeight, Paint().apply { color = header })
+    val pen = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = line; strokeWidth = 3f; style = Paint.Style.STROKE }
+    for (r in 0..rows) canvas.drawLine(0f, (r * rowHeight).coerceIn(1.5f, height - 1.5f), width.toFloat(),
+        (r * rowHeight).coerceIn(1.5f, height - 1.5f), pen)
+    for (c in 0..cols) canvas.drawLine((c * colWidth).coerceIn(1.5f, width - 1.5f), 0f,
+        (c * colWidth).coerceIn(1.5f, width - 1.5f), height.toFloat(), pen)
+    return bitmap
 }
