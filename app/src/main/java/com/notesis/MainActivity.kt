@@ -416,6 +416,8 @@ private fun NoteListScreen(
     var showTrash by remember { mutableStateOf(false) }
     var sortMenu by remember { mutableStateOf(false) }
     var tagFilter by remember { mutableStateOf<String?>(null) }
+    var showHelp by remember { mutableStateOf(false) }
+    if (showHelp) HelpDialog(onDismiss = { showHelp = false })
     val allTags = remember(revision) { store.allTags() }
     var taggingNote by remember { mutableStateOf<NoteMeta?>(null) }
     var labelingNote by remember { mutableStateOf<NoteMeta?>(null) }
@@ -506,7 +508,7 @@ private fun NoteListScreen(
     // Favourites first, then the chosen order within each group.
     val shown = (results ?: if (tagFilter != null) notes.filter { tagFilter in it.tags }
         else notes.filter { it.folder == folder }).sortedWith(
-        compareByDescending<NoteMeta> { it.favorite }.then(
+        compareByDescending<NoteMeta> { it.favorite }.thenBy { if (it.favorite) it.favoriteOrder else 0L }.then(
             when (librarySort) {
                 LIBRARY_SORT_TITLE -> compareBy { it.title.lowercase() }
                 LIBRARY_SORT_PAGES -> compareByDescending { it.pageCount }
@@ -817,6 +819,9 @@ private fun NoteListScreen(
                     IconButton(onClick = onSettings) {
                         Icon(Reicons.Tune, contentDescription = "화면 설정")
                     }
+                    IconButton(onClick = { showHelp = true }) {
+                        Icon(Reicons.BugReport, contentDescription = "도움말 · 진단")
+                    }
                 },
                 navigationIcon = {
                     // Only inside a folder: at the top level there is nowhere
@@ -1048,6 +1053,15 @@ private fun NoteListScreen(
                             revision++
                         },
                         onTags = { taggingNote = note },
+                        onMoveFavorite = if (note.favorite) { delta ->
+                            val pinned = shown.filter { it.favorite }
+                            val at = pinned.indexOfFirst { it.id == note.id }
+                            val to = (at + delta).coerceIn(pinned.indices)
+                            if (at >= 0 && to != at) {
+                                store.setFavoriteOrder(pinned.toMutableList().apply { add(to, removeAt(at)) }.map { it.id })
+                                revision++
+                            }
+                        } else null,
                         onLabel = { labelingNote = note },
                         onLock = {
                             // Locking with a password already set needs nothing more; the rest asks first.
@@ -1812,6 +1826,7 @@ private fun NoteCard(
     onTags: () -> Unit = {},
     onLabel: () -> Unit = {},
     onLock: () -> Unit = {},
+    onMoveFavorite: ((Int) -> Unit)? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     // Keyed on the file's timestamp, so replacing the picture redraws the card
@@ -1978,6 +1993,10 @@ private fun NoteCard(
                                 onToggleFavorite()
                             },
                         )
+                        if (onMoveFavorite != null) {
+                            DropdownMenuItem(text = { Text("즐겨찾기에서 앞으로") }, onClick = { menuOpen = false; onMoveFavorite(-1) })
+                            DropdownMenuItem(text = { Text("즐겨찾기에서 뒤로") }, onClick = { menuOpen = false; onMoveFavorite(1) })
+                        }
                         DropdownMenuItem(
                             text = { Text("태그") },
                             onClick = { menuOpen = false; onTags() },

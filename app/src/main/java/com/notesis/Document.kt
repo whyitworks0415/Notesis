@@ -445,6 +445,8 @@ data class NoteMeta(
     val label: Int = 0,
     /** Behind the master password. See [NoteLock]. */
     val locked: Boolean = false,
+    /** Where it sits among the favourites; pinned later sits later. */
+    val favoriteOrder: Long = 0L,
 )
 
 /**
@@ -689,7 +691,16 @@ class NoteStore(context: Context) {
 
     fun setFavorite(id: String, favorite: Boolean) {
         val marker = File(root, "$id/$FAVORITE")
-        if (favorite) runCatching { marker.writeText("1") } else marker.delete()
+        // The marker holds the pinning time, which is the favourite's place in line.
+        if (favorite) runCatching { marker.writeText(System.currentTimeMillis().toString()) } else marker.delete()
+    }
+
+    /** Renumbers the favourites in [ids]' order. */
+    fun setFavoriteOrder(ids: List<String>) {
+        ids.forEachIndexed { i, id ->
+            val marker = File(root, "$id/$FAVORITE")
+            if (marker.isFile) runCatching { marker.writeText((i + 1).toString()) }
+        }
     }
 
     @Volatile private var trashPurged = false
@@ -1910,6 +1921,8 @@ class NoteStore(context: Context) {
                 label = File(dir, LABEL).takeIf { it.isFile }
                     ?.let { runCatching { it.readText().trim().toInt() }.getOrNull() } ?: 0,
                 locked = File(dir, LOCKED).isFile,
+                favoriteOrder = File(dir, FAVORITE).takeIf { it.isFile }
+                    ?.let { runCatching { it.readText().trim().toLong() }.getOrNull() } ?: 0L,
             )
         }.getOrNull()
     }
