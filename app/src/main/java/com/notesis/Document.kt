@@ -812,6 +812,67 @@ class NoteStore(context: Context) {
         return NoteMeta(id, title, System.currentTimeMillis(), pages.size, 0)
     }
 
+    /**
+     * Adds [pages] - in-memory pages of note [sourceId], ink loaded - to the
+     * end of note [targetId] on disk: strokes, tape, pictures and any PDF page
+     * under them. The target must not be open.
+     */
+    fun appendPages(targetId: String, sourceId: String, pages: List<Page>): Boolean = runCatching {
+        PDFBoxResourceLoader.init(appContext)
+        val target = load(targetId)
+        val title = readMeta(File(root, targetId))?.title ?: "노트"
+        val memory = { MemoryUsageSetting.setupTempFileOnly().setTempDir(appContext.cacheDir) }
+        val sourcePdf = pdfFile(sourceId).takeIf { it.isFile && pages.any { p -> p.pdfPageIndex >= 0 } }
+            ?.let { PDDocument.load(it, memory()) }
+        val targetPdfFile = pdfFile(targetId)
+        val targetPdf = if (targetPdfFile.isFile) PDDocument.load(targetPdfFile, memory()) else PDDocument(memory())
+        val pagesDir = File(root, "$targetId/pages").apply { mkdirs() }
+        var pdfChanged = false
+        try {
+            for (old in pages) {
+                val pageId = UUID.randomUUID().toString()
+                val pdfIndex = if (old.pdfPageIndex >= 0 && sourcePdf != null &&
+                    old.pdfPageIndex < sourcePdf.numberOfPages) {
+                    targetPdf.importPage(sourcePdf.getPage(old.pdfPageIndex))
+                    pdfChanged = true
+                    targetPdf.numberOfPages - 1
+                } else -1
+                val images = old.images.map { image ->
+                    val imageId = UUID.randomUUID().toString()
+                    val file = imageFile(sourceId, image.id)
+                    if (file.isFile) file.copyTo(imageFile(targetId, imageId).also { it.parentFile?.mkdirs() })
+                    image.copy(id = imageId)
+                }.toMutableList()
+                writeStrokes(File(pagesDir, "$pageId.bin"), old.strokes)
+                if (old.masks.isNotEmpty()) writeStrokes(File(pagesDir, "$pageId.mask"), old.masks.map { it.stroke })
+                target.pages += Page(
+                    id = pageId, width = old.width, height = old.height,
+                    background = if (pdfIndex < 0 && old.background == PageBackground.PDF) PageBackground.BLANK
+                        else old.background,
+                    templateId = old.templateId, pdfPageIndex = pdfIndex, tocTitle = old.tocTitle,
+                    tocHighlighted = old.tocHighlighted, tocLevel = old.tocLevel, bookmarked = old.bookmarked,
+                    links = old.links.toMutableMap(), images = images,
+                ).also {
+                    it.loaded = false
+                    it.dirty = false
+                    it.savedStrokeCount = old.strokes.size
+                    it.savedOnDisk = old.strokes.size
+                }
+            }
+            if (pdfChanged) {
+                // Beside and renamed over: the loaded document still reads from the old file.
+                val tmp = File(targetPdfFile.parentFile, "doc.pdf.tmp")
+                targetPdf.save(tmp)
+                targetPdf.close()
+                tmp.renameTo(targetPdfFile)
+            }
+            writeMeta(targetId, title, target)
+        } finally {
+            sourcePdf?.close()
+            runCatching { targetPdf.close() }
+        }
+    }.isSuccess
+
     /** Copies editable pages, ink, pictures and PDF backgrounds into one new note. */
     fun mergeNotes(ids: List<String>, title: String): NoteMeta? = runCatching {
         val sources = ids.distinct().mapNotNull { id ->

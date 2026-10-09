@@ -84,6 +84,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.runtime.produceState
+import androidx.compose.material3.Checkbox
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material.icons.outlined.BookmarkBorder
@@ -3339,6 +3340,26 @@ private fun NoteScreen(
     var showVoice by remember { mutableStateOf(false) }
     var showInput by remember { mutableStateOf(false) }
     var showLibrary by remember { mutableStateOf(false) }
+    var exportingPages by remember { mutableStateOf<List<Page>?>(null) }
+    /** Pages picked to go to another note, and whether they leave this one. */
+    var sendingPages by remember { mutableStateOf<Pair<List<Int>, Boolean>?>(null) }
+    val savePagesPdf = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/pdf"),
+    ) { uri: Uri? ->
+        val pages = exportingPages
+        exportingPages = null
+        if (uri == null || pages == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                context.contentResolver.openOutputStream(uri)?.use { out ->
+                    writeVectorPdf(context, store.pdfFile(note.id),
+                        pages.map { VectorPdfPage(it, it.strokes, it.masks.map { m -> m.stroke }) },
+                        { imageId -> store.imageFile(note.id, imageId) }, out)
+                } ?: false
+            }
+            Toast.makeText(context, if (ok) "PDF를 저장했습니다" else "내보내지 못했습니다", Toast.LENGTH_SHORT).show()
+        }
+    }
     // The PDF's own contents, read once off the main thread when the note opens.
     val pdfOutline by produceState(emptyList<NoteStore.PdfOutlineEntry>(), note.id) {
         value = withContext(Dispatchers.IO) { store.pdfOutline(note.id) }
@@ -4630,6 +4651,31 @@ private fun NoteScreen(
                 Text(" 이전 위치로")
             }
         }
+        sendingPages?.let { (indices, move) ->
+            val others = remember { store.list().filter { it.id != note.id && it.kind == NoteKind.INK } }
+            AlertDialog(
+                onDismissRequest = { sendingPages = null },
+                title = { Text(if (move) "${indices.size}쪽을 옮길 노트" else "${indices.size}쪽을 복사할 노트") },
+                text = {
+                    LazyColumn(Modifier.heightIn(max = 360.dp)) {
+                        items(others, key = { it.id }) { target ->
+                            Text(target.title, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.fillMaxWidth().clickable {
+                                    val pages = canvas?.snapshotPages(indices).orEmpty()
+                                    sendingPages = null
+                                    scope.launch {
+                                        val ok = withContext(Dispatchers.IO) { store.appendPages(target.id, note.id, pages) }
+                                        if (ok && move) { canvas?.deletePages(indices); edits++ }
+                                        Toast.makeText(context, if (ok) "\"${target.title}\"에 ${pages.size}쪽을 넣었습니다"
+                                            else "옮기지 못했습니다", Toast.LENGTH_SHORT).show()
+                                    }
+                                }.padding(12.dp))
+                        }
+                    }
+                },
+                confirmButton = { TextButton(onClick = { sendingPages = null }) { Text("취소") } },
+            )
+        }
         if (showLibrary) LibraryDialog(store, onPaste = { clip ->
             showLibrary = false
             canvas?.paste(clip)
@@ -5098,6 +5144,17 @@ private fun NoteScreen(
                     canvas?.setBackgroundAll(background, templateId)
                     edits++
                 },
+                onDeletePages = { canvas?.deletePages(it); edits++ },
+                onDuplicatePages = { indices ->
+                    // Last first, so each copy lands right after its own page.
+                    indices.sortedDescending().forEach { canvas?.duplicatePage(it) }
+                    edits++
+                },
+                onExportPages = { indices ->
+                    exportingPages = canvas?.snapshotPages(indices)
+                    if (exportingPages != null) savePagesPdf.launch(safeFileName(note.title) + "-선택.pdf")
+                },
+                onSendPages = { indices, move -> sendingPages = indices to move },
             )
         }
 
@@ -6180,6 +6237,10 @@ private fun PageSidebar(
     onBookmark: (Int, Boolean) -> Unit = { _, _ -> },
     onRotate: (Int, Boolean) -> Unit = { _, _ -> },
     onBackgroundAll: (PageBackground, String?) -> Unit = { _, _ -> },
+    onDeletePages: (List<Int>) -> Unit = {},
+    onDuplicatePages: (List<Int>) -> Unit = {},
+    onExportPages: (List<Int>) -> Unit = {},
+    onSendPages: (List<Int>, Boolean) -> Unit = { _, _ -> },
     study: MaskStudy? = null,
     studyRevision: Int = 0,
     onRenameMask: (Int, Int) -> Unit = { _, _ -> },
@@ -6192,6 +6253,9 @@ private fun PageSidebar(
     var bookmarksOnly by remember { mutableStateOf(false) }
     var tocQuery by remember { mutableStateOf("") }
     var showPdfOutline by remember { mutableStateOf(true) }
+    var choosing by remember { mutableStateOf(false) }
+    val chosen = remember { mutableStateListOf<String>() }
+    fun chosenIndices() = pages.indices.filter { pages[it].id in chosen }
     var goingTo by remember { mutableStateOf(false) }
     if (goingTo) GoToPageDialog(pages.size, onGo = { onJump(it) }, onDismiss = { goingTo = false })
     var tocName by remember { mutableStateOf("") }
@@ -6265,6 +6329,9 @@ private fun PageSidebar(
                                 label = { Text("북마크만") },
                             )
                             Spacer(Modifier.weight(1f))
+                            TextButton(onClick = { choosing = !choosing; chosen.clear() }) {
+                                Text(if (choosing) "선택 끝" else "선택")
+                            }
                             TextButton(onClick = { goingTo = true }) { Text("쪽 이동") }
                         }
                     }
@@ -6316,7 +6383,17 @@ private fun PageSidebar(
                     key = { it.id },
                 ) { page ->
                     val index = pages.indexOf(page)
-                    if (tab == 0) {
+                    if (tab == 0 && choosing) {
+                        Row(
+                            Modifier.fillMaxWidth().clickable {
+                                if (page.id in chosen) chosen.remove(page.id) else chosen.add(page.id)
+                            },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Checkbox(checked = page.id in chosen, onCheckedChange = null)
+                            Text("${index + 1}쪽", style = MaterialTheme.typography.titleSmall)
+                        }
+                    } else if (tab == 0) {
                         PageChip(
                             index = index,
                             page = page,
@@ -6367,7 +6444,20 @@ private fun PageSidebar(
                     }
                 }
             }
-            if (tab == 0) {
+            if (tab == 0 && choosing) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 6.dp)) {
+                    val any = chosen.isNotEmpty()
+                    TextButton(enabled = any && chosen.size < pages.size, onClick = {
+                        onDeletePages(chosenIndices()); chosen.clear()
+                    }) { Text("삭제") }
+                    TextButton(enabled = any, onClick = { onDuplicatePages(chosenIndices()); chosen.clear() }) { Text("복제") }
+                    TextButton(enabled = any, onClick = { onExportPages(chosenIndices()) }) { Text("PDF") }
+                    TextButton(enabled = any, onClick = { onSendPages(chosenIndices(), false) }) { Text("복사…") }
+                    TextButton(enabled = any && chosen.size < pages.size, onClick = {
+                        onSendPages(chosenIndices(), true); chosen.clear()
+                    }) { Text("이동…") }
+                }
+            } else if (tab == 0) {
                 TextButton(
                     onClick = onAdd,
                     modifier = Modifier

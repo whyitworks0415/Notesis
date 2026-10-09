@@ -2067,6 +2067,29 @@ class InkCanvasView @JvmOverloads constructor(
         scrollToPage(index + 1)
     }
 
+    /**
+     * Copies of the pages at [indices] with their ink read in, safe to hand to
+     * another thread: their lists are their own.
+     */
+    fun snapshotPages(indices: List<Int>): List<Page> = indices.sorted().mapNotNull { index ->
+        val page = document.pages.getOrNull(index) ?: return@mapNotNull null
+        if (!ensureLoaded(page)) return@mapNotNull null
+        Page(
+            id = page.id, width = page.width, height = page.height, background = page.background,
+            templateId = page.templateId, pdfPageIndex = page.pdfPageIndex, tocTitle = page.tocTitle,
+            tocHighlighted = page.tocHighlighted, tocLevel = page.tocLevel, bookmarked = page.bookmarked,
+            links = page.links.toMutableMap(),
+            images = page.images.map { it.copy() }.toMutableList(),
+            masks = page.masks.map { PageMask(it.stroke) }.toMutableList(),
+            strokes = page.strokes.toMutableList(),
+        )
+    }
+
+    /** Removes several pages, last first so each index still means what it did. */
+    fun deletePages(indices: List<Int>) {
+        for (index in indices.distinct().sortedDescending()) deletePage(index)
+    }
+
     fun deletePage(index: Int) {
         if (document.pages.size <= 1 || index !in document.pages.indices) return
         val removed = document.pages[index]
