@@ -3167,6 +3167,8 @@ private fun PageExportDialog(
     var png by remember { mutableStateOf(false) }
     var size by remember { mutableStateOf(ExportPageSize.ORIGINAL) }
     var rotation by remember { mutableIntStateOf(0) }
+    var raster by remember { mutableStateOf(false) }
+    var invert by remember { mutableStateOf(false) }
     val from = first.toIntOrNull()
     val to = last.toIntOrNull()
     val valid = from != null && to != null && from >= 1 && to >= from && to <= pageCount
@@ -3203,11 +3205,15 @@ private fun PageExportDialog(
                         label = { Text("${value}°") })
                 }
             }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (!png) FilterChip(selected = raster, onClick = { raster = !raster }, label = { Text("이미지 PDF") })
+                FilterChip(selected = invert, onClick = { invert = !invert }, label = { Text("색 반전") })
+            }
             if (png && valid && from != to) Text("여러 PNG는 ZIP 파일로 저장됩니다.",
                 style = MaterialTheme.typography.bodySmall)
         } },
         confirmButton = { TextButton(enabled = valid, onClick = {
-            onExport(png, PageExportOptions(from!!, to!!, size, rotation))
+            onExport(png, PageExportOptions(from!!, to!!, size, rotation, raster = raster && !png, invert = invert))
         }) { Text("저장") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
     )

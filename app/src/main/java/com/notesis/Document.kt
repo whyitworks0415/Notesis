@@ -134,6 +134,10 @@ data class PageExportOptions(
     val last: Int,
     val size: ExportPageSize = ExportPageSize.ORIGINAL,
     val rotation: Int = 0,
+    /** Every page flattened to a picture, for viewers that mishandle vector ink. */
+    val raster: Boolean = false,
+    /** Dark paper, light ink: every colour turned to its opposite. */
+    val invert: Boolean = false,
 )
 
 enum class PageLayoutMode { VERTICAL, HORIZONTAL, SPREAD_2X1, GRID_2X2 }
@@ -1534,7 +1538,7 @@ class NoteStore(context: Context) {
         if (first < 1 || last < first || last > document.pages.size) return false
         val selected = document.pages.subList(first - 1, last)
         if (selected.isEmpty()) return false
-        if (options?.size != null && options.size != ExportPageSize.ORIGINAL) {
+        if (options != null && (options.size != ExportPageSize.ORIGINAL || options.raster || options.invert)) {
             return exportSizedPdf(id, selected, out, options)
         }
         val pages = selected.map { page ->
@@ -1566,7 +1570,7 @@ class NoteStore(context: Context) {
         try {
             for ((index, page) in pages.withIndex()) {
                 val bitmap = renderExportBitmap(id, page, source, renderer,
-                    options.size, options.rotation)
+                    options.size, options.rotation, options.invert)
                 try {
                     val pdfPage = pdf.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(
                         (bitmap.width / 2).coerceAtLeast(1),
@@ -1598,14 +1602,14 @@ class NoteStore(context: Context) {
         try {
             if (options.first == options.last) {
                 val bitmap = renderExportBitmap(id, document.pages[options.first - 1],
-                    source, renderer, options.size, options.rotation)
+                    source, renderer, options.size, options.rotation, options.invert)
                 try { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) }
                 finally { bitmap.recycle() }
             } else {
                 java.util.zip.ZipOutputStream(out.buffered()).use { zip ->
                     for (number in options.first..options.last) {
                         val bitmap = renderExportBitmap(id, document.pages[number - 1],
-                            source, renderer, options.size, options.rotation)
+                            source, renderer, options.size, options.rotation, options.invert)
                         try {
                             zip.putNextEntry(java.util.zip.ZipEntry(
                                 "page-${number.toString().padStart(3, '0')}.png"))
@@ -1619,9 +1623,25 @@ class NoteStore(context: Context) {
         true
     }.getOrDefault(false)
 
+    /** Turns every colour in [bitmap] to its opposite, alpha untouched. */
+    private fun invertColours(bitmap: Bitmap) {
+        val copy = bitmap.copy(Bitmap.Config.ARGB_8888, false)
+        val paint = android.graphics.Paint().apply {
+            colorFilter = android.graphics.ColorMatrixColorFilter(floatArrayOf(
+                -1f, 0f, 0f, 0f, 255f,
+                0f, -1f, 0f, 0f, 255f,
+                0f, 0f, -1f, 0f, 255f,
+                0f, 0f, 0f, 1f, 0f,
+            ))
+            xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC)
+        }
+        Canvas(bitmap).drawBitmap(copy, 0f, 0f, paint)
+        copy.recycle()
+    }
+
     private fun renderExportBitmap(
         id: String, page: Page, source: PdfSource?, renderer: CanvasStrokeRenderer,
-        size: ExportPageSize, rotation: Int,
+        size: ExportPageSize, rotation: Int, invert: Boolean = false,
     ): Bitmap {
         val (width, height) = when (size) {
             ExportPageSize.A4 -> 1240 to 1754
@@ -1641,6 +1661,7 @@ class NoteStore(context: Context) {
             (height - page.height * scale) / 2f)
         drawWholePage(id, page, canvas, source, renderer, scale)
         canvas.restore()
+        if (invert) invertColours(bitmap)
         val degrees = ((rotation % 360) + 360) % 360
         if (degrees == 0) return bitmap
         val matrix = Matrix().apply { postRotate(degrees.toFloat()) }
