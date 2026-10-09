@@ -1358,6 +1358,7 @@ internal fun InputSettingsDialog(gestures: CanvasGestures, onGestures: (CanvasGe
                 toggle("확대·축소 잠금", gestures.zoomLocked) { onGestures(gestures.copy(zoomLocked = it)) }
                 toggle("한 손가락 두 번 탭으로 확대", gestures.doubleTapZoom) { onGestures(gestures.copy(doubleTapZoom = it)) }
                 toggle("길게 눌러 메뉴 열기", gestures.longPressMenu) { onGestures(gestures.copy(longPressMenu = it)) }
+                toggle("링크 객체에 파란 표시", gestures.linkOverlay) { onGestures(gestures.copy(linkOverlay = it)) }
                 Text("손바닥이 닿는다면 한 손가락을 '무시'로, 두 손가락을 '스크롤'로 두세요. 그리기 모드에서는 두 손가락으로 화면을 움직입니다.",
                     style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
             }
@@ -1409,6 +1410,72 @@ internal fun TableDialog(rows: Int, cols: Int, onDismiss: () -> Unit, onSave: (I
             onSave(r, c, line, if (header) (line and 0x00FFFFFF) or 0x22000000 else 0)
         }) { Text("저장") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+    )
+}
+
+/**
+ * Where a selection's link goes: a page of this note, a page of another note,
+ * or a web address. Saving blank removes the link.
+ */
+@Composable
+internal fun LinkDialog(
+    current: String?,
+    pageCount: Int,
+    notes: List<NoteMeta>,
+    pageId: (Int) -> String?,
+    onSave: (String?) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var kind by remember { mutableIntStateOf(when {
+        current == null || current.startsWith("page:") -> 0
+        current.startsWith("note:") -> 1
+        else -> 2
+    }) }
+    var page by remember { mutableStateOf("1") }
+    var url by remember { mutableStateOf(current?.takeIf { kind == 2 }.orEmpty()) }
+    var other by remember { mutableStateOf(notes.firstOrNull { current?.startsWith("note:${it.id}") == true }) }
+    val pageNumber = page.toIntOrNull()
+    val target = when (kind) {
+        0 -> pageNumber?.takeIf { it in 1..pageCount }?.let { pageId(it - 1) }?.let { "page:$it" }
+        1 -> other?.let { "note:${it.id}#${((pageNumber ?: 1) - 1).coerceAtLeast(0)}" }
+        else -> url.trim().takeIf { it.startsWith("http://") || it.startsWith("https://") }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("링크") },
+        text = {
+            Column {
+                if (current != null) Text("현재: $current", style = MaterialTheme.typography.bodySmall)
+                Row {
+                    listOf("이 노트의 쪽", "다른 노트", "웹 주소").forEachIndexed { i, label ->
+                        SettingsChoiceChip(selected = kind == i, onClick = { kind = i }, label = label,
+                            modifier = Modifier.padding(end = 6.dp))
+                    }
+                }
+                when (kind) {
+                    2 -> OutlinedTextField(url, { url = it }, label = { Text("https://…") }, singleLine = true)
+                    else -> {
+                        if (kind == 1) LazyColumn(Modifier.heightIn(max = 200.dp)) {
+                            items(notes, key = { it.id }) { n ->
+                                Text(n.title, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    color = if (other?.id == n.id) MaterialTheme.colorScheme.primary else Color.Unspecified,
+                                    modifier = Modifier.fillMaxWidth().clickable { other = n }.padding(8.dp))
+                            }
+                        }
+                        OutlinedTextField(page, { page = it.filter(Char::isDigit).take(5) },
+                            label = { Text(if (kind == 0) "쪽 (1–$pageCount)" else "쪽") }, singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { onSave(target) }, enabled = target != null) { Text("연결") } },
+        dismissButton = {
+            Row {
+                if (current != null) TextButton(onClick = { onSave(null) }) { Text("링크 제거") }
+                TextButton(onClick = onDismiss) { Text("취소") }
+            }
+        },
     )
 }
 
@@ -3271,6 +3338,8 @@ private fun NoteScreen(
     var showVoice by remember { mutableStateOf(false) }
     var showInput by remember { mutableStateOf(false) }
     var showLibrary by remember { mutableStateOf(false) }
+    var linking by remember { mutableStateOf(false) }
+    var canGoBack by remember { mutableStateOf(false) }
     /** Where a finger was held on the page, in screen pixels, while its menu is up. */
     var pressMenu by remember { mutableStateOf<Offset?>(null) }
     var playNextRecording by remember { mutableStateOf<String?>(null) }
@@ -4022,6 +4091,14 @@ private fun NoteScreen(
                     view.partialEraser = partialEraser
                     view.applyGestures(gestures)
                     view.laserMode = laser
+                    view.showLinkOverlay = gestures.linkOverlay
+                    view.onLinkBackChanged = { canGoBack = it }
+                    view.onOpenNoteLink = { noteId, pageIndex ->
+                        store.list().firstOrNull { it.id == noteId }?.let { target ->
+                            penStore.setLastPage(target.id, pageIndex)
+                            onOpenNote(target)
+                        } ?: Toast.makeText(context, "연결된 노트를 찾을 수 없습니다", Toast.LENGTH_SHORT).show()
+                    }
                     view.onLongPressCanvas = if (gestures.longPressMenu) { x, y -> pressMenu = Offset(x, y) } else null
                     view.laserTrail = !laserDot
                     view.rulerKind = ruler
@@ -4497,6 +4574,7 @@ private fun NoteScreen(
                     canvas?.lockLassoSelection(locked)
                     edits++
                 },
+                onLink = { linking = true },
                 onAddToLibrary = {
                     val kept = canvas?.lassoClipWithPreview()
                     if (kept != null) scope.launch {
@@ -4527,6 +4605,25 @@ private fun NoteScreen(
                 onLibrary = { showLibrary = true },
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
+        }
+        if (linking) canvas?.let { view ->
+            LinkDialog(
+                current = view.lassoLink(),
+                pageCount = view.document.pages.size,
+                notes = remember { store.list().filter { it.id != note.id } },
+                pageId = { view.pageIdAt(it) },
+                onSave = { target -> view.setLassoLink(target); linking = false; edits++ },
+                onDismiss = { linking = false },
+            )
+        }
+        if (canGoBack) SkinSurface(
+            modifier = Modifier.align(Alignment.TopCenter).windowInsetsPadding(ChromeInsets).padding(top = 72.dp),
+            corner = 16.dp,
+        ) {
+            TextButton(onClick = { canvas?.goBack() }) {
+                Icon(Reicons.ArrowBack, contentDescription = null)
+                Text(" 이전 위치로")
+            }
         }
         if (showLibrary) LibraryDialog(store, onPaste = { clip ->
             showLibrary = false
@@ -5209,6 +5306,7 @@ private fun LassoActions(
     locked: Boolean = false,
     onLock: ((Boolean) -> Unit)? = null,
     onAddToLibrary: (() -> Unit)? = null,
+    onLink: (() -> Unit)? = null,
     grouped: Boolean = false,
     onGroup: ((Boolean) -> Unit)? = null,
     onDone: () -> Unit,
@@ -5247,6 +5345,7 @@ private fun LassoActions(
             }
             if (onCopy != null) TextButton(onClick = onCopy) { Text("복사") }
             if (onCut != null) TextButton(onClick = onCut) { Text("잘라내기") }
+            if (onLink != null) TextButton(onClick = onLink) { Text("링크") }
             if (onAddToLibrary != null) TextButton(onClick = onAddToLibrary) { Text("라이브러리에 추가") }
             if (onGroup != null) TextButton(onClick = { onGroup(!grouped) }) {
                 Text(if (grouped) "그룹 해제" else "그룹")

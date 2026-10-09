@@ -157,6 +157,11 @@ class Page(
     /** How deep the outline entry sits: 0 at the top, each step one level in. */
     var tocLevel: Int = 0,
     var bookmarked: Boolean = false,
+    /**
+     * Links on this page's objects: the group the linked objects share, and
+     * where it goes - an https URL, "page:<pageId>" or "note:<noteId>#<pageIndex>".
+     */
+    val links: MutableMap<Int, String> = mutableMapOf(),
     /** Pictures, drawn over the background and under the ink. */
     val images: MutableList<PageImage> = mutableListOf(),
     /** Masking tape, drawn over everything, because covering is the job. */
@@ -848,6 +853,7 @@ class NoteStore(context: Context) {
                             pdfPageIndex = pdfIndex, tocTitle = old.tocTitle,
                             tocHighlighted = old.tocHighlighted, tocLevel = old.tocLevel,
                             bookmarked = old.bookmarked, images = images,
+                            links = old.links.toMutableMap(),
                         ).also {
                             it.loaded = false
                             it.dirty = false
@@ -1007,6 +1013,7 @@ class NoteStore(context: Context) {
                 tocHighlighted = entry.optBoolean("tocHighlighted", false),
                 tocLevel = entry.optInt("tocLevel", 0),
                 bookmarked = entry.optBoolean("bookmark", false),
+                links = linksFrom(entry),
             )
             page.images.addAll(imagesFrom(entry))
             // Strokes are left on disk until the page is actually needed.
@@ -1107,6 +1114,7 @@ class NoteStore(context: Context) {
                 tocHighlighted = live.tocHighlighted,
                 tocLevel = live.tocLevel,
                 bookmarked = live.bookmarked,
+                links = live.links.toMutableMap(),
                 images = live.images.map { image ->
                     image.copy()
                 }.toMutableList(),
@@ -1227,6 +1235,13 @@ class NoteStore(context: Context) {
             )
         }
         return array
+    }
+
+    private fun linksFrom(entry: JSONObject): MutableMap<Int, String> {
+        val json = entry.optJSONObject("links") ?: return mutableMapOf()
+        return json.keys().asSequence().mapNotNull { key ->
+            key.toIntOrNull()?.let { it to json.optString(key) }
+        }.filter { it.second.isNotBlank() }.toMap().toMutableMap()
     }
 
     private fun imagesFrom(entry: JSONObject): MutableList<PageImage> {
@@ -1696,6 +1711,7 @@ class NoteStore(context: Context) {
                     .put("tocHighlighted", page.tocHighlighted)
                     .put("tocLevel", page.tocLevel)
                     .put("bookmark", page.bookmarked)
+                    .put("links", JSONObject(page.links.mapKeys { it.key.toString() }))
                     .put("strokes", if (page.loaded) page.strokes.size else page.savedStrokeCount)
                     .put("images", imagesToJson(page)),
             )

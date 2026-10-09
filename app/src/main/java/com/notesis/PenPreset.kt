@@ -79,6 +79,7 @@ data class CanvasGestures(
     val twoFingerTap: Int = TAP_UNDO,
     val threeFingerTap: Int = TAP_REDO,
     val longPressMenu: Boolean = true,
+    val linkOverlay: Boolean = true,
 )
 
 fun InkCanvasView.applyGestures(gestures: CanvasGestures) {
@@ -259,6 +260,7 @@ class PenStore(context: Context) {
             twoFingerTap = prefs.getInt("twoFingerTap", TAP_UNDO),
             threeFingerTap = prefs.getInt("threeFingerTap", TAP_REDO),
             longPressMenu = prefs.getBoolean("longPressMenu", true),
+            linkOverlay = prefs.getBoolean("linkOverlay", true),
         )
         set(value) = prefs.edit()
             .putBoolean("eraseInk", value.eraseInk)
@@ -285,6 +287,7 @@ class PenStore(context: Context) {
             .putInt("twoFingerTap", value.twoFingerTap)
             .putInt("threeFingerTap", value.threeFingerTap)
             .putBoolean("longPressMenu", value.longPressMenu)
+            .putBoolean("linkOverlay", value.linkOverlay)
             .apply()
 
     /** See [InkCanvasView.compatWetInk]; on by default where the front buffer is known to fail. */

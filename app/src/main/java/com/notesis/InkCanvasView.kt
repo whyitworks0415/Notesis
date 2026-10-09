@@ -924,6 +924,15 @@ class InkCanvasView @JvmOverloads constructor(
     }
     private var longPressFired = false
 
+    /** Linked objects wear a pale blue wash so they can be found. */
+    var showLinkOverlay: Boolean = true
+    /** A link to another note was followed: its id and the page index to open at. */
+    var onOpenNoteLink: ((String, Int) -> Unit)? = null
+    /** Pages left by following a link, newest last, for going back. */
+    private val linkBackStack = ArrayList<Int>()
+    /** Whether there is somewhere to go back to; called after every jump and return. */
+    var onLinkBackChanged: ((Boolean) -> Unit)? = null
+
     /** Where the dragged selection caught, in page units, or NaN; drawn as guides. */
     private var guideX = Float.NaN
     private var guideY = Float.NaN
@@ -2556,6 +2565,7 @@ class InkCanvasView @JvmOverloads constructor(
                     if (onStrokeTapped != null && tapStrokeAt(event.x, event.y, index)) return true
                     // Reading is where a covered answer gets looked at.
                     if (toggleMaskAt(event.x, event.y, index)) return true
+                    if (followObjectLink(event.x, event.y)) return true
                     pressX = event.x
                     pressY = event.y
                     selectingPage = index
@@ -3394,7 +3404,8 @@ class InkCanvasView @JvmOverloads constructor(
             MotionEvent.ACTION_UP -> {
                 removeCallbacks(fingerLongPress)
                 val endedZoom = zooming
-                val openedLink = !longPressFired && (unfoldTap(event) || maybeOpenPdfLink(event.x, event.y))
+                val openedLink = !longPressFired && (unfoldTap(event) || objectLinkTap(event) ||
+                    maybeOpenPdfLink(event.x, event.y))
                 if (!openedLink) startFling()
                 viewportInteracting = false
                 viewportSpeedPxPerSecond = 0f
@@ -3425,6 +3436,12 @@ class InkCanvasView @JvmOverloads constructor(
             }
         }
         return true
+    }
+
+    private fun objectLinkTap(event: MotionEvent): Boolean {
+        val duration = System.currentTimeMillis() - gestureStartTime
+        if (gestureMaxPointers != 1 || duration >= TAP_MAX_MS || gestureMoved >= TAP_SLOP_PX) return false
+        return followObjectLink(event.x, event.y)
     }
 
     private fun unfoldTap(event: MotionEvent): Boolean {
@@ -3466,7 +3483,7 @@ class InkCanvasView @JvmOverloads constructor(
             it.background == PageBackground.PDF && it.pdfPageIndex == targetPdfPage
         }
         if (targetDocumentPage < 0) return false
-        scrollToPage(targetDocumentPage)
+        jumpToPage(targetDocumentPage)
         performClick()
         return true
     }
@@ -4115,7 +4132,7 @@ class InkCanvasView @JvmOverloads constructor(
                         }
                         if (target >= 0) {
                             clearSelection()
-                            scrollToPage(target)
+                            jumpToPage(target)
                         }
                     }
                 }
@@ -4602,6 +4619,100 @@ class InkCanvasView @JvmOverloads constructor(
         page.savedOnDisk = 0
         afterEdit(page)
         onLassoSelected?.invoke(lassoSelectionSize())
+    }
+
+    /** The link on the selection's group, if it has one. */
+    fun lassoLink(): String? {
+        val page = document.pages.getOrNull(lassoPage) ?: return null
+        return sharedLassoGroup()?.let { page.links[it] }
+    }
+
+    private fun sharedLassoGroup(): Int? {
+        val groups = lassoStrokes.map { StrokeTags.group(it) } + lassoImages.map { it.group }
+        val first = groups.firstOrNull() ?: return null
+        return first.takeIf { it != 0 && groups.all { g -> g == it } }
+    }
+
+    /**
+     * Links the selection to [target], or removes its link when null. The
+     * selection is grouped first, so the link stays with the objects wherever
+     * they are moved.
+     */
+    fun setLassoLink(target: String?) {
+        val page = document.pages.getOrNull(lassoPage) ?: return
+        if (!hasLassoSelection()) return
+        val group = sharedLassoGroup() ?: run {
+            groupLassoSelection(true)
+            sharedLassoGroup()
+        } ?: return
+        if (target.isNullOrBlank()) page.links.remove(group) else page.links[group] = target.trim()
+        afterEdit(page)
+    }
+
+    /** Pages are found by id, so a link still finds its page after reordering. */
+    fun pageIdAt(index: Int): String? = document.pages.getOrNull(index)?.id
+
+    /** Goes to page [index], remembering where from so [goBack] can return. */
+    fun jumpToPage(index: Int) {
+        if (index !in document.pages.indices || index == currentPage) return
+        linkBackStack += currentPage
+        scrollToPage(index)
+        onLinkBackChanged?.invoke(true)
+    }
+
+    fun goBack(): Boolean {
+        val back = linkBackStack.removeLastOrNull() ?: return false
+        scrollToPage(back.coerceIn(document.pages.indices))
+        onLinkBackChanged?.invoke(linkBackStack.isNotEmpty())
+        return true
+    }
+
+    /** Box round every object in [group] on [page], or empty. */
+    private fun groupBounds(page: Page, group: Int, out: RectF) {
+        out.setEmpty()
+        for (stroke in page.strokes) {
+            if (StrokeTags.group(stroke) != group) continue
+            val b = stroke.shape.computeBoundingBox() ?: continue
+            if (out.isEmpty) out.set(b.xMin, b.yMin, b.xMax, b.yMax) else out.union(b.xMin, b.yMin, b.xMax, b.yMax)
+        }
+        for (image in page.images) {
+            if (image.group != group) continue
+            if (out.isEmpty) out.set(image.x, image.y, image.x + image.width, image.y + image.height)
+            else out.union(image.x, image.y, image.x + image.width, image.y + image.height)
+        }
+    }
+
+    private val linkBox = RectF()
+
+    /** A tap on a linked object follows it. True when there was one under the tap. */
+    private fun followObjectLink(screenX: Float, screenY: Float): Boolean {
+        scratch[0] = screenX
+        scratch[1] = screenY
+        screenToDocument.mapPoints(scratch)
+        val index = document.pageAt(scratch[0], scratch[1])
+        val page = document.pages.getOrNull(index) ?: return false
+        if (page.links.isEmpty() || !page.loaded) return false
+        pageLocalInto(screenX, screenY, index, pageProbe)
+        val reach = touchSlop / currentScale().coerceAtLeast(0.001f)
+        for ((group, target) in page.links) {
+            groupBounds(page, group, linkBox)
+            linkBox.inset(-reach, -reach)
+            if (!linkBox.contains(pageProbe[0], pageProbe[1])) continue
+            when {
+                target.startsWith("page:") -> {
+                    val at = document.pages.indexOfFirst { it.id == target.removePrefix("page:") }
+                    if (at >= 0) jumpToPage(at)
+                }
+                target.startsWith("note:") -> {
+                    val rest = target.removePrefix("note:")
+                    onOpenNoteLink?.invoke(rest.substringBefore('#'), rest.substringAfter('#', "0").toIntOrNull() ?: 0)
+                }
+                else -> onLinkUrl?.invoke(target)
+            }
+            performClick()
+            return true
+        }
+        return false
     }
 
     fun lassoSelectionGrouped(): Boolean =
@@ -6106,6 +6217,7 @@ class InkCanvasView @JvmOverloads constructor(
                         for (stroke in lassoStrokes) scope.drawStroke(onScreen(stroke))
                         scoped.restore()
                     }
+                    if (showLinkOverlay && page.links.isNotEmpty()) drawLinks(scoped, page)
                     if (i == lassoPage) drawLasso(scoped)
                     if (i == selectingPage) {
                         selection?.boxes?.forEach { scoped.drawRect(it, selectionPaint) }
@@ -6211,6 +6323,18 @@ class InkCanvasView @JvmOverloads constructor(
                     canvas.restore()
                 }
                 if (turned) canvas.restore()
+            }
+        }
+
+        private val linkWash = Paint().apply { color = 0x332196F3 }
+
+        private fun drawLinks(canvas: Canvas, page: Page) {
+            for (group in page.links.keys) {
+                groupBounds(page, group, linkBox)
+                if (linkBox.isEmpty) continue
+                val pad = 4f / currentScale()
+                linkBox.inset(-pad, -pad)
+                canvas.drawRoundRect(linkBox, pad, pad, linkWash)
             }
         }
 
