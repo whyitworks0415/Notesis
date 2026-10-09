@@ -860,6 +860,28 @@ class InkCanvasView @JvmOverloads constructor(
     /** Dragging a picture's corner keeps its proportions; off, width and height go their own ways. */
     var keepAspect: Boolean = true
 
+    /** What one finger does: [FINGER_SCROLL], [FINGER_IGNORED] or [FINGER_DRAW]. */
+    var oneFinger: Int = FINGER_SCROLL
+    /** What two fingers do: [TWO_ZOOM_PAN], [TWO_SCROLL] or [TWO_IGNORED]. */
+    var twoFingers: Int = TWO_ZOOM_PAN
+    /** Pinching moves the page but never changes its zoom. */
+    var zoomLocked: Boolean = false
+    /** A one-finger double tap zooms in, or back out to the page width. */
+    var doubleTapZoom: Boolean = false
+    /** What a two- and a three-finger double tap do: [TAP_NONE], [TAP_UNDO], [TAP_REDO]. */
+    var twoFingerTap: Int = TAP_UNDO
+    var threeFingerTap: Int = TAP_REDO
+    /** A finger held still on the page; null leaves long presses alone. */
+    var onLongPressCanvas: ((Float, Float) -> Unit)? = null
+    private var fingerDrawing = false
+    private val fingerLongPress = Runnable {
+        if (gestureMaxPointers == 1 && gestureMoved < TAP_SLOP_PX) {
+            onLongPressCanvas?.invoke(lastFocusX, lastFocusY)
+            longPressFired = true
+        }
+    }
+    private var longPressFired = false
+
     /** Where the dragged selection caught, in page units, or NaN; drawn as guides. */
     private var guideX = Float.NaN
     private var guideY = Float.NaN
@@ -2298,7 +2320,29 @@ class InkCanvasView @JvmOverloads constructor(
         val stylus = event.getToolType(event.actionIndex) == MotionEvent.TOOL_TYPE_STYLUS
         if (!stylus && activeStylusPointer == null && laserPointer == null) {
             if (ruler.onFinger(event)) return true
+            // A finger set to write takes the pen's path, until a second finger says otherwise.
+            if (oneFinger == FINGER_DRAW && event.actionMasked == MotionEvent.ACTION_DOWN) {
+                fingerDrawing = true
+                return onStylus(event)
+            }
             return onFingers(event)
+        }
+        if (fingerDrawing && !stylus && event.actionMasked == MotionEvent.ACTION_POINTER_DOWN) {
+            // Two fingers are for moving the page: drop the line and start a pan.
+            fingerDrawing = false
+            val cancel = MotionEvent.obtain(event).apply { action = MotionEvent.ACTION_CANCEL }
+            val down = MotionEvent.obtain(event).apply { action = MotionEvent.ACTION_DOWN }
+            try {
+                onStylus(cancel)
+                onFingers(down)
+            } finally {
+                cancel.recycle()
+                down.recycle()
+            }
+            return onFingers(event)
+        }
+        if (fingerDrawing && (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL)) {
+            fingerDrawing = false
         }
         if (!latencyMonitoringEnabled) return onStylus(event)
         Trace.beginSection(when (event.actionMasked) {
@@ -3159,7 +3203,7 @@ class InkCanvasView @JvmOverloads constructor(
                 cancel.recycle()
             }
             suppressScaleUntilGestureEnd = true
-        } else if (!suppressScaleUntilGestureEnd) {
+        } else if (!suppressScaleUntilGestureEnd && !zoomLocked && twoFingers == TWO_ZOOM_PAN) {
             scaleDetector.onTouchEvent(event)
         }
         trackVelocity(event)
@@ -3185,10 +3229,13 @@ class InkCanvasView @JvmOverloads constructor(
                 closed3fThisGesture = false
                 zooming = false
                 draggedReference = false
+                longPressFired = false
+                if (onLongPressCanvas != null) postDelayed(fingerLongPress, LONG_PRESS_MS)
                 return true
             }
 
             MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_POINTER_UP -> {
+                removeCallbacks(fingerLongPress)
                 stopFling(resumeDetail = false)
                 gestureMaxPointers = maxOf(gestureMaxPointers, event.pointerCount)
                 // A second finger is the start of a pinch, and from here until
@@ -3283,7 +3330,9 @@ class InkCanvasView @JvmOverloads constructor(
                     lastFocusY = focus[1]
                     return true
                 }
-                if (!scaleDetector.isInProgress || event.pointerCount > 1) {
+                val panAllowed = if (event.pointerCount == 1) oneFinger == FINGER_SCROLL
+                    else twoFingers != TWO_IGNORED
+                if (panAllowed && (!scaleDetector.isInProgress || event.pointerCount > 1)) {
                     val multiplier = if (event.pointerCount == 1) {
                         viewportPanMultiplier.coerceIn(0.5f, 3f)
                     } else {
@@ -3301,14 +3350,15 @@ class InkCanvasView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_UP -> {
+                removeCallbacks(fingerLongPress)
                 val endedZoom = zooming
-                val openedLink = maybeOpenPdfLink(event.x, event.y)
+                val openedLink = !longPressFired && maybeOpenPdfLink(event.x, event.y)
                 if (!openedLink) startFling()
                 viewportInteracting = false
                 viewportSpeedPxPerSecond = 0f
                 viewportWasFast = false
                 releaseVelocity()
-                if (!openedLink) maybeHandleTap()
+                if (!openedLink && !longPressFired) maybeHandleTap()
                 endZoom()
                 if (!endedZoom && !flinging) resumeViewportDetail()
                 // A real fling keeps moving the page after the hand lifts, so
@@ -3319,6 +3369,7 @@ class InkCanvasView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_CANCEL -> {
+                removeCallbacks(fingerLongPress)
                 val endedZoom = zooming
                 viewportInteracting = false
                 viewportSpeedPxPerSecond = 0f
@@ -3408,15 +3459,20 @@ class InkCanvasView @JvmOverloads constructor(
      */
     private fun maybeHandleTap() {
         val duration = System.currentTimeMillis() - gestureStartTime
-        if (gestureMaxPointers !in 2..3 || duration >= TAP_MAX_MS || gestureMoved >= TAP_SLOP_PX) {
+        if (gestureMaxPointers !in 1..3 || duration >= TAP_MAX_MS || gestureMoved >= TAP_SLOP_PX) {
             return
         }
+        if (gestureMaxPointers == 1 && !doubleTapZoom) return
         val now = System.currentTimeMillis()
         val sameSpot = hypot(lastFocusX - lastTapX, lastFocusY - lastTapY) < DOUBLE_TAP_SLOP_PX
         if (lastTapFingers == gestureMaxPointers && now - lastTapTime < DOUBLE_TAP_MS && sameSpot) {
             when (gestureMaxPointers) {
-                2 -> onUndo?.invoke()
-                3 -> onRedo?.invoke()
+                1 -> if (!zoomLocked) {
+                    if (fitScale > 0f && currentScale() > fitScale * 1.2f) fitWidth()
+                    else zoomBy(DOUBLE_TAP_ZOOM, lastFocusX, lastFocusY)
+                }
+                2 -> runTapAction(twoFingerTap)
+                3 -> runTapAction(threeFingerTap)
             }
             lastTapFingers = 0
         } else {
@@ -3424,6 +3480,13 @@ class InkCanvasView @JvmOverloads constructor(
             lastTapTime = now
             lastTapX = lastFocusX
             lastTapY = lastFocusY
+        }
+    }
+
+    private fun runTapAction(action: Int) {
+        when (action) {
+            TAP_UNDO -> onUndo?.invoke()
+            TAP_REDO -> onRedo?.invoke()
         }
     }
 
@@ -6324,6 +6387,7 @@ class InkCanvasView @JvmOverloads constructor(
         const val SHAPE_STEP_MS = 8L
         const val RULER_GAP_PX = 1.5f
         const val SNAP_ALIGN_PX = 10f
+        const val DOUBLE_TAP_ZOOM = 2f
         const val STRIKE_HEIGHT = 0.08f
         // Page units are A4 at 150dpi, so a real millimetre of page is this many of them.
         const val A4_MM_WIDTH = 210f

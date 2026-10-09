@@ -30,6 +30,17 @@ data class PenPreset(
         if (pressure && tool == Tool.PEN) Tool.PRESSURE_PEN else tool
 }
 
+// What one finger, two fingers and multi-finger double taps do. See InkCanvasView.
+const val FINGER_SCROLL = 0
+const val FINGER_IGNORED = 1
+const val FINGER_DRAW = 2
+const val TWO_ZOOM_PAN = 0
+const val TWO_SCROLL = 1
+const val TWO_IGNORED = 2
+const val TAP_NONE = 0
+const val TAP_UNDO = 1
+const val TAP_REDO = 2
+
 /** What the eraser takes and which pen gestures do more than write. See InkCanvasView. */
 data class CanvasGestures(
     val eraseInk: Boolean = true,
@@ -49,6 +60,13 @@ data class CanvasGestures(
     val holdToDraw: Boolean = false,
     val snapToAlign: Boolean = true,
     val keepAspect: Boolean = true,
+    val oneFinger: Int = FINGER_SCROLL,
+    val twoFingers: Int = TWO_ZOOM_PAN,
+    val zoomLocked: Boolean = false,
+    val doubleTapZoom: Boolean = false,
+    val twoFingerTap: Int = TAP_UNDO,
+    val threeFingerTap: Int = TAP_REDO,
+    val longPressMenu: Boolean = true,
 )
 
 fun InkCanvasView.applyGestures(gestures: CanvasGestures) {
@@ -69,6 +87,12 @@ fun InkCanvasView.applyGestures(gestures: CanvasGestures) {
     holdToDraw = gestures.holdToDraw
     snapToAlign = gestures.snapToAlign
     keepAspect = gestures.keepAspect
+    oneFinger = gestures.oneFinger
+    twoFingers = gestures.twoFingers
+    zoomLocked = gestures.zoomLocked
+    doubleTapZoom = gestures.doubleTapZoom
+    twoFingerTap = gestures.twoFingerTap
+    threeFingerTap = gestures.threeFingerTap
 }
 
 /**
@@ -216,6 +240,13 @@ class PenStore(context: Context) {
             holdToDraw = prefs.getBoolean("holdToDraw", false),
             snapToAlign = prefs.getBoolean("snapToAlign", true),
             keepAspect = prefs.getBoolean("keepAspect", true),
+            oneFinger = prefs.getInt("oneFinger", FINGER_SCROLL),
+            twoFingers = prefs.getInt("twoFingers", TWO_ZOOM_PAN),
+            zoomLocked = prefs.getBoolean("zoomLocked", false),
+            doubleTapZoom = prefs.getBoolean("doubleTapZoom", false),
+            twoFingerTap = prefs.getInt("twoFingerTap", TAP_UNDO),
+            threeFingerTap = prefs.getInt("threeFingerTap", TAP_REDO),
+            longPressMenu = prefs.getBoolean("longPressMenu", true),
         )
         set(value) = prefs.edit()
             .putBoolean("eraseInk", value.eraseInk)
@@ -235,6 +266,13 @@ class PenStore(context: Context) {
             .putBoolean("holdToDraw", value.holdToDraw)
             .putBoolean("snapToAlign", value.snapToAlign)
             .putBoolean("keepAspect", value.keepAspect)
+            .putInt("oneFinger", value.oneFinger)
+            .putInt("twoFingers", value.twoFingers)
+            .putBoolean("zoomLocked", value.zoomLocked)
+            .putBoolean("doubleTapZoom", value.doubleTapZoom)
+            .putInt("twoFingerTap", value.twoFingerTap)
+            .putInt("threeFingerTap", value.threeFingerTap)
+            .putBoolean("longPressMenu", value.longPressMenu)
             .apply()
 
     /** See [InkCanvasView.compatWetInk]; on by default where the front buffer is known to fail. */

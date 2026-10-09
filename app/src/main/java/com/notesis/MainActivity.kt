@@ -1322,6 +1322,50 @@ internal val NOTE_LABELS = listOf(
     0xFF1E88E5.toInt(), 0xFF8E24AA.toInt(), 0xFF6D4C41.toInt(), 0xFF546E7A.toInt(),
 )
 
+/** What fingers do on the page, apart from the pen. */
+@Composable
+internal fun InputSettingsDialog(gestures: CanvasGestures, onGestures: (CanvasGestures) -> Unit, onDismiss: () -> Unit) {
+    @Composable
+    fun choices(title: String, options: List<Pair<Int, String>>, selected: Int, onPick: (Int) -> Unit) {
+        Text(title, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 8.dp))
+        Row(Modifier.horizontalScroll(rememberScrollState())) {
+            options.forEach { (value, label) ->
+                SettingsChoiceChip(selected = selected == value, onClick = { onPick(value) }, label = label,
+                    modifier = Modifier.padding(end = 6.dp))
+            }
+        }
+    }
+    val taps = listOf(TAP_NONE to "없음", TAP_UNDO to "실행 취소", TAP_REDO to "다시 실행")
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("손가락·제스처") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                choices("한 손가락", listOf(FINGER_SCROLL to "스크롤", FINGER_IGNORED to "무시", FINGER_DRAW to "그리기"),
+                    gestures.oneFinger) { onGestures(gestures.copy(oneFinger = it)) }
+                choices("두 손가락", listOf(TWO_ZOOM_PAN to "확대·이동", TWO_SCROLL to "스크롤", TWO_IGNORED to "무시"),
+                    gestures.twoFingers) { onGestures(gestures.copy(twoFingers = it)) }
+                choices("두 손가락 두 번 탭", taps, gestures.twoFingerTap) { onGestures(gestures.copy(twoFingerTap = it)) }
+                choices("세 손가락 두 번 탭", taps, gestures.threeFingerTap) { onGestures(gestures.copy(threeFingerTap = it)) }
+                @Composable
+                fun toggle(label: String, on: Boolean, set: (Boolean) -> Unit) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+                        SkinSwitch(checked = on, onCheckedChange = set)
+                        Spacer(Modifier.width(10.dp))
+                        Text(label)
+                    }
+                }
+                toggle("확대·축소 잠금", gestures.zoomLocked) { onGestures(gestures.copy(zoomLocked = it)) }
+                toggle("한 손가락 두 번 탭으로 확대", gestures.doubleTapZoom) { onGestures(gestures.copy(doubleTapZoom = it)) }
+                toggle("길게 눌러 메뉴 열기", gestures.longPressMenu) { onGestures(gestures.copy(longPressMenu = it)) }
+                Text("손바닥이 닿는다면 한 손가락을 '무시'로, 두 손가락을 '스크롤'로 두세요. 그리기 모드에서는 두 손가락으로 화면을 움직입니다.",
+                    style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("닫기") } },
+    )
+}
+
 /** The master password, typed twice, and a hint for the day it is forgotten. */
 @Composable
 private fun SetPasswordDialog(onSet: (String, String) -> Unit, onDismiss: () -> Unit) {
@@ -3096,6 +3140,9 @@ private fun NoteScreen(
     val lifecycleOwner = context as? LifecycleOwner
     val scope = rememberCoroutineScope()
     var showVoice by remember { mutableStateOf(false) }
+    var showInput by remember { mutableStateOf(false) }
+    /** Where a finger was held on the page, in screen pixels, while its menu is up. */
+    var pressMenu by remember { mutableStateOf<Offset?>(null) }
     var playNextRecording by remember { mutableStateOf<String?>(null) }
     var voiceRevision by remember { mutableIntStateOf(0) }
     var recorder by remember { mutableStateOf<android.media.MediaRecorder?>(null) }
@@ -3644,6 +3691,7 @@ private fun NoteScreen(
                 edits++
             },
             onSticker = { pickingSticker = true },
+            onInputSettings = { showInput = true },
             recording = recorder != null,
             onVoice = { showVoice = true },
             noteRotation = noteRotation,
@@ -3834,6 +3882,7 @@ private fun NoteScreen(
                     view.partialEraser = partialEraser
                     view.applyGestures(gestures)
                     view.laserMode = laser
+                    view.onLongPressCanvas = if (gestures.longPressMenu) { x, y -> pressMenu = Offset(x, y) } else null
                     view.laserTrail = !laserDot
                     view.rulerKind = ruler
                     view.onRulerClosed = { ruler = null }
@@ -4539,6 +4588,53 @@ private fun NoteScreen(
                 onDismiss = { editingPicture = 0; edits++ },
             )
         }
+        if (showInput) InputSettingsDialog(gestures, onGestures = { setGestures(it) }, onDismiss = { showInput = false })
+
+        pressMenu?.let { at ->
+            val system = context.getSystemService(android.content.ClipboardManager::class.java)
+            val clip = system?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)
+            val inkClip = InkClipboard.clips.firstOrNull()
+            Box(Modifier.offset { IntOffset(at.x.roundToInt(), at.y.roundToInt()) }) {
+                DropdownMenu(true, onDismissRequest = { pressMenu = null }) {
+                    if (inkClip != null) DropdownMenuItem(text = { Text("붙여넣기 (${inkClip.size}개)") }, onClick = {
+                        pressMenu = null
+                        canvas?.paste(inkClip)
+                        edits++
+                    })
+                    val pastedText = clip?.coerceToText(context)?.toString()?.takeIf { clip.uri == null && it.isNotBlank() }
+                    if (pastedText != null) DropdownMenuItem(text = { Text("텍스트 붙여넣기") }, onClick = {
+                        pressMenu = null
+                        val content = TextBoxContent(pastedText.take(4000))
+                        scope.launch {
+                            val result = withContext(Dispatchers.IO) { runCatching {
+                                val bitmap = renderTextBox(content)
+                                try { store.addImage(note.id, bitmap)?.let { Triple(it.first, bitmap.width, bitmap.height) } }
+                                finally { bitmap.recycle() }
+                            }.getOrNull() }
+                            if (result != null) {
+                                canvas?.putTextBox(result.first, result.second, result.third, content)
+                                edits++
+                            }
+                        }
+                    })
+                    val uri = clip?.uri
+                    if (uri != null) DropdownMenuItem(text = { Text("이미지 붙여넣기") }, onClick = {
+                        pressMenu = null
+                        scope.launch {
+                            val added = withContext(Dispatchers.IO) {
+                                runCatching { context.contentResolver.openInputStream(uri)?.use { store.addImage(note.id, it) } }.getOrNull()
+                            }
+                            if (added != null) { canvas?.insertImage(added.first, added.second); edits++ }
+                            else Toast.makeText(context, "이미지를 붙여넣지 못했습니다", Toast.LENGTH_SHORT).show()
+                        }
+                    })
+                    if (inkClip == null && pastedText == null && uri == null) {
+                        DropdownMenuItem(text = { Text("붙여넣을 내용이 없습니다") }, onClick = { pressMenu = null }, enabled = false)
+                    }
+                }
+            }
+        }
+
         if (pickingSticker) StickerDialog(onPick = { sticker ->
             pickingSticker = false
             scope.launch {
@@ -6434,6 +6530,7 @@ private fun Toolbar(
     onRuler: (RulerKind?) -> Unit = {},
     onAddPage: () -> Unit = {},
     onSticker: () -> Unit = {},
+    onInputSettings: () -> Unit = {},
 ) {
     val topRow: @Composable () -> Unit = {
         // ---- top row: the note, and what is done to the whole of it
@@ -6547,6 +6644,7 @@ private fun Toolbar(
             }
             RulerButton(ruler, onRuler)
             IconButton(onClick = onSticker) { Text("😀") }
+            IconButton(onClick = onInputSettings) { Icon(Reicons.TouchApp, contentDescription = "손가락·제스처") }
             IconButton(onClick = onAddPage) {
                 Icon(Reicons.Add, contentDescription = "페이지 추가")
             }
@@ -6588,6 +6686,7 @@ private fun Toolbar(
                 }))
                 add(SpotiToolbarAction("사진", Reicons.AddPhotoAlternate, onClick = onPickImage))
                 add(SpotiToolbarAction("스티커", Reicons.AutoAwesome, onClick = onSticker))
+                add(SpotiToolbarAction("손가락·제스처", Reicons.TouchApp, onClick = onInputSettings))
                 add(SpotiToolbarAction("UI · 화면 설정", Reicons.AutoAwesomeMosaic, slot = 6, onClick = onScreenSettings))
                 add(SpotiToolbarAction("화면 맞추기 · $zoomLabel", Reicons.ZoomOutMap, onClick = onFitWidth))
                 add(SpotiToolbarAction("인터넷", Reicons.Language, onClick = { onWeb(SEARCH_HOME) }))
