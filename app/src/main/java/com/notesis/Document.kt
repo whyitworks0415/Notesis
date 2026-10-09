@@ -980,6 +980,38 @@ class NoteStore(context: Context) {
 
     fun pdfFile(id: String): File = File(root, "$id/doc.pdf")
 
+    /** One entry of the outline a PDF carries inside it. */
+    data class PdfOutlineEntry(val title: String, val pdfPage: Int, val level: Int)
+
+    /**
+     * The PDF's own table of contents, flattened in reading order. Read from
+     * the file each time it is asked for; it is the document's, not the note's,
+     * and is never edited here.
+     */
+    fun pdfOutline(id: String): List<PdfOutlineEntry> {
+        val file = pdfFile(id)
+        if (!file.isFile) return emptyList()
+        PDFBoxResourceLoader.init(appContext)
+        return runCatching {
+            PDDocument.load(file, MemoryUsageSetting.setupTempFileOnly().setTempDir(appContext.cacheDir)).use { doc ->
+                val out = mutableListOf<PdfOutlineEntry>()
+                fun walk(node: com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineNode, level: Int) {
+                    var child = node.firstChild
+                    var guard = 0
+                    while (child != null && guard++ < MAX_OUTLINE_ENTRIES) {
+                        val page = runCatching { child.findDestinationPage(doc) }.getOrNull()
+                        val index = page?.let { doc.pages.indexOf(it) } ?: -1
+                        if (index >= 0) out += PdfOutlineEntry(child.title.orEmpty().trim(), index, level)
+                        if (level < MAX_OUTLINE_DEPTH) walk(child, level + 1)
+                        child = child.nextSibling
+                    }
+                }
+                doc.documentCatalog.documentOutline?.let { walk(it, 0) }
+                out
+            }
+        }.getOrDefault(emptyList())
+    }
+
     /** Study progress on the note's tape; see [MaskStudy]. */
     fun studyFile(id: String): File = File(root, "$id/study.json")
 
@@ -1877,6 +1909,8 @@ class NoteStore(context: Context) {
         const val TRASHED = "trashed"
         const val FAVORITE = "favorite"
         const val TRASH_DAYS = 14
+        private const val MAX_OUTLINE_ENTRIES = 2000
+        private const val MAX_OUTLINE_DEPTH = 6
         const val TAGS = "tags.json"
         const val LABEL = "label"
         const val LOCKED = "locked"

@@ -83,6 +83,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material.icons.outlined.BookmarkBorder
@@ -3338,6 +3339,10 @@ private fun NoteScreen(
     var showVoice by remember { mutableStateOf(false) }
     var showInput by remember { mutableStateOf(false) }
     var showLibrary by remember { mutableStateOf(false) }
+    // The PDF's own contents, read once off the main thread when the note opens.
+    val pdfOutline by produceState(emptyList<NoteStore.PdfOutlineEntry>(), note.id) {
+        value = withContext(Dispatchers.IO) { store.pdfOutline(note.id) }
+    }
     var linking by remember { mutableStateOf(false) }
     var canGoBack by remember { mutableStateOf(false) }
     /** Where a finger was held on the page, in screen pixels, while its menu is up. */
@@ -5000,6 +5005,7 @@ private fun NoteScreen(
             modifier = Modifier.align(Alignment.CenterEnd),
         ) {
             PageSidebar(
+                pdfOutline = pdfOutline,
                 document = canvas?.document,
                 currentPage = currentPage,
                 edits = edits,
@@ -6150,6 +6156,7 @@ private fun PageScrubber(
 
 @Composable
 private fun PageSidebar(
+    pdfOutline: List<NoteStore.PdfOutlineEntry> = emptyList(),
     document: Document?,
     currentPage: Int,
     // Read so that laying tape down or peeling it off redraws the list; the
@@ -6184,6 +6191,7 @@ private fun PageSidebar(
     var editingPage by remember { mutableStateOf<Page?>(null) }
     var bookmarksOnly by remember { mutableStateOf(false) }
     var tocQuery by remember { mutableStateOf("") }
+    var showPdfOutline by remember { mutableStateOf(true) }
     var goingTo by remember { mutableStateOf(false) }
     if (goingTo) GoToPageDialog(pages.size, onGo = { onJump(it) }, onDismiss = { goingTo = false })
     var tocName by remember { mutableStateOf("") }
@@ -6261,7 +6269,32 @@ private fun PageSidebar(
                         }
                     }
                 }
-                if (tab == 1 && pages.none { it.tocTitle != null }) {
+                // The PDF's own outline: shown or filtered out, followed with a tap, never deleted.
+                if (tab == 1 && pdfOutline.isNotEmpty()) {
+                    item {
+                        FilterChip(selected = showPdfOutline, onClick = { showPdfOutline = !showPdfOutline },
+                            label = { Text("PDF 목차 ${pdfOutline.size}") })
+                    }
+                    if (showPdfOutline) items(pdfOutline.filter {
+                        tocQuery.isBlank() || it.title.contains(tocQuery.trim(), ignoreCase = true)
+                    }) { entry ->
+                        val target = pages.indexOfFirst { it.background == PageBackground.PDF && it.pdfPageIndex == entry.pdfPage }
+                        Text(
+                            entry.title.ifBlank { "(제목 없음)" } + "  · ${entry.pdfPage + 1}",
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(enabled = target >= 0) { onJump(target) }
+                                .padding(start = (8 + entry.level.coerceAtMost(4) * 12).dp, top = 4.dp, bottom = 4.dp),
+                        )
+                    }
+                }
+                if (tab == 1 && pages.any { it.tocTitle != null } && pdfOutline.isNotEmpty()) {
+                    item { Text("내 목차", style = MaterialTheme.typography.labelMedium) }
+                }
+                if (tab == 1 && pages.none { it.tocTitle != null } && pdfOutline.isEmpty()) {
                     item {
                         Text(
                             "등록된 목차가 없습니다. 현재 쪽을 추가하거나 페이지를 길게 눌러 설정하세요.",
