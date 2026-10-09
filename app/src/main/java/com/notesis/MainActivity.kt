@@ -3554,6 +3554,7 @@ private fun NoteScreen(
     val scope = rememberCoroutineScope()
     var showVoice by remember { mutableStateOf(false) }
     var showInput by remember { mutableStateOf(false) }
+    var dictating by remember { mutableStateOf(false) }
     var shapeCorner by remember { mutableFloatStateOf(PenStore(context).shapeCornerRadius) }
     /** The last tool that was not the eraser, for going back to after an erase. */
     var beforeEraser by remember { mutableStateOf(EditMode.PEN) }
@@ -3909,6 +3910,21 @@ private fun NoteScreen(
     // A multiple of fit-to-width, which is the 100% anybody means.
     var zoom by remember { mutableFloatStateOf(1f) }
     var canvas by remember { mutableStateOf<InkCanvasView?>(null) }
+    /** Puts [text] on the page as a text box in the middle of the screen. */
+    fun putTypedText(text: String) {
+        val content = TextBoxContent(text.take(4000))
+        scope.launch {
+            val result = withContext(Dispatchers.IO) { runCatching {
+                val bitmap = renderTextBox(content)
+                try { store.addImage(note.id, bitmap)?.let { Triple(it.first, bitmap.width, bitmap.height) } }
+                finally { bitmap.recycle() }
+            }.getOrNull() }
+            if (result != null) {
+                canvas?.putTextBox(result.first, result.second, result.third, content)
+                edits++
+            }
+        }
+    }
     val takePhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { taken ->
         val file = java.io.File(context.cacheDir, "shared/camera.jpg")
         if (!taken || !file.isFile) return@rememberLauncherForActivityResult
@@ -4373,6 +4389,7 @@ private fun NoteScreen(
                     view.partialEraser = partialEraser
                     view.applyGestures(gestures)
                     view.laserMode = laser
+                    view.onEditTextBox = { replacingText = canvas?.selectedTextBox(); showTextBox = true }
                     view.shapeCornerRadius = shapeCorner
                     if (mode != EditMode.ERASE && mode in PenStore.DEFAULTS) beforeEraser = mode
                     view.onEraseFinished = if (gestures.eraserReturns && mode == EditMode.ERASE) {
@@ -4652,6 +4669,13 @@ private fun NoteScreen(
                                 startRecording()
                             } else requestAudioPermission.launch(android.Manifest.permission.RECORD_AUDIO)
                         }) { Text(if (recorder == null) "● 새 녹음 시작" else "■ 녹음 끝내기") }
+                        TextButton(enabled = recorder == null, onClick = {
+                            showVoice = false
+                            if (androidx.core.content.ContextCompat.checkSelfPermission(
+                                    context, android.Manifest.permission.RECORD_AUDIO,
+                                ) == android.content.pm.PackageManager.PERMISSION_GRANTED) dictating = true
+                            else requestAudioPermission.launch(android.Manifest.permission.RECORD_AUDIO)
+                        }) { Text("음성 받아쓰기") }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             var autoNext by remember { mutableStateOf(penStore.autoPlayNext) }
                             SkinSwitch(checked = autoNext, onCheckedChange = { autoNext = it; penStore.autoPlayNext = it })
@@ -5186,6 +5210,11 @@ private fun NoteScreen(
             )
         }
         if (editingTools) ToolbarEditDialog(onDismiss = { editingTools = false })
+        if (dictating) DictationDialog(
+            onInsert = { text -> dictating = false; putTypedText(text) },
+            onCopy = { text -> clipboard.setText(AnnotatedString(text)) },
+            onDismiss = { dictating = false },
+        )
         if (noteMenu) {
             val meta = remember(edits) { store.list().firstOrNull { it.id == note.id } ?: note }
             var confirmDelete by remember { mutableStateOf(false) }
@@ -5267,18 +5296,7 @@ private fun NoteScreen(
                     val pastedText = clip?.coerceToText(context)?.toString()?.takeIf { clip.uri == null && it.isNotBlank() }
                     if (pastedText != null) DropdownMenuItem(text = { Text("텍스트 붙여넣기") }, onClick = {
                         pressMenu = null
-                        val content = TextBoxContent(pastedText.take(4000))
-                        scope.launch {
-                            val result = withContext(Dispatchers.IO) { runCatching {
-                                val bitmap = renderTextBox(content)
-                                try { store.addImage(note.id, bitmap)?.let { Triple(it.first, bitmap.width, bitmap.height) } }
-                                finally { bitmap.recycle() }
-                            }.getOrNull() }
-                            if (result != null) {
-                                canvas?.putTextBox(result.first, result.second, result.third, content)
-                                edits++
-                            }
-                        }
+                        putTypedText(pastedText)
                     })
                     val uri = clip?.uri
                     if (uri != null) DropdownMenuItem(text = { Text("이미지 붙여넣기") }, onClick = {

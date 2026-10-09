@@ -2941,6 +2941,13 @@ class InkCanvasView @JvmOverloads constructor(
                     onTextRequested?.invoke(position.first, position.second, position.third)
                     return true
                 }
+                if (pendingTextEdit) {
+                    // After the lift, so the dialog cannot take ACTION_UP from the canvas.
+                    pendingTextEdit = false
+                    endStylus()
+                    onEditTextBox?.invoke()
+                    return true
+                }
                 if (capturing) {
                     finishCapture()
                     endStylus()
@@ -5427,6 +5434,11 @@ class InkCanvasView @JvmOverloads constructor(
 
     fun selectedImageBox(): Int = selectedImage?.box ?: PageImage.BOX_NONE
 
+    /** A text box or sticky note was tapped twice; open it for editing. */
+    var onEditTextBox: (() -> Unit)? = null
+    private var lastImageTap = 0L
+    private var pendingTextEdit = false
+
     fun selectedTable(): PageImage? = selectedImage?.takeIf { it.box == PageImage.BOX_TABLE }
 
     /**
@@ -5498,6 +5510,14 @@ class InkCanvasView @JvmOverloads constructor(
             if (textMode) pendingTextPlacement = Triple(index, x, y)
             return
         }
+        // A second tap on a text box or sticky note already in hand opens it for editing.
+        if (hit === selectedImage && hit.textContent != null &&
+            event.eventTime - lastImageTap < DOUBLE_TAP_MS && onEditTextBox != null) {
+            lastImageTap = 0L
+            pendingTextEdit = true
+            return
+        }
+        lastImageTap = event.eventTime
         select(hit, page)
         resizingImage = hypot(x - (hit.x + hit.width), y - (hit.y + hit.height)) <= grab
         movingImage = !resizingImage
