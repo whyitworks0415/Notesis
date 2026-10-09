@@ -564,6 +564,9 @@ private class LaserView(context: Context) : View(context) {
     }
     private val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFF3B30.toInt() }
 
+    /** False draws only the dot under the pen, with nothing trailing behind it. */
+    var trail = true
+
     init {
         setWillNotDraw(false)
     }
@@ -601,7 +604,7 @@ private class LaserView(context: Context) : View(context) {
             count--
         }
         if (count == 0) return
-        for (i in 1 until count) {
+        if (trail) for (i in 1 until count) {
             val a = (start + i - 1) % CAPACITY
             val b = (start + i) % CAPACITY
             val fade = (1f - (now - times[b]).toFloat() / LIFE_MS).coerceIn(0f, 1f)
@@ -812,6 +815,11 @@ class InkCanvasView @JvmOverloads constructor(
             if (!value) laser.clear()
         }
 
+    /** The laser as a dot alone, or a dot with a fading trail. */
+    var laserTrail: Boolean
+        get() = laser.trail
+        set(value) { laser.trail = value }
+
     /** Cut strokes where the eraser crosses them instead of removing them whole. */
     var partialEraser: Boolean = false
 
@@ -845,6 +853,16 @@ class InkCanvasView @JvmOverloads constructor(
     /** Pictures and text boxes go whole when the eraser touches them. Off, like ink-only erasing. */
     var eraseImages: Boolean = false
     var eraseText: Boolean = false
+
+    /** A dragged selection catches on the page's edges and middle and on pictures' edges. */
+    var snapToAlign: Boolean = true
+
+    /** Dragging a picture's corner keeps its proportions; off, width and height go their own ways. */
+    var keepAspect: Boolean = true
+
+    /** Where the dragged selection caught, in page units, or NaN; drawn as guides. */
+    private var guideX = Float.NaN
+    private var guideY = Float.NaN
 
     /**
      * Reading rather than writing: the pen selects PDF text by dragging, the
@@ -1105,6 +1123,12 @@ class InkCanvasView @JvmOverloads constructor(
     private val predictionHead = PredictionHeadView(context)
     private val laser = LaserView(context)
     private val ruler = RulerView(context).apply { visibility = GONE }
+    private val eyedropper = EyedropperView(context)
+
+    /** The next touch picks a colour off the screen instead of drawing; [onPicked] gets it. */
+    fun pickColor(onPicked: (Int) -> Unit) {
+        eyedropper.onPicked = onPicked
+    }
 
     /** The straightedge laid on the screen, or null for none. */
     var rulerKind: RulerKind? = null
@@ -1488,6 +1512,7 @@ class InkCanvasView @JvmOverloads constructor(
         addView(predictionHead, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(laser, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(ruler, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        addView(eyedropper, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         wet.textureBitmapStore = PencilTextureStore
         // InProgressStrokesView chooses its front-buffer implementation for
         // supported hardware. Do not force the deprecated high-latency helper;
@@ -2269,6 +2294,7 @@ class InkCanvasView @JvmOverloads constructor(
     private fun onTouch(event: MotionEvent): Boolean {
         // Keyboard shortcuts need focus; a keyboard can be attached at any time.
         if (event.actionMasked == MotionEvent.ACTION_DOWN && !isFocused) requestFocus()
+        if (activeStylusPointer == null && eyedropper.onTouch(event)) return true
         val stylus = event.getToolType(event.actionIndex) == MotionEvent.TOOL_TYPE_STYLUS
         if (!stylus && activeStylusPointer == null && laserPointer == null) {
             if (ruler.onFinger(event)) return true
@@ -2562,6 +2588,7 @@ class InkCanvasView @JvmOverloads constructor(
                     pageLocalInto(event.getX(index), event.getY(index), lassoPage, shapeEnd)
                     lassoDx = shapeEnd[0] - lassoGrab[0]
                     lassoDy = shapeEnd[1] - lassoGrab[1]
+                    if (snapToAlign) snapLassoMove()
                     dry.postInvalidateOnAnimation()
                     return true
                 }
@@ -4484,7 +4511,34 @@ class InkCanvasView @JvmOverloads constructor(
         return true
     }
 
+    /**
+     * Nudges the drag so the selection's left, middle or right lands exactly on
+     * a page edge, the page's middle, or a picture's edge when within reach.
+     */
+    private fun snapLassoMove() {
+        val page = document.pages.getOrNull(lassoPage) ?: return
+        val reach = SNAP_ALIGN_PX / currentScale()
+        val xs = ArrayList<Float>()
+        val ys = ArrayList<Float>()
+        xs += 0f; xs += page.width / 2f; xs += page.width
+        ys += 0f; ys += page.height / 2f; ys += page.height
+        for (image in page.images) {
+            if (lassoImages.any { it === image }) continue
+            xs += image.x; xs += image.x + image.width
+            ys += image.y; ys += image.y + image.height
+        }
+        val b = lassoBounds
+        val snapX = alignOffset(floatArrayOf(b.left + lassoDx, b.centerX() + lassoDx, b.right + lassoDx), xs, reach)
+        val snapY = alignOffset(floatArrayOf(b.top + lassoDy, b.centerY() + lassoDy, b.bottom + lassoDy), ys, reach)
+        guideX = snapX?.second ?: Float.NaN
+        guideY = snapY?.second ?: Float.NaN
+        snapX?.let { lassoDx += it.first }
+        snapY?.let { lassoDy += it.first }
+    }
+
     private fun finishLassoMove() {
+        guideX = Float.NaN
+        guideY = Float.NaN
         movingLasso = false
         liftedLassoStrokes = null
         val page = document.pages.getOrNull(lassoPage) ?: return
@@ -4914,7 +4968,8 @@ class InkCanvasView @JvmOverloads constructor(
             // Width leads and height follows, so a picture never gets squashed.
             val width = (imagePoint[0] - image.x).coerceAtLeast(IMAGE_MIN_SIZE)
             image.width = width
-            image.height = if (aspect > 0f) width / aspect else width
+            image.height = if (!keepAspect) (imagePoint[1] - image.y).coerceAtLeast(IMAGE_MIN_SIZE)
+                else if (aspect > 0f) width / aspect else width
         } else {
             image.x += imagePoint[0] - imageGrab[0]
             image.y += imagePoint[1] - imageGrab[1]
@@ -5887,6 +5942,13 @@ class InkCanvasView @JvmOverloads constructor(
             overlay.pathEffect = lassoDashes(scale)
             canvas.drawRect(selectionBox, overlay)
             overlay.pathEffect = null
+            if (movingLasso && (!guideX.isNaN() || !guideY.isNaN())) {
+                val page = document.pages.getOrNull(lassoPage) ?: return
+                overlay.color = 0xFFE91E63.toInt()
+                overlay.strokeWidth = 1f / scale
+                if (!guideX.isNaN()) canvas.drawLine(guideX, 0f, guideX, page.height, overlay)
+                if (!guideY.isNaN()) canvas.drawLine(0f, guideY, page.width, guideY, overlay)
+            }
         }
 
         private fun lassoDashes(scale: Float): android.graphics.DashPathEffect {
@@ -6198,6 +6260,7 @@ class InkCanvasView @JvmOverloads constructor(
         const val SHADOW = 4f
         const val SHAPE_STEP_MS = 8L
         const val RULER_GAP_PX = 1.5f
+        const val SNAP_ALIGN_PX = 10f
         // Page units are A4 at 150dpi, so a real millimetre of page is this many of them.
         const val A4_MM_WIDTH = 210f
         const val IMAGE_INSERT_FRACTION = 0.5f

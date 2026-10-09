@@ -1762,6 +1762,7 @@ internal fun PenDialog(
     gestures: CanvasGestures = CanvasGestures(),
     onGestures: (CanvasGestures) -> Unit = {},
     onClearPage: (() -> Unit)? = null,
+    onEyedropper: (() -> Unit)? = null,
 ) {
     val start = pen
     val hsv = remember(pen) {
@@ -1830,7 +1831,10 @@ internal fun PenDialog(
                     }
                 }
                 if (mode.tints) {
-                    TextButton(onClick = { paletteOpen = true }) { Text("색 팔레트") }
+                    Row {
+                        TextButton(onClick = { paletteOpen = true }) { Text("색 팔레트") }
+                        if (onEyedropper != null) TextButton(onClick = onEyedropper) { Text("스포이드") }
+                    }
                     SaturationValueField(hue, saturation, value) { s, v ->
                         saturation = s
                         value = v
@@ -3082,6 +3086,7 @@ private fun NoteScreen(
     )
     var showLatency by remember { mutableStateOf(false) }
     var laser by remember { mutableStateOf(false) }
+    var laserDot by remember { mutableStateOf(false) }
     var ruler by remember { mutableStateOf<RulerKind?>(null) }
     var rulerAngle by remember { mutableStateOf(false) }
     var showPages by remember { mutableStateOf(false) }
@@ -3339,7 +3344,14 @@ private fun NoteScreen(
             onToggleFullscreen = { fullscreen = !fullscreen },
             onToggleLatency = { showLatency = !showLatency },
             laser = laser,
-            onToggleLaser = { laser = !laser },
+            onToggleLaser = {
+                when {
+                    !laser -> { laser = true; laserDot = false }
+                    !laserDot -> laserDot = true
+                    else -> laser = false
+                }
+            },
+            laserDot = laserDot,
             ruler = ruler,
             onRuler = { picked ->
                 if (picked != null && picked == ruler) rulerAngle = true else ruler = picked
@@ -3538,6 +3550,7 @@ private fun NoteScreen(
                     view.partialEraser = partialEraser
                     view.applyGestures(gestures)
                     view.laserMode = laser
+                    view.laserTrail = !laserDot
                     view.rulerKind = ruler
                     view.onRulerClosed = { ruler = null }
                     view.autoShapeRecognitionEnabled = autoShapes
@@ -3853,6 +3866,17 @@ private fun NoteScreen(
                     canvas?.let { it.clearPage(it.currentPageIndex()) }
                     edits++
                     editingPen = false
+                },
+                onEyedropper = {
+                    val picking = mode
+                    editingPen = false
+                    canvas?.pickColor { picked ->
+                        val current = settings[picking] ?: return@pickColor
+                        // The picked hue at the alpha the tool already had: a highlighter stays see-through.
+                        val alpha = current.colorArgb and 0xFF000000.toInt()
+                        settings = settings + (picking to current.copy(colorArgb = (picked and 0xFFFFFF) or alpha))
+                        editingPen = true
+                    }
                 },
                 autoShapes = autoShapes,
                 onAutoShapes = { autoShapes = it; penStore.autoShapes = it },
@@ -4616,6 +4640,12 @@ private fun PasteBar(
         ) {
             SettingsChoiceChip(selected = wholeOnly, onClick = { onWholeOnly(!wholeOnly) },
                 label = "완전히 포함된 것만")
+            SettingsChoiceChip(selected = gestures.snapToAlign,
+                onClick = { onGestures(gestures.copy(snapToAlign = !gestures.snapToAlign)) },
+                label = "정렬 스냅", modifier = Modifier.padding(start = 6.dp))
+            SettingsChoiceChip(selected = gestures.keepAspect,
+                onClick = { onGestures(gestures.copy(keepAspect = !gestures.keepAspect)) },
+                label = "비율 유지", modifier = Modifier.padding(start = 6.dp))
             ToolbarDivider()
             var types by remember { mutableStateOf(false) }
             Box {
@@ -5994,6 +6024,7 @@ private fun Toolbar(
     modifier: Modifier = Modifier,
     laser: Boolean = false,
     onToggleLaser: () -> Unit = {},
+    laserDot: Boolean = false,
     ruler: RulerKind? = null,
     onRuler: (RulerKind?) -> Unit = {},
     onAddPage: () -> Unit = {},
@@ -6104,7 +6135,7 @@ private fun Toolbar(
             IconButton(onClick = onToggleLaser) {
                 Icon(
                     Reicons.FilterCenterFocus,
-                    contentDescription = "레이저 포인터",
+                    contentDescription = if (!laser) "레이저 포인터" else if (laserDot) "레이저 점 · 끄기" else "레이저 선 · 점으로",
                     tint = if (laser) Color(0xFFFF3B30) else LocalContentColor.current,
                 )
             }
@@ -6137,7 +6168,8 @@ private fun Toolbar(
                 add(SpotiToolbarAction("전체화면", Reicons.Fullscreen, selected = fullscreen, slot = 2, onClick = onToggleFullscreen))
                 add(SpotiToolbarAction("노트 회전", Reicons.ScreenRotation, slot = 7, onClick = onRotate))
                 add(SpotiToolbarAction("캡쳐", Reicons.CropFree, slot = 5, onClick = { onMode(EditMode.CAPTURE) }))
-                add(SpotiToolbarAction("레이저 포인터", Reicons.FilterCenterFocus, selected = laser, onClick = onToggleLaser))
+                add(SpotiToolbarAction(if (!laser) "레이저 포인터" else if (laserDot) "레이저 점" else "레이저 선",
+                    Reicons.FilterCenterFocus, selected = laser, onClick = onToggleLaser))
                 for (kind in RulerKind.entries) {
                     add(SpotiToolbarAction(rulerLabel(kind), Reicons.Remove, selected = ruler == kind,
                         onClick = { onRuler(if (ruler == kind) null else kind) }))

@@ -66,6 +66,21 @@ internal fun isScribble(xs: FloatArray, ys: FloatArray, count: Int): Boolean {
     return straightLegs >= SCRIBBLE_MIN_LEGS
 }
 
+/**
+ * The smallest shift that puts one of [edges] on one of [targets], with the
+ * target it lands on, or null when none is within [reach].
+ */
+internal fun alignOffset(edges: FloatArray, targets: List<Float>, reach: Float): Pair<Float, Float>? {
+    var best: Pair<Float, Float>? = null
+    for (edge in edges) for (target in targets) {
+        val shift = target - edge
+        if (kotlin.math.abs(shift) <= reach && (best == null || kotlin.math.abs(shift) < kotlin.math.abs(best.first))) {
+            best = shift to target
+        }
+    }
+    return best
+}
+
 /** Whether a pen path ending [gap] from its start, inside a [width] x [height] box, closes a loop. */
 internal fun isLassoLoop(gap: Float, width: Float, height: Float, minExtent: Float): Boolean =
     min(width, height) >= minExtent && gap <= max(width, height) * LOOP_GAP_FRACTION

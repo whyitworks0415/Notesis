@@ -1,5 +1,6 @@
 package com.notesis
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -69,5 +70,13 @@ class InkGesturesTest {
         assertFalse(isLassoLoop(gap = 150f, width = 200f, height = 150f, minExtent = 30f))
         // A flat line that happens to end near its start is not a loop.
         assertFalse(isLassoLoop(gap = 5f, width = 200f, height = 4f, minExtent = 30f))
+    }
+
+    @Test
+    fun alignTakesTheNearestTargetWithinReach() {
+        // Middle at 98 is 2 from the page middle at 100; the left edge is 7 from 0.
+        val snap = alignOffset(floatArrayOf(7f, 98f, 189f), listOf(0f, 100f, 200f), reach = 10f)
+        assertEquals(2f to 100f, snap)
+        assertEquals(null, alignOffset(floatArrayOf(30f), listOf(0f, 100f), reach = 10f))
     }
 }
