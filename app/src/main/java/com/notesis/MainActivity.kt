@@ -3670,6 +3670,23 @@ private fun NoteScreen(
         mutableStateOf(with(density) { Size(340.dp.toPx(), 440.dp.toPx()) })
     }
     var referenceStretch by remember { mutableFloatStateOf(1f) }
+    /**
+     * The panel opened as a zoom box: this note's current page in a strip
+     * across the bottom, to write into at whatever magnification it is pinched to.
+     * ponytail: no auto-advance or marker on the page; the panel is the
+     * reference panel aimed at this note.
+     */
+    var zoomBox by remember { mutableStateOf(false) }
+    fun openZoomBox(page: Int) {
+        zoomBox = true
+        referenceNoteId = note.id
+        referencePage = page
+        referenceSize = Size(containerSize.width.toFloat().coerceAtLeast(1f),
+            (containerSize.height / 3f).coerceAtLeast(1f))
+        referenceStretch = 1f
+        referenceOffset = Offset(0f, containerSize.height - referenceSize.height)
+        referenceOpen = true
+    }
     // Three fingers on the panel itself, once it is open: the spread is how
     // much it grows, the drag is where it goes. One function because the
     // panel's own view and the gesture that opened it both end up calling it.
@@ -4002,6 +4019,7 @@ private fun NoteScreen(
             },
             onTable = { editingTable = PageImage() },
             onEditTools = { editingTools = true },
+            onZoomBox = { if (zoomBox && referenceOpen) { referenceOpen = false; zoomBox = false } else openZoomBox(canvas?.currentPageIndex() ?: 0) },
             onQuickColor = { rgb ->
                 val alpha = pen.colorArgb and 0xFF000000.toInt()
                 settings = settings + (mode to pen.copy(colorArgb = (rgb and 0xFFFFFF) or alpha))
@@ -4288,7 +4306,7 @@ private fun NoteScreen(
                     }
                     // Three fingers down the page, with the panel already open,
                     // put it away: the gesture that opened it, run backwards.
-                    view.onCloseReference = { referenceOpen = false }
+                    view.onCloseReference = { referenceOpen = false; zoomBox = false }
                     // Moving and resizing the panel itself is handled on its own
                     // view, not here; see ReferencePanel.
                 },
@@ -5289,7 +5307,8 @@ private fun NoteScreen(
                 meshInk = meshInk,
                 compatWetInk = compatWetInk,
                 partialEraser = partialEraser,
-                gestures = gestures,
+                // Circle to lasso stays off in a zoom box, as in the reference app.
+                gestures = if (zoomBox) gestures.copy(circleToLasso = false) else gestures,
                 autoShapes = autoShapes,
                 axisSnap = axisSnap,
                 dottedPattern = dottedPattern,
@@ -7107,6 +7126,7 @@ private fun Toolbar(
     onTable: () -> Unit = {},
     onEditTools: () -> Unit = {},
     onQuickColor: (Int) -> Unit = {},
+    onZoomBox: () -> Unit = {},
 ) {
     val topRow: @Composable () -> Unit = {
         // ---- top row: the note, and what is done to the whole of it
@@ -7268,6 +7288,7 @@ private fun Toolbar(
                 add(SpotiToolbarAction("표", Reicons.AutoAwesomeMosaic, onClick = onTable))
                 add(SpotiToolbarAction("손가락·제스처", Reicons.TouchApp, onClick = onInputSettings))
                 add(SpotiToolbarAction("도구 편집", Reicons.Tune, onClick = onEditTools))
+                add(SpotiToolbarAction("확대 필기창", Reicons.ZoomOutMap, onClick = onZoomBox))
                 add(SpotiToolbarAction("UI · 화면 설정", Reicons.AutoAwesomeMosaic, slot = 6, onClick = onScreenSettings))
                 add(SpotiToolbarAction("화면 맞추기 · $zoomLabel", Reicons.ZoomOutMap, onClick = onFitWidth))
                 add(SpotiToolbarAction("인터넷", Reicons.Language, onClick = { onWeb(SEARCH_HOME) }))
