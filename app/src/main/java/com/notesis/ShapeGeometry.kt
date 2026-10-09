@@ -20,12 +20,17 @@ enum class ShapeKind {
     LINE, ARROW, RECT, OVAL,
     TRIANGLE, RIGHT_TRIANGLE, DIAMOND, PARALLELOGRAM, TRAPEZOID, PENTAGON, HEXAGON, STAR, HEART,
     ARC, SECTOR, SINE, AXES, BRACE, BUBBLE, CUBE, CYLINDER, DOUBLE_ARROW,
+    /** A gentle bow from start to end. */
+    CURVE,
+    /** Tapped out a corner at a time; closes on the first corner, ends on a double tap. */
+    POLYGON,
 }
 
 /** Shapes whose box is worth squaring when the drag is nearly square. */
 internal val ShapeKind.squarable: Boolean
     get() = this != ShapeKind.LINE && this != ShapeKind.ARROW && this != ShapeKind.DOUBLE_ARROW &&
-        this != ShapeKind.SINE && this != ShapeKind.AXES && this != ShapeKind.BRACE
+        this != ShapeKind.SINE && this != ShapeKind.AXES && this != ShapeKind.BRACE &&
+        this != ShapeKind.CURVE && this != ShapeKind.POLYGON
 
 /**
  * Where the drag ends once a nearly square box is made exactly square, or the
@@ -145,6 +150,14 @@ internal fun shapeOutline(kind: ShapeKind, x0: Float, y0: Float, x1: Float, y1: 
             listOf(p(fl, ft), p(fr, ft), p(fr, fb), p(fl, fb), p(fl, ft), p(fl + d, top), p(right, top),
                 p(fr, ft), p(right, top), p(right, bottom - d), p(fr, fb))
         }
+        ShapeKind.CURVE -> {
+            // Bowed to the left of the drag by a quarter of its length.
+            val mx = (x0 + x1) / 2f - (y1 - y0) * 0.25f
+            val my = (y0 + y1) / 2f + (x1 - x0) * 0.25f
+            listOf(p(x0, y0)) + curve(x0, y0, mx, my, x1, y1)
+        }
+        // Built corner by corner on the canvas; a drag alone is a line.
+        ShapeKind.POLYGON -> listOf(p(x0, y0), p(x1, y1))
         ShapeKind.CYLINDER -> {
             val ry = min(h * 0.15f, w * 0.3f)
             val rx = w / 2f

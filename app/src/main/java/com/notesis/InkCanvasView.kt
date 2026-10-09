@@ -958,6 +958,20 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** Non-null while the pen draws shapes rather than following the hand. */
     var shapeKind: ShapeKind? = null
+        set(value) {
+            // Leaving the polygon tool keeps what was tapped out so far.
+            if (field == ShapeKind.POLYGON && value != ShapeKind.POLYGON) finishPolygon(close = false)
+            field = value
+        }
+
+    /** Corners of the polygon being tapped out, in page units of [polyPage]. */
+    private val polyPoints = ArrayList<FloatArray>()
+    private var polyPage = -1
+
+    /** A shape's corner being dragged: which inputs sit there, and the stroke before the drag. */
+    private var vertexInputs: IntArray? = null
+    private var vertexOriginal: Stroke? = null
+    private var vertexCurrent: Stroke? = null
 
     /** Pictures can be picked up, moved and resized while this is on. */
     var imageMode: Boolean = false
@@ -2633,6 +2647,11 @@ class InkCanvasView @JvmOverloads constructor(
                     }
                 }
                 val shape = shapeKind
+                if (shape == ShapeKind.POLYGON && !readMode && !eraserGesture && tool != Tool.ERASER) {
+                    onDrawingChanged?.invoke(true)
+                    tapPolygon(event, index)
+                    return true
+                }
                 if (shape != null && !readMode && !eraserGesture &&
                     tool != Tool.ERASER
                 ) {
@@ -2778,6 +2797,15 @@ class InkCanvasView @JvmOverloads constructor(
                     appendLassoSamples(event, index)
                     return true
                 }
+                if (polyPoints.isNotEmpty() && polyPage >= 0 && shapeKind == ShapeKind.POLYGON) {
+                    pageLocalInto(event.getX(index), event.getY(index), polyPage, polyPoints.last())
+                    dry.postInvalidateOnAnimation()
+                    return true
+                }
+                if (vertexInputs != null) {
+                    dragVertex(event, index)
+                    return true
+                }
                 if (drawingShape && rulerEdge != null) {
                     for (h in 0 until event.historySize) {
                         addRulerPoint(event.getHistoricalX(index, h), event.getHistoricalY(index, h))
@@ -2912,6 +2940,15 @@ class InkCanvasView @JvmOverloads constructor(
                 }
                 if (capturing) {
                     finishCapture()
+                    endStylus()
+                    return true
+                }
+                if (vertexInputs != null) {
+                    finishVertexDrag()
+                    endStylus()
+                    return true
+                }
+                if (polyPoints.isNotEmpty() && shapeKind == ShapeKind.POLYGON) {
                     endStylus()
                     return true
                 }
@@ -4463,8 +4500,36 @@ class InkCanvasView @JvmOverloads constructor(
 
     // ---- lasso --------------------------------------------------------------
 
+    /** The one stroke selected, when it is a shape with few enough corners to drag. */
+    private fun editableShape(): Stroke? =
+        lassoStrokes.singleOrNull()?.takeIf { lassoImages.isEmpty() && it.inputs.size in 2..MAX_EDITABLE_INPUTS }
+
     private fun beginLasso(event: MotionEvent, index: Int) {
         pageLocalInto(event.x, event.y, index, shapeStart)
+        val shape = editableShape()
+        if (shape != null && index == lassoPage) {
+            val reach = VERTEX_HANDLE_PX * 1.6f / currentScale()
+            val sample = StrokeInput()
+            var hit = -1
+            for (i in 0 until shape.inputs.size) {
+                shape.inputs.populate(i, sample)
+                if (hypot(sample.x - shapeStart[0], sample.y - shapeStart[1]) <= reach) { hit = i; break }
+            }
+            if (hit >= 0) {
+                shape.inputs.populate(hit, sample)
+                val hx = sample.x
+                val hy = sample.y
+                // Every input sitting on this corner moves with it: a closed shape's
+                // first and last, an arrow's tip and its barbs' return.
+                vertexInputs = (0 until shape.inputs.size).filter { i ->
+                    shape.inputs.populate(i, sample)
+                    abs(sample.x - hx) < 0.01f && abs(sample.y - hy) < 0.01f
+                }.toIntArray()
+                vertexOriginal = shape
+                vertexCurrent = shape
+                return
+            }
+        }
         // Inside an existing selection the gesture is a drag, not a new loop.
         if (hasLassoSelection() && index == lassoPage &&
             lassoBounds.contains(shapeStart[0], shapeStart[1])
@@ -4870,6 +4935,77 @@ class InkCanvasView @JvmOverloads constructor(
         guideY = snapY?.second ?: Float.NaN
         snapX?.let { lassoDx += it.first }
         snapY?.let { lassoDy += it.first }
+    }
+
+    private fun dragVertex(event: MotionEvent, pointerIndex: Int) {
+        val page = document.pages.getOrNull(lassoPage) ?: return
+        val inputs = vertexInputs ?: return
+        val current = vertexCurrent ?: return
+        pageLocalInto(event.getX(pointerIndex), event.getY(pointerIndex), lassoPage, shapeEnd)
+        val tx = shapeEnd[0]
+        val ty = shapeEnd[1]
+        var i = 0
+        val moved = mapInputs(current) { x, y, out ->
+            if (i in inputs) { out[0] = tx; out[1] = ty } else { out[0] = x; out[1] = y }
+            i++
+        }
+        swapStrokes(page, listOf(current), listOf(moved))
+        lassoStrokes.clear()
+        lassoStrokes += moved
+        vertexCurrent = moved
+        recomputeLassoBounds()
+        page.revision++
+        page.renderState = RenderState.Dirty
+        dry.postInvalidateOnAnimation()
+    }
+
+    private fun finishVertexDrag() {
+        val page = document.pages.getOrNull(lassoPage)
+        val before = vertexOriginal
+        val after = vertexCurrent
+        vertexInputs = null
+        vertexOriginal = null
+        vertexCurrent = null
+        if (page == null || before == null || after == null || before === after) return
+        undoStack += Edit.Moved(page, listOf(before), listOf(after))
+        redoStack.clear()
+        afterEdit(page)
+    }
+
+    /** A pen tap with the polygon tool: a new corner, or the end of the shape. */
+    private fun tapPolygon(event: MotionEvent, index: Int) {
+        val point = FloatArray(2)
+        pageLocalInto(event.x, event.y, index, point)
+        if (polyPoints.isNotEmpty() && index != polyPage) finishPolygon(close = false)
+        if (polyPoints.isEmpty()) polyPage = index
+        val reach = VERTEX_HANDLE_PX * 2f / currentScale()
+        val first = polyPoints.firstOrNull()
+        val last = polyPoints.lastOrNull()
+        when {
+            first != null && polyPoints.size >= 3 && hypot(point[0] - first[0], point[1] - first[1]) <= reach ->
+                finishPolygon(close = true)
+            last != null && polyPoints.size >= 2 && hypot(point[0] - last[0], point[1] - last[1]) <= reach ->
+                finishPolygon(close = false)
+            else -> polyPoints += point
+        }
+        dry.invalidate()
+    }
+
+    /** Commits the polygon tapped out so far, closed back to its first corner or left open. */
+    fun finishPolygon(close: Boolean) {
+        val page = document.pages.getOrNull(polyPage)
+        val points = ArrayList(polyPoints)
+        polyPoints.clear()
+        polyPage = -1
+        if (page == null || points.size < 2) { dry.invalidate(); return }
+        if (close) points += points.first()
+        val group = nextEditGroup++
+        for (stroke in strokesThrough(points, currentBrush())) {
+            page.strokes += stroke
+            undoStack += Edit.Drawn(page, stroke, group)
+        }
+        redoStack.clear()
+        afterEdit(page)
     }
 
     private fun finishLassoMove() {
@@ -6310,6 +6446,14 @@ class InkCanvasView @JvmOverloads constructor(
                         selection?.boxes?.forEach { scoped.drawRect(it, selectionPaint) }
                     }
                     if (i == shapePage && drawingShape) drawShapePreview(scoped)
+                    if (i == polyPage && polyPoints.isNotEmpty()) {
+                        overlay.color = colorArgb
+                        overlay.strokeWidth = strokeWidth
+                        for (k in 1 until polyPoints.size) {
+                            scoped.drawLine(polyPoints[k - 1][0], polyPoints[k - 1][1], polyPoints[k][0], polyPoints[k][1], overlay)
+                        }
+                        scoped.drawCircle(polyPoints[0][0], polyPoints[0][1], VERTEX_HANDLE_PX / currentScale(), vertexPaint)
+                    }
                     if (i == capturePage && capturing) {
                         scoped.drawRect(captureRect, marqueeFill)
                         marquee.strokeWidth = 2f / currentScale()
@@ -6414,6 +6558,8 @@ class InkCanvasView @JvmOverloads constructor(
         }
 
         private val linkWash = Paint().apply { color = 0x332196F3 }
+        /** The orange corner handles of a shape being edited. */
+        private val vertexPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFF9800.toInt() }
 
         private fun drawLinks(canvas: Canvas, page: Page) {
             for (group in page.links.keys) {
@@ -6447,6 +6593,13 @@ class InkCanvasView @JvmOverloads constructor(
                 return
             }
             if (!hasLassoSelection() || lassoBounds.isEmpty) return
+            editableShape()?.let { shape ->
+                val sample = StrokeInput()
+                for (i in 0 until shape.inputs.size) {
+                    shape.inputs.populate(i, sample)
+                    canvas.drawCircle(sample.x, sample.y, VERTEX_HANDLE_PX / scale, vertexPaint)
+                }
+            }
             selectionBox.set(lassoBounds)
             selectionBox.offset(lassoDx, lassoDy)
             val pad = LASSO_PADDING / scale
@@ -6775,6 +6928,8 @@ class InkCanvasView @JvmOverloads constructor(
         const val SHAPE_STEP_MS = 8L
         const val RULER_GAP_PX = 1.5f
         const val SNAP_ALIGN_PX = 10f
+        const val VERTEX_HANDLE_PX = 9f
+        const val MAX_EDITABLE_INPUTS = 24
         const val EDGE_EXCLUSION_DP = 32f
         const val DOUBLE_TAP_ZOOM = 2f
         const val STRIKE_HEIGHT = 0.08f

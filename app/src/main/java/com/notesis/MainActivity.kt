@@ -2863,6 +2863,8 @@ private fun shapeLabel(kind: ShapeKind): String = when (kind) {
     ShapeKind.BUBBLE -> "말풍선"
     ShapeKind.CUBE -> "정육면체"
     ShapeKind.CYLINDER -> "원기둥"
+    ShapeKind.CURVE -> "곡선"
+    ShapeKind.POLYGON -> "다각형 · 연속 직선"
 }
 
 /** Opens one of the AI sites in the side panel. */
