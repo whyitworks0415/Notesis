@@ -109,8 +109,12 @@ class InkIndexer(private val context: Context) {
         return ready
     }
 
-    /** Blocking; call it off the main thread. Null means nothing was read. */
-    fun textOf(strokes: List<Stroke>): String? {
+    /**
+     * Blocking; call it off the main thread. Null means nothing was read.
+     * [firstReading] keeps only the first language that reads each line, for
+     * showing to a person; the search index keeps every reading.
+     */
+    fun textOf(strokes: List<Stroke>, firstReading: Boolean = false): String? {
         if (strokes.isEmpty()) return ""
         if (!prepare()) return null
         val boxes = strokes.map { stroke ->
@@ -127,7 +131,10 @@ class InkIndexer(private val context: Context) {
                 val text = runCatching {
                     Tasks.await(recognizer.recognize(ink)).candidates.firstOrNull()?.text
                 }.getOrNull().orEmpty()
-                if (text.isNotBlank()) out.append(text).append('\n')
+                if (text.isNotBlank()) {
+                    out.append(text).append('\n')
+                    if (firstReading) break
+                }
             }
         }
         return out.toString()

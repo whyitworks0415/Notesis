@@ -4829,7 +4829,7 @@ private fun NoteScreen(
                     val strokes = canvas?.selectedLassoStrokes().orEmpty()
                     regionOcrBusy = true
                     scope.launch {
-                        regionOcrText = withContext(Dispatchers.IO) { indexer.textOf(strokes) }
+                        regionOcrText = withContext(Dispatchers.IO) { indexer.textOf(strokes, firstReading = true) }
                             ?: "인식 모델을 사용할 수 없습니다"
                         regionOcrBusy = false
                     }
