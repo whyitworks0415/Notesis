@@ -1537,14 +1537,20 @@ class InkCanvasView @JvmOverloads constructor(
         class PageRotated(override val page: Page, val clockwise: Boolean) : Edit
     }
 
-    private data class PaperState(val background: PageBackground, val templateId: String?, val height: Float)
+    private data class PaperState(
+        val background: PageBackground,
+        val templateId: String?,
+        val height: Float,
+        val width: Float = 0f,
+    )
 
-    private fun Page.paper() = PaperState(background, templateId, height)
+    private fun Page.paper() = PaperState(background, templateId, height, width)
 
     private fun Page.setPaper(state: PaperState) {
         background = state.background
         templateId = state.templateId
         height = state.height
+        if (state.width > 0f) width = state.width
     }
 
     private val scaleDetector = ScaleGestureDetector(
@@ -2129,7 +2135,7 @@ class InkCanvasView @JvmOverloads constructor(
         val height = if (background == PageBackground.INFINITE) Page.A4_HEIGHT * 12f
             else if (page.height > Page.A4_HEIGHT * 2f) Page.A4_HEIGHT else page.height
         val template = if (background == PageBackground.CUSTOM) page.templateId else null
-        changePaper(page, PaperState(background, template, height))
+        changePaper(page, PaperState(background, template, height, page.width))
     }
 
     private fun changePaper(page: Page, after: PaperState) {
@@ -2156,6 +2162,31 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     /** One template for every page that can take one; a single undo puts them all back. */
+    /**
+     * Gives page [index] - or every page that is not a PDF page, with [all] -
+     * a new size in page units. Ink stays where it is on the paper. One undo.
+     */
+    fun setPageSize(index: Int, width: Float, height: Float, all: Boolean) {
+        val targets = if (all) document.pages.filter { it.background != PageBackground.PDF }
+            else listOfNotNull(document.pages.getOrNull(index)?.takeIf { it.background != PageBackground.PDF })
+        val group = nextEditGroup++
+        var changed = false
+        for (page in targets) {
+            val before = page.paper()
+            val after = before.copy(width = width, height = height)
+            if (before == after) continue
+            page.setPaper(after)
+            undoStack += Edit.PagePaper(page, before, after, group)
+            changed = true
+        }
+        if (!changed) return
+        clearLassoSelection()
+        redoStack.clear()
+        document.invalidateLayout()
+        fitWidth()
+        afterEdit(*targets.toTypedArray())
+    }
+
     fun setBackgroundAll(background: PageBackground, templateId: String? = null) {
         val group = nextEditGroup++
         var changed = false
@@ -2164,7 +2195,7 @@ class InkCanvasView @JvmOverloads constructor(
             val height = if (background == PageBackground.INFINITE) Page.A4_HEIGHT * 12f
                 else if (page.height > Page.A4_HEIGHT * 2f) Page.A4_HEIGHT else page.height
             val before = page.paper()
-            val after = PaperState(background, templateId, height)
+            val after = PaperState(background, templateId, height, page.width)
             if (before == after) continue
             page.setPaper(after)
             undoStack += Edit.PagePaper(page, before, after, group)

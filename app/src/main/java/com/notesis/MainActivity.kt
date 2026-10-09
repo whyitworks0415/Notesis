@@ -5145,6 +5145,7 @@ private fun NoteScreen(
                     edits++
                 },
                 onDeletePages = { canvas?.deletePages(it); edits++ },
+                onPageSize = { index, w, h, all -> canvas?.setPageSize(index, w, h, all); edits++ },
                 onDuplicatePages = { indices ->
                     // Last first, so each copy lands right after its own page.
                     indices.sortedDescending().forEach { canvas?.duplicatePage(it) }
@@ -6241,6 +6242,7 @@ private fun PageSidebar(
     onDuplicatePages: (List<Int>) -> Unit = {},
     onExportPages: (List<Int>) -> Unit = {},
     onSendPages: (List<Int>, Boolean) -> Unit = { _, _ -> },
+    onPageSize: (Int, Float, Float, Boolean) -> Unit = { _, _, _, _ -> },
     study: MaskStudy? = null,
     studyRevision: Int = 0,
     onRenameMask: (Int, Int) -> Unit = { _, _ -> },
@@ -6253,6 +6255,15 @@ private fun PageSidebar(
     var bookmarksOnly by remember { mutableStateOf(false) }
     var tocQuery by remember { mutableStateOf("") }
     var showPdfOutline by remember { mutableStateOf(true) }
+    var sizingPage by remember { mutableStateOf<Int?>(null) }
+    sizingPage?.let { index ->
+        pages.getOrNull(index)?.let { page ->
+            PageSizeDialog(page.width, page.height, onDismiss = { sizingPage = null }) { w, h, all ->
+                onPageSize(index, w, h, all)
+                sizingPage = null
+            }
+        }
+    }
     var choosing by remember { mutableStateOf(false) }
     val chosen = remember { mutableStateListOf<String>() }
     fun chosenIndices() = pages.indices.filter { pages[it].id in chosen }
@@ -6410,6 +6421,7 @@ private fun PageSidebar(
                             onBookmark = { onBookmark(index, !page.bookmarked) },
                             onRotate = { clockwise -> onRotate(index, clockwise) },
                             onBackgroundAll = { onBackgroundAll(page.background, page.templateId) },
+                            onPageSize = { sizingPage = index },
                         )
                     } else if (tab == 1) {
                         TocChip(
@@ -6503,6 +6515,59 @@ private fun chipFill(selected: Boolean): Color = when {
     selected -> MaterialTheme.colorScheme.primaryContainer
     LocalSkin.current == Skin.MATERIAL -> MaterialTheme.colorScheme.surfaceContainerLowest
     else -> Color.White.copy(alpha = 0.34f)
+}
+
+/**
+ * Paper sizes as other apps count them - pixels at 300 dpi - so a size typed
+ * from one of them comes out the same. Pages here are kept at half that.
+ */
+internal val PAGE_SIZES = listOf(
+    "A4" to (2480 to 3508), "A3" to (3508 to 4960), "A5" to (1748 to 2480), "Letter" to (2550 to 3300),
+)
+internal const val PX_300_PER_UNIT = 2f
+internal val PAGE_PX_RANGE = 100..9999
+
+@Composable
+internal fun PageSizeDialog(width: Float, height: Float, onDismiss: () -> Unit, onSize: (Float, Float, Boolean) -> Unit) {
+    var w by remember { mutableStateOf((width * PX_300_PER_UNIT).roundToInt().toString()) }
+    var h by remember { mutableStateOf((height * PX_300_PER_UNIT).roundToInt().toString()) }
+    var all by remember { mutableStateOf(false) }
+    val pw = w.toIntOrNull()?.takeIf { it in PAGE_PX_RANGE }
+    val ph = h.toIntOrNull()?.takeIf { it in PAGE_PX_RANGE }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("페이지 크기") },
+        text = {
+            Column {
+                Row(Modifier.horizontalScroll(rememberScrollState())) {
+                    PAGE_SIZES.forEach { (name, size) ->
+                        TextButton(onClick = { w = size.first.toString(); h = size.second.toString() }) { Text(name) }
+                    }
+                    TextButton(onClick = { val t = w; w = h; h = t }) { Text("가로↔세로") }
+                }
+                Row {
+                    OutlinedTextField(w, { w = it.filter(Char::isDigit).take(4) }, label = { Text("너비 px") },
+                        singleLine = true, isError = pw == null, modifier = Modifier.weight(1f),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                    Spacer(Modifier.width(8.dp))
+                    OutlinedTextField(h, { h = it.filter(Char::isDigit).take(4) }, label = { Text("높이 px") },
+                        singleLine = true, isError = ph == null, modifier = Modifier.weight(1f),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                }
+                Text("300dpi 기준, 100–9,999px", style = MaterialTheme.typography.bodySmall)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = all, onCheckedChange = { all = it })
+                    Text("PDF가 아닌 모든 페이지에 적용")
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = pw != null && ph != null, onClick = {
+                onSize(pw!! / PX_300_PER_UNIT, ph!! / PX_300_PER_UNIT, all)
+            }) { Text("적용") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+    )
 }
 
 /** Page number in, page index out. Shared by the page panel and the Ctrl+Alt+G shortcut. */
@@ -6751,6 +6816,7 @@ private fun PageChip(
     onBookmark: () -> Unit = {},
     onRotate: (Boolean) -> Unit = {},
     onBackgroundAll: () -> Unit = {},
+    onPageSize: () -> Unit = {},
 ) {
     var menu by remember { mutableStateOf(false) }
     Box {
@@ -6840,6 +6906,10 @@ private fun PageChip(
                 )
             }
             if (page.background != PageBackground.PDF) {
+                DropdownMenuItem(
+                    text = { Text("페이지 크기…") },
+                    onClick = { onPageSize(); menu = false },
+                )
                 DropdownMenuItem(
                     text = { Text("이 배경을 모든 페이지에") },
                     onClick = { onBackgroundAll(); menu = false },
