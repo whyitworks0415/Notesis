@@ -2577,6 +2577,22 @@ private fun PaletteDialog(onDismiss: () -> Unit, onPick: (Int) -> Unit) {
     )
 }
 
+/**
+ * Hands selected text to other apps: ACTION_PROCESS_TEXT reaches translators
+ * and dictionaries, ACTION_SEND the share sheet. Nothing installed, nothing happens.
+ */
+internal fun sendSelectedText(context: android.content.Context, text: String, action: String) {
+    val intent = android.content.Intent(action).apply {
+        type = "text/plain"
+        if (action == android.content.Intent.ACTION_PROCESS_TEXT) {
+            putExtra(android.content.Intent.EXTRA_PROCESS_TEXT, text)
+            putExtra(android.content.Intent.EXTRA_PROCESS_TEXT_READONLY, true)
+        } else putExtra(android.content.Intent.EXTRA_TEXT, text)
+    }
+    runCatching { context.startActivity(android.content.Intent.createChooser(intent, null)) }
+        .onFailure { Toast.makeText(context, "열 수 있는 앱이 없습니다", Toast.LENGTH_SHORT).show() }
+}
+
 /** What came back from a capture, and the two things worth doing with it. */
 @Composable
 private fun CaptureDialog(
@@ -3080,6 +3096,7 @@ private fun NoteScreen(
     val lifecycleOwner = context as? LifecycleOwner
     val scope = rememberCoroutineScope()
     var showVoice by remember { mutableStateOf(false) }
+    var playNextRecording by remember { mutableStateOf<String?>(null) }
     var voiceRevision by remember { mutableIntStateOf(0) }
     var recorder by remember { mutableStateOf<android.media.MediaRecorder?>(null) }
     var recordingFile by remember { mutableStateOf<java.io.File?>(null) }
@@ -4041,6 +4058,28 @@ private fun NoteScreen(
             }
         }
 
+        // A finished recording asked for the next: start it the way the play button would.
+        LaunchedEffect(playNextRecording) {
+            val path = playNextRecording ?: return@LaunchedEffect
+            playNextRecording = null
+            val player = android.media.MediaPlayer()
+            val started = runCatching {
+                player.setDataSource(path)
+                player.prepare()
+                player.setOnCompletionListener {
+                    it.release(); voicePlayer = null; playingFile = null
+                    if (penStore.autoPlayNext) {
+                        val all = store.recordings(note.id)
+                        all.getOrNull(all.indexOfFirst { f -> f.path == path } + 1)?.let { next -> playNextRecording = next.path }
+                    }
+                }
+                player.start()
+            }.isSuccess
+            if (started) {
+                voicePlayer = player; playingFile = path
+                playingTimeline = RecordingTimeline.load(java.io.File(path))
+            } else player.release()
+        }
         if (showVoice) {
             val recordings = remember(note.id, voiceRevision) { store.recordings(note.id) }
             AlertDialog(
@@ -4056,6 +4095,12 @@ private fun NoteScreen(
                                 startRecording()
                             } else requestAudioPermission.launch(android.Manifest.permission.RECORD_AUDIO)
                         }) { Text(if (recorder == null) "● 새 녹음 시작" else "■ 녹음 끝내기") }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            var autoNext by remember { mutableStateOf(penStore.autoPlayNext) }
+                            SkinSwitch(checked = autoNext, onCheckedChange = { autoNext = it; penStore.autoPlayNext = it })
+                            Spacer(Modifier.width(8.dp))
+                            Text("다음 녹음 이어서 재생", style = MaterialTheme.typography.bodySmall)
+                        }
                         for (file in recordings) Row(verticalAlignment = Alignment.CenterVertically) {
                             val label = runCatching {
                                 dateFormat.format(Date(file.nameWithoutExtension.toLong()))
@@ -4072,6 +4117,12 @@ private fun NoteScreen(
                                         player.prepare()
                                         player.setOnCompletionListener {
                                             it.release(); voicePlayer = null; playingFile = null
+                                            // The one after this, if asked to carry on.
+                                            if (penStore.autoPlayNext) {
+                                                recordings.getOrNull(recordings.indexOf(file) + 1)?.let { next ->
+                                                    playNextRecording = next.path
+                                                }
+                                            }
                                         }
                                         player.start()
                                     }.isSuccess
@@ -4081,6 +4132,7 @@ private fun NoteScreen(
                                     } else { player.release(); playingFile = null }
                                 }
                             }) { Text(if (playingFile == file.path) "정지" else "재생") }
+                            TextButton(onClick = { shareFile(context, file, "audio/*") }) { Text("내보내기") }
                             TextButton(onClick = {
                                 if (playingFile == file.path) {
                                     voicePlayer?.release(); voicePlayer = null; playingFile = null
@@ -4548,6 +4600,17 @@ private fun NoteScreen(
                     canvas?.maskSelection(settings.getValue(EditMode.MASK).colorArgb)
                     edits++
                 },
+                onStrike = {
+                    canvas?.strikeSelection(settings.getValue(EditMode.PEN).colorArgb)
+                    edits++
+                },
+                // The device's own translators (Google Translate, DeepL, Papago...) answer this.
+                onTranslate = { sendSelectedText(context, text, android.content.Intent.ACTION_PROCESS_TEXT) },
+                onSearch = {
+                    webUrl = SEARCH_HOME + "search?q=" + java.net.URLEncoder.encode(text, "UTF-8")
+                    canvas?.clearSelection()
+                },
+                onShare = { sendSelectedText(context, text, android.content.Intent.ACTION_SEND) },
                 onDismiss = { canvas?.clearSelection() },
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
@@ -5077,6 +5140,20 @@ private fun captureUri(context: android.content.Context, bitmap: Bitmap): Uri? {
     )
 }
 
+/** Copies [file] where the share sheet may read it and offers it to other apps. */
+internal fun shareFile(context: android.content.Context, file: java.io.File, mime: String) {
+    val shared = java.io.File(context.cacheDir, "shared").apply { mkdirs() }
+    val copy = java.io.File(shared, file.name)
+    if (runCatching { file.copyTo(copy, overwrite = true) }.isFailure) return
+    val uri = androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".files", copy)
+    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+        type = mime
+        putExtra(android.content.Intent.EXTRA_STREAM, uri)
+        addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(android.content.Intent.createChooser(intent, null))
+}
+
 /** Hands the captured region to whatever the user picks in the share sheet. */
 private fun shareBitmap(context: android.content.Context, bitmap: Bitmap) {
     val uri = captureUri(context, bitmap) ?: return
@@ -5539,6 +5616,10 @@ private fun SelectionActions(
     onHighlight: () -> Unit,
     onMask: () -> Unit,
     onDismiss: () -> Unit,
+    onStrike: () -> Unit = {},
+    onTranslate: () -> Unit = {},
+    onSearch: () -> Unit = {},
+    onShare: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     SkinSurface(
@@ -5570,10 +5651,14 @@ private fun SelectionActions(
                 Icon(Reicons.VisibilityOff, contentDescription = null)
                 Text(" 마스킹")
             }
+            TextButton(onClick = onStrike) { Text("취소선") }
             TextButton(onClick = onCopy) {
                 Icon(Reicons.ContentCopy, contentDescription = null)
                 Text(" 복사")
             }
+            TextButton(onClick = onTranslate) { Text("번역") }
+            TextButton(onClick = onSearch) { Text("검색") }
+            TextButton(onClick = onShare) { Text("공유") }
             TextButton(onClick = onDismiss) { Text("취소") }
         }
     }

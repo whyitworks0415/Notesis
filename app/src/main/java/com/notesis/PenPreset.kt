@@ -192,6 +192,11 @@ class PenStore(context: Context) {
         get() = prefs.getBoolean("partialEraser", false)
         set(value) = prefs.edit().putBoolean("partialEraser", value).apply()
 
+    /** A recording that finishes starts the next one in the note's list. */
+    var autoPlayNext: Boolean
+        get() = prefs.getBoolean("autoPlayNext", false)
+        set(value) = prefs.edit().putBoolean("autoPlayNext", value).apply()
+
     var gestures: CanvasGestures
         get() = CanvasGestures(
             eraseInk = prefs.getBoolean("eraseInk", true),

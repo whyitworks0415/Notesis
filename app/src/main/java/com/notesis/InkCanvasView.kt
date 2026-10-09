@@ -4064,6 +4064,7 @@ class InkCanvasView @JvmOverloads constructor(
             size = 1f,
             epsilon = epsilonFor(currentScale()),
         )
+        val group = nextEditGroup++
         for (box in found.boxes) {
             if (box.width() <= 0f || box.height() <= 0f) continue
             val middle = box.centerY()
@@ -4074,7 +4075,32 @@ class InkCanvasView @JvmOverloads constructor(
             val sized = brush.copy(size = box.height() * HIGHLIGHT_HEIGHT)
             val stroke = Stroke(sized, inputs.toImmutable())
             page.strokes += stroke
-            undoStack += Edit.Drawn(page, stroke)
+            undoStack += Edit.Drawn(page, stroke, group)
+        }
+        redoStack.clear()
+        clearSelection()
+        afterEdit(page)
+    }
+
+    /** A pen line through the middle of every selected line of text, one undo for all of them. */
+    fun strikeSelection(color: Int = 0xFFE53935.toInt()) {
+        val found = selection ?: return
+        val page = document.pages.getOrNull(selectingPage) ?: return
+        val group = nextEditGroup++
+        for (box in found.boxes) {
+            if (box.width() <= 0f || box.height() <= 0f) continue
+            val brush = Brush.createWithColorIntArgb(
+                family = Tool.PEN.brushFamily(),
+                colorIntArgb = color,
+                size = (box.height() * STRIKE_HEIGHT).coerceAtLeast(1f),
+                epsilon = epsilonFor(currentScale()),
+            )
+            val inputs = MutableStrokeInputBatch()
+            inputs.add(InputToolType.STYLUS, box.left, box.centerY(), 0L)
+            inputs.add(InputToolType.STYLUS, box.right, box.centerY(), 16L)
+            val stroke = Stroke(brush, inputs.toImmutable())
+            page.strokes += stroke
+            undoStack += Edit.Drawn(page, stroke, group)
         }
         redoStack.clear()
         clearSelection()
@@ -6298,6 +6324,7 @@ class InkCanvasView @JvmOverloads constructor(
         const val SHAPE_STEP_MS = 8L
         const val RULER_GAP_PX = 1.5f
         const val SNAP_ALIGN_PX = 10f
+        const val STRIKE_HEIGHT = 0.08f
         // Page units are A4 at 150dpi, so a real millimetre of page is this many of them.
         const val A4_MM_WIDTH = 210f
         const val IMAGE_INSERT_FRACTION = 0.5f
