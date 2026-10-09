@@ -4621,7 +4621,7 @@ class InkCanvasView @JvmOverloads constructor(
             else Stroke(stroke.brush.copy(size = (stroke.brush.size * factor).coerceAtLeast(0.1f)), moved.inputs)
         }
         val group = nextEditGroup++
-        // Pictures keep their own orientation; their middles go round with the rest.
+        // Pictures turn about their own middles, which go round with the rest.
         replaceLassoImages(page, group) { image ->
             val dx = image.x + image.width / 2f - cx
             val dy = image.y + image.height / 2f - cy
@@ -4630,6 +4630,7 @@ class InkCanvasView @JvmOverloads constructor(
             val w = image.width * factor
             val h = image.height * factor
             image.copy(x = mx - w / 2f, y = my - h / 2f, width = w, height = h)
+                .also { it.rotation = (image.rotation + degrees) % 360f }
         }
         replaceLassoStrokes(page, before, after, group)
     }
@@ -4924,6 +4925,50 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     fun clearImageSelection() = select(null, null)
+
+    fun selectedPicture(): PageImage? = selectedImage?.takeIf { it.textContent == null }
+
+    /**
+     * Puts picture [imageId] where the part [area] (fractions of the selected
+     * picture's box) of the selected picture was: a crop keeps what it kept in place.
+     */
+    fun replaceSelectedImage(imageId: String, area: RectF = RectF(0f, 0f, 1f, 1f)) {
+        val image = selectedImage ?: return
+        val page = selectedImagePage ?: return
+        val at = page.images.indexOf(image)
+        if (at < 0) return
+        val after = image.copy(
+            id = imageId,
+            x = image.x + area.left * image.width,
+            y = image.y + area.top * image.height,
+            width = area.width() * image.width,
+            height = area.height() * image.height,
+        )
+        page.images[at] = after
+        undoStack += Edit.ImageReplaced(page, image, after, at)
+        redoStack.clear()
+        select(after, page)
+        afterEdit(page)
+    }
+
+    fun setSelectedImageOpacity(opacity: Float) {
+        val image = selectedImage ?: return
+        image.opacity = opacity.coerceIn(0.05f, 1f)
+        selectedImagePage?.let { afterEdit(it) }
+    }
+
+    fun rotateSelectedImage(degrees: Float) {
+        val image = selectedImage ?: return
+        val page = selectedImagePage ?: return
+        val at = page.images.indexOf(image)
+        if (at < 0) return
+        val after = image.copy().also { it.rotation = (image.rotation + degrees) % 360f }
+        page.images[at] = after
+        undoStack += Edit.ImageReplaced(page, image, after, at)
+        redoStack.clear()
+        select(after, page)
+        afterEdit(page)
+    }
 
     private fun select(image: PageImage?, page: Page?) {
         selectedImage = image
@@ -5870,6 +5915,11 @@ class InkCanvasView @JvmOverloads constructor(
                     image.y + image.height,
                 )
                 if (liftedPage && lassoImages.any { it === image }) imageRect.offset(lassoDx, lassoDy)
+                val turned = image.rotation != 0f
+                if (turned) {
+                    canvas.save()
+                    canvas.rotate(image.rotation, imageRect.centerX(), imageRect.centerY())
+                }
                 val content = image.textContent
                 if (content == null) {
                     if (image.opacity < 1f) {
@@ -5894,6 +5944,7 @@ class InkCanvasView @JvmOverloads constructor(
                     drawTextBox(canvas, content, text.layout, text.logicalWidth, text.logicalHeight, 1f)
                     canvas.restore()
                 }
+                if (turned) canvas.restore()
             }
         }
 

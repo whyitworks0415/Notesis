@@ -39,6 +39,8 @@ class PageImage(
     /** Objects sharing a nonzero group are selected together. See [StrokeTags]. */
     var group: Int = 0,
     var opacity: Float = 1f,
+    /** Degrees clockwise about the picture's middle. */
+    var rotation: Float = 0f,
 ) {
     /** Everything carried over, with whatever is named changed. */
     fun copy(
@@ -48,7 +50,7 @@ class PageImage(
         width: Float = this.width,
         height: Float = this.height,
         textContent: TextBoxContent? = this.textContent,
-    ) = PageImage(id, x, y, width, height, textContent, locked, group, opacity)
+    ) = PageImage(id, x, y, width, height, textContent, locked, group, opacity, rotation)
 }
 
 /**
@@ -1125,7 +1127,8 @@ class NoteStore(context: Context) {
                         .put("corner", content.corner.toDouble()).put("pad", content.padding.toDouble()) })
                     .put("locked", image.locked)
                     .put("group", image.group)
-                    .put("opacity", image.opacity.toDouble()),
+                    .put("opacity", image.opacity.toDouble())
+                    .put("rotation", image.rotation.toDouble()),
             )
         }
         return array
@@ -1154,6 +1157,7 @@ class NoteStore(context: Context) {
                 locked = item.optBoolean("locked", false),
                 group = item.optInt("group", 0),
                 opacity = item.optDouble("opacity", 1.0).toFloat().coerceIn(0f, 1f),
+                rotation = item.optDouble("rotation", 0.0).toFloat(),
             )
         }
         return images

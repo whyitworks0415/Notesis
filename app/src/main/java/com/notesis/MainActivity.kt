@@ -3168,6 +3168,9 @@ private fun NoteScreen(
     var fullscreen by remember { mutableStateOf(false) }
     var imageSelected by remember { mutableStateOf(false) }
     var showTextBox by remember { mutableStateOf(false) }
+    /** 1 cropping the selected picture, 2 styling it, 0 neither. */
+    var editingPicture by remember { mutableIntStateOf(0) }
+    var pickingSticker by remember { mutableStateOf(false) }
     var replacingText by remember { mutableStateOf<PageImage?>(null) }
     var textPosition by remember { mutableStateOf<Triple<Int, Float, Float>?>(null) }
     var captured by remember { mutableStateOf<Bitmap?>(null) }
@@ -3623,6 +3626,7 @@ private fun NoteScreen(
                 canvas?.let { it.addPage(it.currentPageIndex()); it.scrollToPage(it.currentPageIndex() + 1) }
                 edits++
             },
+            onSticker = { pickingSticker = true },
             recording = recorder != null,
             onVoice = { showVoice = true },
             noteRotation = noteRotation,
@@ -4446,9 +4450,54 @@ private fun NoteScreen(
                     edits++
                 },
                 onDone = { canvas?.clearImageSelection() },
+                onCrop = { editingPicture = 1 },
+                onStyle = { editingPicture = 2 },
+                onRotate = { canvas?.rotateSelectedImage(90f); edits++ },
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
         }
+
+        // Crop and corner/border make a new picture file; the old one stays for undo.
+        val picture = if (editingPicture != 0) canvas?.selectedPicture() else null
+        val pictureBitmap = remember(picture?.id) {
+            picture?.let { runCatching { android.graphics.BitmapFactory.decodeFile(store.imageFile(note.id, it.id).path) }.getOrNull() }
+        }
+        fun storePicture(bitmap: android.graphics.Bitmap, area: android.graphics.RectF) {
+            scope.launch {
+                val added = withContext(Dispatchers.IO) { store.addImage(note.id, bitmap) }
+                if (added != null) { canvas?.replaceSelectedImage(added.first, area); edits++ }
+                else Toast.makeText(context, "이미지를 저장하지 못했습니다", Toast.LENGTH_SHORT).show()
+            }
+        }
+        if (picture == null || pictureBitmap == null) {
+            if (editingPicture != 0) editingPicture = 0
+        } else if (editingPicture == 1) {
+            ImageCropDialog(pictureBitmap, onCrop = { shape, area, outline ->
+                editingPicture = 0
+                storePicture(cropBitmap(pictureBitmap, shape, area, outline), area)
+            }, onDismiss = { editingPicture = 0 })
+        } else if (editingPicture == 2) {
+            ImageStyleDialog(
+                opacity = picture.opacity,
+                onOpacity = { canvas?.setSelectedImageOpacity(it) },
+                onDecorate = { corner, border, color ->
+                    editingPicture = 0
+                    storePicture(decorateBitmap(pictureBitmap, corner, border, color), android.graphics.RectF(0f, 0f, 1f, 1f))
+                },
+                onDismiss = { editingPicture = 0; edits++ },
+            )
+        }
+        if (pickingSticker) StickerDialog(onPick = { sticker ->
+            pickingSticker = false
+            scope.launch {
+                val added = withContext(Dispatchers.IO) { store.addImage(note.id, Stickers.render(sticker)) }
+                if (added != null) {
+                    canvas?.insertImage(added.first, added.second)
+                    mode = EditMode.IMAGE
+                    edits++
+                }
+            }
+        }, onDismiss = { pickingSticker = false })
 
         selectionColorMode?.let { colorMode ->
             PenDialog(mode = colorMode, pen = settings.getValue(colorMode),
@@ -4962,6 +5011,9 @@ private fun ImageActions(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onDone: () -> Unit,
+    onCrop: () -> Unit = {},
+    onStyle: () -> Unit = {},
+    onRotate: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     SkinSurface(
@@ -4976,6 +5028,11 @@ private fun ImageActions(
         ) {
             Text(if (isText) "텍스트" else "사진", style = MaterialTheme.typography.bodyMedium)
             if (isText) TextButton(onClick = onEdit) { Text("편집") }
+            else {
+                TextButton(onClick = onCrop) { Text("자르기") }
+                TextButton(onClick = onStyle) { Text("스타일") }
+            }
+            IconButton(onClick = onRotate) { Icon(Reicons.Refresh, contentDescription = "90° 회전") }
             ToolbarDivider()
             TextButton(onClick = onDelete) {
                 Icon(Reicons.Delete, contentDescription = null)
@@ -6291,6 +6348,7 @@ private fun Toolbar(
     ruler: RulerKind? = null,
     onRuler: (RulerKind?) -> Unit = {},
     onAddPage: () -> Unit = {},
+    onSticker: () -> Unit = {},
 ) {
     val topRow: @Composable () -> Unit = {
         // ---- top row: the note, and what is done to the whole of it
@@ -6403,6 +6461,7 @@ private fun Toolbar(
                 )
             }
             RulerButton(ruler, onRuler)
+            IconButton(onClick = onSticker) { Text("😀") }
             IconButton(onClick = onAddPage) {
                 Icon(Reicons.Add, contentDescription = "페이지 추가")
             }
@@ -6443,6 +6502,7 @@ private fun Toolbar(
                     onEditPen()
                 }))
                 add(SpotiToolbarAction("사진", Reicons.AddPhotoAlternate, onClick = onPickImage))
+                add(SpotiToolbarAction("스티커", Reicons.AutoAwesome, onClick = onSticker))
                 add(SpotiToolbarAction("UI · 화면 설정", Reicons.AutoAwesomeMosaic, slot = 6, onClick = onScreenSettings))
                 add(SpotiToolbarAction("화면 맞추기 · $zoomLabel", Reicons.ZoomOutMap, onClick = onFitWidth))
                 add(SpotiToolbarAction("인터넷", Reicons.Language, onClick = { onWeb(SEARCH_HOME) }))
