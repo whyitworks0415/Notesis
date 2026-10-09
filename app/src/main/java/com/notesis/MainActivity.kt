@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -1681,7 +1682,7 @@ private fun SetPasswordDialog(onSet: (String, String) -> Unit, onDismiss: () -> 
 /** Asks for the master password, or the device's fingerprint or face first where there is one. */
 @Composable
 internal fun UnlockDialog(lock: NoteLock, title: String, onUnlocked: () -> Unit, onDismiss: () -> Unit) {
-    val activity = LocalContext.current as? android.app.Activity
+    val activity = LocalActivity.current
     var password by remember { mutableStateOf("") }
     var wrong by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
