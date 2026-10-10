@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.Notesis" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.Notesis" parent="android:Theme.Material.Light.NoActionBar">
+        <!-- Paper stays paper: the app has its own dark theme, so a maker's forced dark mode is refused. -->
+        <item name="android:forceDarkAllowed">false</item>
+    </style>
 </resources>

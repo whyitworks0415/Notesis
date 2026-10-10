@@ -34,14 +34,82 @@ class PageImage(
     var width: Float = 0f,
     var height: Float = 0f,
     val textContent: TextBoxContent? = null,
-)
+    /** Left alone by the lasso and the eraser unless they are told otherwise. */
+    var locked: Boolean = false,
+    /** Objects sharing a nonzero group are selected together. See [StrokeTags]. */
+    var group: Int = 0,
+    var opacity: Float = 1f,
+    /** Degrees clockwise about the picture's middle. */
+    var rotation: Float = 0f,
+    /** [BOX_NONE], or a container ([BOX_STICKY], [BOX_TABLE]) that carries what lies on it. */
+    var box: Int = BOX_NONE,
+    /** A folded sticky note: drawn as a small tab, its full size kept for unfolding. */
+    var collapsed: Boolean = false,
+    var expandedWidth: Float = 0f,
+    var expandedHeight: Float = 0f,
+    /** A table's grid, so it can be redrawn with more rows or columns. */
+    var rows: Int = 0,
+    var cols: Int = 0,
+) {
+    companion object {
+        const val BOX_NONE = 0
+        const val BOX_STICKY = 1
+        const val BOX_TABLE = 2
+        /** The side of a folded sticky note, in page units. */
+        const val FOLDED_SIZE = 56f
+    }
+
+    /** Everything carried over, with whatever is named changed. */
+    fun copy(
+        id: String = this.id,
+        x: Float = this.x,
+        y: Float = this.y,
+        width: Float = this.width,
+        height: Float = this.height,
+        textContent: TextBoxContent? = this.textContent,
+    ) = PageImage(id, x, y, width, height, textContent, locked, group, opacity, rotation,
+        box, collapsed, expandedWidth, expandedHeight, rows, cols)
+}
+
+/**
+ * Lock and group for a stroke. A Stroke is the ink library's immutable object
+ * and has nowhere to put either, so they live beside it, keyed by identity
+ * (Stroke does not override equals), and ride in the high bits of the tool
+ * field when a page is written. Bit 0 is locked; the rest is the group.
+ */
+internal object StrokeTags {
+    private val tags = java.util.Collections.synchronizedMap(java.util.WeakHashMap<Stroke, Int>())
+
+    fun of(stroke: Stroke): Int = tags[stroke] ?: 0
+    fun set(stroke: Stroke, tag: Int) { if (tag == 0) tags.remove(stroke) else tags[stroke] = tag }
+    fun locked(stroke: Stroke): Boolean = of(stroke) and 1 != 0
+    fun group(stroke: Stroke): Int = of(stroke) ushr 1
+    fun tag(locked: Boolean, group: Int): Int = ((group and MAX_GROUP) shl 1) or (if (locked) 1 else 0)
+
+    /** The tool field as written: the ordinal in the low byte, the tag above it. */
+    fun pack(ordinal: Int, tag: Int): Int = (ordinal and 0xFF) or (tag shl 8)
+    fun ordinalOf(packed: Int): Int = packed and 0xFF
+    fun tagOf(packed: Int): Int = packed ushr 8
+
+    /** A stroke rebuilt from another (moved, turned, re-meshed) is still the same object to the user. */
+    fun carry(from: Stroke, to: Stroke) { if (from !== to) of(from).let { if (it != 0) set(to, it) } }
+
+    // ponytail: random ids, collisions are one in four million per pair of groups on a page.
+    fun newGroup(): Int = 1 + java.util.concurrent.ThreadLocalRandom.current().nextInt(MAX_GROUP)
+
+    const val MAX_GROUP = 0x3FFFFF
+}
 
 /**
  * Masking tape: a stroke drawn like any other, in an opaque colour, whose job is
  * to cover what is under it. Tapping one turns it into its own outline, so what
  * it covers can be read without taking the tape off.
  */
-class PageMask(val stroke: Stroke) {
+class PageMask(stroke: Stroke) {
+    /** Replaced only when the whole page is turned. */
+    var stroke: Stroke = stroke
+        internal set
+
     /**
      * Lifted to look at what is underneath. Deliberately not saved: reopening a
      * note should put every strip back down, which is the point of covering
@@ -66,6 +134,10 @@ data class PageExportOptions(
     val last: Int,
     val size: ExportPageSize = ExportPageSize.ORIGINAL,
     val rotation: Int = 0,
+    /** Every page flattened to a picture, for viewers that mishandle vector ink. */
+    val raster: Boolean = false,
+    /** Dark paper, light ink: every colour turned to its opposite. */
+    val invert: Boolean = false,
 )
 
 enum class PageLayoutMode { VERTICAL, HORIZONTAL, SPREAD_2X1, GRID_2X2 }
@@ -86,6 +158,14 @@ class Page(
     /** Optional table-of-contents entry attached to this page's stable ID. */
     var tocTitle: String? = null,
     var tocHighlighted: Boolean = false,
+    /** How deep the outline entry sits: 0 at the top, each step one level in. */
+    var tocLevel: Int = 0,
+    var bookmarked: Boolean = false,
+    /**
+     * Links on this page's objects: the group the linked objects share, and
+     * where it goes - an https URL, "page:<pageId>" or "note:<noteId>#<pageIndex>".
+     */
+    val links: MutableMap<Int, String> = mutableMapOf(),
     /** Pictures, drawn over the background and under the ink. */
     val images: MutableList<PageImage> = mutableListOf(),
     /** Masking tape, drawn over everything, because covering is the job. */
@@ -360,6 +440,13 @@ data class NoteMeta(
     val favorite: Boolean = false,
     /** When it went into the trash, or 0 for a note that is not in it. */
     val trashedAt: Long = 0L,
+    val tags: List<String> = emptyList(),
+    /** A colour to tell it apart in the list, or 0 for none. */
+    val label: Int = 0,
+    /** Behind the master password. See [NoteLock]. */
+    val locked: Boolean = false,
+    /** Where it sits among the favourites; pinned later sits later. */
+    val favoriteOrder: Long = 0L,
 )
 
 /**
@@ -427,9 +514,15 @@ class NoteStore(context: Context) {
         return true
     }
 
-    /** Deleting a folder keeps its notes at the top level. */
-    fun deleteFolder(name: String) {
-        list().filter { it.folder == name }.forEach { setFolder(it.id, "") }
+    /**
+     * Deleting a folder sends its notes to the trash, still filed under it, so
+     * restoring one brings the folder back with it. [keepNotes] moves them to
+     * the top level instead.
+     */
+    fun deleteFolder(name: String, keepNotes: Boolean = false) {
+        list().filter { it.folder == name }.forEach {
+            if (keepNotes) setFolder(it.id, "") else moveToTrash(it.id)
+        }
         writeFolders(savedFolders().filterNot { it == name })
     }
 
@@ -505,9 +598,109 @@ class NoteStore(context: Context) {
         trashed().forEach { delete(it.id) }
     }
 
+    // ---- reusable library ------------------------------------------------------
+    // Objects kept for reuse across pages and notes, one directory each:
+    // strokes.bin in the page format, the pictures' PNGs, preview.png and item.json.
+
+    private val libraryRoot = File(appContext.filesDir, "library").apply { mkdirs() }
+
+    data class LibraryItem(val id: String, val tags: List<String>, val preview: File, val created: Long)
+
+    fun library(): List<LibraryItem> =
+        libraryRoot.listFiles { f -> f.isDirectory }?.mapNotNull { dir ->
+            val json = runCatching { JSONObject(File(dir, "item.json").readText()) }.getOrNull() ?: return@mapNotNull null
+            val tags = json.optJSONArray("tags")?.let { a -> (0 until a.length()).map(a::getString) }.orEmpty()
+            LibraryItem(dir.name, tags, File(dir, "preview.png"), json.optLong("created"))
+        }?.sortedByDescending { it.created }.orEmpty()
+
+    /** Keeps [clip] for good, with a picture of it for the list. Returns its id. */
+    internal fun addToLibrary(clip: InkClipboard.Clip, preview: Bitmap?): String? = runCatching {
+        val id = UUID.randomUUID().toString()
+        val dir = File(libraryRoot, id).apply { mkdirs() }
+        writeStrokes(File(dir, "strokes.bin"), clip.strokes)
+        val images = JSONArray()
+        clip.images.forEachIndexed { i, (image, bitmap) ->
+            bitmap?.let { b -> File(dir, "$i.png").outputStream().use { b.compress(Bitmap.CompressFormat.PNG, 100, it) } }
+            images.put(JSONObject().put("x", image.x.toDouble()).put("y", image.y.toDouble())
+                .put("w", image.width.toDouble()).put("h", image.height.toDouble())
+                .put("rotation", image.rotation.toDouble()).put("opacity", image.opacity.toDouble()))
+        }
+        preview?.let { b -> File(dir, "preview.png").outputStream().use { b.compress(Bitmap.CompressFormat.PNG, 90, it) } }
+        File(dir, "item.json").writeText(JSONObject()
+            .put("created", System.currentTimeMillis())
+            .put("tags", JSONArray())
+            .put("bounds", JSONArray(listOf(clip.bounds.left, clip.bounds.top, clip.bounds.right, clip.bounds.bottom)
+                .map { it.toDouble() }))
+            .put("images", images).toString())
+        id
+    }.getOrNull()
+
+    /** A kept item as a clip, ready to paste anywhere. */
+    internal fun libraryClip(id: String): InkClipboard.Clip? = runCatching {
+        val dir = File(libraryRoot, id)
+        val json = JSONObject(File(dir, "item.json").readText())
+        val b = json.getJSONArray("bounds")
+        val images = json.optJSONArray("images") ?: JSONArray()
+        InkClipboard.Clip(
+            readStrokes(File(dir, "strokes.bin")),
+            android.graphics.RectF(b.getDouble(0).toFloat(), b.getDouble(1).toFloat(),
+                b.getDouble(2).toFloat(), b.getDouble(3).toFloat()),
+            (0 until images.length()).map { i ->
+                val item = images.getJSONObject(i)
+                PageImage(x = item.optDouble("x").toFloat(), y = item.optDouble("y").toFloat(),
+                    width = item.optDouble("w").toFloat(), height = item.optDouble("h").toFloat(),
+                    opacity = item.optDouble("opacity", 1.0).toFloat(), rotation = item.optDouble("rotation", 0.0).toFloat()) to
+                    BitmapFactory.decodeFile(File(dir, "$i.png").path)
+            },
+        )
+    }.getOrNull()
+
+    fun setLibraryTags(id: String, tags: List<String>) {
+        val file = File(libraryRoot, "$id/item.json")
+        runCatching {
+            val json = JSONObject(file.readText())
+            json.put("tags", JSONArray(tags.map { it.trim() }.filter { it.isNotEmpty() }.distinct()))
+            file.writeText(json.toString())
+        }
+    }
+
+    fun deleteLibraryItem(id: String) {
+        File(libraryRoot, id).deleteRecursively()
+    }
+
+    fun setTags(id: String, tags: List<String>) {
+        val clean = tags.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        val file = File(root, "$id/$TAGS")
+        if (clean.isEmpty()) file.delete() else runCatching { file.writeText(JSONArray(clean).toString()) }
+    }
+
+    /** Every tag on a note that is not in the trash, for the filter row. */
+    fun allTags(): List<String> = list().flatMap { it.tags }.distinct().sorted()
+
+    fun setLabel(id: String, color: Int) {
+        val file = File(root, "$id/$LABEL")
+        if (color == 0) file.delete() else runCatching { file.writeText(color.toString()) }
+    }
+
+    fun setLocked(id: String, locked: Boolean) {
+        val marker = File(root, "$id/$LOCKED")
+        if (locked) runCatching { marker.writeText("1") } else marker.delete()
+    }
+
+    fun isLocked(id: String): Boolean = File(root, "$id/$LOCKED").isFile
+
     fun setFavorite(id: String, favorite: Boolean) {
         val marker = File(root, "$id/$FAVORITE")
-        if (favorite) runCatching { marker.writeText("1") } else marker.delete()
+        // The marker holds the pinning time, which is the favourite's place in line.
+        if (favorite) runCatching { marker.writeText(System.currentTimeMillis().toString()) } else marker.delete()
+    }
+
+    /** Renumbers the favourites in [ids]' order. */
+    fun setFavoriteOrder(ids: List<String>) {
+        ids.forEachIndexed { i, id ->
+            val marker = File(root, "$id/$FAVORITE")
+            if (marker.isFile) runCatching { marker.writeText((i + 1).toString()) }
+        }
     }
 
     @Volatile private var trashPurged = false
@@ -531,6 +724,30 @@ class NoteStore(context: Context) {
         )))
         writeMeta(id, title, document)
         return NoteMeta(id, title, System.currentTimeMillis(), 1, 0)
+    }
+
+    /**
+     * A note with one picture per page, in [streams]' order: each page is A4
+     * wide and as tall as its picture needs.
+     */
+    fun createFromImages(title: String, streams: List<() -> java.io.InputStream?>): NoteMeta? {
+        val id = UUID.randomUUID().toString()
+        File(root, "$id/pages").mkdirs()
+        val pages = streams.mapNotNull { open ->
+            val added = runCatching { open()?.use { addImage(id, it) } }.getOrNull() ?: return@mapNotNull null
+            val height = (Page.A4_WIDTH / added.second.coerceAtLeast(0.05f)).coerceIn(100f, Page.A4_HEIGHT * 6f)
+            Page(width = Page.A4_WIDTH, height = height).also {
+                it.images += PageImage(added.first, 0f, 0f, Page.A4_WIDTH, height)
+            }
+        }
+        if (pages.isEmpty()) {
+            File(root, id).deleteRecursively()
+            return null
+        }
+        val document = Document(pages.toMutableList())
+        writeMeta(id, title, document)
+        writeAutoThumbnail(id, document)
+        return readMeta(File(root, id))
     }
 
     fun createMarkdown(title: String, text: String = "", folder: String = ""): NoteMeta {
@@ -634,6 +851,67 @@ class NoteStore(context: Context) {
         return NoteMeta(id, title, System.currentTimeMillis(), pages.size, 0)
     }
 
+    /**
+     * Adds [pages] - in-memory pages of note [sourceId], ink loaded - to the
+     * end of note [targetId] on disk: strokes, tape, pictures and any PDF page
+     * under them. The target must not be open.
+     */
+    fun appendPages(targetId: String, sourceId: String, pages: List<Page>): Boolean = runCatching {
+        PDFBoxResourceLoader.init(appContext)
+        val target = load(targetId)
+        val title = readMeta(File(root, targetId))?.title ?: "노트"
+        val memory = { MemoryUsageSetting.setupTempFileOnly().setTempDir(appContext.cacheDir) }
+        val sourcePdf = pdfFile(sourceId).takeIf { it.isFile && pages.any { p -> p.pdfPageIndex >= 0 } }
+            ?.let { PDDocument.load(it, memory()) }
+        val targetPdfFile = pdfFile(targetId)
+        val targetPdf = if (targetPdfFile.isFile) PDDocument.load(targetPdfFile, memory()) else PDDocument(memory())
+        val pagesDir = File(root, "$targetId/pages").apply { mkdirs() }
+        var pdfChanged = false
+        try {
+            for (old in pages) {
+                val pageId = UUID.randomUUID().toString()
+                val pdfIndex = if (old.pdfPageIndex >= 0 && sourcePdf != null &&
+                    old.pdfPageIndex < sourcePdf.numberOfPages) {
+                    targetPdf.importPage(sourcePdf.getPage(old.pdfPageIndex))
+                    pdfChanged = true
+                    targetPdf.numberOfPages - 1
+                } else -1
+                val images = old.images.map { image ->
+                    val imageId = UUID.randomUUID().toString()
+                    val file = imageFile(sourceId, image.id)
+                    if (file.isFile) file.copyTo(imageFile(targetId, imageId).also { it.parentFile?.mkdirs() })
+                    image.copy(id = imageId)
+                }.toMutableList()
+                writeStrokes(File(pagesDir, "$pageId.bin"), old.strokes)
+                if (old.masks.isNotEmpty()) writeStrokes(File(pagesDir, "$pageId.mask"), old.masks.map { it.stroke })
+                target.pages += Page(
+                    id = pageId, width = old.width, height = old.height,
+                    background = if (pdfIndex < 0 && old.background == PageBackground.PDF) PageBackground.BLANK
+                        else old.background,
+                    templateId = old.templateId, pdfPageIndex = pdfIndex, tocTitle = old.tocTitle,
+                    tocHighlighted = old.tocHighlighted, tocLevel = old.tocLevel, bookmarked = old.bookmarked,
+                    links = old.links.toMutableMap(), images = images,
+                ).also {
+                    it.loaded = false
+                    it.dirty = false
+                    it.savedStrokeCount = old.strokes.size
+                    it.savedOnDisk = old.strokes.size
+                }
+            }
+            if (pdfChanged) {
+                // Beside and renamed over: the loaded document still reads from the old file.
+                val tmp = File(targetPdfFile.parentFile, "doc.pdf.tmp")
+                targetPdf.save(tmp)
+                targetPdf.close()
+                tmp.renameTo(targetPdfFile)
+            }
+            writeMeta(targetId, title, target)
+        } finally {
+            sourcePdf?.close()
+            runCatching { targetPdf.close() }
+        }
+    }.isSuccess
+
     /** Copies editable pages, ink, pictures and PDF backgrounds into one new note. */
     fun mergeNotes(ids: List<String>, title: String): NoteMeta? = runCatching {
         val sources = ids.distinct().mapNotNull { id ->
@@ -667,21 +945,22 @@ class NoteStore(context: Context) {
                                 imageFile(newId, imageId).also { it.parentFile?.mkdirs() }
                                     .let { source.copyTo(it) }
                             }
-                            PageImage(imageId, image.x, image.y, image.width, image.height,
-                                image.textContent)
+                            image.copy(id = imageId)
                         }.toMutableList()
                         val page = Page(
                             id = pageId, width = old.width, height = old.height,
                             background = old.background, templateId = old.templateId,
                             pdfPageIndex = pdfIndex, tocTitle = old.tocTitle,
-                            tocHighlighted = old.tocHighlighted, images = images,
+                            tocHighlighted = old.tocHighlighted, tocLevel = old.tocLevel,
+                            bookmarked = old.bookmarked, images = images,
+                            links = old.links.toMutableMap(),
                         ).also {
                             it.loaded = false
                             it.dirty = false
                             it.savedStrokeCount = old.savedStrokeCount
                             it.savedOnDisk = old.savedStrokeCount
                         }
-                        for (suffix in listOf(".bin", ".mask", ".txt", INK_INDEX)) {
+                        for (suffix in listOf(".bin", ".mask", ".txt", INK_INDEX, BOX_INDEX)) {
                             val source = File(root, "$id/pages/${old.id}$suffix")
                             if (source.isFile) source.copyTo(File(pagesDir, "$pageId$suffix"))
                         }
@@ -801,6 +1080,38 @@ class NoteStore(context: Context) {
 
     fun pdfFile(id: String): File = File(root, "$id/doc.pdf")
 
+    /** One entry of the outline a PDF carries inside it. */
+    data class PdfOutlineEntry(val title: String, val pdfPage: Int, val level: Int)
+
+    /**
+     * The PDF's own table of contents, flattened in reading order. Read from
+     * the file each time it is asked for; it is the document's, not the note's,
+     * and is never edited here.
+     */
+    fun pdfOutline(id: String): List<PdfOutlineEntry> {
+        val file = pdfFile(id)
+        if (!file.isFile) return emptyList()
+        PDFBoxResourceLoader.init(appContext)
+        return runCatching {
+            PDDocument.load(file, MemoryUsageSetting.setupTempFileOnly().setTempDir(appContext.cacheDir)).use { doc ->
+                val out = mutableListOf<PdfOutlineEntry>()
+                fun walk(node: com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineNode, level: Int) {
+                    var child = node.firstChild
+                    var guard = 0
+                    while (child != null && guard++ < MAX_OUTLINE_ENTRIES) {
+                        val page = runCatching { child.findDestinationPage(doc) }.getOrNull()
+                        val index = page?.let { doc.pages.indexOf(it) } ?: -1
+                        if (index >= 0) out += PdfOutlineEntry(child.title.orEmpty().trim(), index, level)
+                        if (level < MAX_OUTLINE_DEPTH) walk(child, level + 1)
+                        child = child.nextSibling
+                    }
+                }
+                doc.documentCatalog.documentOutline?.let { walk(it, 0) }
+                out
+            }
+        }.getOrDefault(emptyList())
+    }
+
     /** Study progress on the note's tape; see [MaskStudy]. */
     fun studyFile(id: String): File = File(root, "$id/study.json")
 
@@ -832,6 +1143,9 @@ class NoteStore(context: Context) {
                 pdfPageIndex = entry.optInt("pdf", -1),
                 tocTitle = entry.optString("tocTitle", "").ifBlank { null },
                 tocHighlighted = entry.optBoolean("tocHighlighted", false),
+                tocLevel = entry.optInt("tocLevel", 0),
+                bookmarked = entry.optBoolean("bookmark", false),
+                links = linksFrom(entry),
             )
             page.images.addAll(imagesFrom(entry))
             // Strokes are left on disk until the page is actually needed.
@@ -878,7 +1192,7 @@ class NoteStore(context: Context) {
         // A page that was deleted this session leaves its file behind otherwise.
         val live = document.pages
             .flatMap {
-                listOf("${it.id}.bin", "${it.id}.mask", "${it.id}.txt", "${it.id}$INK_INDEX")
+                listOf("${it.id}.bin", "${it.id}.mask", "${it.id}.txt", "${it.id}$INK_INDEX", "${it.id}$BOX_INDEX")
             }
             .toSet()
         dir.listFiles()?.forEach { if (it.name !in live) it.delete() }
@@ -930,8 +1244,11 @@ class NoteStore(context: Context) {
                 pdfPageIndex = live.pdfPageIndex,
                 tocTitle = live.tocTitle,
                 tocHighlighted = live.tocHighlighted,
+                tocLevel = live.tocLevel,
+                bookmarked = live.bookmarked,
+                links = live.links.toMutableMap(),
                 images = live.images.map { image ->
-                    PageImage(image.id, image.x, image.y, image.width, image.height, image.textContent)
+                    image.copy()
                 }.toMutableList(),
                 masks = live.masks.map { mask ->
                     PageMask(mask.stroke).also { it.revealed = mask.revealed }
@@ -1033,10 +1350,30 @@ class NoteStore(context: Context) {
                     .put("w", image.width.toDouble())
                     .put("h", image.height.toDouble())
                     .put("text", image.textContent?.let { content -> JSONObject()
-                        .put("value", content.text).put("size", content.size.toDouble()).put("color", content.color) }),
+                        .put("value", content.text).put("size", content.size.toDouble()).put("color", content.color)
+                        .put("html", content.html ?: "").put("font", content.font).put("bg", content.background)
+                        .put("corner", content.corner.toDouble()).put("pad", content.padding.toDouble())
+                        .put("min", content.minSize.toDouble()) })
+                    .put("locked", image.locked)
+                    .put("group", image.group)
+                    .put("opacity", image.opacity.toDouble())
+                    .put("rotation", image.rotation.toDouble())
+                    .put("box", image.box)
+                    .put("collapsed", image.collapsed)
+                    .put("ew", image.expandedWidth.toDouble())
+                    .put("eh", image.expandedHeight.toDouble())
+                    .put("rows", image.rows)
+                    .put("cols", image.cols),
             )
         }
         return array
+    }
+
+    private fun linksFrom(entry: JSONObject): MutableMap<Int, String> {
+        val json = entry.optJSONObject("links") ?: return mutableMapOf()
+        return json.keys().asSequence().mapNotNull { key ->
+            key.toIntOrNull()?.let { it to json.optString(key) }
+        }.filter { it.second.isNotBlank() }.toMap().toMutableMap()
     }
 
     private fun imagesFrom(entry: JSONObject): MutableList<PageImage> {
@@ -1052,8 +1389,24 @@ class NoteStore(context: Context) {
                 height = item.optDouble("h").toFloat(),
                 textContent = item.optJSONObject("text")?.let { content ->
                     TextBoxContent(content.optString("value"), content.optDouble("size", 32.0).toFloat(),
-                        content.optInt("color", 0xFF000000.toInt()))
+                        content.optInt("color", 0xFF000000.toInt()),
+                        html = content.optString("html", "").ifBlank { null },
+                        font = content.optString("font", ""),
+                        background = content.optInt("bg", 0),
+                        corner = content.optDouble("corner", 0.0).toFloat(),
+                        padding = content.optDouble("pad", TextBoxContent.DEFAULT_PADDING.toDouble()).toFloat(),
+                        minSize = content.optDouble("min", 0.0).toFloat())
                 },
+                locked = item.optBoolean("locked", false),
+                group = item.optInt("group", 0),
+                opacity = item.optDouble("opacity", 1.0).toFloat().coerceIn(0f, 1f),
+                rotation = item.optDouble("rotation", 0.0).toFloat(),
+                box = item.optInt("box", PageImage.BOX_NONE),
+                collapsed = item.optBoolean("collapsed", false),
+                expandedWidth = item.optDouble("ew", 0.0).toFloat(),
+                expandedHeight = item.optDouble("eh", 0.0).toFloat(),
+                rows = item.optInt("rows", 0),
+                cols = item.optInt("cols", 0),
             )
         }
         return images
@@ -1220,7 +1573,7 @@ class NoteStore(context: Context) {
         if (first < 1 || last < first || last > document.pages.size) return false
         val selected = document.pages.subList(first - 1, last)
         if (selected.isEmpty()) return false
-        if (options?.size != null && options.size != ExportPageSize.ORIGINAL) {
+        if (options != null && (options.size != ExportPageSize.ORIGINAL || options.raster || options.invert)) {
             return exportSizedPdf(id, selected, out, options)
         }
         val pages = selected.map { page ->
@@ -1252,7 +1605,7 @@ class NoteStore(context: Context) {
         try {
             for ((index, page) in pages.withIndex()) {
                 val bitmap = renderExportBitmap(id, page, source, renderer,
-                    options.size, options.rotation)
+                    options.size, options.rotation, options.invert)
                 try {
                     val pdfPage = pdf.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(
                         (bitmap.width / 2).coerceAtLeast(1),
@@ -1273,8 +1626,9 @@ class NoteStore(context: Context) {
     }.getOrDefault(false)
 
     /** Exports one page as PNG, or a numbered PNG ZIP for a range. */
+    /** One PNG per page, each handed to [write] with its page number. */
     fun exportPng(
-        id: String, out: java.io.OutputStream, options: PageExportOptions,
+        id: String, options: PageExportOptions, write: (page: Int, png: Bitmap) -> Boolean,
     ): Boolean = runCatching {
         val document = load(id)
         require(options.first >= 1 && options.last >= options.first &&
@@ -1282,32 +1636,34 @@ class NoteStore(context: Context) {
         val source = PdfSource.open(pdfFile(id))
         val renderer = CanvasStrokeRenderer.create(PencilTextureStore)
         try {
-            if (options.first == options.last) {
-                val bitmap = renderExportBitmap(id, document.pages[options.first - 1],
-                    source, renderer, options.size, options.rotation)
-                try { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) }
-                finally { bitmap.recycle() }
-            } else {
-                java.util.zip.ZipOutputStream(out.buffered()).use { zip ->
-                    for (number in options.first..options.last) {
-                        val bitmap = renderExportBitmap(id, document.pages[number - 1],
-                            source, renderer, options.size, options.rotation)
-                        try {
-                            zip.putNextEntry(java.util.zip.ZipEntry(
-                                "page-${number.toString().padStart(3, '0')}.png"))
-                            check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, zip))
-                            zip.closeEntry()
-                        } finally { bitmap.recycle() }
-                    }
-                }
+            for (number in options.first..options.last) {
+                val bitmap = renderExportBitmap(id, document.pages[number - 1],
+                    source, renderer, options.size, options.rotation, options.invert)
+                try { check(write(number, bitmap)) } finally { bitmap.recycle() }
             }
         } finally { source?.close() }
         true
     }.getOrDefault(false)
 
+    /** Turns every colour in [bitmap] to its opposite, alpha untouched. */
+    private fun invertColours(bitmap: Bitmap) {
+        val copy = bitmap.copy(Bitmap.Config.ARGB_8888, false)
+        val paint = android.graphics.Paint().apply {
+            colorFilter = android.graphics.ColorMatrixColorFilter(floatArrayOf(
+                -1f, 0f, 0f, 0f, 255f,
+                0f, -1f, 0f, 0f, 255f,
+                0f, 0f, -1f, 0f, 255f,
+                0f, 0f, 0f, 1f, 0f,
+            ))
+            xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC)
+        }
+        Canvas(bitmap).drawBitmap(copy, 0f, 0f, paint)
+        copy.recycle()
+    }
+
     private fun renderExportBitmap(
         id: String, page: Page, source: PdfSource?, renderer: CanvasStrokeRenderer,
-        size: ExportPageSize, rotation: Int,
+        size: ExportPageSize, rotation: Int, invert: Boolean = false,
     ): Bitmap {
         val (width, height) = when (size) {
             ExportPageSize.A4 -> 1240 to 1754
@@ -1327,6 +1683,7 @@ class NoteStore(context: Context) {
             (height - page.height * scale) / 2f)
         drawWholePage(id, page, canvas, source, renderer, scale)
         canvas.restore()
+        if (invert) invertColours(bitmap)
         val degrees = ((rotation % 360) + 360) % 360
         if (degrees == 0) return bitmap
         val matrix = Matrix().apply { postRotate(degrees.toFloat()) }
@@ -1475,7 +1832,24 @@ class NoteStore(context: Context) {
         }
     }
 
+    /**
+     * What was typed on each page - text boxes, sticky notes - kept beside the
+     * page for search, rewritten only when it changes.
+     */
+    private fun writeTypedIndex(id: String, document: Document) {
+        val dir = File(root, "$id/pages")
+        for (page in document.pages) {
+            val typed = page.images.mapNotNull { it.textContent?.text?.takeIf(String::isNotBlank) }.joinToString("\n")
+            val file = File(dir, page.id + BOX_INDEX)
+            if (typed.isEmpty()) { if (file.isFile) file.delete(); continue }
+            if (file.isFile && runCatching { file.readText() }.getOrNull() == typed) continue
+            dir.mkdirs()
+            runCatching { file.writeText(typed) }
+        }
+    }
+
     private fun writeMeta(id: String, title: String, document: Document) {
+        writeTypedIndex(id, document)
         val pages = JSONArray()
         for (page in document.pages) {
             pages.put(
@@ -1488,6 +1862,9 @@ class NoteStore(context: Context) {
                     .put("pdf", page.pdfPageIndex)
                     .put("tocTitle", page.tocTitle ?: "")
                     .put("tocHighlighted", page.tocHighlighted)
+                    .put("tocLevel", page.tocLevel)
+                    .put("bookmark", page.bookmarked)
+                    .put("links", JSONObject(page.links.mapKeys { it.key.toString() }))
                     .put("strokes", if (page.loaded) page.strokes.size else page.savedStrokeCount)
                     .put("images", imagesToJson(page)),
             )
@@ -1524,6 +1901,15 @@ class NoteStore(context: Context) {
                 trashedAt = File(dir, TRASHED).takeIf { it.isFile }
                     ?.let { runCatching { it.readText().trim().toLong() }.getOrDefault(it.lastModified()) }
                     ?: 0L,
+                tags = File(dir, TAGS).takeIf { it.isFile }?.let { file ->
+                    runCatching { JSONArray(file.readText()).let { a -> (0 until a.length()).map(a::getString) } }
+                        .getOrNull()
+                }.orEmpty(),
+                label = File(dir, LABEL).takeIf { it.isFile }
+                    ?.let { runCatching { it.readText().trim().toInt() }.getOrNull() } ?: 0,
+                locked = File(dir, LOCKED).isFile,
+                favoriteOrder = File(dir, FAVORITE).takeIf { it.isFile }
+                    ?.let { runCatching { it.readText().trim().toLong() }.getOrNull() } ?: 0L,
             )
         }.getOrNull()
     }
@@ -1564,7 +1950,8 @@ class NoteStore(context: Context) {
 
     private fun writeStroke(out: DataOutputStream, stroke: Stroke) {
         val brush = stroke.brush
-        out.writeInt(Tool.ofBrushFamily(brush.family).ordinal)
+        // The ordinal never needs more than the low byte; the tags ride above it.
+        out.writeInt(StrokeTags.pack(Tool.ofBrushFamily(brush.family).ordinal, StrokeTags.of(stroke)))
         out.writeInt(brush.colorIntArgb)
         out.writeFloat(brush.size)
         out.writeFloat(brush.epsilon)
@@ -1597,7 +1984,8 @@ class NoteStore(context: Context) {
                 val storedVersion = input.readInt()
                 if (storedVersion !in 1..VERSION) return emptyList()
                 repeat(input.readInt()) {
-                    val storedTool = Tool.entries[input.readInt()]
+                    val rawTool = input.readInt()
+                    val storedTool = Tool.entries[StrokeTags.ordinalOf(rawTool)]
                     val color = input.readInt()
                     // Earlier identical pen/highlighter families wrote opaque
                     // normal pens with the highlighter ordinal. Restore their
@@ -1622,7 +2010,9 @@ class NoteStore(context: Context) {
                         ),
                         inputs,
                     )
-                    strokes += if (tool == Tool.PEN) withoutStationaryStart(stroke) else stroke
+                    val loaded = if (tool == Tool.PEN) withoutStationaryStart(stroke) else stroke
+                    StrokeTags.set(loaded, StrokeTags.tagOf(rawTool))
+                    strokes += loaded
                 }
             }
         }
@@ -1641,7 +2031,14 @@ class NoteStore(context: Context) {
         const val INK_INDEX = ".ink"
         const val TRASHED = "trashed"
         const val FAVORITE = "favorite"
-        const val TRASH_DAYS = 30
+        const val TRASH_DAYS = 14
+        /** Typed text on a page, for search. */
+        const val BOX_INDEX = ".box"
+        private const val MAX_OUTLINE_ENTRIES = 2000
+        private const val MAX_OUTLINE_DEPTH = 6
+        const val TAGS = "tags.json"
+        const val LABEL = "label"
+        const val LOCKED = "locked"
         const val ARCHIVE_MARK = "notesis.json"
         const val ARCHIVE_VERSION = 1
         const val THUMB_INTERVAL_MS = 20_000L

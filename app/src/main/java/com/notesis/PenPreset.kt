@@ -24,10 +24,93 @@ data class PenPreset(
      * gives that fifth the whole track back.
      */
     val maxWidth: Float = 0f,
+    /** Which pen: one of [PEN_NIBS]. Pens only. */
+    val nib: Tool = Tool.PEN,
 ) {
-    /** The tool as it actually draws, which is where pressure is decided. */
-    fun drawingTool(): Tool =
-        if (pressure && tool == Tool.PEN) Tool.PRESSURE_PEN else tool
+    /** The tool as it actually draws, which is where pressure and the nib are decided. */
+    fun drawingTool(): Tool = when {
+        tool != Tool.PEN -> tool
+        nib != Tool.PEN -> nib
+        pressure -> Tool.PRESSURE_PEN
+        else -> Tool.PEN
+    }
+}
+
+/** The pens the pen tool can be, in the order the settings offer them. */
+val PEN_NIBS = listOf(
+    Tool.PEN to "볼펜", Tool.FOUNTAIN to "만년필", Tool.CALLIGRAPHY to "캘리그라피",
+)
+
+// What one finger, two fingers and multi-finger double taps do. See InkCanvasView.
+const val FINGER_SCROLL = 0
+const val FINGER_IGNORED = 1
+const val FINGER_DRAW = 2
+const val TWO_ZOOM_PAN = 0
+const val TWO_SCROLL = 1
+const val TWO_IGNORED = 2
+const val TAP_NONE = 0
+const val TAP_UNDO = 1
+const val TAP_REDO = 2
+const val PEN_BUTTON_ERASE = 0
+const val PEN_BUTTON_LASER = 1
+const val PEN_BUTTON_LASSO = 2
+
+/** What the eraser takes and which pen gestures do more than write. See InkCanvasView. */
+data class CanvasGestures(
+    val eraseInk: Boolean = true,
+    val eraseHighlighter: Boolean = true,
+    val eraseTape: Boolean = true,
+    val scribbleErase: Boolean = false,
+    val circleToLasso: Boolean = false,
+    val lassoWholeOnly: Boolean = false,
+    val lassoInk: Boolean = true,
+    val lassoHighlighter: Boolean = true,
+    val lassoPictures: Boolean = true,
+    val lassoText: Boolean = true,
+    val selectLocked: Boolean = false,
+    val eraseLocked: Boolean = false,
+    val eraseImages: Boolean = false,
+    val eraseText: Boolean = false,
+    val holdToDraw: Boolean = false,
+    val snapToAlign: Boolean = true,
+    val keepAspect: Boolean = true,
+    val oneFinger: Int = FINGER_SCROLL,
+    val twoFingers: Int = TWO_ZOOM_PAN,
+    val zoomLocked: Boolean = false,
+    val doubleTapZoom: Boolean = false,
+    val twoFingerTap: Int = TAP_UNDO,
+    val threeFingerTap: Int = TAP_REDO,
+    val longPressMenu: Boolean = true,
+    val linkOverlay: Boolean = true,
+    val eraserReturns: Boolean = false,
+    val penButton: Int = PEN_BUTTON_ERASE,
+)
+
+fun InkCanvasView.applyGestures(gestures: CanvasGestures) {
+    eraseInk = gestures.eraseInk
+    eraseHighlighter = gestures.eraseHighlighter
+    eraseTape = gestures.eraseTape
+    scribbleErase = gestures.scribbleErase
+    circleToLasso = gestures.circleToLasso
+    lassoWholeOnly = gestures.lassoWholeOnly
+    lassoInk = gestures.lassoInk
+    lassoHighlighter = gestures.lassoHighlighter
+    lassoPictures = gestures.lassoPictures
+    lassoText = gestures.lassoText
+    selectLocked = gestures.selectLocked
+    eraseLocked = gestures.eraseLocked
+    eraseImages = gestures.eraseImages
+    eraseText = gestures.eraseText
+    holdToDraw = gestures.holdToDraw
+    snapToAlign = gestures.snapToAlign
+    keepAspect = gestures.keepAspect
+    oneFinger = gestures.oneFinger
+    twoFingers = gestures.twoFingers
+    zoomLocked = gestures.zoomLocked
+    doubleTapZoom = gestures.doubleTapZoom
+    twoFingerTap = gestures.twoFingerTap
+    threeFingerTap = gestures.threeFingerTap
+    penButton = gestures.penButton
 }
 
 /**
@@ -128,6 +211,15 @@ class PenStore(context: Context) {
         get() = prefs.getInt("dottedPattern", 0).coerceIn(0, 3)
         set(value) = prefs.edit().putInt("dottedPattern", value.coerceIn(0, 3)).apply()
 
+    /** This note's own way of laying pages out, or the app-wide one it has not been given. */
+    fun pageLayoutOf(noteId: String): PageLayoutMode =
+        prefs.getString("layout:$noteId", null)?.let { name -> PageLayoutMode.entries.firstOrNull { it.name == name } }
+            ?: pageLayout
+
+    fun setPageLayoutOf(noteId: String, mode: PageLayoutMode) {
+        prefs.edit().putString("layout:$noteId", mode.name).apply()
+    }
+
     var pageLayout: PageLayoutMode
         get() = runCatching { PageLayoutMode.valueOf(
             prefs.getString("pageLayout", PageLayoutMode.VERTICAL.name)!!,
@@ -150,6 +242,81 @@ class PenStore(context: Context) {
     var partialEraser: Boolean
         get() = prefs.getBoolean("partialEraser", false)
         set(value) = prefs.edit().putBoolean("partialEraser", value).apply()
+
+    var shapeCornerRadius: Float
+        get() = prefs.getFloat("shapeCornerRadius", 0f)
+        set(value) = prefs.edit().putFloat("shapeCornerRadius", value).apply()
+
+    /** The swatches on the bar, in the order they sit; opaque RGB, the tool keeps its alpha. */
+    var quickColors: List<Int>
+        get() = prefs.getString("quickColors", null)?.split(',')?.mapNotNull { it.toIntOrNull() }
+            ?: listOf(0xFF000000.toInt(), 0xFF1E88E5.toInt(), 0xFFE53935.toInt(), 0xFF43A047.toInt())
+        set(value) = prefs.edit().putString("quickColors", value.distinct().take(MAX_QUICK_COLORS).joinToString(",")).apply()
+
+    /** A recording that finishes starts the next one in the note's list. */
+    var autoPlayNext: Boolean
+        get() = prefs.getBoolean("autoPlayNext", false)
+        set(value) = prefs.edit().putBoolean("autoPlayNext", value).apply()
+
+    var gestures: CanvasGestures
+        get() = CanvasGestures(
+            eraseInk = prefs.getBoolean("eraseInk", true),
+            eraseHighlighter = prefs.getBoolean("eraseHighlighter", true),
+            eraseTape = prefs.getBoolean("eraseTape", true),
+            scribbleErase = prefs.getBoolean("scribbleErase", false),
+            circleToLasso = prefs.getBoolean("circleToLasso", false),
+            lassoWholeOnly = prefs.getBoolean("lassoWholeOnly", false),
+            lassoInk = prefs.getBoolean("lassoInk", true),
+            lassoHighlighter = prefs.getBoolean("lassoHighlighter", true),
+            lassoPictures = prefs.getBoolean("lassoPictures", true),
+            lassoText = prefs.getBoolean("lassoText", true),
+            selectLocked = prefs.getBoolean("selectLocked", false),
+            eraseLocked = prefs.getBoolean("eraseLocked", false),
+            eraseImages = prefs.getBoolean("eraseImages", false),
+            eraseText = prefs.getBoolean("eraseText", false),
+            holdToDraw = prefs.getBoolean("holdToDraw", false),
+            snapToAlign = prefs.getBoolean("snapToAlign", true),
+            keepAspect = prefs.getBoolean("keepAspect", true),
+            oneFinger = prefs.getInt("oneFinger", FINGER_SCROLL),
+            twoFingers = prefs.getInt("twoFingers", TWO_ZOOM_PAN),
+            zoomLocked = prefs.getBoolean("zoomLocked", false),
+            doubleTapZoom = prefs.getBoolean("doubleTapZoom", false),
+            twoFingerTap = prefs.getInt("twoFingerTap", TAP_UNDO),
+            threeFingerTap = prefs.getInt("threeFingerTap", TAP_REDO),
+            longPressMenu = prefs.getBoolean("longPressMenu", true),
+            linkOverlay = prefs.getBoolean("linkOverlay", true),
+            eraserReturns = prefs.getBoolean("eraserReturns", false),
+            penButton = prefs.getInt("penButton", PEN_BUTTON_ERASE),
+        )
+        set(value) = prefs.edit()
+            .putBoolean("eraseInk", value.eraseInk)
+            .putBoolean("eraseHighlighter", value.eraseHighlighter)
+            .putBoolean("eraseTape", value.eraseTape)
+            .putBoolean("scribbleErase", value.scribbleErase)
+            .putBoolean("circleToLasso", value.circleToLasso)
+            .putBoolean("lassoWholeOnly", value.lassoWholeOnly)
+            .putBoolean("lassoInk", value.lassoInk)
+            .putBoolean("lassoHighlighter", value.lassoHighlighter)
+            .putBoolean("lassoPictures", value.lassoPictures)
+            .putBoolean("lassoText", value.lassoText)
+            .putBoolean("selectLocked", value.selectLocked)
+            .putBoolean("eraseLocked", value.eraseLocked)
+            .putBoolean("eraseImages", value.eraseImages)
+            .putBoolean("eraseText", value.eraseText)
+            .putBoolean("holdToDraw", value.holdToDraw)
+            .putBoolean("snapToAlign", value.snapToAlign)
+            .putBoolean("keepAspect", value.keepAspect)
+            .putInt("oneFinger", value.oneFinger)
+            .putInt("twoFingers", value.twoFingers)
+            .putBoolean("zoomLocked", value.zoomLocked)
+            .putBoolean("doubleTapZoom", value.doubleTapZoom)
+            .putInt("twoFingerTap", value.twoFingerTap)
+            .putInt("threeFingerTap", value.threeFingerTap)
+            .putBoolean("longPressMenu", value.longPressMenu)
+            .putBoolean("linkOverlay", value.linkOverlay)
+            .putBoolean("eraserReturns", value.eraserReturns)
+            .putInt("penButton", value.penButton)
+            .apply()
 
     /** See [InkCanvasView.compatWetInk]; on by default where the front buffer is known to fail. */
     var compatWetInk: Boolean
@@ -196,6 +363,8 @@ class PenStore(context: Context) {
                     pressure = item.optBoolean("pressure", fallback.pressure),
                     maxWidth = item.optDouble("maxWidth", fallback.maxWidth.toDouble()).toFloat()
                         .takeIf { it.isFinite() }?.coerceIn(0f, widthRange(mode).endInclusive) ?: 0f,
+                    nib = runCatching { Tool.valueOf(item.optString("nib", "PEN")) }.getOrDefault(Tool.PEN)
+                        .takeIf { nib -> PEN_NIBS.any { it.first == nib } } ?: Tool.PEN,
                 )
             }.toMap()
         }.getOrNull().orEmpty()
@@ -213,13 +382,15 @@ class PenStore(context: Context) {
                     .put("color", pen.colorArgb)
                     .put("width", pen.width.toDouble())
                     .put("pressure", pen.pressure)
-                    .put("maxWidth", pen.maxWidth.toDouble()),
+                    .put("maxWidth", pen.maxWidth.toDouble())
+                    .put("nib", pen.nib.name),
             )
         }
         prefs.edit().putString(KEY, json.toString()).apply()
     }
 
     companion object {
+        const val MAX_QUICK_COLORS = 8
         private const val KEY = "tools"
         private const val DOCKED = "docked"
         private const val PREDICTION = "prediction"
@@ -266,7 +437,6 @@ class PenStore(context: Context) {
             // Pressure on by default: the stylus has been reporting it all
              // along, and a pen that ignores it reads as a marker.
             EditMode.PEN to PenPreset(Tool.PEN, 0xFF000000.toInt(), 5f, pressure = true),
-            EditMode.PENCIL to PenPreset(Tool.PENCIL, 0xCC404040.toInt(), 4f),
             EditMode.HIGHLIGHTER to PenPreset(Tool.HIGHLIGHTER, 0x66F9A825, 20f),
             EditMode.MASK to PenPreset(Tool.MASK, PageMask.DEFAULT_MASK_COLOR, 20f),
             EditMode.SHAPE to PenPreset(Tool.PEN, 0xFF1976D2.toInt(), 5f),

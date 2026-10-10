@@ -194,9 +194,24 @@ private fun drawImages(
             val y = placement.y / unit
             val width = placement.width / unit
             val height = placement.height / unit
+            stream.saveGraphicsState()
+            if (placement.opacity < 0.999f) {
+                stream.setGraphicsStateParameters(
+                    PDExtendedGraphicsState().apply { nonStrokingAlphaConstant = placement.opacity },
+                )
+            }
+            if (placement.rotation != 0f) {
+                // Turn about the picture's middle, in the page's downward-pointing system.
+                val cx = x + width / 2f
+                val cy = y + height / 2f
+                stream.transform(Matrix.getTranslateInstance(cx, cy))
+                stream.transform(Matrix.getRotateInstance(Math.toRadians(placement.rotation.toDouble()), 0f, 0f))
+                stream.transform(Matrix.getTranslateInstance(-cx, -cy))
+            }
             // The enclosing coordinate system points down. Flip the image once
             // locally so its bitmap rows remain upright after that page transform.
             stream.drawImage(image, Matrix(width, 0f, 0f, -height, x, y + height))
+            stream.restoreGraphicsState()
         } finally {
             bitmap.recycle()
         }

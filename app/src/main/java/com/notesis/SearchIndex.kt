@@ -94,7 +94,7 @@ class SearchIndex(context: Context) : SQLiteOpenHelper(context, "search.db", nul
 
     companion object {
         fun isTextFile(name: String): Boolean =
-            name.endsWith(".txt") || name.endsWith(NoteStore.INK_INDEX)
+            name.endsWith(".txt") || name.endsWith(NoteStore.INK_INDEX) || name.endsWith(NoteStore.BOX_INDEX)
 
         /** The page id a text file belongs to: the file name without its extension. */
         fun pageIdOf(file: String): String = file.substringBeforeLast('.')

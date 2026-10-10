@@ -20,6 +20,7 @@ import android.text.TextPaint
 import android.util.AttributeSet
 import android.util.LruCache
 import android.view.Choreographer
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.VelocityTracker
@@ -355,8 +356,6 @@ private class TextRender(
     val logicalHeight: Float,
 )
 
-/** The shapes the pen can be made to draw instead of following the hand. */
-enum class ShapeKind { LINE, ARROW, RECT, OVAL }
 
 enum class Tool {
     PEN,
@@ -381,7 +380,16 @@ enum class Tool {
     /** Patterned lines remain one Ink stroke instead of hundreds of marks. */
     DOTTED,
     DASHED,
-    DASH_DOT;
+    DASH_DOT,
+
+    /** A pressure nib cut at an angle, so the line swells and thins with direction and weight. */
+    FOUNTAIN,
+    /** A flat nib held at 45 degrees: broad on the down-strokes, hairline across. */
+    CALLIGRAPHY,
+    /** Translucent wash whose overlaps build up, like layers of paint. */
+    WATERCOLOR,
+    /** A broad, squarish, pressure-loaded bristle laid on opaque. */
+    OIL;
 
     fun brushFamily(): BrushFamily = when (this) {
         HIGHLIGHTER -> highlighter
@@ -391,6 +399,10 @@ enum class Tool {
         DOTTED -> dotted
         DASHED -> dashed
         DASH_DOT -> dashDot
+        FOUNTAIN -> fountain
+        CALLIGRAPHY -> calligraphy
+        WATERCOLOR -> watercolor
+        OIL -> oil
         else -> pen
     }
 
@@ -475,6 +487,30 @@ enum class Tool {
             )))
         }
 
+        @OptIn(ExperimentalInkCustomBrushApi::class)
+        private fun nib(
+            stock: BrushFamily, id: String, scaleY: Float, rotation: Float, rounding: Float, overlap: SelfOverlap,
+        ): BrushFamily {
+            val coat = stock.coats.first()
+            return withSelfOverlap(stock.copy(coat = coat.copy(tip = coat.tip.copy(
+                scaleX = 1f, scaleY = scaleY, cornerRounding = rounding,
+                slantDegrees = 0f, pinch = 0f, rotationDegrees = rotation,
+            ))), overlap).copy(clientBrushFamilyId = id)
+        }
+
+        private val fountain by lazy {
+            nib(StockBrushes.pressurePen(), "notesis.fountain", 0.55f, -30f, 0.8f, SelfOverlap.DISCARD)
+        }
+        private val calligraphy by lazy {
+            nib(StockBrushes.marker(), "notesis.calligraphy", 0.18f, -45f, 0.25f, SelfOverlap.DISCARD)
+        }
+        private val watercolor by lazy {
+            nib(StockBrushes.pressurePen(), "notesis.watercolor", 1f, 0f, 1f, SelfOverlap.ACCUMULATE)
+        }
+        private val oil by lazy {
+            nib(StockBrushes.pressurePen(), "notesis.oil", 0.8f, 0f, 0.3f, SelfOverlap.DISCARD)
+        }
+
         /**
          * A centred round marker with merged self-overlap keeps a highlighter
          * aligned to the pen and avoids dark seams where it crosses itself.
@@ -532,13 +568,18 @@ enum class Tool {
             dotted -> DOTTED
             dashed -> DASHED
             dashDot -> DASH_DOT
+            fountain -> FOUNTAIN
+            calligraphy -> CALLIGRAPHY
+            watercolor -> WATERCOLOR
+            oil -> OIL
             else -> PEN
         }
     }
 }
 
 private fun Tool.isFreehandPen(): Boolean =
-    this == Tool.PEN || this == Tool.PRESSURE_PEN || this == Tool.PENCIL
+    this == Tool.PEN || this == Tool.PRESSURE_PEN || this == Tool.PENCIL || this == Tool.FOUNTAIN ||
+        this == Tool.CALLIGRAPHY || this == Tool.WATERCOLOR || this == Tool.OIL
 
 /**
  * The laser pointer's trail, in screen pixels. A fixed ring of samples that age
@@ -564,6 +605,9 @@ private class LaserView(context: Context) : View(context) {
         strokeCap = Paint.Cap.ROUND
     }
     private val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFF3B30.toInt() }
+
+    /** False draws only the dot under the pen, with nothing trailing behind it. */
+    var trail = true
 
     init {
         setWillNotDraw(false)
@@ -602,7 +646,7 @@ private class LaserView(context: Context) : View(context) {
             count--
         }
         if (count == 0) return
-        for (i in 1 until count) {
+        if (trail) for (i in 1 until count) {
             val a = (start + i - 1) % CAPACITY
             val b = (start + i) % CAPACITY
             val fade = (1f - (now - times[b]).toFloat() / LIFE_MS).coerceIn(0f, 1f)
@@ -744,7 +788,16 @@ class InkCanvasView @JvmOverloads constructor(
     var strokeWidth: Float = 5f
     var stabilizer: Int = 0
     var autoShapeRecognitionEnabled: Boolean = false
+
+    /** A pen stroke held still at its end for [CIRCLE_HOLD_MS] becomes the shape it looks like. */
+    var holdToDraw: Boolean = false
+    private var holdTracking = false
+    /** Set at pen-up when the hold was long enough; the commit that follows reads and clears it. */
+    private var recognizeOnFinish = false
     var axisSnapEnabled: Boolean = true
+
+    /** How round a polygon shape's corners are drawn, in page units; 0 is sharp. */
+    var shapeCornerRadius: Float = 0f
     var dottedPattern: Int = 0
     private var playbackPage = -1
     private var playbackStrokeCount: Int? = null
@@ -807,11 +860,98 @@ class InkCanvasView @JvmOverloads constructor(
             if (!value) laser.clear()
         }
 
+    /** The laser as a dot alone, or a dot with a fading trail. */
+    var laserTrail: Boolean
+        get() = laser.trail
+        set(value) { laser.trail = value }
+
     /** Cut strokes where the eraser crosses them instead of removing them whole. */
     var partialEraser: Boolean = false
 
     /** Diameter of the eraser tip, in page units, like [strokeWidth]. */
     var eraserWidth: Float = 24f
+
+    /** What the eraser may take: pen ink (everything but highlighter), highlighter, tape. */
+    var eraseInk: Boolean = true
+    var eraseHighlighter: Boolean = true
+    var eraseTape: Boolean = true
+
+    /** A pen stroke that scribbles back and forth over ink erases that ink instead. */
+    var scribbleErase: Boolean = false
+
+    /** A pen loop held still at its end turns into a lasso selection. */
+    var circleToLasso: Boolean = false
+
+    /** The lasso takes only strokes lying wholly inside the loop, not those whose middle is. */
+    var lassoWholeOnly: Boolean = false
+
+    /** What a loop picks up: pen ink, highlighter, pictures, text boxes. */
+    var lassoInk: Boolean = true
+    var lassoHighlighter: Boolean = true
+    var lassoPictures: Boolean = true
+    var lassoText: Boolean = true
+
+    /** Locked objects are skipped by the lasso and the eraser unless these say otherwise. */
+    var selectLocked: Boolean = false
+    var eraseLocked: Boolean = false
+
+    /** Pictures and text boxes go whole when the eraser touches them. Off, like ink-only erasing. */
+    var eraseImages: Boolean = false
+    var eraseText: Boolean = false
+
+    /** A dragged selection catches on the page's edges and middle and on pictures' edges. */
+    var snapToAlign: Boolean = true
+
+    /** Dragging a picture's corner keeps its proportions; off, width and height go their own ways. */
+    var keepAspect: Boolean = true
+
+    /** What one finger does: [FINGER_SCROLL], [FINGER_IGNORED] or [FINGER_DRAW]. */
+    var oneFinger: Int = FINGER_SCROLL
+    /** What two fingers do: [TWO_ZOOM_PAN], [TWO_SCROLL] or [TWO_IGNORED]. */
+    var twoFingers: Int = TWO_ZOOM_PAN
+    /** Pinching moves the page but never changes its zoom. */
+    var zoomLocked: Boolean = false
+    /** A one-finger double tap zooms in, or back out to the page width. */
+    var doubleTapZoom: Boolean = false
+    /** What a two- and a three-finger double tap do: [TAP_NONE], [TAP_UNDO], [TAP_REDO]. */
+    var twoFingerTap: Int = TAP_UNDO
+    var threeFingerTap: Int = TAP_REDO
+    /** A finger held still on the page; null leaves long presses alone. */
+    var onLongPressCanvas: ((Float, Float) -> Unit)? = null
+    private var fingerDrawing = false
+    private val fingerLongPress = Runnable {
+        if (gestureMaxPointers == 1 && gestureMoved < TAP_SLOP_PX) {
+            onLongPressCanvas?.invoke(lastFocusX, lastFocusY)
+            longPressFired = true
+        }
+    }
+    private var longPressFired = false
+
+    /** What holding the pen's barrel button while writing does: one of PEN_BUTTON_*. */
+    var penButton: Int = PEN_BUTTON_ERASE
+    /** An eraser gesture with the eraser tool has ended. */
+    var onEraseFinished: (() -> Unit)? = null
+
+    /** The page is scrolled as far as it goes toward its end. */
+    private var atDocumentEnd = false
+    /** How far a finger has pulled on past the end, in screen pixels. */
+    private var pullPastEnd = 0f
+    private var pullArmed = false
+    /** A pull past the last page is far enough to add one (true), or let go (false). */
+    var onPullForPage: ((Boolean) -> Unit)? = null
+
+    /** Linked objects wear a pale blue wash so they can be found. */
+    var showLinkOverlay: Boolean = true
+    /** A link to another note was followed: its id and the page index to open at. */
+    var onOpenNoteLink: ((String, Int) -> Unit)? = null
+    /** Pages left by following a link, newest last, for going back. */
+    private val linkBackStack = ArrayList<Int>()
+    /** Whether there is somewhere to go back to; called after every jump and return. */
+    var onLinkBackChanged: ((Boolean) -> Unit)? = null
+
+    /** Where the dragged selection caught, in page units, or NaN; drawn as guides. */
+    private var guideX = Float.NaN
+    private var guideY = Float.NaN
 
     /**
      * Reading rather than writing: the pen selects PDF text by dragging, the
@@ -829,6 +969,20 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** Non-null while the pen draws shapes rather than following the hand. */
     var shapeKind: ShapeKind? = null
+        set(value) {
+            // Leaving the polygon tool keeps what was tapped out so far.
+            if (field == ShapeKind.POLYGON && value != ShapeKind.POLYGON) finishPolygon(close = false)
+            field = value
+        }
+
+    /** Corners of the polygon being tapped out, in page units of [polyPage]. */
+    private val polyPoints = ArrayList<FloatArray>()
+    private var polyPage = -1
+
+    /** A shape's corner being dragged: which inputs sit there, and the stroke before the drag. */
+    private var vertexInputs: IntArray? = null
+    private var vertexOriginal: Stroke? = null
+    private var vertexCurrent: Stroke? = null
 
     /** Pictures can be picked up, moved and resized while this is on. */
     var imageMode: Boolean = false
@@ -862,6 +1016,9 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** Reads a picture's bytes. Called on the UI thread, so it should cache. */
     var imageLoader: ((String) -> Bitmap?)? = null
+
+    /** Stores a bitmap in this note and returns its picture id; for pictures pasted from another note. */
+    var imageAdder: ((Bitmap) -> String?)? = null
     var templateLoader: ((String) -> Bitmap?)? = null
 
     /** Handed a rendering of the captured region, on a background thread. */
@@ -1068,6 +1225,37 @@ class InkCanvasView @JvmOverloads constructor(
     }
     private val predictionHead = PredictionHeadView(context)
     private val laser = LaserView(context)
+    private val ruler = RulerView(context).apply { visibility = GONE }
+    private val eyedropper = EyedropperView(context)
+
+    /** The next touch picks a colour off the screen instead of drawing; [onPicked] gets it. */
+    fun pickColor(onPicked: (Int) -> Unit) {
+        eyedropper.onPicked = onPicked
+    }
+
+    /** The straightedge laid on the screen, or null for none. */
+    var rulerKind: RulerKind? = null
+        set(value) {
+            field = value
+            if (value != null) ruler.kind = value
+            ruler.visibility = if (value == null) GONE else VISIBLE
+        }
+
+    var rulerInches: Boolean
+        get() = ruler.inches
+        set(value) { ruler.inches = value }
+
+    /** The ruler asked to go away: pinched shut or dragged off the screen. */
+    var onRulerClosed: (() -> Unit)?
+        get() = ruler.onClosed
+        set(value) { ruler.onClosed = value }
+
+    fun setRulerDegrees(degrees: Float) = ruler.setDegrees(degrees)
+
+    /** The edge the pen is drawing along, and the line so far in page units. */
+    private var rulerEdge: RulerEdge? = null
+    private val rulerPoints = ArrayList<FloatArray>()
+    private val rulerScratch = FloatArray(2)
     private var laserPointer: Int? = null
     private val dry = DryLayer(context)
     /** Android chooses its own horizon, so an overlong result is clipped locally. */
@@ -1229,11 +1417,35 @@ class InkCanvasView @JvmOverloads constructor(
     private val lassoStrokes: MutableSet<Stroke> =
         Collections.newSetFromMap(IdentityHashMap())
     private val lassoBounds = RectF()
+    /** Pictures and text boxes the loop caught, alongside [lassoStrokes]. */
+    private val lassoImages = ArrayList<PageImage>()
     private var movingLasso = false
     private var liftedLassoStrokes: Set<Stroke>? = null
     private val lassoGrab = floatArrayOf(0f, 0f)
     private var lassoDx = 0f
     private var lassoDy = 0f
+
+    // Circle to lasso: the pen's path is kept in [lassoPath] while it writes,
+    // and where it last came to rest. Moving only updates these fields; the
+    // timer is what looks at them, once the pen has stood still long enough.
+    private var circleTracking = false
+    private var holdX = 0f
+    private var holdY = 0f
+    private var holdSince = 0L
+    /** The rest already judged not to be a loop, so a pen left standing is not asked again. */
+    private var checkedHold = -1L
+    private val circleHold: Runnable = object : Runnable {
+        override fun run() {
+            if (!circleTracking) return
+            val waited = SystemClock.uptimeMillis() - holdSince
+            if (waited >= CIRCLE_HOLD_MS && checkedHold != holdSince) {
+                checkedHold = holdSince
+                convertCircleToLasso()
+                if (!circleTracking) return
+            }
+            postDelayed(this, if (waited < CIRCLE_HOLD_MS) CIRCLE_HOLD_MS - waited else CIRCLE_HOLD_MS)
+        }
+    }
 
     private var selectedImage: PageImage? = null
     private var selectedImagePage: Page? = null
@@ -1312,15 +1524,23 @@ class InkCanvasView @JvmOverloads constructor(
 
         // Pictures are mutable and moving one is not undoable; adding and
         // removing are, because those are the ones that lose work.
-        class ImageReplaced(override val page: Page, val before: PageImage, val after: PageImage, val at: Int) : Edit
+        class ImageReplaced(
+            override val page: Page,
+            val before: PageImage,
+            val after: PageImage,
+            val at: Int,
+            val group: Long = 0L,
+        ) : Edit
         class ImageAdded(override val page: Page, val image: PageImage) : Edit
-        class ImageRemoved(override val page: Page, val image: PageImage, val at: Int) : Edit
+        class ImageRemoved(override val page: Page, val image: PageImage, val at: Int, val group: Long = 0L) : Edit
+        class ImageAddedInGroup(override val page: Page, val image: PageImage, val group: Long) : Edit
 
         /** A lasso drag: the strokes as they were, and where they ended up. */
         class Moved(
             override val page: Page,
             var before: List<Stroke>,
             var after: List<Stroke>,
+            val group: Long = 0L,
         ) : Edit
 
         class MaskAdded(override val page: Page, val mask: PageMask, val group: Long = 0L) : Edit
@@ -1330,6 +1550,37 @@ class InkCanvasView @JvmOverloads constructor(
             val at: Int,
             val group: Long = 0L,
         ) : Edit
+
+        /** A page put in at [at], whether new or a copy. */
+        class PageInserted(override val page: Page, val at: Int) : Edit
+        /** A page taken out of [at]; it keeps its ink in memory so undo can put it back. */
+        class PageRemoved(override val page: Page, val at: Int) : Edit
+        class PageMoved(override val page: Page, val from: Int, val to: Int) : Edit
+        /** Paper changed: background, template, and the height an infinite page takes. */
+        class PagePaper(
+            override val page: Page,
+            val before: PaperState,
+            val after: PaperState,
+            val group: Long = 0L,
+        ) : Edit
+        /** A quarter turn of everything on a page; undone by the opposite turn. */
+        class PageRotated(override val page: Page, val clockwise: Boolean) : Edit
+    }
+
+    private data class PaperState(
+        val background: PageBackground,
+        val templateId: String?,
+        val height: Float,
+        val width: Float = 0f,
+    )
+
+    private fun Page.paper() = PaperState(background, templateId, height, width)
+
+    private fun Page.setPaper(state: PaperState) {
+        background = state.background
+        templateId = state.templateId
+        height = state.height
+        if (state.width > 0f) width = state.width
     }
 
     private val scaleDetector = ScaleGestureDetector(
@@ -1361,11 +1612,16 @@ class InkCanvasView @JvmOverloads constructor(
         // A ViewGroup only gets onTouchEvent once no child has taken the event;
         // being clickable is what keeps the DOWN from being dropped outright.
         isClickable = true
+        isFocusable = true
+        isFocusableInTouchMode = true
+        defaultFocusHighlightEnabled = false
         addView(dry, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(wet, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(compatWet, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(predictionHead, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(laser, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        addView(ruler, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        addView(eyedropper, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         wet.textureBitmapStore = PencilTextureStore
         // InProgressStrokesView chooses its front-buffer implementation for
         // supported hardware. Do not force the deprecated high-latency helper;
@@ -1474,7 +1730,22 @@ class InkCanvasView @JvmOverloads constructor(
         dry.invalidate()
     }
 
+    /**
+     * A pen stroke that starts at the screen's edge is writing, not the system's
+     * back gesture. Android honours up to 200dp of each edge; ask for the middle.
+     */
+    private fun excludeEdgesFromBackGesture(w: Int, h: Int) {
+        val band = (resources.displayMetrics.density * EDGE_EXCLUSION_DP).toInt()
+        val tall = (resources.displayMetrics.density * 200).toInt().coerceAtMost(h)
+        val top = (h - tall) / 2
+        systemGestureExclusionRects = listOf(
+            android.graphics.Rect(0, top, band, top + tall),
+            android.graphics.Rect(w - band, top, w, top + tall),
+        )
+    }
+
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        excludeEdgesFromBackGesture(w, h)
         super.onSizeChanged(w, h, oldw, oldh)
         if (!fitted && w > 0) {
             fitWidth()
@@ -1561,13 +1832,50 @@ class InkCanvasView @JvmOverloads constructor(
     private var pendingZoom = 0f
     private var pendingFit = false
 
-    /** Zooms about the top-left corner, which is the corner a resize keeps. */
-    private fun zoomBy(factor: Float) {
+    /** Zooms about the top-left corner by default, which is the corner a resize keeps. */
+    private fun zoomBy(factor: Float, pivotX: Float = 0f, pivotY: Float = 0f) {
         if (factor <= 0f || abs(factor - 1f) < 1e-4f) return
         val current = currentScale()
         val minimum = if (minimumScaleIsFitWidth && fitScale > 0f) fitScale else MIN_SCALE
         val applied = (current * factor).coerceIn(minimum, maxScale()) / current
-        documentToScreen.postScale(applied, applied, 0f, 0f)
+        documentToScreen.postScale(applied, applied, pivotX, pivotY)
+        onTransformChanged()
+    }
+
+    /**
+     * A hardware keyboard: Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z or +Y, Ctrl/Cmd and +/-
+     * to zoom, arrows to move, Alt+arrows and Page Up/Down for the next page.
+     */
+    /** App-level keyboard commands the canvas does not own: tools, go-to-page. True when handled. */
+    var onShortcut: ((Int, KeyEvent) -> Boolean)? = null
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (onShortcut?.invoke(keyCode, event) == true) return true
+        val command = event.isCtrlPressed || event.isMetaPressed
+        val step = min(width, height) * KEY_PAN_FRACTION
+        when {
+            command && keyCode == KeyEvent.KEYCODE_Z ->
+                if (event.isShiftPressed) onRedo?.invoke() else onUndo?.invoke()
+            command && keyCode == KeyEvent.KEYCODE_Y -> onRedo?.invoke()
+            command && (keyCode == KeyEvent.KEYCODE_EQUALS || keyCode == KeyEvent.KEYCODE_PLUS ||
+                keyCode == KeyEvent.KEYCODE_NUMPAD_ADD) -> zoomBy(KEY_ZOOM_STEP, width / 2f, height / 2f)
+            command && (keyCode == KeyEvent.KEYCODE_MINUS || keyCode == KeyEvent.KEYCODE_NUMPAD_SUBTRACT) ->
+                zoomBy(1f / KEY_ZOOM_STEP, width / 2f, height / 2f)
+            keyCode == KeyEvent.KEYCODE_PAGE_UP ||
+                (event.isAltPressed && keyCode == KeyEvent.KEYCODE_DPAD_LEFT) -> scrollToPage(currentPage - 1)
+            keyCode == KeyEvent.KEYCODE_PAGE_DOWN ||
+                (event.isAltPressed && keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) -> scrollToPage(currentPage + 1)
+            keyCode == KeyEvent.KEYCODE_DPAD_UP -> panBy(0f, step)
+            keyCode == KeyEvent.KEYCODE_DPAD_DOWN -> panBy(0f, -step)
+            keyCode == KeyEvent.KEYCODE_DPAD_LEFT -> panBy(step, 0f)
+            keyCode == KeyEvent.KEYCODE_DPAD_RIGHT -> panBy(-step, 0f)
+            else -> return super.onKeyDown(keyCode, event)
+        }
+        return true
+    }
+
+    private fun panBy(dx: Float, dy: Float) {
+        documentToScreen.postTranslate(dx, dy)
         onTransformChanged()
     }
 
@@ -1601,6 +1909,15 @@ class InkCanvasView @JvmOverloads constructor(
             redoStack += part
         }
         afterEdit(edit.page)
+        showPageEdit(edit)
+    }
+
+    /** A page that came back, moved or changed is brought into view; one that went, its neighbour. */
+    private fun showPageEdit(edit: Edit) {
+        if (edit !is Edit.PageInserted && edit !is Edit.PageRemoved &&
+            edit !is Edit.PageMoved && edit !is Edit.PagePaper && edit !is Edit.PageRotated) return
+        val at = document.pages.indexOf(edit.page)
+        scrollToPage(if (at >= 0) at else currentPage.coerceIn(document.pages.indices))
     }
 
     fun redo() {
@@ -1617,6 +1934,7 @@ class InkCanvasView @JvmOverloads constructor(
             undoStack += part
         }
         afterEdit(edit.page)
+        showPageEdit(edit)
     }
 
     fun setPageLayout(mode: PageLayoutMode) {
@@ -1631,6 +1949,11 @@ class InkCanvasView @JvmOverloads constructor(
         is Edit.Erased -> group
         is Edit.MaskAdded -> group
         is Edit.MaskRemoved -> group
+        is Edit.PagePaper -> group
+        is Edit.Moved -> group
+        is Edit.ImageReplaced -> group
+        is Edit.ImageRemoved -> group
+        is Edit.ImageAddedInGroup -> group
         else -> 0L
     }
 
@@ -1640,11 +1963,40 @@ class InkCanvasView @JvmOverloads constructor(
             is Edit.Erased -> edit.page.strokes.removeAll(edit.strokes)
             is Edit.ImageReplaced -> { edit.page.images[edit.at] = edit.after; clearImageSelection() }
             is Edit.ImageAdded -> edit.page.images += edit.image
+            is Edit.ImageAddedInGroup -> edit.page.images += edit.image
             is Edit.ImageRemoved -> edit.page.images.remove(edit.image)
             is Edit.MaskAdded -> edit.page.masks += edit.mask
             is Edit.MaskRemoved -> edit.page.masks.remove(edit.mask)
             is Edit.Moved -> swapStrokes(edit.page, edit.before, edit.after)
+            is Edit.PageInserted -> putPageBack(edit.page, edit.at)
+            is Edit.PageRemoved -> takePageOut(edit.page)
+            is Edit.PageMoved -> movePageObject(edit.page, edit.to)
+            is Edit.PagePaper -> { edit.page.setPaper(edit.after); document.invalidateLayout() }
+            is Edit.PageRotated -> turnPage(edit.page, edit.clockwise)
         }
+    }
+
+    /**
+     * A page coming back after an autosave may have had its files swept away,
+     * so its ink is written whole again rather than appended to what was there.
+     */
+    private fun putPageBack(page: Page, at: Int) {
+        page.savedOnDisk = 0
+        document.pages.add(at.coerceIn(0, document.pages.size), page)
+        document.invalidateLayout()
+    }
+
+    private fun takePageOut(page: Page) {
+        document.pages.remove(page)
+        dry.dropStrokeIndex(page)
+        document.invalidateLayout()
+    }
+
+    private fun movePageObject(page: Page, to: Int) {
+        document.pages.remove(page)
+        document.pages.add(to.coerceIn(0, document.pages.size), page)
+        document.invalidateLayout()
+        currentPage = document.pages.indexOf(page)
     }
 
     private fun applyInverse(edit: Edit) {
@@ -1657,8 +2009,14 @@ class InkCanvasView @JvmOverloads constructor(
                 edit.page.masks.add(edit.at.coerceIn(0, edit.page.masks.size), edit.mask)
             is Edit.ImageReplaced -> { edit.page.images[edit.at] = edit.before; clearImageSelection() }
             is Edit.ImageAdded -> edit.page.images.remove(edit.image)
+            is Edit.ImageAddedInGroup -> edit.page.images.remove(edit.image)
             is Edit.ImageRemoved ->
                 edit.page.images.add(edit.at.coerceIn(0, edit.page.images.size), edit.image)
+            is Edit.PageInserted -> takePageOut(edit.page)
+            is Edit.PageRemoved -> putPageBack(edit.page, edit.at)
+            is Edit.PageMoved -> movePageObject(edit.page, edit.from)
+            is Edit.PagePaper -> { edit.page.setPaper(edit.before); document.invalidateLayout() }
+            is Edit.PageRotated -> turnPage(edit.page, !edit.clockwise)
         }
     }
 
@@ -1706,9 +2064,33 @@ class InkCanvasView @JvmOverloads constructor(
                 ?: PageBackground.BLANK,
             templateId = template?.templateId,
         )
-        document.pages.add((after + 1).coerceIn(0, document.pages.size), page)
-        document.invalidateLayout()
-        afterEdit(page)
+        insertPage(page, (after + 1).coerceIn(0, document.pages.size))
+    }
+
+    private fun insertPage(page: Page, at: Int) {
+        putPageBack(page, at)
+        recordPageEdit(Edit.PageInserted(page, at))
+    }
+
+    private fun recordPageEdit(edit: Edit) {
+        clearLassoSelection()
+        undoStack += edit
+        redoStack.clear()
+        afterEdit(edit.page)
+    }
+
+    /** Reads a page's ink in now if it has not been yet. False when there is no way to. */
+    private fun ensureLoaded(page: Page): Boolean {
+        if (page.loaded) return true
+        val loader = pageLoader ?: return false
+        val bucket = minOf(tessellationBucket(currentScale()), BASE_TESSELLATION_SCALE)
+        val epsilon = epsilonFor(bucket)
+        page.strokes.addAll(0, loader(page, epsilon))
+        maskLoader?.let { page.masks.addAll(0, it(page, epsilon)) }
+        page.savedOnDisk = if (page.dirty) 0 else page.strokes.size
+        page.loaded = true
+        page.tessellatedFor = bucket
+        return true
     }
 
     /**
@@ -1718,16 +2100,8 @@ class InkCanvasView @JvmOverloads constructor(
      */
     fun duplicatePage(index: Int) {
         val source = document.pages.getOrNull(index) ?: return
-        if (!source.loaded) {
-            // Nothing of a page not read in yet is in memory to copy.
-            val loader = pageLoader ?: return
-            val epsilon = epsilonFor(minOf(tessellationBucket(currentScale()), BASE_TESSELLATION_SCALE))
-            source.strokes.addAll(0, loader(source, epsilon))
-            maskLoader?.let { source.masks.addAll(0, it(source, epsilon)) }
-            source.savedOnDisk = if (source.dirty) 0 else source.strokes.size
-            source.loaded = true
-            source.tessellatedFor = minOf(tessellationBucket(currentScale()), BASE_TESSELLATION_SCALE)
-        }
+        // Nothing of a page not read in yet is in memory to copy.
+        if (!ensureLoaded(source)) return
         val copy = Page(
             width = source.width,
             height = source.height,
@@ -1738,24 +2112,50 @@ class InkCanvasView @JvmOverloads constructor(
         copy.strokes += source.strokes
         copy.masks += source.masks.map { PageMask(it.stroke) }
         copy.images += source.images.map {
-            PageImage(it.id, it.x, it.y, it.width, it.height, it.textContent)
+            it.copy()
         }
-        document.pages.add(index + 1, copy)
-        document.invalidateLayout()
-        afterEdit(copy)
+        insertPage(copy, index + 1)
         scrollToPage(index + 1)
+    }
+
+    /**
+     * Copies of the pages at [indices] with their ink read in, safe to hand to
+     * another thread: their lists are their own.
+     */
+    fun snapshotPages(indices: List<Int>): List<Page> = indices.sorted().mapNotNull { index ->
+        val page = document.pages.getOrNull(index) ?: return@mapNotNull null
+        if (!ensureLoaded(page)) return@mapNotNull null
+        Page(
+            id = page.id, width = page.width, height = page.height, background = page.background,
+            templateId = page.templateId, pdfPageIndex = page.pdfPageIndex, tocTitle = page.tocTitle,
+            tocHighlighted = page.tocHighlighted, tocLevel = page.tocLevel, bookmarked = page.bookmarked,
+            links = page.links.toMutableMap(),
+            images = page.images.map { it.copy() }.toMutableList(),
+            masks = page.masks.map { PageMask(it.stroke) }.toMutableList(),
+            strokes = page.strokes.toMutableList(),
+        )
+    }
+
+    /** Removes several pages, last first so each index still means what it did. */
+    fun deletePages(indices: List<Int>) {
+        for (index in indices.distinct().sortedDescending()) deletePage(index)
     }
 
     fun deletePage(index: Int) {
         if (document.pages.size <= 1 || index !in document.pages.indices) return
-        val removed = document.pages.removeAt(index)
-        dry.dropStrokeIndex(removed)
-        // Undo cannot bring the page back, so drop any history that points at it
-        // rather than leaving edits that would resurrect strokes onto nothing.
-        undoStack.removeAll { it.page === removed }
-        redoStack.removeAll { it.page === removed }
-        document.invalidateLayout()
-        afterEdit()
+        val removed = document.pages[index]
+        // Undo puts the page object back, so its ink has to be in it: autosave
+        // deletes the files of a page that is no longer in the note.
+        val keepable = ensureLoaded(removed)
+        takePageOut(removed)
+        if (keepable) {
+            recordPageEdit(Edit.PageRemoved(removed, index))
+        } else {
+            // Nothing to put back, so drop history that would resurrect strokes onto nothing.
+            undoStack.removeAll { it.page === removed }
+            redoStack.removeAll { it.page === removed }
+            afterEdit()
+        }
     }
 
     fun setPageToc(index: Int, title: String?) {
@@ -1777,31 +2177,166 @@ class InkCanvasView @JvmOverloads constructor(
     fun setBackground(index: Int, background: PageBackground) {
         val page = document.pages.getOrNull(index) ?: return
         if (page.background == PageBackground.PDF) return
-        page.background = background
-        page.height = if (background == PageBackground.INFINITE) Page.A4_HEIGHT * 12f
+        val height = if (background == PageBackground.INFINITE) Page.A4_HEIGHT * 12f
             else if (page.height > Page.A4_HEIGHT * 2f) Page.A4_HEIGHT else page.height
-        if (background != PageBackground.CUSTOM) page.templateId = null
+        val template = if (background == PageBackground.CUSTOM) page.templateId else null
+        changePaper(page, PaperState(background, template, height, page.width))
+    }
+
+    private fun changePaper(page: Page, after: PaperState) {
+        val before = page.paper()
+        if (before == after) return
+        page.setPaper(after)
         document.invalidateLayout()
-        afterEdit()
+        recordPageEdit(Edit.PagePaper(page, before, after))
     }
 
     fun movePage(index: Int, delta: Int) {
         val to = index + delta
         if (index !in document.pages.indices || to !in document.pages.indices) return
-        val page = document.pages.removeAt(index)
-        document.pages.add(to, page)
-        document.invalidateLayout()
-        currentPage = to
-        afterEdit()
+        val page = document.pages[index]
+        movePageObject(page, to)
+        recordPageEdit(Edit.PageMoved(page, index, to))
         scrollToPage(to)
     }
 
     fun setPageTemplate(index: Int, templateId: String) {
         val page = document.pages.getOrNull(index) ?: return
         if (page.background == PageBackground.PDF) return
-        page.background = PageBackground.CUSTOM
-        page.templateId = templateId
-        afterEdit(page)
+        changePaper(page, page.paper().copy(background = PageBackground.CUSTOM, templateId = templateId))
+    }
+
+    /** One template for every page that can take one; a single undo puts them all back. */
+    /**
+     * Gives page [index] - or every page that is not a PDF page, with [all] -
+     * a new size in page units. Ink stays where it is on the paper. One undo.
+     */
+    fun setPageSize(index: Int, width: Float, height: Float, all: Boolean) {
+        val targets = if (all) document.pages.filter { it.background != PageBackground.PDF }
+            else listOfNotNull(document.pages.getOrNull(index)?.takeIf { it.background != PageBackground.PDF })
+        val group = nextEditGroup++
+        var changed = false
+        for (page in targets) {
+            val before = page.paper()
+            val after = before.copy(width = width, height = height)
+            if (before == after) continue
+            page.setPaper(after)
+            undoStack += Edit.PagePaper(page, before, after, group)
+            changed = true
+        }
+        if (!changed) return
+        clearLassoSelection()
+        redoStack.clear()
+        document.invalidateLayout()
+        fitWidth()
+        afterEdit(*targets.toTypedArray())
+    }
+
+    fun setBackgroundAll(background: PageBackground, templateId: String? = null) {
+        val group = nextEditGroup++
+        var changed = false
+        for (page in document.pages) {
+            if (page.background == PageBackground.PDF) continue
+            val height = if (background == PageBackground.INFINITE) Page.A4_HEIGHT * 12f
+                else if (page.height > Page.A4_HEIGHT * 2f) Page.A4_HEIGHT else page.height
+            val before = page.paper()
+            val after = PaperState(background, templateId, height, page.width)
+            if (before == after) continue
+            page.setPaper(after)
+            undoStack += Edit.PagePaper(page, before, after, group)
+            changed = true
+        }
+        if (!changed) return
+        clearLassoSelection()
+        redoStack.clear()
+        document.invalidateLayout()
+        afterEdit(*document.pages.toTypedArray())
+    }
+
+    fun setPageBookmarked(index: Int, bookmarked: Boolean) {
+        val page = document.pages.getOrNull(index) ?: return
+        if (page.bookmarked == bookmarked) return
+        page.bookmarked = bookmarked
+        afterEdit()
+    }
+
+    /** Moves an outline entry in or out one level, never deeper than one below the entry above it. */
+    fun setPageTocLevel(index: Int, level: Int) {
+        val page = document.pages.getOrNull(index) ?: return
+        if (page.tocTitle == null) return
+        val above = document.pages.subList(0, index).lastOrNull { it.tocTitle != null }
+        val clamped = level.coerceIn(0, (above?.tocLevel ?: -1) + 1)
+        if (page.tocLevel == clamped) return
+        page.tocLevel = clamped
+        afterEdit()
+    }
+
+    /**
+     * Turns a page a quarter. PDF pages are left alone: the PDF draws itself
+     * the way it was printed, and ink turned over it would no longer line up.
+     */
+    fun rotatePage(index: Int, clockwise: Boolean) {
+        val page = document.pages.getOrNull(index) ?: return
+        if (page.background == PageBackground.PDF || page.pdfPageIndex >= 0) return
+        if (!ensureLoaded(page)) return
+        clearLassoSelection()
+        clearImageSelection()
+        turnPage(page, clockwise)
+        recordPageEdit(Edit.PageRotated(page, clockwise))
+        scrollToPage(document.pages.indexOf(page))
+    }
+
+    fun canRotatePage(index: Int): Boolean =
+        document.pages.getOrNull(index)?.let { it.background != PageBackground.PDF && it.pdfPageIndex < 0 } == true
+
+    /**
+     * Turns everything on [page] - and every stroke history still holds for it -
+     * so undoing an erase made before the turn puts the ink back where it now belongs.
+     * Pictures keep their own orientation; only where they sit turns.
+     */
+    private fun turnPage(page: Page, clockwise: Boolean) {
+        val w = page.width
+        val h = page.height
+        fun turn(x: Float, y: Float, out: FloatArray) {
+            if (clockwise) { out[0] = h - y; out[1] = x } else { out[0] = y; out[1] = w - x }
+        }
+        val replacements = IdentityHashMap<Stroke, Stroke>()
+        fun turned(stroke: Stroke): Stroke =
+            replacements.getOrPut(stroke) { mapInputs(stroke, ::turn).also { StrokeTags.carry(stroke, it) } }
+        for (i in page.strokes.indices) page.strokes[i] = turned(page.strokes[i])
+        val masks = Collections.newSetFromMap(IdentityHashMap<PageMask, Boolean>())
+        val images = Collections.newSetFromMap(IdentityHashMap<PageImage, Boolean>())
+        masks += page.masks
+        images += page.images
+        for (edit in undoStack + redoStack) {
+            if (edit.page !== page) continue
+            when (edit) {
+                is Edit.Drawn -> turned(edit.stroke)
+                is Edit.Erased -> edit.strokes.forEach { turned(it) }
+                is Edit.Moved -> { edit.before.forEach { turned(it) }; edit.after.forEach { turned(it) } }
+                is Edit.MaskAdded -> masks += edit.mask
+                is Edit.MaskRemoved -> masks += edit.mask
+                is Edit.ImageAdded -> images += edit.image
+                is Edit.ImageAddedInGroup -> images += edit.image
+                is Edit.ImageRemoved -> images += edit.image
+                is Edit.ImageReplaced -> { images += edit.before; images += edit.after }
+                else -> Unit
+            }
+        }
+        for (mask in masks) mask.stroke = turned(mask.stroke)
+        val center = FloatArray(2)
+        for (image in images) {
+            turn(image.x + image.width / 2f, image.y + image.height / 2f, center)
+            image.x = center[0] - image.width / 2f
+            image.y = center[1] - image.height / 2f
+        }
+        remapHistory(replacements)
+        page.savedOnDisk = 0
+        page.width = h
+        page.height = w
+        page.tessellatedFor = 0f
+        dry.dropStrokeIndex(page)
+        document.invalidateLayout()
     }
 
     fun currentPageIndex(): Int = currentPage
@@ -1826,6 +2361,7 @@ class InkCanvasView @JvmOverloads constructor(
         viewportRenderGeneration++
         clampTransform()
         documentToScreen.invert(screenToDocument)
+        ruler.pxPerMm = currentScale() * Page.A4_WIDTH / A4_MM_WIDTH
         // Input can arrive several times inside one display interval. Ask for
         // one paint on the next vsync instead of repeatedly invalidating now.
         dry.postInvalidateOnAnimation()
@@ -1872,17 +2408,23 @@ class InkCanvasView @JvmOverloads constructor(
         var x = matrixValues[Matrix.MTRANS_X]
         var y = matrixValues[Matrix.MTRANS_Y]
 
-        x = if (docWidth <= width) {
-            (width - docWidth) / 2f
-        } else {
-            x.coerceIn(width - docWidth, 0f)
-        }
+        // 0.8 of a note's width of slack past either side, so the edge of the
+        // page can be brought to the middle of the screen to write on.
+        val slack = document.fitWidth() * scale * 0.8f
+        val centred = (width - docWidth) / 2f
+        x = x.coerceIn(minOf(width - docWidth, centred) - slack, maxOf(0f, centred) + slack)
         y = if (docHeight <= height) {
             (height - docHeight) / 2f
         } else {
             // Half a screen of overscroll at each end, so the last page is
             // reachable without fighting the edge.
             y.coerceIn(height - docHeight - height / 2f, height / 2f)
+        }
+        // At the far end, a pull further on is asking for another page.
+        atDocumentEnd = if (document.layoutMode == PageLayoutMode.HORIZONTAL) {
+            docWidth > width && x <= width - docWidth + 1f
+        } else {
+            docHeight <= height || y <= height - docHeight - height / 2f + 1f
         }
 
         matrixValues[Matrix.MTRANS_X] = x
@@ -1928,8 +2470,36 @@ class InkCanvasView @JvmOverloads constructor(
     private var samsungSideButton = false
 
     private fun onTouch(event: MotionEvent): Boolean {
+        // Keyboard shortcuts need focus; a keyboard can be attached at any time.
+        if (event.actionMasked == MotionEvent.ACTION_DOWN && !isFocused) requestFocus()
+        if (activeStylusPointer == null && eyedropper.onTouch(event)) return true
         val stylus = event.getToolType(event.actionIndex) == MotionEvent.TOOL_TYPE_STYLUS
-        if (!stylus && activeStylusPointer == null && laserPointer == null) return onFingers(event)
+        if (!stylus && activeStylusPointer == null && laserPointer == null) {
+            if (ruler.onFinger(event)) return true
+            // A finger set to write takes the pen's path, until a second finger says otherwise.
+            if (oneFinger == FINGER_DRAW && event.actionMasked == MotionEvent.ACTION_DOWN) {
+                fingerDrawing = true
+                return onStylus(event)
+            }
+            return onFingers(event)
+        }
+        if (fingerDrawing && !stylus && event.actionMasked == MotionEvent.ACTION_POINTER_DOWN) {
+            // Two fingers are for moving the page: drop the line and start a pan.
+            fingerDrawing = false
+            val cancel = MotionEvent.obtain(event).apply { action = MotionEvent.ACTION_CANCEL }
+            val down = MotionEvent.obtain(event).apply { action = MotionEvent.ACTION_DOWN }
+            try {
+                onStylus(cancel)
+                onFingers(down)
+            } finally {
+                cancel.recycle()
+                down.recycle()
+            }
+            return onFingers(event)
+        }
+        if (fingerDrawing && (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL)) {
+            fingerDrawing = false
+        }
         if (!latencyMonitoringEnabled) return onStylus(event)
         Trace.beginSection(when (event.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> TRACE_STYLUS_DOWN
@@ -2022,6 +2592,18 @@ class InkCanvasView @JvmOverloads constructor(
                     Choreographer.getInstance().postFrameCallback(frameCallback)
                 }
                 activePage = document.pages[index]
+                // The barrel button held (not the pen turned to its eraser end) can mean something else.
+                val buttonHeld = samsungSideButton || (event.getToolType(event.actionIndex) != MotionEvent.TOOL_TYPE_ERASER &&
+                    event.isEraserGesture())
+                if (buttonHeld && !readMode && penButton == PEN_BUTTON_LASER) {
+                    activeStylusPointer = null
+                    return onLaser(event)
+                }
+                if (buttonHeld && !readMode && penButton == PEN_BUTTON_LASSO) {
+                    onDrawingChanged?.invoke(true)
+                    beginLasso(event, index)
+                    return true
+                }
                 val eraserGesture = event.isEraserGesture() || samsungSideButton
                 if (readMode && eraserGesture) {
                     onDrawingChanged?.invoke(true)
@@ -2046,6 +2628,18 @@ class InkCanvasView @JvmOverloads constructor(
                     dry.invalidate()
                     return true
                 }
+                // A selection made without the lasso tool (circle to lasso, a
+                // paste): the pen inside it carries on moving it, and anywhere
+                // else lets it go and writes as usual.
+                if (!lassoMode && !readMode && !eraserGesture && hasLassoSelection()) {
+                    pageLocalInto(event.x, event.y, index, shapeStart)
+                    if (index == lassoPage && lassoBounds.contains(shapeStart[0], shapeStart[1])) {
+                        onDrawingChanged?.invoke(true)
+                        beginLasso(event, index)
+                        return true
+                    }
+                    clearLassoSelection()
+                }
                 if (lassoMode && !eraserGesture) {
                     onDrawingChanged?.invoke(true)
                     beginLasso(event, index)
@@ -2056,7 +2650,25 @@ class InkCanvasView @JvmOverloads constructor(
                     beginImageGesture(event, index)
                     return true
                 }
+                if (rulerKind != null && !readMode && !eraserGesture && tool != Tool.ERASER) {
+                    val edge = ruler.edgeAt(event.x, event.y)
+                    if (edge != null) {
+                        onDrawingChanged?.invoke(true)
+                        rulerEdge = edge
+                        shapePage = index
+                        drawingShape = true
+                        rulerPoints.clear()
+                        addRulerPoint(event.x, event.y)
+                        dry.invalidate()
+                        return true
+                    }
+                }
                 val shape = shapeKind
+                if (shape == ShapeKind.POLYGON && !readMode && !eraserGesture && tool != Tool.ERASER) {
+                    onDrawingChanged?.invoke(true)
+                    tapPolygon(event, index)
+                    return true
+                }
                 if (shape != null && !readMode && !eraserGesture &&
                     tool != Tool.ERASER
                 ) {
@@ -2075,6 +2687,7 @@ class InkCanvasView @JvmOverloads constructor(
                     if (onStrokeTapped != null && tapStrokeAt(event.x, event.y, index)) return true
                     // Reading is where a covered answer gets looked at.
                     if (toggleMaskAt(event.x, event.y, index)) return true
+                    if (followObjectLink(event.x, event.y)) return true
                     pressX = event.x
                     pressY = event.y
                     selectingPage = index
@@ -2135,6 +2748,24 @@ class InkCanvasView @JvmOverloads constructor(
                     stationaryStartX = event.getX(event.actionIndex)
                     stationaryStartY = event.getY(event.actionIndex)
                     stationaryStartTime = event.eventTime
+                    circleTracking = circleToLasso && tool.isFreehandPen() && !strokeIsMask
+                    holdTracking = holdToDraw && (tool.isFreehandPen() || tool == Tool.HIGHLIGHTER) && !strokeIsMask
+                    recognizeOnFinish = false
+                    if (holdTracking) {
+                        holdX = stationaryStartX
+                        holdY = stationaryStartY
+                        holdSince = event.eventTime
+                    }
+                    if (circleTracking) {
+                        lassoPage = index
+                        lassoPath.clear()
+                        pageLocalInto(stationaryStartX, stationaryStartY, index, shapeStart)
+                        lassoPath.add(shapeStart[0], shapeStart[1])
+                        holdX = stationaryStartX
+                        holdY = stationaryStartY
+                        holdSince = event.eventTime
+                        postDelayed(circleHold, CIRCLE_HOLD_MS)
+                    }
                     // Put the first wet-ink mark on the front buffer before a
                     // Compose state write freezes the toolbar backdrop.
                     onDrawingChanged?.invoke(true)
@@ -2175,11 +2806,29 @@ class InkCanvasView @JvmOverloads constructor(
                     pageLocalInto(event.getX(index), event.getY(index), lassoPage, shapeEnd)
                     lassoDx = shapeEnd[0] - lassoGrab[0]
                     lassoDy = shapeEnd[1] - lassoGrab[1]
+                    if (snapToAlign) snapLassoMove()
                     dry.postInvalidateOnAnimation()
                     return true
                 }
                 if (drawingLasso) {
                     appendLassoSamples(event, index)
+                    return true
+                }
+                if (polyPoints.isNotEmpty() && polyPage >= 0 && shapeKind == ShapeKind.POLYGON) {
+                    pageLocalInto(event.getX(index), event.getY(index), polyPage, polyPoints.last())
+                    dry.postInvalidateOnAnimation()
+                    return true
+                }
+                if (vertexInputs != null) {
+                    dragVertex(event, index)
+                    return true
+                }
+                if (drawingShape && rulerEdge != null) {
+                    for (h in 0 until event.historySize) {
+                        addRulerPoint(event.getHistoricalX(index, h), event.getHistoricalY(index, h))
+                    }
+                    addRulerPoint(event.getX(index), event.getY(index))
+                    dry.postInvalidateOnAnimation()
                     return true
                 }
                 if (drawingShape) {
@@ -2202,6 +2851,8 @@ class InkCanvasView @JvmOverloads constructor(
                 if (hypot(event.getX(index) - pressX, event.getY(index) - pressY) > touchSlop) {
                     removeCallbacks(longPress)
                 }
+                if (circleTracking) trackCircle(event, index)
+                else if (holdTracking) trackHold(event.getX(index), event.getY(index), event.eventTime)
                 val strokeId = activeStrokeId ?: return false
                 if (latencyMonitoringEnabled) latency.addSamples(1 + event.historySize)
                 // Hold back the digitizer's near-stationary samples at contact,
@@ -2304,8 +2955,24 @@ class InkCanvasView @JvmOverloads constructor(
                     onTextRequested?.invoke(position.first, position.second, position.third)
                     return true
                 }
+                if (pendingTextEdit) {
+                    // After the lift, so the dialog cannot take ACTION_UP from the canvas.
+                    pendingTextEdit = false
+                    endStylus()
+                    onEditTextBox?.invoke()
+                    return true
+                }
                 if (capturing) {
                     finishCapture()
+                    endStylus()
+                    return true
+                }
+                if (vertexInputs != null) {
+                    finishVertexDrag()
+                    endStylus()
+                    return true
+                }
+                if (polyPoints.isNotEmpty() && shapeKind == ShapeKind.POLYGON) {
                     endStylus()
                     return true
                 }
@@ -2345,6 +3012,7 @@ class InkCanvasView @JvmOverloads constructor(
                     eraseAlong(event, event.actionIndex, force = true)
                     finishEraseGesture()
                     endStylus()
+                    if (tool == Tool.ERASER) onEraseFinished?.invoke()
                     return true
                 }
                 activeStrokeId?.let { strokeId ->
@@ -2683,9 +3351,19 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun endStylus() {
+        if (holdTracking) {
+            holdTracking = false
+            recognizeOnFinish = activeStrokeId != null &&
+                SystemClock.uptimeMillis() - holdSince >= CIRCLE_HOLD_MS
+        }
         readingWithButton = false
         pendingTextPlacement = null
         removeCallbacks(longPress)
+        if (circleTracking) {
+            circleTracking = false
+            removeCallbacks(circleHold)
+            lassoPath.clear()
+        }
         selectingText = false
         if (activeStylusPointer != null) onDrawingChanged?.invoke(false)
         predictionHead.clear()
@@ -2725,7 +3403,7 @@ class InkCanvasView @JvmOverloads constructor(
                 cancel.recycle()
             }
             suppressScaleUntilGestureEnd = true
-        } else if (!suppressScaleUntilGestureEnd) {
+        } else if (!suppressScaleUntilGestureEnd && !zoomLocked && twoFingers == TWO_ZOOM_PAN) {
             scaleDetector.onTouchEvent(event)
         }
         trackVelocity(event)
@@ -2751,10 +3429,13 @@ class InkCanvasView @JvmOverloads constructor(
                 closed3fThisGesture = false
                 zooming = false
                 draggedReference = false
+                longPressFired = false
+                if (onLongPressCanvas != null) postDelayed(fingerLongPress, LONG_PRESS_MS)
                 return true
             }
 
             MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_POINTER_UP -> {
+                removeCallbacks(fingerLongPress)
                 stopFling(resumeDetail = false)
                 gestureMaxPointers = maxOf(gestureMaxPointers, event.pointerCount)
                 // A second finger is the start of a pinch, and from here until
@@ -2849,7 +3530,16 @@ class InkCanvasView @JvmOverloads constructor(
                     lastFocusY = focus[1]
                     return true
                 }
-                if (!scaleDetector.isInProgress || event.pointerCount > 1) {
+                val panAllowed = if (event.pointerCount == 1) oneFinger == FINGER_SCROLL
+                    else twoFingers != TWO_IGNORED
+                if (panAllowed && event.pointerCount == 1 && atDocumentEnd && onPullForPage != null) {
+                    val along = if (document.layoutMode == PageLayoutMode.HORIZONTAL) focus[0] - lastFocusX
+                        else focus[1] - lastFocusY
+                    pullPastEnd = (pullPastEnd - along).coerceAtLeast(0f)
+                    val armed = pullPastEnd > PULL_FOR_PAGE_PX * resources.displayMetrics.density
+                    if (armed != pullArmed) { pullArmed = armed; onPullForPage?.invoke(armed) }
+                } else if (!atDocumentEnd) pullPastEnd = 0f
+                if (panAllowed && (!scaleDetector.isInProgress || event.pointerCount > 1)) {
                     val multiplier = if (event.pointerCount == 1) {
                         viewportPanMultiplier.coerceIn(0.5f, 3f)
                     } else {
@@ -2867,14 +3557,25 @@ class InkCanvasView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_UP -> {
+                removeCallbacks(fingerLongPress)
+                if (pullArmed) {
+                    pullArmed = false
+                    pullPastEnd = 0f
+                    onPullForPage?.invoke(false)
+                    addPage(document.pages.lastIndex)
+                    scrollToPage(document.pages.lastIndex)
+                    return true
+                }
+                pullPastEnd = 0f
                 val endedZoom = zooming
-                val openedLink = maybeOpenPdfLink(event.x, event.y)
+                val openedLink = !longPressFired && (unfoldTap(event) || objectLinkTap(event) ||
+                    maybeOpenPdfLink(event.x, event.y))
                 if (!openedLink) startFling()
                 viewportInteracting = false
                 viewportSpeedPxPerSecond = 0f
                 viewportWasFast = false
                 releaseVelocity()
-                if (!openedLink) maybeHandleTap()
+                if (!openedLink && !longPressFired) maybeHandleTap()
                 endZoom()
                 if (!endedZoom && !flinging) resumeViewportDetail()
                 // A real fling keeps moving the page after the hand lifts, so
@@ -2885,6 +3586,7 @@ class InkCanvasView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_CANCEL -> {
+                removeCallbacks(fingerLongPress)
                 val endedZoom = zooming
                 viewportInteracting = false
                 viewportSpeedPxPerSecond = 0f
@@ -2898,6 +3600,18 @@ class InkCanvasView @JvmOverloads constructor(
             }
         }
         return true
+    }
+
+    private fun objectLinkTap(event: MotionEvent): Boolean {
+        val duration = System.currentTimeMillis() - gestureStartTime
+        if (gestureMaxPointers != 1 || duration >= TAP_MAX_MS || gestureMoved >= TAP_SLOP_PX) return false
+        return followObjectLink(event.x, event.y)
+    }
+
+    private fun unfoldTap(event: MotionEvent): Boolean {
+        val duration = System.currentTimeMillis() - gestureStartTime
+        if (gestureMaxPointers != 1 || duration >= TAP_MAX_MS || gestureMoved >= TAP_SLOP_PX) return false
+        return unfoldAt(event.x, event.y)
     }
 
     /** A short one-finger tap follows a portable, pre-indexed PDF link. */
@@ -2933,7 +3647,7 @@ class InkCanvasView @JvmOverloads constructor(
             it.background == PageBackground.PDF && it.pdfPageIndex == targetPdfPage
         }
         if (targetDocumentPage < 0) return false
-        scrollToPage(targetDocumentPage)
+        jumpToPage(targetDocumentPage)
         performClick()
         return true
     }
@@ -2974,15 +3688,20 @@ class InkCanvasView @JvmOverloads constructor(
      */
     private fun maybeHandleTap() {
         val duration = System.currentTimeMillis() - gestureStartTime
-        if (gestureMaxPointers !in 2..3 || duration >= TAP_MAX_MS || gestureMoved >= TAP_SLOP_PX) {
+        if (gestureMaxPointers !in 1..3 || duration >= TAP_MAX_MS || gestureMoved >= TAP_SLOP_PX) {
             return
         }
+        if (gestureMaxPointers == 1 && !doubleTapZoom) return
         val now = System.currentTimeMillis()
         val sameSpot = hypot(lastFocusX - lastTapX, lastFocusY - lastTapY) < DOUBLE_TAP_SLOP_PX
         if (lastTapFingers == gestureMaxPointers && now - lastTapTime < DOUBLE_TAP_MS && sameSpot) {
             when (gestureMaxPointers) {
-                2 -> onUndo?.invoke()
-                3 -> onRedo?.invoke()
+                1 -> if (!zoomLocked) {
+                    if (fitScale > 0f && currentScale() > fitScale * 1.2f) fitWidth()
+                    else zoomBy(DOUBLE_TAP_ZOOM, lastFocusX, lastFocusY)
+                }
+                2 -> runTapAction(twoFingerTap)
+                3 -> runTapAction(threeFingerTap)
             }
             lastTapFingers = 0
         } else {
@@ -2990,6 +3709,13 @@ class InkCanvasView @JvmOverloads constructor(
             lastTapTime = now
             lastTapX = lastFocusX
             lastTapY = lastFocusY
+        }
+    }
+
+    private fun runTapAction(action: Int) {
+        when (action) {
+            TAP_UNDO -> onUndo?.invoke()
+            TAP_REDO -> onRedo?.invoke()
         }
     }
 
@@ -3321,6 +4047,7 @@ class InkCanvasView @JvmOverloads constructor(
                     var replaced = 0
                     for (i in page.strokes.indices) {
                         replacements[page.strokes[i]]?.let {
+                            StrokeTags.carry(page.strokes[i], it)
                             page.strokes[i] = it
                             replaced++
                         }
@@ -3396,8 +4123,10 @@ class InkCanvasView @JvmOverloads constructor(
                 is Edit.Erased ->
                     edit.strokes = edit.strokes.map { replacements[it] ?: it }
                 // Pictures are not rebuilt when a page is re-tessellated.
-                is Edit.ImageAdded, is Edit.ImageRemoved, is Edit.ImageReplaced -> Unit
+                is Edit.ImageAdded, is Edit.ImageRemoved, is Edit.ImageReplaced, is Edit.ImageAddedInGroup -> Unit
                 is Edit.MaskAdded, is Edit.MaskRemoved -> Unit
+                is Edit.PageInserted, is Edit.PageRemoved, is Edit.PageMoved, is Edit.PagePaper,
+                is Edit.PageRotated -> Unit
                 is Edit.Moved -> {
                     edit.before = edit.before.map { replacements[it] ?: it }
                     edit.after = edit.after.map { replacements[it] ?: it }
@@ -3567,7 +4296,7 @@ class InkCanvasView @JvmOverloads constructor(
                         }
                         if (target >= 0) {
                             clearSelection()
-                            scrollToPage(target)
+                            jumpToPage(target)
                         }
                     }
                 }
@@ -3627,6 +4356,7 @@ class InkCanvasView @JvmOverloads constructor(
             size = 1f,
             epsilon = epsilonFor(currentScale()),
         )
+        val group = nextEditGroup++
         for (box in found.boxes) {
             if (box.width() <= 0f || box.height() <= 0f) continue
             val middle = box.centerY()
@@ -3637,7 +4367,32 @@ class InkCanvasView @JvmOverloads constructor(
             val sized = brush.copy(size = box.height() * HIGHLIGHT_HEIGHT)
             val stroke = Stroke(sized, inputs.toImmutable())
             page.strokes += stroke
-            undoStack += Edit.Drawn(page, stroke)
+            undoStack += Edit.Drawn(page, stroke, group)
+        }
+        redoStack.clear()
+        clearSelection()
+        afterEdit(page)
+    }
+
+    /** A pen line through the middle of every selected line of text, one undo for all of them. */
+    fun strikeSelection(color: Int = 0xFFE53935.toInt()) {
+        val found = selection ?: return
+        val page = document.pages.getOrNull(selectingPage) ?: return
+        val group = nextEditGroup++
+        for (box in found.boxes) {
+            if (box.width() <= 0f || box.height() <= 0f) continue
+            val brush = Brush.createWithColorIntArgb(
+                family = Tool.PEN.brushFamily(),
+                colorIntArgb = color,
+                size = (box.height() * STRIKE_HEIGHT).coerceAtLeast(1f),
+                epsilon = epsilonFor(currentScale()),
+            )
+            val inputs = MutableStrokeInputBatch()
+            inputs.add(InputToolType.STYLUS, box.left, box.centerY(), 0L)
+            inputs.add(InputToolType.STYLUS, box.right, box.centerY(), 16L)
+            val stroke = Stroke(brush, inputs.toImmutable())
+            page.strokes += stroke
+            undoStack += Edit.Drawn(page, stroke, group)
         }
         redoStack.clear()
         clearSelection()
@@ -3706,15 +4461,31 @@ class InkCanvasView @JvmOverloads constructor(
      * a drawn rectangle is ink like any other and erases, saves and zooms the
      * same way. Nothing new has to know what a shape is.
      */
+    /**
+     * Lays screen (x, y) against the ruler edge in hand and keeps it in page
+     * units. A straight edge needs only its two ends; an arc keeps its path.
+     */
+    private fun addRulerPoint(x: Float, y: Float) {
+        val edge = rulerEdge ?: return
+        ruler.project(edge, x, y, strokeWidth * currentScale() / 2f + RULER_GAP_PX, rulerScratch)
+        val point = FloatArray(2)
+        pageLocalInto(rulerScratch[0], rulerScratch[1], shapePage, point)
+        if (!edge.isArc && rulerPoints.size >= 2) rulerPoints[1] = point else rulerPoints += point
+    }
+
     private fun finishShape() {
         val kind = shapeKind
         val page = document.pages.getOrNull(shapePage)
         drawingShape = false
-        if (kind == null || page == null) {
+        val ruled = rulerEdge != null
+        rulerEdge = null
+        if ((kind == null && !ruled) || page == null) {
+            rulerPoints.clear()
             dry.invalidate()
             return
         }
-        val points = shapePoints(kind, shapeStart, shapeEnd)
+        val points = if (ruled) rulerPoints.toList() else shapePoints(kind!!, shapeStart, shapeEnd)
+        rulerPoints.clear()
         if (points.size < 2) {
             dry.invalidate()
             return
@@ -3723,7 +4494,7 @@ class InkCanvasView @JvmOverloads constructor(
         // A straight line drawn with the mask tool covers exactly like any
         // other strip of tape - it goes on the mask list, not the ink list, or
         // it could never be lifted to read what is underneath.
-        for (stroke in shapeStrokes(kind, shapeStart, shapeEnd, currentBrush())) {
+        for (stroke in strokesThrough(points, currentBrush())) {
             if (tool == Tool.MASK) {
                 val mask = PageMask(stroke)
                 page.masks += mask
@@ -3737,8 +4508,10 @@ class InkCanvasView @JvmOverloads constructor(
         afterEdit(page)
     }
 
-    private fun shapeStrokes(kind: ShapeKind, from: FloatArray, to: FloatArray, brush: Brush): List<Stroke> {
-        val points = shapePoints(kind, from, to)
+    private fun shapeStrokes(kind: ShapeKind, from: FloatArray, to: FloatArray, brush: Brush): List<Stroke> =
+        strokesThrough(shapePoints(kind, from, to), brush)
+
+    private fun strokesThrough(points: List<FloatArray>, brush: Brush): List<Stroke> {
         if (points.size < 2) return emptyList()
         val inputs = MutableStrokeInputBatch()
         points.forEachIndexed { index, point ->
@@ -3752,71 +4525,54 @@ class InkCanvasView @JvmOverloads constructor(
         return listOf(Stroke(brush, inputs.toImmutable()))
     }
 
-    /** The outline of [kind], sampled densely enough that the brush follows it. */
+    /** The outline of [kind]; a nearly square box is made square. See [squaredEnd]. */
     private fun shapePoints(
         kind: ShapeKind,
         from: FloatArray,
         to: FloatArray,
     ): List<FloatArray> {
-        val x0 = from[0]
-        val y0 = from[1]
-        val x1 = to[0]
-        val y1 = to[1]
-        return when (kind) {
-            ShapeKind.LINE -> {
-                val dx = x1 - x0
-                val dy = y1 - y0
-                val length = hypot(dx, dy)
-                val snap = axisSnapEnabled && length > 20f &&
-                    min(abs(dx), abs(dy)) / length < 0.14f
-                listOf(floatArrayOf(x0, y0), floatArrayOf(
-                    if (snap && abs(dx) < abs(dy)) x0 else x1,
-                    if (snap && abs(dy) < abs(dx)) y0 else y1,
-                ))
-            }
-
-            ShapeKind.ARROW -> {
-                val angle = atan2(y1 - y0, x1 - x0)
-                // Barbs sized off the shaft, so a short arrow is not all head.
-                val barb = (hypot(x1 - x0, y1 - y0) * 0.22f).coerceIn(12f, 90f)
-                val left = angle + ARROW_SPREAD
-                val right = angle - ARROW_SPREAD
-                listOf(
-                    floatArrayOf(x0, y0),
-                    floatArrayOf(x1, y1),
-                    floatArrayOf(x1 - barb * cos(left), y1 - barb * sin(left)),
-                    floatArrayOf(x1, y1),
-                    floatArrayOf(x1 - barb * cos(right), y1 - barb * sin(right)),
-                )
-            }
-
-            ShapeKind.RECT -> listOf(
-                floatArrayOf(x0, y0),
-                floatArrayOf(x1, y0),
-                floatArrayOf(x1, y1),
-                floatArrayOf(x0, y1),
-                floatArrayOf(x0, y0),
-            )
-
-            ShapeKind.OVAL -> {
-                val cx = (x0 + x1) / 2f
-                val cy = (y0 + y1) / 2f
-                val rx = abs(x1 - x0) / 2f
-                val ry = abs(y1 - y0) / 2f
-                (0..OVAL_STEPS).map {
-                    val t = it * 2.0 * Math.PI / OVAL_STEPS
-                    floatArrayOf(cx + rx * cos(t).toFloat(), cy + ry * sin(t).toFloat())
-                }
-            }
-        }
+        val end = squaredShapeEnd(kind, from, to) ?: to
+        val outline = shapeOutline(kind, from[0], from[1], end[0], end[1], axisSnapEnabled)
+        return if (kind.cornered && shapeCornerRadius > 0f) roundCorners(outline, shapeCornerRadius) else outline
     }
+
+    private fun squaredShapeEnd(kind: ShapeKind, from: FloatArray, to: FloatArray): FloatArray? =
+        if (kind.squarable) squaredEnd(from[0], from[1], to[0], to[1]) else null
 
     // ---- lasso --------------------------------------------------------------
 
+    /** The one stroke selected, when it is a shape with few enough corners to drag. */
+    private fun editableShape(): Stroke? =
+        lassoStrokes.singleOrNull()?.takeIf { lassoImages.isEmpty() && it.inputs.size in 2..MAX_EDITABLE_INPUTS }
+
     private fun beginLasso(event: MotionEvent, index: Int) {
         pageLocalInto(event.x, event.y, index, shapeStart)
+        val shape = editableShape()
+        if (shape != null && index == lassoPage) {
+            val reach = VERTEX_HANDLE_PX * 1.6f / currentScale()
+            val sample = StrokeInput()
+            var hit = -1
+            for (i in 0 until shape.inputs.size) {
+                shape.inputs.populate(i, sample)
+                if (hypot(sample.x - shapeStart[0], sample.y - shapeStart[1]) <= reach) { hit = i; break }
+            }
+            if (hit >= 0) {
+                shape.inputs.populate(hit, sample)
+                val hx = sample.x
+                val hy = sample.y
+                // Every input sitting on this corner moves with it: a closed shape's
+                // first and last, an arrow's tip and its barbs' return.
+                vertexInputs = (0 until shape.inputs.size).filter { i ->
+                    shape.inputs.populate(i, sample)
+                    abs(sample.x - hx) < 0.01f && abs(sample.y - hy) < 0.01f
+                }.toIntArray()
+                vertexOriginal = shape
+                vertexCurrent = shape
+                return
+            }
+        }
         // Inside an existing selection the gesture is a drag, not a new loop.
-        if (lassoStrokes.isNotEmpty() && index == lassoPage &&
+        if (hasLassoSelection() && index == lassoPage &&
             lassoBounds.contains(shapeStart[0], shapeStart[1])
         ) {
             movingLasso = true
@@ -3842,7 +4598,7 @@ class InkCanvasView @JvmOverloads constructor(
      * Lasso is app-owned, so retain its useful history here as primitive points
      * while dropping samples closer than two screen pixels.
      */
-    private fun appendLassoSamples(event: MotionEvent, pointerIndex: Int) {
+    private fun appendLassoSamples(event: MotionEvent, pointerIndex: Int, invalidate: Boolean = true) {
         val minimumDistance = LASSO_SAMPLE_DISTANCE_PX / currentScale().coerceAtLeast(0.01f)
         var changed = false
         for (historyIndex in 0 until event.historySize) {
@@ -3860,7 +4616,63 @@ class InkCanvasView @JvmOverloads constructor(
         changed = lassoPath.addIfFarEnough(
             shapeEnd[0], shapeEnd[1], minimumDistance,
         ) || changed
-        if (changed) dry.postInvalidateOnAnimation()
+        if (changed && invalidate) dry.postInvalidateOnAnimation()
+    }
+
+    /** Keeps the pen's path for circle to lasso; never redraws, the wet ink is the picture. */
+    private fun trackCircle(event: MotionEvent, pointerIndex: Int) {
+        appendLassoSamples(event, pointerIndex, invalidate = false)
+        trackHold(event.getX(pointerIndex), event.getY(pointerIndex), event.eventTime)
+    }
+
+    /** Where the pen last came to rest, and since when. */
+    private fun trackHold(x: Float, y: Float, time: Long) {
+        if (hypot(x - holdX, y - holdY) > touchSlop * HOLD_SLOP_FRACTION) {
+            holdX = x
+            holdY = y
+            holdSince = time
+        }
+    }
+
+    /**
+     * The pen came to rest at the end of a loop: if the loop closes and has
+     * something in it, the ink being written is dropped and what it went round
+     * is selected, still under the pen, so carrying on moving drags it away.
+     * A loop round nothing stays ink.
+     */
+    private fun convertCircleToLasso() {
+        val strokeId = activeStrokeId ?: return
+        if (lassoPage !in document.pages.indices || lassoPath.size < LASSO_MIN_POINTS * 2) return
+        var left = lassoPath[0]
+        var right = left
+        var top = lassoPath[1]
+        var bottom = top
+        for (i in 2 until lassoPath.size step 2) {
+            left = min(left, lassoPath[i]); right = max(right, lassoPath[i])
+            top = min(top, lassoPath[i + 1]); bottom = max(bottom, lassoPath[i + 1])
+        }
+        val endX = lassoPath[lassoPath.size - 2]
+        val endY = lassoPath[lassoPath.size - 1]
+        val gap = hypot(endX - lassoPath[0], endY - lassoPath[1])
+        if (!isLassoLoop(gap, right - left, bottom - top, CIRCLE_MIN_EXTENT_PX / currentScale())) return
+        if (!selectInsideLasso()) return
+        circleTracking = false
+        lassoPath.clear()
+        removeCallbacks(longPress)
+        wet.cancelStroke(strokeId)
+        cancelCompatWet(strokeId)
+        activeStrokeId = null
+        predictionHead.clear()
+        movingLasso = true
+        liftedLassoStrokes = Collections.newSetFromMap(IdentityHashMap<Stroke, Boolean>()).apply {
+            addAll(lassoStrokes)
+        }
+        lassoGrab[0] = endX
+        lassoGrab[1] = endY
+        lassoDx = 0f
+        lassoDy = 0f
+        dry.invalidate()
+        onLassoSelected?.invoke(lassoSelectionSize())
     }
 
     private fun finishLasso() {
@@ -3871,7 +4683,15 @@ class InkCanvasView @JvmOverloads constructor(
             dry.invalidate()
             return
         }
-        val page = document.pages[index]
+        selectInsideLasso()
+        lassoPath.clear()
+        dry.invalidate()
+        onLassoSelected?.invoke(lassoSelectionSize())
+    }
+
+    /** Selects what [lassoPath] goes round on [lassoPage], leaving the path. True when that is anything. */
+    private fun selectInsideLasso(): Boolean {
+        val page = document.pages[lassoPage]
         lassoStrokes.clear()
         lassoBounds.setEmpty()
         var left = Float.POSITIVE_INFINITY
@@ -3884,26 +4704,363 @@ class InkCanvasView @JvmOverloads constructor(
             top = minOf(top, lassoPath[point + 1])
             bottom = maxOf(bottom, lassoPath[point + 1])
         }
+        lassoImages.clear()
+        val sample = StrokeInput()
+        val groups = HashSet<Int>()
         for (stroke in dry.strokesIn(page, left, top, right, bottom)) {
+            if (!selectable(stroke)) continue
             val box = stroke.shape.computeBoundingBox() ?: continue
-            // The centre decides. Requiring every corner inside makes a lasso
-            // that is hard to satisfy; the centre is what people aim at.
+            // The centre decides by default. Requiring every corner inside makes
+            // a lasso that is hard to satisfy; the centre is what people aim at.
             if (!lassoPath.contains((box.xMin + box.xMax) / 2f,
                     (box.yMin + box.yMax) / 2f)
             ) continue
+            if (lassoWholeOnly && !wholeInsideLasso(stroke, sample)) continue
             lassoStrokes += stroke
-            if (lassoBounds.isEmpty) {
-                lassoBounds.set(box.xMin, box.yMin, box.xMax, box.yMax)
-            } else {
-                lassoBounds.union(box.xMin, box.yMin, box.xMax, box.yMax)
+            StrokeTags.group(stroke).let { if (it != 0) groups += it }
+        }
+        for (image in page.images) {
+            if (!selectable(image)) continue
+            val inside = if (lassoWholeOnly) {
+                lassoPath.contains(image.x, image.y) && lassoPath.contains(image.x + image.width, image.y) &&
+                    lassoPath.contains(image.x, image.y + image.height) &&
+                    lassoPath.contains(image.x + image.width, image.y + image.height)
+            } else lassoPath.contains(image.x + image.width / 2f, image.y + image.height / 2f)
+            if (!inside) continue
+            lassoImages += image
+            if (image.group != 0) groups += image.group
+        }
+        // A group comes whole, wherever the loop happened to cut it.
+        if (groups.isNotEmpty()) {
+            for (stroke in page.strokes) {
+                if (StrokeTags.group(stroke) in groups && stroke !in lassoStrokes) lassoStrokes += stroke
+            }
+            for (image in page.images) {
+                if (image.group in groups && lassoImages.none { it === image }) lassoImages += image
             }
         }
-        lassoPath.clear()
+        for (container in lassoImages.filter { it.box != PageImage.BOX_NONE }) addContainedBy(page, container)
+        recomputeLassoBounds()
+        return hasLassoSelection()
+    }
+
+    private fun selectable(stroke: Stroke): Boolean {
+        if (!selectLocked && StrokeTags.locked(stroke)) return false
+        return if (isHighlighter(stroke)) lassoHighlighter else lassoInk
+    }
+
+    private fun selectable(image: PageImage): Boolean {
+        if (!selectLocked && image.locked) return false
+        return if (image.textContent != null) lassoText else lassoPictures
+    }
+
+    private fun hasLassoSelection(): Boolean = lassoStrokes.isNotEmpty() || lassoImages.isNotEmpty()
+
+    private fun lassoSelectionSize(): Int = lassoStrokes.size + lassoImages.size
+
+    private fun recomputeLassoBounds() {
+        lassoBounds.setEmpty()
+        for (stroke in lassoStrokes) {
+            val box = stroke.shape.computeBoundingBox() ?: continue
+            if (lassoBounds.isEmpty) lassoBounds.set(box.xMin, box.yMin, box.xMax, box.yMax)
+            else lassoBounds.union(box.xMin, box.yMin, box.xMax, box.yMax)
+        }
+        for (image in lassoImages) {
+            if (lassoBounds.isEmpty) lassoBounds.set(image.x, image.y, image.x + image.width, image.y + image.height)
+            else lassoBounds.union(image.x, image.y, image.x + image.width, image.y + image.height)
+        }
+    }
+
+    /**
+     * Swaps each selected picture for [change]'s copy of it, as part of edit
+     * [group], and keeps the selection pointing at the copies.
+     */
+    private fun replaceLassoImages(page: Page, group: Long, change: (PageImage) -> PageImage) {
+        for (i in lassoImages.indices) {
+            val before = lassoImages[i]
+            val at = page.images.indexOfFirst { it === before }
+            if (at < 0) continue
+            val after = change(before)
+            page.images[at] = after
+            undoStack += Edit.ImageReplaced(page, before, after, at, group)
+            lassoImages[i] = after
+        }
+    }
+
+    /** Locks or unlocks everything selected, then lets go of it: locked objects are not selectable. */
+    fun lockLassoSelection(locked: Boolean) {
+        val page = document.pages.getOrNull(lassoPage) ?: return
+        if (!hasLassoSelection()) return
+        for (stroke in lassoStrokes) StrokeTags.set(stroke, StrokeTags.tag(locked, StrokeTags.group(stroke)))
+        for (image in lassoImages) image.locked = locked
+        // Same strokes, new tags: the file has to be rewritten, not appended to.
+        page.savedOnDisk = 0
+        clearLassoSelection()
+        afterEdit(page)
+    }
+
+    fun lassoSelectionLocked(): Boolean =
+        lassoStrokes.any { StrokeTags.locked(it) } || lassoImages.any { it.locked }
+
+    /** Puts everything selected in one group, or takes the selection's groups apart. */
+    fun groupLassoSelection(grouped: Boolean) {
+        val page = document.pages.getOrNull(lassoPage) ?: return
+        if (!hasLassoSelection()) return
+        val group = if (grouped) StrokeTags.newGroup() else 0
+        for (stroke in lassoStrokes) StrokeTags.set(stroke, StrokeTags.tag(StrokeTags.locked(stroke), group))
+        for (image in lassoImages) image.group = group
+        page.savedOnDisk = 0
+        afterEdit(page)
+        onLassoSelected?.invoke(lassoSelectionSize())
+    }
+
+    /**
+     * Where the selection is - page, box - and a text size that matches the
+     * height of one line of it, for typed text taking its place.
+     */
+    fun lassoPlacement(): Triple<Int, RectF, Float>? {
+        if (!hasLassoSelection() || lassoBounds.isEmpty) return null
+        return Triple(lassoPage, RectF(lassoBounds), (lassoBounds.height() * 0.6f).coerceIn(14f, 72f))
+    }
+
+    /** The link on the selection's group, if it has one. */
+    fun lassoLink(): String? {
+        val page = document.pages.getOrNull(lassoPage) ?: return null
+        return sharedLassoGroup()?.let { page.links[it] }
+    }
+
+    private fun sharedLassoGroup(): Int? {
+        val groups = lassoStrokes.map { StrokeTags.group(it) } + lassoImages.map { it.group }
+        val first = groups.firstOrNull() ?: return null
+        return first.takeIf { it != 0 && groups.all { g -> g == it } }
+    }
+
+    /**
+     * Links the selection to [target], or removes its link when null. The
+     * selection is grouped first, so the link stays with the objects wherever
+     * they are moved.
+     */
+    fun setLassoLink(target: String?) {
+        val page = document.pages.getOrNull(lassoPage) ?: return
+        if (!hasLassoSelection()) return
+        val group = sharedLassoGroup() ?: run {
+            groupLassoSelection(true)
+            sharedLassoGroup()
+        } ?: return
+        if (target.isNullOrBlank()) page.links.remove(group) else page.links[group] = target.trim()
+        afterEdit(page)
+    }
+
+    /** Pages are found by id, so a link still finds its page after reordering. */
+    fun pageIdAt(index: Int): String? = document.pages.getOrNull(index)?.id
+
+    /** Goes to page [index], remembering where from so [goBack] can return. */
+    fun jumpToPage(index: Int) {
+        if (index !in document.pages.indices || index == currentPage) return
+        linkBackStack += currentPage
+        scrollToPage(index)
+        onLinkBackChanged?.invoke(true)
+    }
+
+    fun goBack(): Boolean {
+        val back = linkBackStack.removeLastOrNull() ?: return false
+        scrollToPage(back.coerceIn(document.pages.indices))
+        onLinkBackChanged?.invoke(linkBackStack.isNotEmpty())
+        return true
+    }
+
+    /** Box round every object in [group] on [page], or empty. */
+    private fun groupBounds(page: Page, group: Int, out: RectF) {
+        out.setEmpty()
+        for (stroke in page.strokes) {
+            if (StrokeTags.group(stroke) != group) continue
+            val b = stroke.shape.computeBoundingBox() ?: continue
+            if (out.isEmpty) out.set(b.xMin, b.yMin, b.xMax, b.yMax) else out.union(b.xMin, b.yMin, b.xMax, b.yMax)
+        }
+        for (image in page.images) {
+            if (image.group != group) continue
+            if (out.isEmpty) out.set(image.x, image.y, image.x + image.width, image.y + image.height)
+            else out.union(image.x, image.y, image.x + image.width, image.y + image.height)
+        }
+    }
+
+    private val linkBox = RectF()
+
+    /** A tap on a linked object follows it. True when there was one under the tap. */
+    private fun followObjectLink(screenX: Float, screenY: Float): Boolean {
+        scratch[0] = screenX
+        scratch[1] = screenY
+        screenToDocument.mapPoints(scratch)
+        val index = document.pageAt(scratch[0], scratch[1])
+        val page = document.pages.getOrNull(index) ?: return false
+        if (page.links.isEmpty() || !page.loaded) return false
+        pageLocalInto(screenX, screenY, index, pageProbe)
+        val reach = touchSlop / currentScale().coerceAtLeast(0.001f)
+        for ((group, target) in page.links) {
+            groupBounds(page, group, linkBox)
+            linkBox.inset(-reach, -reach)
+            if (!linkBox.contains(pageProbe[0], pageProbe[1])) continue
+            when {
+                target.startsWith("page:") -> {
+                    val at = document.pages.indexOfFirst { it.id == target.removePrefix("page:") }
+                    if (at >= 0) jumpToPage(at)
+                }
+                target.startsWith("note:") -> {
+                    val rest = target.removePrefix("note:")
+                    onOpenNoteLink?.invoke(rest.substringBefore('#'), rest.substringAfter('#', "0").toIntOrNull() ?: 0)
+                }
+                else -> onLinkUrl?.invoke(target)
+            }
+            performClick()
+            return true
+        }
+        return false
+    }
+
+    fun lassoSelectionGrouped(): Boolean =
+        lassoStrokes.any { StrokeTags.group(it) != 0 } || lassoImages.any { it.group != 0 }
+
+    /** Everything that can be erased on page [index] goes, in one undo step. Locked objects stay unless erasable. */
+    fun clearPage(index: Int) {
+        val page = document.pages.getOrNull(index) ?: return
+        if (!ensureLoaded(page)) return
+        clearLassoSelection()
+        clearImageSelection()
+        val group = nextEditGroup++
+        val gone = page.strokes.filter { eraseLocked || !StrokeTags.locked(it) }
+        if (gone.isNotEmpty()) {
+            val goneSet: MutableSet<Stroke> = Collections.newSetFromMap(IdentityHashMap())
+            goneSet.addAll(gone)
+            page.strokes.removeAll(goneSet::contains)
+            dry.removeStrokesFromIndex(page, gone)
+            undoStack += Edit.Erased(page, gone, group)
+        }
+        for (at in page.images.indices.reversed()) {
+            val image = page.images[at]
+            if (image.locked && !eraseLocked) continue
+            page.images.removeAt(at)
+            undoStack += Edit.ImageRemoved(page, image, at, group)
+        }
+        for (at in page.masks.indices.reversed()) {
+            undoStack += Edit.MaskRemoved(page, page.masks[at], at, group)
+            page.masks.removeAt(at)
+        }
+        redoStack.clear()
+        afterEdit(page)
+    }
+
+    /** Every input of [stroke] inside the loop, judged on at most [WHOLE_CHECK_SAMPLES] of them. */
+    private fun wholeInsideLasso(stroke: Stroke, sample: StrokeInput): Boolean {
+        val count = stroke.inputs.size
+        val step = (count / WHOLE_CHECK_SAMPLES).coerceAtLeast(1)
+        var i = 0
+        while (i < count) {
+            stroke.inputs.populate(i, sample)
+            if (!lassoPath.contains(sample.x, sample.y)) return false
+            i = if (i + step >= count && i != count - 1) count - 1 else i + step
+        }
+        return true
+    }
+
+    /**
+     * Nudges the drag so the selection's left, middle or right lands exactly on
+     * a page edge, the page's middle, or a picture's edge when within reach.
+     */
+    private fun snapLassoMove() {
+        val page = document.pages.getOrNull(lassoPage) ?: return
+        val reach = SNAP_ALIGN_PX / currentScale()
+        val xs = ArrayList<Float>()
+        val ys = ArrayList<Float>()
+        xs += 0f; xs += page.width / 2f; xs += page.width
+        ys += 0f; ys += page.height / 2f; ys += page.height
+        for (image in page.images) {
+            if (lassoImages.any { it === image }) continue
+            xs += image.x; xs += image.x + image.width
+            ys += image.y; ys += image.y + image.height
+        }
+        val b = lassoBounds
+        val snapX = alignOffset(floatArrayOf(b.left + lassoDx, b.centerX() + lassoDx, b.right + lassoDx), xs, reach)
+        val snapY = alignOffset(floatArrayOf(b.top + lassoDy, b.centerY() + lassoDy, b.bottom + lassoDy), ys, reach)
+        guideX = snapX?.second ?: Float.NaN
+        guideY = snapY?.second ?: Float.NaN
+        snapX?.let { lassoDx += it.first }
+        snapY?.let { lassoDy += it.first }
+    }
+
+    private fun dragVertex(event: MotionEvent, pointerIndex: Int) {
+        val page = document.pages.getOrNull(lassoPage) ?: return
+        val inputs = vertexInputs ?: return
+        val current = vertexCurrent ?: return
+        pageLocalInto(event.getX(pointerIndex), event.getY(pointerIndex), lassoPage, shapeEnd)
+        val tx = shapeEnd[0]
+        val ty = shapeEnd[1]
+        var i = 0
+        val moved = mapInputs(current) { x, y, out ->
+            if (i in inputs) { out[0] = tx; out[1] = ty } else { out[0] = x; out[1] = y }
+            i++
+        }
+        swapStrokes(page, listOf(current), listOf(moved))
+        lassoStrokes.clear()
+        lassoStrokes += moved
+        vertexCurrent = moved
+        recomputeLassoBounds()
+        page.revision++
+        page.renderState = RenderState.Dirty
+        dry.postInvalidateOnAnimation()
+    }
+
+    private fun finishVertexDrag() {
+        val page = document.pages.getOrNull(lassoPage)
+        val before = vertexOriginal
+        val after = vertexCurrent
+        vertexInputs = null
+        vertexOriginal = null
+        vertexCurrent = null
+        if (page == null || before == null || after == null || before === after) return
+        undoStack += Edit.Moved(page, listOf(before), listOf(after))
+        redoStack.clear()
+        afterEdit(page)
+    }
+
+    /** A pen tap with the polygon tool: a new corner, or the end of the shape. */
+    private fun tapPolygon(event: MotionEvent, index: Int) {
+        val point = FloatArray(2)
+        pageLocalInto(event.x, event.y, index, point)
+        if (polyPoints.isNotEmpty() && index != polyPage) finishPolygon(close = false)
+        if (polyPoints.isEmpty()) polyPage = index
+        val reach = VERTEX_HANDLE_PX * 2f / currentScale()
+        val first = polyPoints.firstOrNull()
+        val last = polyPoints.lastOrNull()
+        when {
+            first != null && polyPoints.size >= 3 && hypot(point[0] - first[0], point[1] - first[1]) <= reach ->
+                finishPolygon(close = true)
+            last != null && polyPoints.size >= 2 && hypot(point[0] - last[0], point[1] - last[1]) <= reach ->
+                finishPolygon(close = false)
+            else -> polyPoints += point
+        }
         dry.invalidate()
-        onLassoSelected?.invoke(lassoStrokes.size)
+    }
+
+    /** Commits the polygon tapped out so far, closed back to its first corner or left open. */
+    fun finishPolygon(close: Boolean) {
+        val page = document.pages.getOrNull(polyPage)
+        val points = ArrayList(polyPoints)
+        polyPoints.clear()
+        polyPage = -1
+        if (page == null || points.size < 2) { dry.invalidate(); return }
+        if (close) points += points.first()
+        val group = nextEditGroup++
+        for (stroke in strokesThrough(points, currentBrush())) {
+            page.strokes += stroke
+            undoStack += Edit.Drawn(page, stroke, group)
+        }
+        redoStack.clear()
+        afterEdit(page)
     }
 
     private fun finishLassoMove() {
+        guideX = Float.NaN
+        guideY = Float.NaN
         movingLasso = false
         liftedLassoStrokes = null
         val page = document.pages.getOrNull(lassoPage) ?: return
@@ -3915,10 +5072,12 @@ class InkCanvasView @JvmOverloads constructor(
             dry.invalidate()
             return
         }
+        val group = nextEditGroup++
         val before = lassoStrokes.toList()
         val after = before.map { translate(it, dx, dy) }
         swapStrokes(page, before, after)
-        undoStack += Edit.Moved(page, before, after)
+        undoStack += Edit.Moved(page, before, after, group)
+        replaceLassoImages(page, group) { it.copy(x = it.x + dx, y = it.y + dy) }
         redoStack.clear()
         lassoStrokes.clear()
         lassoStrokes += after
@@ -3949,7 +5108,11 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun swapStrokes(page: Page, from: List<Stroke>, to: List<Stroke>) {
+        // Replaced in place, so the file's prefix no longer matches: appending
+        // the next new stroke would leave these where they were on disk.
+        page.savedOnDisk = 0
         for (i in from.indices) {
+            StrokeTags.carry(from[i], to[i])
             val at = page.strokes.indexOfFirst { it === from[i] }
             if (at >= 0) page.strokes[at] = to[i] else page.strokes += to[i]
         }
@@ -3962,7 +5125,7 @@ class InkCanvasView @JvmOverloads constructor(
      */
     fun transformLassoSelection(factor: Float, degrees: Float) {
         val page = document.pages.getOrNull(lassoPage) ?: return
-        if (lassoStrokes.isEmpty() || lassoBounds.isEmpty || factor <= 0f) return
+        if (!hasLassoSelection() || lassoBounds.isEmpty || factor <= 0f) return
         val cx = lassoBounds.centerX()
         val cy = lassoBounds.centerY()
         val radians = Math.toRadians(degrees.toDouble())
@@ -3979,7 +5142,19 @@ class InkCanvasView @JvmOverloads constructor(
             if (factor == 1f) moved
             else Stroke(stroke.brush.copy(size = (stroke.brush.size * factor).coerceAtLeast(0.1f)), moved.inputs)
         }
-        replaceLassoStrokes(page, before, after)
+        val group = nextEditGroup++
+        // Pictures turn about their own middles, which go round with the rest.
+        replaceLassoImages(page, group) { image ->
+            val dx = image.x + image.width / 2f - cx
+            val dy = image.y + image.height / 2f - cy
+            val mx = cx + dx * cosine - dy * sine
+            val my = cy + dx * sine + dy * cosine
+            val w = image.width * factor
+            val h = image.height * factor
+            image.copy(x = mx - w / 2f, y = my - h / 2f, width = w, height = h)
+                .also { it.rotation = (image.rotation + degrees) % 360f }
+        }
+        replaceLassoStrokes(page, before, after, group)
     }
 
     /** Gives the selection [colorArgb], keeping each stroke's own transparency. */
@@ -3999,7 +5174,7 @@ class InkCanvasView @JvmOverloads constructor(
     /** Copies the selection a little down and right, and selects the copy. */
     fun duplicateLassoSelection() {
         val page = document.pages.getOrNull(lassoPage) ?: return
-        if (lassoStrokes.isEmpty()) return
+        if (!hasLassoSelection()) return
         val offset = LASSO_DUPLICATE_OFFSET
         val copies = lassoStrokes.map { translate(it, offset, offset) }
         val group = nextEditGroup++
@@ -4007,26 +5182,93 @@ class InkCanvasView @JvmOverloads constructor(
             page.strokes += copy
             undoStack += Edit.Drawn(page, copy, group)
         }
+        val imageCopies = lassoImages.map { it.copy(x = it.x + offset, y = it.y + offset).also { copy -> copy.locked = false } }
+        for (copy in imageCopies) {
+            page.images += copy
+            undoStack += Edit.ImageAddedInGroup(page, copy, group)
+        }
         redoStack.clear()
         lassoStrokes.clear()
         lassoStrokes += copies
+        lassoImages.clear()
+        lassoImages += imageCopies
         lassoBounds.offset(offset, offset)
         afterEdit(page)
-        onLassoSelected?.invoke(lassoStrokes.size)
+        onLassoSelected?.invoke(lassoSelectionSize())
     }
 
-    private fun replaceLassoStrokes(page: Page, before: List<Stroke>, after: List<Stroke>) {
+    /** Puts the selection on [InkClipboard]. */
+    fun copyLassoSelection() {
+        if (!hasLassoSelection()) return
+        // Pictures go with their pixels: the file they point at belongs to this
+        // note, and the paste may land in another one.
+        val pictures = lassoImages.map { it.copy() to imageLoader?.invoke(it.id) }
+        InkClipboard.push(lassoStrokes.toList(), lassoBounds, pictures)
+    }
+
+    /** The selection as a clip and a small picture of it, for keeping in the library. */
+    internal fun lassoClipWithPreview(): Pair<InkClipboard.Clip, Bitmap?>? {
+        val page = document.pages.getOrNull(lassoPage) ?: return null
+        if (!hasLassoSelection()) return null
+        val pictures = lassoImages.map { it.copy() to imageLoader?.invoke(it.id) }
+        val clip = InkClipboard.Clip(lassoStrokes.toList(), RectF(lassoBounds), pictures)
+        val preview = renderRegion(RectF(lassoBounds).apply { inset(-8f, -8f) }, page.width, page.height, -1,
+            lassoStrokes.toList(), pictures)
+        return clip to preview
+    }
+
+    fun cutLassoSelection() {
+        copyLassoSelection()
+        deleteLassoSelection()
+    }
+
+    /**
+     * Puts [clip] on the page in the middle of the screen, centred there, and
+     * selects it so it can be dragged into place straight away.
+     */
+    internal fun paste(clip: InkClipboard.Clip) {
+        if (document.pages.isEmpty()) return
+        val index = currentPage.coerceIn(document.pages.indices)
+        val page = document.pages[index]
+        // Ink added to a page not read in yet would be skipped by the next save.
+        if (!ensureLoaded(page)) return
+        pageLocalInto(width / 2f, height / 2f, index, shapeEnd)
+        val dx = shapeEnd[0].coerceIn(0f, page.width) - clip.bounds.centerX()
+        val dy = shapeEnd[1].coerceIn(0f, page.height) - clip.bounds.centerY()
+        val copies = clip.strokes.map { translate(it, dx, dy) }
+        val group = nextEditGroup++
+        for (copy in copies) {
+            page.strokes += copy
+            undoStack += Edit.Drawn(page, copy, group)
+        }
+        val pictures = clip.images.mapNotNull { (image, bitmap) ->
+            // Same note: the file is already here. Another note: bring the pixels in.
+            val id = if (imageLoader?.invoke(image.id) != null) image.id
+                else bitmap?.let { imageAdder?.invoke(it) } ?: return@mapNotNull null
+            image.copy(id = id, x = image.x + dx, y = image.y + dy).also { it.locked = false }
+        }
+        for (picture in pictures) {
+            page.images += picture
+            undoStack += Edit.ImageAddedInGroup(page, picture, group)
+        }
+        redoStack.clear()
+        clearLassoSelection()
+        lassoPage = index
+        lassoStrokes += copies
+        lassoImages += pictures
+        lassoBounds.set(clip.bounds)
+        lassoBounds.offset(dx, dy)
+        afterEdit(page)
+        onLassoSelected?.invoke(lassoSelectionSize())
+    }
+
+    private fun replaceLassoStrokes(page: Page, before: List<Stroke>, after: List<Stroke>, group: Long = 0L) {
         swapStrokes(page, before, after)
-        undoStack += Edit.Moved(page, before, after)
+        undoStack += Edit.Moved(page, before, after, group)
         redoStack.clear()
         lassoStrokes.clear()
         lassoStrokes += after
-        lassoBounds.setEmpty()
-        for (stroke in after) {
-            val box = stroke.shape.computeBoundingBox() ?: continue
-            if (lassoBounds.isEmpty) lassoBounds.set(box.xMin, box.yMin, box.xMax, box.yMax)
-            else lassoBounds.union(box.xMin, box.yMin, box.xMax, box.yMax)
-        }
+        recomputeLassoBounds()
         afterEdit(page)
     }
 
@@ -4054,22 +5296,30 @@ class InkCanvasView @JvmOverloads constructor(
     /** Throws away what the loop caught. */
     fun deleteLassoSelection() {
         val page = document.pages.getOrNull(lassoPage) ?: return
-        if (lassoStrokes.isEmpty()) return
+        if (!hasLassoSelection()) return
+        val group = nextEditGroup++
         val gone = lassoStrokes.toList()
         val goneSet: MutableSet<Stroke> = Collections.newSetFromMap(IdentityHashMap())
         goneSet.addAll(gone)
         page.strokes.removeAll(goneSet::contains)
-        undoStack += Edit.Erased(page, gone)
+        undoStack += Edit.Erased(page, gone, group)
+        for (image in lassoImages) {
+            val at = page.images.indexOfFirst { it === image }
+            if (at < 0) continue
+            page.images.removeAt(at)
+            undoStack += Edit.ImageRemoved(page, image, at, group)
+        }
         redoStack.clear()
         clearLassoSelection()
         afterEdit(page)
     }
 
     fun clearLassoSelection() {
-        val had = lassoStrokes.isNotEmpty()
+        val had = hasLassoSelection()
         movingLasso = false
         liftedLassoStrokes = null
         lassoStrokes.clear()
+        lassoImages.clear()
         lassoBounds.setEmpty()
         lassoDx = 0f
         lassoDy = 0f
@@ -4174,14 +5424,15 @@ class InkCanvasView @JvmOverloads constructor(
     fun selectedTextBox(): PageImage? = selectedImage?.takeIf { it.textContent != null }
 
     fun putTextBox(imageId: String, bitmapWidth: Int, bitmapHeight: Int, content: TextBoxContent,
-        replacing: PageImage? = null, at: Triple<Int, Float, Float>? = null) {
+        replacing: PageImage? = null, at: Triple<Int, Float, Float>? = null, box: Int = PageImage.BOX_NONE) {
         val page = if (replacing != null) document.pages.firstOrNull { replacing in it.images } ?: return
             else document.pages.getOrNull(at?.first ?: currentPage) ?: return
         val boxWidth = bitmapWidth / 2f
         val boxHeight = bitmapHeight / 2f
-        val image = PageImage(imageId, replacing?.x ?: at?.second ?: (page.width - boxWidth).coerceAtLeast(0f) / 2f,
-            replacing?.y ?: at?.third ?: (page.height - boxHeight).coerceAtLeast(0f) / 2f,
-            boxWidth, boxHeight, content)
+        val image = replacing?.copy(id = imageId, width = boxWidth, height = boxHeight, textContent = content)
+            ?: PageImage(imageId, at?.second ?: (page.width - boxWidth).coerceAtLeast(0f) / 2f,
+                at?.third ?: (page.height - boxHeight).coerceAtLeast(0f) / 2f,
+                boxWidth, boxHeight, content, box = box)
         if (replacing != null) {
             val at = page.images.indexOf(replacing)
             page.images[at] = image
@@ -4209,6 +5460,59 @@ class InkCanvasView @JvmOverloads constructor(
 
     fun clearImageSelection() = select(null, null)
 
+    fun selectedPicture(): PageImage? = selectedImage?.takeIf { it.textContent == null && it.box == PageImage.BOX_NONE }
+
+    fun selectedImageBox(): Int = selectedImage?.box ?: PageImage.BOX_NONE
+
+    /** A text box or sticky note was tapped twice; open it for editing. */
+    var onEditTextBox: (() -> Unit)? = null
+    private var lastImageTap = 0L
+    private var pendingTextEdit = false
+
+    fun selectedTable(): PageImage? = selectedImage?.takeIf { it.box == PageImage.BOX_TABLE }
+
+    /**
+     * Puts picture [imageId] where the part [area] (fractions of the selected
+     * picture's box) of the selected picture was: a crop keeps what it kept in place.
+     */
+    fun replaceSelectedImage(imageId: String, area: RectF = RectF(0f, 0f, 1f, 1f)) {
+        val image = selectedImage ?: return
+        val page = selectedImagePage ?: return
+        val at = page.images.indexOf(image)
+        if (at < 0) return
+        val after = image.copy(
+            id = imageId,
+            x = image.x + area.left * image.width,
+            y = image.y + area.top * image.height,
+            width = area.width() * image.width,
+            height = area.height() * image.height,
+        )
+        page.images[at] = after
+        undoStack += Edit.ImageReplaced(page, image, after, at)
+        redoStack.clear()
+        select(after, page)
+        afterEdit(page)
+    }
+
+    fun setSelectedImageOpacity(opacity: Float) {
+        val image = selectedImage ?: return
+        image.opacity = opacity.coerceIn(0.05f, 1f)
+        selectedImagePage?.let { afterEdit(it) }
+    }
+
+    fun rotateSelectedImage(degrees: Float) {
+        val image = selectedImage ?: return
+        val page = selectedImagePage ?: return
+        val at = page.images.indexOf(image)
+        if (at < 0) return
+        val after = image.copy().also { it.rotation = (image.rotation + degrees) % 360f }
+        page.images[at] = after
+        undoStack += Edit.ImageReplaced(page, image, after, at)
+        redoStack.clear()
+        select(after, page)
+        afterEdit(page)
+    }
+
     private fun select(image: PageImage?, page: Page?) {
         selectedImage = image
         selectedImagePage = page
@@ -4225,6 +5529,7 @@ class InkCanvasView @JvmOverloads constructor(
         // far the page is zoomed out.
         val grab = IMAGE_HANDLE_PX / currentScale()
         val hit = page.images.lastOrNull {
+            (selectLocked || !it.locked) &&
             x >= it.x - grab && x <= it.x + it.width + grab &&
                 y >= it.y - grab && y <= it.y + it.height + grab
         }
@@ -4235,9 +5540,112 @@ class InkCanvasView @JvmOverloads constructor(
             if (textMode) pendingTextPlacement = Triple(index, x, y)
             return
         }
+        // A second tap on a text box or sticky note already in hand opens it for editing.
+        if (hit === selectedImage && hit.textContent != null &&
+            event.eventTime - lastImageTap < DOUBLE_TAP_MS && onEditTextBox != null) {
+            lastImageTap = 0L
+            pendingTextEdit = true
+            return
+        }
+        lastImageTap = event.eventTime
         select(hit, page)
         resizingImage = hypot(x - (hit.x + hit.width), y - (hit.y + hit.height)) <= grab
         movingImage = !resizingImage
+        if (movingImage && hit.box != PageImage.BOX_NONE) {
+            // A container moves as a selection of itself and everything on it.
+            clearLassoSelection()
+            lassoPage = index
+            lassoImages += hit
+            addContainedBy(page, hit)
+            recomputeLassoBounds()
+            movingImage = false
+            movingLasso = true
+            liftedLassoStrokes = Collections.newSetFromMap(IdentityHashMap<Stroke, Boolean>()).apply { addAll(lassoStrokes) }
+            lassoGrab[0] = x
+            lassoGrab[1] = y
+            lassoDx = 0f
+            lassoDy = 0f
+        }
+    }
+
+    /** Ink and pictures whose middles lie on [container], added to the lasso selection. */
+    private fun addContainedBy(page: Page, container: PageImage) {
+        if (container.collapsed) return
+        val right = container.x + container.width
+        val bottom = container.y + container.height
+        for (stroke in dry.strokesIn(page, container.x, container.y, right, bottom)) {
+            val b = stroke.shape.computeBoundingBox() ?: continue
+            val cx = (b.xMin + b.xMax) / 2f
+            val cy = (b.yMin + b.yMax) / 2f
+            if (cx in container.x..right && cy in container.y..bottom && stroke !in lassoStrokes) lassoStrokes += stroke
+        }
+        for (image in page.images) {
+            if (image === container || lassoImages.any { it === image }) continue
+            val cx = image.x + image.width / 2f
+            val cy = image.y + image.height / 2f
+            if (cx in container.x..right && cy in container.y..bottom) lassoImages += image
+        }
+    }
+
+    /** Folds the selected sticky note to a tab, or unfolds it. */
+    fun toggleSelectedFolded() {
+        val image = selectedImage ?: return
+        val page = selectedImagePage ?: return
+        foldSticky(page, image)
+    }
+
+    private fun foldSticky(page: Page, image: PageImage) {
+        val at = page.images.indexOf(image)
+        if (at < 0 || image.box != PageImage.BOX_STICKY) return
+        val after = if (image.collapsed) image.copy(width = image.expandedWidth, height = image.expandedHeight)
+            .also { it.collapsed = false }
+        else image.copy(width = PageImage.FOLDED_SIZE, height = PageImage.FOLDED_SIZE).also {
+            it.collapsed = true
+            it.expandedWidth = image.width
+            it.expandedHeight = image.height
+        }
+        page.images[at] = after
+        undoStack += Edit.ImageReplaced(page, image, after, at)
+        redoStack.clear()
+        select(after, page)
+        afterEdit(page)
+    }
+
+    /** A finger tap on a folded sticky note opens it. True when there was one there. */
+    private fun unfoldAt(screenX: Float, screenY: Float): Boolean {
+        scratch[0] = screenX
+        scratch[1] = screenY
+        screenToDocument.mapPoints(scratch)
+        val index = document.pageAt(scratch[0], scratch[1])
+        if (index < 0) return false
+        val page = document.pages[index]
+        pageLocalInto(screenX, screenY, index, scratch)
+        val hit = page.images.lastOrNull {
+            it.collapsed && scratch[0] in it.x..(it.x + it.width) && scratch[1] in it.y..(it.y + it.height)
+        } ?: return false
+        foldSticky(page, hit)
+        clearImageSelection()
+        return true
+    }
+
+    /** Puts a table's freshly drawn grid where the selected one was, or new in the middle of the page. */
+    fun putTable(imageId: String, rows: Int, cols: Int, width: Float, height: Float, replacing: PageImage? = null) {
+        val page = if (replacing != null) document.pages.firstOrNull { replacing in it.images } ?: return
+            else document.pages.getOrNull(currentPage.coerceIn(document.pages.indices)) ?: return
+        val table = replacing?.copy(id = imageId, width = width, height = height)?.also { it.rows = rows; it.cols = cols }
+            ?: PageImage(imageId, (page.width - width) / 2f, (page.height - height) / 2f, width, height,
+                box = PageImage.BOX_TABLE, rows = rows, cols = cols)
+        if (replacing != null) {
+            val at = page.images.indexOf(replacing)
+            page.images[at] = table
+            undoStack += Edit.ImageReplaced(page, replacing, table, at)
+        } else {
+            page.images += table
+            undoStack += Edit.ImageAdded(page, table)
+        }
+        redoStack.clear()
+        select(table, page)
+        afterEdit(page)
     }
 
     private fun dragImage(event: MotionEvent, pointerIndex: Int) {
@@ -4251,7 +5659,8 @@ class InkCanvasView @JvmOverloads constructor(
             // Width leads and height follows, so a picture never gets squashed.
             val width = (imagePoint[0] - image.x).coerceAtLeast(IMAGE_MIN_SIZE)
             image.width = width
-            image.height = if (aspect > 0f) width / aspect else width
+            image.height = if (!keepAspect) (imagePoint[1] - image.y).coerceAtLeast(IMAGE_MIN_SIZE)
+                else if (aspect > 0f) width / aspect else width
         } else {
             image.x += imagePoint[0] - imageGrab[0]
             image.y += imagePoint[1] - imageGrab[1]
@@ -4401,8 +5810,12 @@ class InkCanvasView @JvmOverloads constructor(
         // only resolves inside its scope.
         eraseStrokeHits.clear()
         eraseStrokeHitSet.clear()
+        // Both on is the default and costs nothing; only a filter asks about families.
+        val filtered = !eraseInk || !eraseHighlighter
         with(Intersection) {
             for (candidate in candidates) {
+                if (filtered && !erasable(candidate)) continue
+                if (!eraseLocked && StrokeTags.locked(candidate)) continue
                 if ((segment?.intersects(candidate.shape, IDENTITY) == true) ||
                     tip.intersects(candidate.shape, IDENTITY)
                 ) {
@@ -4412,7 +5825,7 @@ class InkCanvasView @JvmOverloads constructor(
             }
         }
         eraseMaskHits.clear()
-        with(Intersection) {
+        if (eraseTape) with(Intersection) {
             for (mask in page.masks) {
                 if ((segment?.intersects(mask.stroke.shape, IDENTITY) == true) ||
                     tip.intersects(mask.stroke.shape, IDENTITY)
@@ -4430,6 +5843,8 @@ class InkCanvasView @JvmOverloads constructor(
                 val parts = splitStroke(stroke, ax, ay, x, y, radius + stroke.brush.size / 2f)
                     ?: continue
                 cut += stroke
+                // A piece of a grouped stroke stays in its group.
+                parts.forEach { StrokeTags.carry(stroke, it) }
                 pieces += parts
             }
             eraseStrokeHits.clear()
@@ -4437,7 +5852,33 @@ class InkCanvasView @JvmOverloads constructor(
             eraseStrokeHits += cut
             eraseStrokeHitSet += cut
         }
-        if (eraseStrokeHits.isEmpty() && eraseMaskHits.isEmpty()) return
+        // Pictures and text boxes go whole, when asked for, if the tip's sweep reaches their box.
+        var imagesErased = false
+        if (eraseImages || eraseText) {
+            val sweepLeft = candidateLeft
+            val sweepTop = candidateTop
+            val sweepRight = candidateRight
+            val sweepBottom = candidateBottom
+            for (at in page.images.indices.reversed()) {
+                val image = page.images[at]
+                if (image.locked && !eraseLocked) continue
+                if (if (image.textContent != null) !eraseText else !eraseImages) continue
+                if (image.x > sweepRight || image.x + image.width < sweepLeft ||
+                    image.y > sweepBottom || image.y + image.height < sweepTop) continue
+                page.images.removeAt(at)
+                undoStack += Edit.ImageRemoved(page, image, at, activeEraseGroup)
+                imagesErased = true
+            }
+        }
+        if (eraseStrokeHits.isEmpty() && eraseMaskHits.isEmpty()) {
+            if (imagesErased) {
+                redoStack.clear()
+                eraseChanged = true
+                page.dirty = true
+                dry.postInvalidateOnAnimation()
+            }
+            return
+        }
         // Backwards, so each recorded index is still where it goes back.
         for (i in eraseMaskHits.lastIndex downTo 0) {
             val mask = eraseMaskHits[i]
@@ -4466,6 +5907,14 @@ class InkCanvasView @JvmOverloads constructor(
         page.dirty = true
         dry.postInvalidateOnAnimation()
     }
+
+    private val highlighterFamily by lazy { Tool.HIGHLIGHTER.brushFamily() }
+
+    private fun isHighlighter(stroke: Stroke): Boolean =
+        stroke.brush.family.let { it === highlighterFamily || it == highlighterFamily }
+
+    private fun erasable(stroke: Stroke): Boolean =
+        if (isHighlighter(stroke)) eraseHighlighter else eraseInk
 
     /** The pieces of [stroke] the eraser swept a→b did not reach, or null if it reached none. */
     private fun splitStroke(stroke: Stroke, ax: Float, ay: Float, bx: Float, by: Float, reach: Float): List<Stroke>? {
@@ -4529,10 +5978,20 @@ class InkCanvasView @JvmOverloads constructor(
                     val mask = PageMask(stroke)
                     page.masks += mask
                     undoStack += Edit.MaskAdded(page, mask, group)
+                } else if (scribbleErase && finishedTool.isFreehandPen() && scribbleOut(page, stroke, group)) {
+                    // The scribble took the ink under it and is not kept itself.
                 } else {
-                    val shape = if (autoShapeRecognitionEnabled &&
-                        Tool.ofBrushFamily(stroke.brush.family).isFreehandPen()
-                    ) recognizeStroke(stroke) else null
+                    val shape = when {
+                        // A held highlighter only ever straightens: it marks lines of text.
+                        recognizeOnFinish && finishedTool == Tool.HIGHLIGHTER && stroke.inputs.size >= 2 -> {
+                            val first = stroke.inputs.get(0)
+                            val last = stroke.inputs.get(stroke.inputs.size - 1)
+                            RecognizedShape(ShapeKind.LINE, first.x, first.y, last.x, last.y)
+                        }
+                        (autoShapeRecognitionEnabled || recognizeOnFinish) &&
+                            Tool.ofBrushFamily(stroke.brush.family).isFreehandPen() -> recognizeStroke(stroke)
+                        else -> null
+                    }
                     if (shape != null) {
                         val parts = shapeStrokes(
                             shape.kind, floatArrayOf(shape.fromX, shape.fromY),
@@ -4554,6 +6013,7 @@ class InkCanvasView @JvmOverloads constructor(
             }
             redoStack.clear()
         }
+        recognizeOnFinish = false
         wet.removeFinishedStrokes(finished.keys)
         cancelCompatWet(compatWetStrokeId?.takeIf { it in finished.keys })
         if (page != null && committed.isNotEmpty()) {
@@ -4564,6 +6024,46 @@ class InkCanvasView @JvmOverloads constructor(
             latency.addPenFinalize(System.nanoTime() - finalizeStarted)
         }
         if (pendingClose != null) completePendingClose()
+    }
+
+    /**
+     * Erases the ink [scribble] scribbles over, as part of edit [group]. Runs
+     * once per stroke at pen-up, never while writing. Only strokes whose middle
+     * lies under the scribble and whose ink it touches go, so a scribble across
+     * the end of a long line does not take the whole line with it.
+     */
+    private fun scribbleOut(page: Page, scribble: Stroke, group: Long): Boolean {
+        val inputs = scribble.inputs
+        val count = inputs.size
+        if (count < 8) return false
+        val xs = FloatArray(count)
+        val ys = FloatArray(count)
+        val sample = StrokeInput()
+        for (i in 0 until count) {
+            inputs.populate(i, sample)
+            xs[i] = sample.x
+            ys[i] = sample.y
+        }
+        if (!isScribble(xs, ys, count)) return false
+        val box = scribble.shape.computeBoundingBox() ?: return false
+        val hits = ArrayList<Stroke>()
+        with(Intersection) {
+            for (candidate in dry.strokesIn(page, box.xMin, box.yMin, box.xMax, box.yMax)) {
+                if (!eraseLocked && StrokeTags.locked(candidate)) continue
+                val bounds = candidate.shape.computeBoundingBox() ?: continue
+                val cx = (bounds.xMin + bounds.xMax) / 2f
+                val cy = (bounds.yMin + bounds.yMax) / 2f
+                if (cx < box.xMin || cx > box.xMax || cy < box.yMin || cy > box.yMax) continue
+                if (candidate.shape.intersects(scribble.shape, IDENTITY, IDENTITY)) hits += candidate
+            }
+        }
+        if (hits.isEmpty()) return false
+        val gone: MutableSet<Stroke> = Collections.newSetFromMap(IdentityHashMap())
+        gone.addAll(hits)
+        page.strokes.removeAll(gone::contains)
+        dry.removeStrokesFromIndex(page, hits)
+        undoStack += Edit.Erased(page, hits, group)
+        return true
     }
 
     /** Snapshot of handwriting enclosed by the current lasso for region OCR. */
@@ -4801,6 +6301,7 @@ class InkCanvasView @JvmOverloads constructor(
 
         private val strokeIndexes = IdentityHashMap<Page, StrokeGrid>()
         private val textLayouts = java.util.WeakHashMap<PageImage, TextRender>()
+        private val foldPaint = Paint(Paint.ANTI_ALIAS_FLAG)
         private val inkBitmaps = object : LruCache<String, CachedInk>(48 * 1024 * 1024) {
             override fun sizeOf(key: String, value: CachedInk): Int = value.bitmap.byteCount
         }
@@ -5002,11 +6503,20 @@ class InkCanvasView @JvmOverloads constructor(
                         for (stroke in lassoStrokes) scope.drawStroke(onScreen(stroke))
                         scoped.restore()
                     }
+                    if (showLinkOverlay && page.links.isNotEmpty()) drawLinks(scoped, page)
                     if (i == lassoPage) drawLasso(scoped)
                     if (i == selectingPage) {
                         selection?.boxes?.forEach { scoped.drawRect(it, selectionPaint) }
                     }
                     if (i == shapePage && drawingShape) drawShapePreview(scoped)
+                    if (i == polyPage && polyPoints.isNotEmpty()) {
+                        overlay.color = colorArgb
+                        overlay.strokeWidth = strokeWidth
+                        for (k in 1 until polyPoints.size) {
+                            scoped.drawLine(polyPoints[k - 1][0], polyPoints[k - 1][1], polyPoints[k][0], polyPoints[k][1], overlay)
+                        }
+                        scoped.drawCircle(polyPoints[0][0], polyPoints[0][1], VERTEX_HANDLE_PX / currentScale(), vertexPaint)
+                    }
                     if (i == capturePage && capturing) {
                         scoped.drawRect(captureRect, marqueeFill)
                         marquee.strokeWidth = 2f / currentScale()
@@ -5050,7 +6560,25 @@ class InkCanvasView @JvmOverloads constructor(
         private fun drawImages(canvas: Canvas, page: Page) {
             if (page.images.isEmpty()) return
             val loader = imageLoader ?: return
+            val liftedPage = movingLasso && lassoImages.isNotEmpty() &&
+                document.pages.getOrNull(lassoPage) === page
             for (image in page.images) {
+                if (image.collapsed) {
+                    // Folded: a tab in the note's own colour, with its corner turned down.
+                    imageRect.set(image.x, image.y, image.x + image.width, image.y + image.height)
+                    if (liftedPage && lassoImages.any { it === image }) imageRect.offset(lassoDx, lassoDy)
+                    foldPaint.color = image.textContent?.background?.takeIf { it != 0 } ?: 0xFFFFF59D.toInt()
+                    canvas.drawRoundRect(imageRect, 6f, 6f, foldPaint)
+                    foldPaint.color = 0x33000000
+                    val corner = imageRect.width() * 0.35f
+                    canvas.drawPath(android.graphics.Path().apply {
+                        moveTo(imageRect.right - corner, imageRect.bottom)
+                        lineTo(imageRect.right, imageRect.bottom - corner)
+                        lineTo(imageRect.right - corner, imageRect.bottom - corner)
+                        close()
+                    }, foldPaint)
+                    continue
+                }
                 val bitmap = loader(image.id) ?: continue
                 imageRect.set(
                     image.x,
@@ -5058,9 +6586,19 @@ class InkCanvasView @JvmOverloads constructor(
                     image.x + image.width,
                     image.y + image.height,
                 )
+                if (liftedPage && lassoImages.any { it === image }) imageRect.offset(lassoDx, lassoDy)
+                val turned = image.rotation != 0f
+                if (turned) {
+                    canvas.save()
+                    canvas.rotate(image.rotation, imageRect.centerX(), imageRect.centerY())
+                }
                 val content = image.textContent
                 if (content == null) {
-                    canvas.drawBitmap(bitmap, null, imageRect, bitmapPaint)
+                    if (image.opacity < 1f) {
+                        bitmapPaint.alpha = (image.opacity * 255).toInt()
+                        canvas.drawBitmap(bitmap, null, imageRect, bitmapPaint)
+                        bitmapPaint.alpha = 255
+                    } else canvas.drawBitmap(bitmap, null, imageRect, bitmapPaint)
                 } else {
                     // Text boxes keep a bitmap for old files and export, but on
                     // screen their glyphs are laid out as vectors. Scaling a
@@ -5068,30 +6606,31 @@ class InkCanvasView @JvmOverloads constructor(
                     val text = textLayouts.getOrPut(image) {
                         val logicalWidth = bitmap.width / 2f
                         val logicalHeight = bitmap.height / 2f
-                        val paint = TextPaint(
-                            Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG or Paint.LINEAR_TEXT_FLAG,
-                        ).apply {
-                            textSize = content.size
-                            color = content.color
-                        }
-                        val width = ((bitmap.width - 16) / 2).coerceAtLeast(1)
-                        TextRender(
-                            StaticLayout.Builder.obtain(content.text, 0, content.text.length, paint, width)
-                                .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-                                .setIncludePad(true)
-                                .build(),
-                            logicalWidth,
-                            logicalHeight,
-                        )
+                        val width = (logicalWidth - content.padding * 2f).toInt().coerceAtLeast(1)
+                        TextRender(textBoxLayout(content, width, 1f), logicalWidth, logicalHeight)
                     }
                     canvas.save()
                     canvas.clipRect(imageRect)
-                    canvas.translate(image.x, image.y)
+                    canvas.translate(imageRect.left, imageRect.top)
                     canvas.scale(image.width / text.logicalWidth, image.height / text.logicalHeight)
-                    canvas.translate(4f, 4f)
-                    text.layout.draw(canvas)
+                    drawTextBox(canvas, content, text.layout, text.logicalWidth, text.logicalHeight, 1f)
                     canvas.restore()
                 }
+                if (turned) canvas.restore()
+            }
+        }
+
+        private val linkWash = Paint().apply { color = 0x332196F3 }
+        /** The orange corner handles of a shape being edited. */
+        private val vertexPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFF9800.toInt() }
+
+        private fun drawLinks(canvas: Canvas, page: Page) {
+            for (group in page.links.keys) {
+                groupBounds(page, group, linkBox)
+                if (linkBox.isEmpty) continue
+                val pad = 4f / currentScale()
+                linkBox.inset(-pad, -pad)
+                canvas.drawRoundRect(linkBox, pad, pad, linkWash)
             }
         }
 
@@ -5116,7 +6655,14 @@ class InkCanvasView @JvmOverloads constructor(
                 overlay.pathEffect = null
                 return
             }
-            if (lassoStrokes.isEmpty() || lassoBounds.isEmpty) return
+            if (!hasLassoSelection() || lassoBounds.isEmpty) return
+            editableShape()?.let { shape ->
+                val sample = StrokeInput()
+                for (i in 0 until shape.inputs.size) {
+                    shape.inputs.populate(i, sample)
+                    canvas.drawCircle(sample.x, sample.y, VERTEX_HANDLE_PX / scale, vertexPaint)
+                }
+            }
             selectionBox.set(lassoBounds)
             selectionBox.offset(lassoDx, lassoDy)
             val pad = LASSO_PADDING / scale
@@ -5126,6 +6672,13 @@ class InkCanvasView @JvmOverloads constructor(
             overlay.pathEffect = lassoDashes(scale)
             canvas.drawRect(selectionBox, overlay)
             overlay.pathEffect = null
+            if (movingLasso && (!guideX.isNaN() || !guideY.isNaN())) {
+                val page = document.pages.getOrNull(lassoPage) ?: return
+                overlay.color = 0xFFE91E63.toInt()
+                overlay.strokeWidth = 1f / scale
+                if (!guideX.isNaN()) canvas.drawLine(guideX, 0f, guideX, page.height, overlay)
+                if (!guideY.isNaN()) canvas.drawLine(0f, guideY, page.width, guideY, overlay)
+            }
         }
 
         private fun lassoDashes(scale: Float): android.graphics.DashPathEffect {
@@ -5205,9 +6758,19 @@ class InkCanvasView @JvmOverloads constructor(
 
         /** The shape as it is being dragged out, before it becomes a stroke. */
         private fun drawShapePreview(canvas: Canvas) {
-            val kind = shapeKind ?: return
-            val points = shapePoints(kind, shapeStart, shapeEnd)
+            val kind = shapeKind
+            if (kind == null && rulerEdge == null) return
+            val points = if (rulerEdge != null) rulerPoints else shapePoints(kind!!, shapeStart, shapeEnd)
             if (points.size < 2) return
+            // Squared up: a red guide round the box says the sides are now equal.
+            if (kind != null && rulerEdge == null) squaredShapeEnd(kind, shapeStart, shapeEnd)?.let { end ->
+                overlay.color = 0xFFE53935.toInt()
+                overlay.strokeWidth = 1.5f / currentScale()
+                overlay.pathEffect = lassoDashes(currentScale())
+                canvas.drawRect(min(shapeStart[0], end[0]), min(shapeStart[1], end[1]),
+                    max(shapeStart[0], end[0]), max(shapeStart[1], end[1]), overlay)
+                overlay.pathEffect = null
+            }
             overlay.color = colorArgb
             overlay.strokeWidth = strokeWidth
             overlay.strokeCap = Paint.Cap.ROUND
@@ -5426,8 +6989,16 @@ class InkCanvasView @JvmOverloads constructor(
         const val DETAIL_THRESHOLD_PX = 2048
         const val SHADOW = 4f
         const val SHAPE_STEP_MS = 8L
-        const val OVAL_STEPS = 64
-        const val ARROW_SPREAD = 0.5f
+        const val RULER_GAP_PX = 1.5f
+        const val SNAP_ALIGN_PX = 10f
+        const val PULL_FOR_PAGE_PX = 90f
+        const val VERTEX_HANDLE_PX = 9f
+        const val MAX_EDITABLE_INPUTS = 24
+        const val EDGE_EXCLUSION_DP = 32f
+        const val DOUBLE_TAP_ZOOM = 2f
+        const val STRIKE_HEIGHT = 0.08f
+        // Page units are A4 at 150dpi, so a real millimetre of page is this many of them.
+        const val A4_MM_WIDTH = 210f
         const val IMAGE_INSERT_FRACTION = 0.5f
         const val IMAGE_HANDLE_PX = 22f
         const val IMAGE_MIN_SIZE = 32f
@@ -5436,6 +7007,15 @@ class InkCanvasView @JvmOverloads constructor(
         const val LASSO_MIN_POINTS = 6
         const val LASSO_PADDING = 10f
         const val LASSO_SAMPLE_DISTANCE_PX = 2f
+        /** How long the pen rests at the end of a loop before it becomes a lasso. */
+        const val CIRCLE_HOLD_MS = 500L
+        /** Of touch slop: a resting pen still shakes this much. */
+        const val HOLD_SLOP_FRACTION = 0.5f
+        /** On screen: a loop smaller than this both ways is a letter o, not a lasso. */
+        const val CIRCLE_MIN_EXTENT_PX = 48f
+        const val WHOLE_CHECK_SAMPLES = 32
+        const val KEY_ZOOM_STEP = 1.25f
+        const val KEY_PAN_FRACTION = 0.15f
         /** Pages this far either side of the screen stay in memory. */
         const val KEEP_PAGES = 3
         /** What every LatencyData field holds until it is filled in. */

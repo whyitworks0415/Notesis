@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
 import java.util.Locale
 
@@ -62,6 +63,8 @@ internal data class ViewerRequest(val uri: Uri, val name: String)
 
 internal val SUPPORTED_DOCUMENT_MIME_TYPES = arrayOf(
     "text/plain",
+    "text/csv",
+    "text/comma-separated-values",
     "text/markdown",
     "application/msword",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -118,7 +121,10 @@ private sealed interface ViewerLoadState {
 internal fun ReadOnlyDocumentScreen(
     request: ViewerRequest,
     onBack: () -> Unit,
+    /** Keeps the document's text as a note: its title and Markdown. Null hides the action. */
+    onImport: ((String, String) -> Unit)? = null,
 ) {
+    val importScope = androidx.compose.runtime.rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
     var state: ViewerLoadState by remember(request.uri) { mutableStateOf(ViewerLoadState.Loading) }
     var sectionIndex by remember(request.uri) { mutableIntStateOf(0) }
@@ -177,6 +183,19 @@ internal fun ReadOnlyDocumentScreen(
                         }
                     },
                     actions = {
+                        if (onImport != null) TextButton(onClick = {
+                            importScope.launch {
+                                val markdown = withContext(Dispatchers.IO) {
+                                    runCatching {
+                                        val bytes = context.contentResolver.openInputStream(request.uri)?.use(::readDocumentBytes)
+                                            ?: error("파일을 열 수 없습니다.")
+                                        OfficeDocumentParser.parse(request.name, bytes).toMarkdown()
+                                    }.getOrNull()
+                                }
+                                if (markdown != null) onImport(request.name.substringBeforeLast('.'), markdown)
+                                else android.widget.Toast.makeText(context, "가져오지 못했습니다", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        }) { Text("노트로 가져오기") }
                         if (hasLayout) {
                             TextButton(onClick = { textOnly = !textOnly }) {
                                 Text(if (textOnly) "문서 보기" else "텍스트 보기")
@@ -445,4 +464,5 @@ private fun readDocumentBytes(input: java.io.InputStream): ByteArray {
 internal fun isSupportedDocumentName(name: String): Boolean =
     name.substringAfterLast('.', "").lowercase(Locale.ROOT) in setOf(
         "ppt", "pptx", "doc", "docx", "xls", "xlsx", "md", "markdown", "txt", "hwp", "hwpx",
+        "dot", "dotx", "pps", "ppsx", "pot", "potx", "xlt", "xltx", "csv",
     )

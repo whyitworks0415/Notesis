@@ -54,7 +54,7 @@ import kotlin.math.sin
 import com.kyant.backdrop.drawBackdrop
 
 internal enum class SpotiToolbarTool(val mode: EditMode?, val label: String) {
-    READ(EditMode.READ, "읽기"), PEN(EditMode.PEN, "펜"), PENCIL(EditMode.PENCIL, "연필"),
+    READ(EditMode.READ, "읽기"), PEN(EditMode.PEN, "펜"),
     HIGHLIGHTER(EditMode.HIGHLIGHTER, "형광펜"), MASK(EditMode.MASK, "마스킹"),
     ERASE(EditMode.ERASE, "지우개"), SHAPE(EditMode.SHAPE, "도형"), TEXT(EditMode.TEXT, "텍스트"),
     LASSO(EditMode.LASSO, "올가미"), CAPTURE(EditMode.CAPTURE, "캡쳐"), AI(null, "AI"),
@@ -63,7 +63,65 @@ internal enum class SpotiToolbarTool(val mode: EditMode?, val label: String) {
 internal fun spotiToolbarTools(level: Int): List<SpotiToolbarTool> = when (level) {
     2 -> listOf(SpotiToolbarTool.READ, SpotiToolbarTool.PEN, SpotiToolbarTool.HIGHLIGHTER, SpotiToolbarTool.MASK)
     3 -> emptyList()
-    else -> SpotiToolbarTool.entries
+    else -> ToolbarLayout.tools
+}
+
+/**
+ * Which tools the full bar shows, in what order. Snapshot state, so the bar
+ * redraws the moment it is edited; kept in preferences between runs. The
+ * keyboard's Ctrl+1..9 follows the same order.
+ */
+internal object ToolbarLayout {
+    var tools by mutableStateOf(SpotiToolbarTool.entries.toList())
+        private set
+
+    private fun prefs(context: android.content.Context) =
+        context.getSharedPreferences("pens", android.content.Context.MODE_PRIVATE)
+
+    fun load(context: android.content.Context) {
+        val saved = prefs(context).getString("toolbarTools", null) ?: return
+        tools = saved.split(',').mapNotNull { name -> SpotiToolbarTool.entries.firstOrNull { it.name == name } }
+            .ifEmpty { SpotiToolbarTool.entries.toList() }
+    }
+
+    fun set(context: android.content.Context, value: List<SpotiToolbarTool>) {
+        tools = value.ifEmpty { listOf(SpotiToolbarTool.PEN) }
+        prefs(context).edit().putString("toolbarTools", tools.joinToString(",") { it.name }).apply()
+    }
+}
+
+/** Tick the tools to show and move them up or down; the bar follows as you go. */
+@Composable
+internal fun ToolbarEditDialog(onDismiss: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val shown = ToolbarLayout.tools
+    val all = shown + SpotiToolbarTool.entries.filter { it !in shown }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("도구 편집") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                all.forEach { tool ->
+                    val on = tool in shown
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = on, onCheckedChange = {
+                            ToolbarLayout.set(context, if (on) shown - tool else shown + tool)
+                        })
+                        Text(tool.label, Modifier.weight(1f))
+                        val at = shown.indexOf(tool)
+                        TextButton(enabled = on && at > 0, onClick = {
+                            ToolbarLayout.set(context, shown.toMutableList().apply { add(at - 1, removeAt(at)) })
+                        }) { Text("▲") }
+                        TextButton(enabled = on && at in 0 until shown.lastIndex, onClick = {
+                            ToolbarLayout.set(context, shown.toMutableList().apply { add(at + 1, removeAt(at)) })
+                        }) { Text("▼") }
+                    }
+                }
+                Text("위에서부터 Ctrl+1~9로 고를 수 있습니다.", style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("닫기") } },
+    )
 }
 
 internal fun spotiToolbarWidth(level: Int) = when (level) {
@@ -120,7 +178,6 @@ private fun Modifier.spotiToolbarGlass(circle: Boolean = false): Modifier {
 private fun SpotiToolbarTool.icon(): ImageVector = when (this) {
     SpotiToolbarTool.READ -> Reicons.TouchApp
     SpotiToolbarTool.PEN -> Reicons.Create
-    SpotiToolbarTool.PENCIL -> Reicons.Brush
     SpotiToolbarTool.HIGHLIGHTER -> Reicons.Highlight
     SpotiToolbarTool.MASK -> Reicons.VisibilityOff
     SpotiToolbarTool.ERASE -> Reicons.Eraser
@@ -193,9 +250,10 @@ private fun SpotiActionButton(
     val shape = SpotiGlassShape(22.dp)
     val look = LocalSkinSettings.current
     val effects = rememberLiquidGlassEffectsAllowed() && !look.highContrast && look.spotiglassResponse > 0f
-    // A trigger uses the same rest -> lifted -> rest cycle as the tool pill.
+    // Only a trigger lifts on press, in the same rest -> lifted -> rest cycle as
+    // the tool pill; an ordinary button stays flat.
     val grow by androidx.compose.animation.core.animateFloatAsState(
-        if (pressed && effects) 1f + 0.08f * look.spotiglassResponse else 1f,
+        if (pressed && effects && persistentGlass) 1f + 0.08f * look.spotiglassResponse else 1f,
         if (effects) spring(0.78f, 430f) else tween(0), label = "기능 버튼 들림")
     Box(modifier.sizeIn(minWidth = 44.dp, minHeight = 44.dp)
         .semantics { contentDescription = label }
@@ -203,8 +261,7 @@ private fun SpotiActionButton(
         contentAlignment = Alignment.Center) {
         val body = Modifier.matchParentSize().graphicsLayer { scaleX = grow; scaleY = grow }
         Box(if (persistentGlass) body.spotiToolbarGlass(circle = true)
-            else body.spotiGlassMorph(pressed)
-                .background(if (selected) scheme.primary.copy(alpha = 0.12f) else scheme.onSurface.copy(alpha = 0.06f), shape))
+            else body.background(if (selected) scheme.primary.copy(alpha = 0.12f) else scheme.onSurface.copy(alpha = 0.06f), shape))
         Column(Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
             horizontalAlignment = Alignment.CenterHorizontally) {
             val color = (if (selected) scheme.primary else scheme.onSurface).copy(alpha = if (enabled) 1f else 0.38f)

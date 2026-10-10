@@ -46,6 +46,67 @@ internal sealed interface PreviewBlock {
     data class Table(val rows: List<List<String>>) : PreviewBlock
 }
 
+/**
+ * The document as Markdown, for keeping as an editable text note: each
+ * section a heading, paragraphs as they were (deeper levels as list items),
+ * tables as Markdown tables with the first row as their header.
+ */
+internal fun PreviewDocument.toMarkdown(): String = buildString {
+    for (section in sections) {
+        if (sections.size > 1 && section.title.isNotBlank()) append("## ").append(section.title.trim()).append("\n\n")
+        for (block in section.blocks) when (block) {
+            is PreviewBlock.Paragraph -> {
+                val text = block.text.trim()
+                if (text.isEmpty()) continue
+                when {
+                    block.monospace -> append("```\n").append(block.text).append("\n```\n\n")
+                    block.level > 0 -> append("  ".repeat(block.level - 1)).append("- ").append(text).append('\n')
+                    else -> append(text).append("\n\n")
+                }
+            }
+            is PreviewBlock.Table -> {
+                val rows = block.rows.filter { row -> row.any { it.isNotBlank() } }
+                if (rows.isEmpty()) continue
+                val width = rows.maxOf { it.size }
+                fun line(cells: List<String>) = (0 until width).joinToString(" | ", "| ", " |") { i ->
+                    cells.getOrElse(i) { "" }.replace("|", "\\|").replace('\n', ' ').trim()
+                }
+                append(line(rows.first())).append('\n')
+                append((0 until width).joinToString(" | ", "| ", " |") { "---" }).append('\n')
+                rows.drop(1).forEach { append(line(it)).append('\n') }
+                append('\n')
+            }
+        }
+    }
+}.trimEnd() + "\n"
+
+/** Rows of a CSV: commas between cells, quotes around cells that hold commas, quotes or line breaks. */
+internal fun parseCsv(text: String): List<List<String>> {
+    val rows = mutableListOf<List<String>>()
+    var row = mutableListOf<String>()
+    val cell = StringBuilder()
+    var quoted = false
+    var i = 0
+    val body = text.removePrefix("\uFEFF")
+    while (i < body.length) {
+        val c = body[i]
+        when {
+            quoted && c == '"' && i + 1 < body.length && body[i + 1] == '"' -> { cell.append('"'); i++ }
+            c == '"' -> quoted = !quoted
+            !quoted && c == ',' -> { row += cell.toString(); cell.clear() }
+            !quoted && (c == '\n' || c == '\r') -> {
+                if (c == '\r' && i + 1 < body.length && body[i + 1] == '\n') i++
+                row += cell.toString(); cell.clear()
+                rows += row; row = mutableListOf()
+            }
+            else -> cell.append(c)
+        }
+        i++
+    }
+    if (cell.isNotEmpty() || row.isNotEmpty()) { row += cell.toString(); rows += row }
+    return rows
+}
+
 internal object OfficeDocumentParser {
     private const val MAX_SECTIONS = 1_000
     private const val MAX_PARAGRAPHS = 20_000
@@ -60,14 +121,17 @@ internal object OfficeDocumentParser {
         return when (extension) {
             "txt" -> plainText(fileName, bytes, markdown = false)
             "md", "markdown" -> plainText(fileName, bytes, markdown = true)
-            "docx" -> parseDocx(fileName, unzip(bytes))
-            "pptx" -> parsePptx(fileName, unzip(bytes))
-            "xlsx" -> parseXlsx(fileName, unzip(bytes))
+            // Templates and shows are the same containers as the documents they make.
+            "docx", "dotx" -> parseDocx(fileName, unzip(bytes))
+            "pptx", "ppsx", "potx" -> parsePptx(fileName, unzip(bytes))
+            "xlsx", "xltx" -> parseXlsx(fileName, unzip(bytes))
+            "csv" -> PreviewDocument(fileName, PreviewKind.WORKBOOK,
+                listOf(PreviewSection(fileName, listOf(PreviewBlock.Table(parseCsv(String(bytes, Charsets.UTF_8)))))))
             "hwpx" -> parseHwpx(fileName, unzip(bytes))
             "hwp" -> parseHwp(fileName, CompoundFile(bytes))
-            "doc" -> parseDoc(fileName, CompoundFile(bytes))
-            "ppt" -> parsePpt(fileName, CompoundFile(bytes))
-            "xls" -> parseXls(fileName, CompoundFile(bytes))
+            "doc", "dot" -> parseDoc(fileName, CompoundFile(bytes))
+            "ppt", "pps", "pot" -> parsePpt(fileName, CompoundFile(bytes))
+            "xls", "xlt" -> parseXls(fileName, CompoundFile(bytes))
             else -> throw UnsupportedDocumentException("지원하지 않는 파일 형식입니다: .$extension")
         }
     }

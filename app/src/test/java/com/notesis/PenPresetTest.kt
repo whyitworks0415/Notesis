@@ -43,4 +43,11 @@ class PenPresetTest {
         val pen = PenPreset(Tool.PEN, 0, 5f, maxWidth = Float.NaN)
         assertEquals(PenStore.widthRange(EditMode.PEN), PenStore.widthRange(EditMode.PEN, pen))
     }
+
+    @Test
+    fun `a chosen nib wins over pressure, and only for the pen`() {
+        assertEquals(Tool.CALLIGRAPHY, PenPreset(Tool.PEN, 0, 5f, pressure = true, nib = Tool.CALLIGRAPHY).drawingTool())
+        assertEquals(Tool.PRESSURE_PEN, PenPreset(Tool.PEN, 0, 5f, pressure = true).drawingTool())
+        assertEquals(Tool.HIGHLIGHTER, PenPreset(Tool.HIGHLIGHTER, 0, 5f, nib = Tool.OIL).drawingTool())
+    }
 }

@@ -56,13 +56,13 @@ internal fun WidthControls(mode: EditMode, width: Float, onWidth: (Float) -> Uni
             modifier = Modifier.fillMaxWidth(),
         )
         Row(Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(modifier = Modifier.settingsPressHighlight(), enabled = parsed != null, onClick = {
+            TextButton(enabled = parsed != null, onClick = {
                 val chosen = parsed ?: return@TextButton
                 favorites = if (chosen in favorites) favorites - chosen else (favorites + chosen).sorted()
                 store.saveFavoriteWidths(mode, favorites)
             }) { Text(if (parsed in favorites) "★ 해제" else "☆ 즐겨찾기") }
             favorites.forEach { favorite ->
-                TextButton(modifier = Modifier.settingsPressHighlight(), onClick = { onWidth(favorite) }) { Text(widthLabel(favorite)) }
+                TextButton(onClick = { onWidth(favorite) }) { Text(widthLabel(favorite)) }
             }
         }
     }
@@ -71,7 +71,7 @@ internal fun WidthControls(mode: EditMode, width: Float, onWidth: (Float) -> Uni
 @Composable
 internal fun FavoriteWidthButton(mode: EditMode, width: Float, onWidth: (Float) -> Unit) {
     var open by remember { mutableStateOf(false) }
-    TextButton(modifier = Modifier.settingsPressHighlight(), onClick = { open = true }) { Text("${widthLabel(width)} ▾") }
+    TextButton(onClick = { open = true }) { Text("${widthLabel(width)} ▾") }
     if (open) AlertDialog(
         onDismissRequest = { open = false },
         title = { Text("굵기 · 즐겨찾기") },
