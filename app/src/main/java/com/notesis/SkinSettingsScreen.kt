@@ -1,5 +1,6 @@
 package com.notesis
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -63,6 +64,8 @@ fun SkinSettingsScreen(
     onBack: () -> Unit,
 ) {
     var picking by remember { mutableStateOf<ColorSlot?>(null) }
+    // Back leaves the settings for the screen underneath, not the app.
+    BackHandler(onBack = onBack)
 
     // The screen that sets the glass was itself the one screen wearing none.
     val backdrop = rememberBackdrop(

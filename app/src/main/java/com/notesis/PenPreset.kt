@@ -266,7 +266,6 @@ class PenStore(context: Context) {
             // Pressure on by default: the stylus has been reporting it all
              // along, and a pen that ignores it reads as a marker.
             EditMode.PEN to PenPreset(Tool.PEN, 0xFF000000.toInt(), 5f, pressure = true),
-            EditMode.PENCIL to PenPreset(Tool.PENCIL, 0xCC404040.toInt(), 4f),
             EditMode.HIGHLIGHTER to PenPreset(Tool.HIGHLIGHTER, 0x66F9A825, 20f),
             EditMode.MASK to PenPreset(Tool.MASK, PageMask.DEFAULT_MASK_COLOR, 20f),
             EditMode.SHAPE to PenPreset(Tool.PEN, 0xFF1976D2.toInt(), 5f),

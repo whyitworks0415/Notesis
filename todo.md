@@ -85,9 +85,6 @@
 - [ ] PEN-01 Ball Pen 제공하기.
 - [ ] PEN-02 Fountain Pen 제공하기.
 - [ ] PEN-03 Calligraphy Pen 제공하기.
-- [ ] PEN-04 연필 계열의 Creative Brush 제공하기.
-- [ ] PEN-05 수채화 계열의 Creative Brush 제공하기.
-- [ ] PEN-06 유화 계열 브러시 제공하기.
 - [ ] PEN-07 브러시 종류마다 선의 외형과 질감 구분하기.
 - [ ] PEN-08 필압을 반영한 필기 지원하기.
 - [ ] PEN-09 압력 민감도 설정하기.
@@ -335,7 +332,6 @@
 - [ ] BOX-09 컨테이너 안에 손글씨 쓰기.
 - [ ] BOX-10 컨테이너 안에 텍스트 넣기.
 - [ ] BOX-11 컨테이너 안에 이미지 넣기.
-- [ ] BOX-12 컨테이너 안에 스티커 넣기.
 - [ ] BOX-13 컨테이너 안에 브러시로 그리기.
 - [ ] BOX-14 컨테이너를 옮기면 내부 콘텐츠도 함께 이동하기.
 - [ ] BOX-15 표의 칸에 시각적인 콘텐츠를 배치하는 흐름 지원하기.
@@ -344,7 +340,7 @@
 
 근거: [3.2 스티키 노트][release32], [3.3 접기·펼치기][release33], [표 도입 기록][history], [3.6 콘텐츠를 담는 컨테이너][blog36].
 
-## 15. 이미지·스티커·동영상
+## 15. 이미지·동영상
 
 - [ ] MEDIA-01 이미지 도구로 이미지를 추가하기.
 - [ ] MEDIA-02 눌러 넣기·드래그로 배치하는 이미지 삽입 흐름.
@@ -358,18 +354,13 @@
 - [ ] MEDIA-10 여러 이미지를 새 노트로 가져오기.
 - [ ] MEDIA-11 이미지 가져오기 과정에서 순서 재배치하기.
 - [ ] MEDIA-12 이미지 배경 제거 기능. Classic의 도구 설명과 Cloud의 AI 배경 제거 조건은 각각 확인하기.
-- [ ] MEDIA-13 기본 스티커 컬렉션 제공하기. 3.4 소개에서 100개 이상을 안내.
-- [ ] MEDIA-14 스티커 검색하기.
-- [ ] MEDIA-15 최근 사용한 스티커에 접근하기.
-- [ ] MEDIA-16 스티커 크기·회전 조절하기.
-- [ ] MEDIA-17 스티커를 자르고 테두리·모서리를 편집하기.
 - [ ] MEDIA-18 캔버스에 동영상 넣기.
 - [ ] MEDIA-19 4.0의 Classic Free에서도 동영상 가져오기 지원하기.
 - [ ] MEDIA-20 이미지가 Text·Audio 노트에서도 소스로 사용되도록 하기.
 
 이미지 배경 제거는 Unlimited의 캔버스 도구 안내와 Cloud 요금표의 AI 항목이 모두 있으므로, 같은 처리 방식이라고 단정하지 않는다. 동영상 코덱·URL 재생·모든 플레이어 버튼도 공개 자료만으로 확정하지 않았다.
 
-근거: [이미지 생성·자르기][images], [3.2 가져올 이미지 순서][release32], [2.19 테두리·모서리][release219], [3.4 스티커][blog34], [3.5 투명도·동영상][release35], [4.0 가져오기 확대][blog40], [Classic·Cloud 도구 조건][plans], [AI 배경 제거][pricing], [4.1 이미지][blog41].
+근거: [이미지 생성·자르기][images], [3.2 가져올 이미지 순서][release32], [2.19 테두리·모서리][release219], [3.5 투명도·동영상][release35], [4.0 가져오기 확대][blog40], [Classic·Cloud 도구 조건][plans], [AI 배경 제거][pricing], [4.1 이미지][blog41].
 
 ## 16. 테이프·레이저 포인터·확대 필기창
 
@@ -957,14 +948,14 @@ Notewise의 Liquid Glass 출시 기록은 iOS에 관한 것이다. 이것만으�
 
 | 영역 | 현재 Notesis에서 확인한 출발점 | 추가 비교·개발 대상 | 주요 코드 |
 |---|---|---|---|
-| 기본 필기 | 압력 기반 펜, 연필·형광펜·질감 처리 | Fountain·Calligraphy·수채화·유화 등의 외형, 프리셋과 작은 설정 동작 | [InkCanvasView.kt](app/src/main/java/com/notesis/InkCanvasView.kt), [InkTextures.kt](app/src/main/java/com/notesis/InkTextures.kt) |
+| 기본 필기 | 압력 기반 펜·형광펜·질감 처리 | Fountain·Calligraphy 등의 외형, 프리셋과 작은 설정 동작 | [InkCanvasView.kt](app/src/main/java/com/notesis/InkCanvasView.kt), [InkTextures.kt](app/src/main/java/com/notesis/InkTextures.kt) |
 | 안정화·지연 | 스트리밍 안정화, 짧은 예측, 입력 지연 통계 | 기기별 설정 범위, 끝점, 압력, 낮은 성능 기기에서의 실제 필기 | [StrokeStabilizer.kt](app/src/main/java/com/notesis/StrokeStabilizer.kt), [InkPredictionPolicy.kt](app/src/main/java/com/notesis/InkPredictionPolicy.kt) |
 | 많은 필기 렌더링 | 메시 렌더링용 GPU 타일·증분 갱신·메모리 한도 | 실제 태블릿의 밀집 페이지 이동·확대·편집 검증 | [InkTileCache.kt](app/src/main/java/com/notesis/InkTileCache.kt) |
 | 지우개 | 획 분할 기반 부분 지우기 | 객체 종류 필터, 잠금 예외, 낙서 지우기, 도구 복귀 조건 | [StrokeSplit.kt](app/src/main/java/com/notesis/StrokeSplit.kt), [InkCanvasView.kt](app/src/main/java/com/notesis/InkCanvasView.kt) |
 | 올가미 | 이동·크기·회전·색 변경·복제 | 완전 포함 선택, 타입 제외, 그룹·잠금, Circle to Lasso와 전체 붙여넣기 흐름 | [InkCanvasView.kt](app/src/main/java/com/notesis/InkCanvasView.kt) |
 | 도형 | LINE·ARROW·RECT·OVAL, 획 종료 후 자동 도형 인식 | 끝에서 유지하는 동작과 즉시 편집, 추가 도형·각 조절점·커넥터 | [StrokeEnd.kt](app/src/main/java/com/notesis/StrokeEnd.kt), [InkCanvasView.kt](app/src/main/java/com/notesis/InkCanvasView.kt) |
 | 텍스트 상자 | 저장 모델에 text·size·color, 편집 가능한 메타데이터 | 부분 서식, 글꼴 선택, 배경·모서리·여백, Google Fonts | [TextBox.kt](app/src/main/java/com/notesis/TextBox.kt) |
-| 이미지 | 이미지 배치·문서 저장 경로 | 자유형 자르기·테두리·스티커·배경 제거·동영상은 별도 확인 | [MainActivity.kt](app/src/main/java/com/notesis/MainActivity.kt), [Document.kt](app/src/main/java/com/notesis/Document.kt) |
+| 이미지 | 이미지 배치·문서 저장 경로 | 자유형 자르기·테두리·배경 제거·동영상은 별도 확인 | [MainActivity.kt](app/src/main/java/com/notesis/MainActivity.kt), [Document.kt](app/src/main/java/com/notesis/Document.kt) |
 | 스티키 노트·표 | 별도 컨테이너 패리티는 아직 판정하지 않음 | 내부 손글씨·이미지·텍스트의 결합과 함께 이동하는 전체 흐름 | 캔버스·문서 모델 확장 검토 |
 | 가리기·설명 | 학습 마스크와 레이저 관련 구현 | Notewise Tape·Laser의 표시·취소·저장 동작 비교 | [MaskStudy.kt](app/src/main/java/com/notesis/MaskStudy.kt), [InkCanvasView.kt](app/src/main/java/com/notesis/InkCanvasView.kt) |
 | 페이지·배경 | 페이지 추가·복제·배치·사용자 배경 | 전체 페이지 회전, 다른 노트로 이동·복사, 페이지 작업 실행 취소 | [Document.kt](app/src/main/java/com/notesis/Document.kt), [DocumentLayoutPolicy.kt](app/src/main/java/com/notesis/DocumentLayoutPolicy.kt) |
@@ -1003,7 +994,6 @@ Notewise의 Liquid Glass 출시 기록은 iOS에 관한 것이다. 이것만으�
 - [ ] CHECK-16 컨테이너 크기 변경·자르기·삭제 때 내부 객체 좌표와 복구 방식.
 - [ ] CHECK-17 이미지 좌우 반전, 테두리 전체 설정, 배경 제거의 Classic·AI 차이와 네트워크 조건.
 - [ ] CHECK-18 동영상 형식·코덱·URL 지원, 재생 버튼·음량·반복·전체 화면.
-- [ ] CHECK-19 사용자 스티커 추가·팩 가져오기, 최근 사용 항목 수와 저장 위치.
 - [ ] CHECK-20 Tape 전체 공개·개별 공개 옵션, 암기 채점 기능 유무.
 - [ ] CHECK-21 Laser 색·잔상·지속 시간, 저장·내보내기에 포함되는지.
 - [ ] CHECK-22 Zoom Box 자동 전진·다음 줄·필기 영역·다시 열 때 상태 유지.
@@ -1038,7 +1028,7 @@ Notewise의 Liquid Glass 출시 기록은 iOS에 관한 것이다. 이것만으�
 |---|---|---|
 | P0 | 기존 필기·메시 렌더링·부분 지우기·선택·저장 신뢰성 | 밀집 페이지와 낮은 성능의 실제 태블릿에서 필기 정확도·지연·데이터 복구 검증 |
 | P1 | 도구 프리셋·고급 지우개·Circle to Lasso·클립보드/라이브러리·페이지 실행 취소 | 조작·취소·복구·다시 열기의 작은 동작까지 일치 |
-| P2 | 추가 도형·커넥터·자/각도기·텍스트 서식·스티키/표·이미지/스티커·PDF 목차 | 객체 간 결합, PDF 호환, 저장 형식과 내보내기 검증 |
+| P2 | 추가 도형·커넥터·자/각도기·텍스트 서식·스티키/표·이미지·PDF 목차 | 객체 간 결합, PDF 호환, 저장 형식과 내보내기 검증 |
 | P3 | 여러 소스 Note·오디오 전사·AI Note·Custom Tabs·Magic Select·검색 확장 | 원본 보존, 실패·재시도·사용량 조건과 학습 결과 검증 |
 | P4 | 자체 Cloud·권한 공유·웹 열람·계정/암호·조직 관리 | 동시 편집·오프라인 병합·만료/용량 정책·접근 권한 검증 |
 

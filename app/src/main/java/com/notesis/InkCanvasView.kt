@@ -134,6 +134,10 @@ const val STROKE_EPSILON = TESSELLATION_TARGET_PX
 
 private const val STROKE_GRID_CELL = 256f
 private const val MAX_GRID_CELLS_PER_STROKE = 64
+
+/** How far past each side of the note it can be scrolled, as a share of a page's width. */
+private const val HORIZONTAL_OVERSCROLL = 0.8f
+
 /** Below this fraction of the tip width, the previous eraser tip still covers the move. */
 private const val ERASER_SAMPLE_DISTANCE_FRACTION = 0.08f
 
@@ -1872,10 +1876,15 @@ class InkCanvasView @JvmOverloads constructor(
         var x = matrixValues[Matrix.MTRANS_X]
         var y = matrixValues[Matrix.MTRANS_Y]
 
+        // Past each side edge the note can be pushed a further share of a page's
+        // width, so writing near the margin is not done against the screen edge.
+        val pageWidth = (document.pages.maxOfOrNull { it.width } ?: Page.A4_WIDTH) * scale
+        val overscrollX = pageWidth * HORIZONTAL_OVERSCROLL
         x = if (docWidth <= width) {
-            (width - docWidth) / 2f
+            val centred = (width - docWidth) / 2f
+            x.coerceIn(centred - overscrollX, centred + overscrollX)
         } else {
-            x.coerceIn(width - docWidth, 0f)
+            x.coerceIn(width - docWidth - overscrollX, overscrollX)
         }
         y = if (docHeight <= height) {
             (height - docHeight) / 2f

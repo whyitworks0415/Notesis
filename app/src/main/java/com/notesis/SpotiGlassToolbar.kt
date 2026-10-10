@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -24,6 +25,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
@@ -54,7 +56,7 @@ import kotlin.math.sin
 import com.kyant.backdrop.drawBackdrop
 
 internal enum class SpotiToolbarTool(val mode: EditMode?, val label: String) {
-    READ(EditMode.READ, "읽기"), PEN(EditMode.PEN, "펜"), PENCIL(EditMode.PENCIL, "연필"),
+    READ(EditMode.READ, "읽기"), PEN(EditMode.PEN, "펜"),
     HIGHLIGHTER(EditMode.HIGHLIGHTER, "형광펜"), MASK(EditMode.MASK, "마스킹"),
     ERASE(EditMode.ERASE, "지우개"), SHAPE(EditMode.SHAPE, "도형"), TEXT(EditMode.TEXT, "텍스트"),
     LASSO(EditMode.LASSO, "올가미"), CAPTURE(EditMode.CAPTURE, "캡쳐"), AI(null, "AI"),
@@ -120,7 +122,6 @@ private fun Modifier.spotiToolbarGlass(circle: Boolean = false): Modifier {
 private fun SpotiToolbarTool.icon(): ImageVector = when (this) {
     SpotiToolbarTool.READ -> Reicons.TouchApp
     SpotiToolbarTool.PEN -> Reicons.Create
-    SpotiToolbarTool.PENCIL -> Reicons.Brush
     SpotiToolbarTool.HIGHLIGHTER -> Reicons.Highlight
     SpotiToolbarTool.MASK -> Reicons.VisibilityOff
     SpotiToolbarTool.ERASE -> Reicons.Eraser
@@ -194,16 +195,18 @@ private fun SpotiActionButton(
     val look = LocalSkinSettings.current
     val effects = rememberLiquidGlassEffectsAllowed() && !look.highContrast && look.spotiglassResponse > 0f
     // A trigger uses the same rest -> lifted -> rest cycle as the tool pill.
+    // Ordinary buttons stay flat when pressed: only a trigger turns to glass.
     val grow by androidx.compose.animation.core.animateFloatAsState(
-        if (pressed && effects) 1f + 0.08f * look.spotiglassResponse else 1f,
+        if (pressed && effects && persistentGlass) 1f + 0.08f * look.spotiglassResponse else 1f,
         if (effects) spring(0.78f, 430f) else tween(0), label = "기능 버튼 들림")
     Box(modifier.sizeIn(minWidth = 44.dp, minHeight = 44.dp)
         .semantics { contentDescription = label }
-        .clickable(enabled = enabled, role = Role.Button, interactionSource = interaction, indication = null, onClick = onClick),
+        .clickable(enabled = enabled, role = Role.Button, interactionSource = interaction,
+            indication = if (persistentGlass) null else LocalIndication.current, onClick = onClick),
         contentAlignment = Alignment.Center) {
         val body = Modifier.matchParentSize().graphicsLayer { scaleX = grow; scaleY = grow }
         Box(if (persistentGlass) body.spotiToolbarGlass(circle = true)
-            else body.spotiGlassMorph(pressed)
+            else body.clip(shape)
                 .background(if (selected) scheme.primary.copy(alpha = 0.12f) else scheme.onSurface.copy(alpha = 0.06f), shape))
         Column(Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
             horizontalAlignment = Alignment.CenterHorizontally) {

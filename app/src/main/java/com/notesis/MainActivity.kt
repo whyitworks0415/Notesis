@@ -188,6 +188,7 @@ class MainActivity : ComponentActivity() {
         val prefs = PenStore(this)
         val lookStore = SkinSettingsStore(this)
         acceptDocumentIntent(intent)
+        hideSystemBars()
         setContent {
             // Hoisted to the top so a change repaints every bar at once rather
             // than whichever screen happened to be looking.
@@ -283,6 +284,20 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // Always fullscreen: the bars stay hidden everywhere in the app and come
+    // back only for a moment when swiped in from the edge.
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) hideSystemBars()
+    }
+
+    private fun hideSystemBars() {
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            hide(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -365,7 +380,6 @@ private fun NoteListScreen(
     var exporting by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
     var exportDialogFor by remember { mutableStateOf<NoteMeta?>(null) }
     var exportPageOptions by remember { mutableStateOf<PageExportOptions?>(null) }
-    var pngJob by remember { mutableStateOf<Pair<String, PageExportOptions>?>(null) }
     var markdownExportId by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf<String?>(null) }
     var report by remember { mutableStateOf<String?>(null) }
@@ -457,6 +471,15 @@ private fun NoteListScreen(
     var deletingFolder by remember { mutableStateOf(false) }
     var folderMenu by remember { mutableStateOf(false) }
     val folders = remember(revision) { store.folders() }
+    // Back steps out of whatever the list is in - a selection, a search, a
+    // folder - before it is allowed to leave the app.
+    BackHandler(enabled = selectionMode || query.isNotEmpty() || folder.isNotBlank()) {
+        when {
+            selectionMode -> { selectionMode = false; selectedIds.clear() }
+            query.isNotEmpty() -> query = ""
+            else -> folder = ""
+        }
+    }
     // Favourites first, then the chosen order within each group.
     val shown = (results ?: notes.filter { it.folder == folder }).sortedWith(
         compareByDescending<NoteMeta> { it.favorite }.then(
@@ -524,19 +547,20 @@ private fun NoteListScreen(
         }
     }
 
-    fun writePng(uri: Uri?) {
-        val job = pngJob
-        pngJob = null
-        if (uri == null || job == null) return
+    // PNGs go straight to the gallery, one picture per page, without a file picker.
+    fun writePngToGallery(note: NoteMeta, options: PageExportOptions) {
         busy = "PNG로 그리는 중"
         scope.launch {
-            val ok = withContext(Dispatchers.IO) {
-                context.contentResolver.openOutputStream(uri)?.use {
-                    store.exportPng(job.first, it, job.second)
-                } ?: false
+            val saved = withContext(Dispatchers.IO) {
+                store.exportPngToGallery(note.id, safeFileName(note.title), options)
             }
+            val wanted = options.last - options.first + 1
             busy = null
-            report = if (ok) "PNG를 저장했습니다" else "PNG로 내보내지 못했습니다"
+            report = when {
+                saved == wanted -> "갤러리에 PNG ${saved}장을 저장했습니다"
+                saved > 0 -> "갤러리에 PNG ${saved}장을 저장했습니다 (${wanted - saved}장 실패)"
+                else -> "PNG로 내보내지 못했습니다"
+            }
         }
     }
     val addPageTemplate = rememberLauncherForActivityResult(
@@ -553,12 +577,6 @@ private fun NoteListScreen(
             else templateRevision++
         }
     }
-    val savePng = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("image/png"),
-    ) { uri -> writePng(uri) }
-    val savePngZip = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/zip"),
-    ) { uri -> writePng(uri) }
 
     val saveMarkdown = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/markdown"),
@@ -1063,10 +1081,7 @@ private fun NoteListScreen(
             onExport = { png, options ->
                 exportDialogFor = null
                 if (png) {
-                    pngJob = note.id to options
-                    if (options.first == options.last)
-                        savePng.launch(safeFileName(note.title) + "-${options.first}.png")
-                    else savePngZip.launch(safeFileName(note.title) + "-png.zip")
+                    writePngToGallery(note, options)
                 } else {
                     exporting = note.id to true
                     exportPageOptions = options
@@ -1819,7 +1834,7 @@ internal fun PenDialog(
                     )
 
                 }
-                if (mode == EditMode.PEN || mode == EditMode.PENCIL) {
+                if (mode == EditMode.PEN) {
                     Spacer(Modifier.height(10.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         SkinSwitch(checked = pressure, onCheckedChange = { pressure = it })
@@ -1873,7 +1888,7 @@ internal fun PenDialog(
                         Text(if (highlighterAboveInk) "필기 위에 표시" else "필기 아래에 표시")
                     }
                 }
-                if (mode == EditMode.PEN || mode == EditMode.PENCIL) {
+                if (mode == EditMode.PEN) {
                   Spacer(Modifier.height(10.dp))
                   Row(verticalAlignment = Alignment.CenterVertically) {
                     SkinSwitch(checked = meshInk, onCheckedChange = onMeshInk)
@@ -1959,7 +1974,7 @@ internal fun PenDialog(
                     // was living in a fifth of the track.
                     for ((label, ceiling) in PenStore.widthCeilings(mode)) {
                         val chosen = kotlin.math.abs(range.endInclusive - ceiling) < 0.01f
-                        TextButton(modifier = Modifier.settingsPressHighlight(), onClick = { maxWidth = ceiling; width = width.coerceAtMost(ceiling) }) {
+                        TextButton(onClick = { maxWidth = ceiling; width = width.coerceAtMost(ceiling) }) {
                             Text(
                                 label,
                                 style = MaterialTheme.typography.labelMedium,
@@ -2035,7 +2050,6 @@ internal fun PenDialog(
 
 private fun toolLabel(mode: EditMode): String = when (mode) {
     EditMode.PEN -> "펜"
-    EditMode.PENCIL -> "연필"
     EditMode.HIGHLIGHTER -> "형광펜"
     EditMode.MASK -> "마스킹테이프"
     EditMode.SHAPE -> "도형"
@@ -2603,7 +2617,7 @@ private fun PageExportDialog(
                         label = { Text("${value}°") })
                 }
             }
-            if (png && valid && from != to) Text("여러 PNG는 ZIP 파일로 저장됩니다.",
+            if (png && valid && from != to) Text("PNG는 페이지마다 한 장씩 갤러리에 저장됩니다.",
                 style = MaterialTheme.typography.bodySmall)
         } },
         confirmButton = { TextButton(enabled = valid, onClick = {
@@ -2704,11 +2718,11 @@ private val ChromeInsets: WindowInsets
  * What the pen does when it lands. One thing at a time, by construction, and
  * each one remembers its own colour and thickness rather than sharing a tray.
  */
-enum class EditMode { PEN, HIGHLIGHTER, MASK, LASSO, SHAPE, IMAGE, ERASE, READ, CAPTURE, TEXT, PENCIL }
+enum class EditMode { PEN, HIGHLIGHTER, MASK, LASSO, SHAPE, IMAGE, ERASE, READ, CAPTURE, TEXT }
 
 /** Whether this mode puts something on the page in the tool's own colour. */
 private val EditMode.tints: Boolean
-    get() = this == EditMode.PEN || this == EditMode.PENCIL || this == EditMode.HIGHLIGHTER ||
+    get() = this == EditMode.PEN || this == EditMode.HIGHLIGHTER ||
         this == EditMode.MASK || this == EditMode.SHAPE
 
 @Composable
@@ -2823,26 +2837,18 @@ private fun NoteScreen(
         delay(PEN_SAVE_DELAY_MS)
         withContext(Dispatchers.IO) { penStore.save(settings) }
     }
-    var fullscreen by remember { mutableStateOf(false) }
     var imageSelected by remember { mutableStateOf(false) }
     var showTextBox by remember { mutableStateOf(false) }
     var replacingText by remember { mutableStateOf<PageImage?>(null) }
     var textPosition by remember { mutableStateOf<Triple<Int, Float, Float>?>(null) }
     var captured by remember { mutableStateOf<Bitmap?>(null) }
-    var captureToSave by remember { mutableStateOf<Bitmap?>(null) }
-    val saveCapture = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("image/png"),
-    ) { uri: Uri? ->
-        val bitmap = captureToSave
-        captureToSave = null
-        if (uri != null && bitmap != null) scope.launch(Dispatchers.IO) {
-            val ok = runCatching {
-                context.contentResolver.openOutputStream(uri)?.use {
-                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
-                } == true
-            }.getOrDefault(false)
+    // A capture goes straight into the gallery rather than through a file picker.
+    fun saveCapture(bitmap: Bitmap) {
+        scope.launch(Dispatchers.IO) {
+            val ok = saveBitmapToGallery(context, bitmap, "Notesis-capture-${System.currentTimeMillis()}")
             withContext(Dispatchers.Main) {
-                Toast.makeText(context, if (ok) "PNG를 저장했습니다" else "PNG 저장 실패", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, if (ok) "갤러리에 PNG를 저장했습니다" else "PNG 저장 실패",
+                    Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -3078,34 +3084,12 @@ private fun NoteScreen(
         }
     }
 
-    // Back clears a selection first, then leaves fullscreen, the way dismissing
-    // anything else works - one step out per press.
+    // Back clears a selection first, the way dismissing anything else works -
+    // one step out per press.
     BackHandler {
         when {
             selectedText != null -> canvas?.clearSelection()
-            fullscreen -> fullscreen = false
             else -> onBack()
-        }
-    }
-
-    val window = (context as? ComponentActivity)?.window
-    LaunchedEffect(fullscreen, window) {
-        val view = window?.decorView ?: return@LaunchedEffect
-        val controller = WindowCompat.getInsetsController(window, view)
-        controller.systemBarsBehavior =
-            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        if (fullscreen) {
-            controller.hide(WindowInsetsCompat.Type.systemBars())
-        } else {
-            controller.show(WindowInsetsCompat.Type.systemBars())
-        }
-    }
-    // Leaving the note with the bars still hidden would hide them on the list.
-    DisposableEffect(window) {
-        onDispose {
-            val view = window?.decorView ?: return@onDispose
-            WindowCompat.getInsetsController(window, view)
-                .show(WindowInsetsCompat.Type.systemBars())
         }
     }
 
@@ -3173,7 +3157,6 @@ private fun NoteScreen(
             shapeKind = shapeKind,
             straightLine = straightLine,
             onToggleStraightLine = { straightLine = !straightLine },
-            fullscreen = fullscreen,
             showLatency = showLatency,
             // edits is read here so drawing or erasing recomposes the toolbar and
             // undo/redo can re-evaluate whether there is anything on the stacks.
@@ -3219,7 +3202,6 @@ private fun NoteScreen(
             },
             onFitWidth = { canvas?.fitWidth() },
             zoomLabel = "${(zoom * 100).roundToInt()}%",
-            onToggleFullscreen = { fullscreen = !fullscreen },
             onToggleLatency = { showLatency = !showLatency },
             laser = laser,
             onToggleLaser = { laser = !laser },
@@ -3758,9 +3740,8 @@ private fun NoteScreen(
                     captured = null
                 },
                 onSave = {
-                    captureToSave = bitmap
                     captured = null
-                    saveCapture.launch("Notesis-capture.png")
+                    saveCapture(bitmap)
                 },
                 onDismiss = { captured = null },
             )
@@ -5547,7 +5528,6 @@ private fun Toolbar(
     skin: Skin,
     onSkin: (Skin) -> Unit,
     docked: Boolean,
-    fullscreen: Boolean,
     showLatency: Boolean,
     canUndo: Boolean,
     canRedo: Boolean,
@@ -5565,7 +5545,6 @@ private fun Toolbar(
     onFitWidth: () -> Unit,
     /** The zoom as a percentage of fit-to-width, which is what the button resets to. */
     zoomLabel: String,
-    onToggleFullscreen: () -> Unit,
     onToggleLatency: () -> Unit,
     recording: Boolean,
     onVoice: () -> Unit,
@@ -5685,12 +5664,6 @@ private fun Toolbar(
                     )
                 }
             }
-            IconButton(onClick = onToggleFullscreen) {
-                Icon(
-                    if (fullscreen) Reicons.FullscreenExit else Reicons.Fullscreen,
-                    contentDescription = "전체화면",
-                )
-            }
             IconButton(onClick = onToggleLaser) {
                 Icon(
                     Reicons.FilterCenterFocus,
@@ -5720,7 +5693,6 @@ private fun Toolbar(
                 add(SpotiToolbarAction("마이크", Reicons.Mic, selected = recording, slot = 0, onClick = onVoice))
                 add(SpotiToolbarAction(if (docked) "상단 고정 해제" else "상단 고정", Reicons.VerticalAlignTop,
                     selected = docked, slot = 1, onClick = onToggleDock))
-                add(SpotiToolbarAction("전체화면", Reicons.Fullscreen, selected = fullscreen, slot = 2, onClick = onToggleFullscreen))
                 add(SpotiToolbarAction("노트 회전", Reicons.ScreenRotation, slot = 7, onClick = onRotate))
                 add(SpotiToolbarAction("캡쳐", Reicons.CropFree, slot = 5, onClick = { onMode(EditMode.CAPTURE) }))
                 add(SpotiToolbarAction("레이저 포인터", Reicons.FilterCenterFocus, selected = laser, onClick = onToggleLaser))

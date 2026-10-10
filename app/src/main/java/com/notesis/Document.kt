@@ -1272,38 +1272,31 @@ class NoteStore(context: Context) {
         true
     }.getOrDefault(false)
 
-    /** Exports one page as PNG, or a numbered PNG ZIP for a range. */
-    fun exportPng(
-        id: String, out: java.io.OutputStream, options: PageExportOptions,
-    ): Boolean = runCatching {
-        val document = load(id)
-        require(options.first >= 1 && options.last >= options.first &&
-            options.last <= document.pages.size)
-        val source = PdfSource.open(pdfFile(id))
-        val renderer = CanvasStrokeRenderer.create(PencilTextureStore)
-        try {
-            if (options.first == options.last) {
-                val bitmap = renderExportBitmap(id, document.pages[options.first - 1],
-                    source, renderer, options.size, options.rotation)
-                try { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) }
-                finally { bitmap.recycle() }
-            } else {
-                java.util.zip.ZipOutputStream(out.buffered()).use { zip ->
-                    for (number in options.first..options.last) {
-                        val bitmap = renderExportBitmap(id, document.pages[number - 1],
-                            source, renderer, options.size, options.rotation)
-                        try {
-                            zip.putNextEntry(java.util.zip.ZipEntry(
-                                "page-${number.toString().padStart(3, '0')}.png"))
-                            check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, zip))
-                            zip.closeEntry()
-                        } finally { bitmap.recycle() }
-                    }
+    /**
+     * Renders the chosen pages and puts each straight into the gallery as its
+     * own PNG. Returns how many were saved; fewer than asked for is a failure.
+     */
+    fun exportPngToGallery(id: String, title: String, options: PageExportOptions): Int {
+        var saved = 0
+        runCatching {
+            val document = load(id)
+            require(options.first >= 1 && options.last >= options.first &&
+                options.last <= document.pages.size)
+            val source = PdfSource.open(pdfFile(id))
+            val renderer = CanvasStrokeRenderer.create(PencilTextureStore)
+            try {
+                for (number in options.first..options.last) {
+                    val bitmap = renderExportBitmap(id, document.pages[number - 1],
+                        source, renderer, options.size, options.rotation)
+                    try {
+                        val name = "$title-${number.toString().padStart(3, '0')}"
+                        if (saveBitmapToGallery(appContext, bitmap, name)) saved++
+                    } finally { bitmap.recycle() }
                 }
-            }
-        } finally { source?.close() }
-        true
-    }.getOrDefault(false)
+            } finally { source?.close() }
+        }
+        return saved
+    }
 
     private fun renderExportBitmap(
         id: String, page: Page, source: PdfSource?, renderer: CanvasStrokeRenderer,
