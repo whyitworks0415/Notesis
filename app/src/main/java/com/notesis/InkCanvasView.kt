@@ -2408,11 +2408,11 @@ class InkCanvasView @JvmOverloads constructor(
         var x = matrixValues[Matrix.MTRANS_X]
         var y = matrixValues[Matrix.MTRANS_Y]
 
-        x = if (docWidth <= width) {
-            (width - docWidth) / 2f
-        } else {
-            x.coerceIn(width - docWidth, 0f)
-        }
+        // 0.8 of a note's width of slack past either side, so the edge of the
+        // page can be brought to the middle of the screen to write on.
+        val slack = document.fitWidth() * scale * 0.8f
+        val centred = (width - docWidth) / 2f
+        x = x.coerceIn(minOf(width - docWidth, centred) - slack, maxOf(0f, centred) + slack)
         y = if (docHeight <= height) {
             (height - docHeight) / 2f
         } else {

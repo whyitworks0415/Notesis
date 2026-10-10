@@ -54,7 +54,7 @@ import kotlin.math.sin
 import com.kyant.backdrop.drawBackdrop
 
 internal enum class SpotiToolbarTool(val mode: EditMode?, val label: String) {
-    READ(EditMode.READ, "읽기"), PEN(EditMode.PEN, "펜"), PENCIL(EditMode.PENCIL, "연필"),
+    READ(EditMode.READ, "읽기"), PEN(EditMode.PEN, "펜"),
     HIGHLIGHTER(EditMode.HIGHLIGHTER, "형광펜"), MASK(EditMode.MASK, "마스킹"),
     ERASE(EditMode.ERASE, "지우개"), SHAPE(EditMode.SHAPE, "도형"), TEXT(EditMode.TEXT, "텍스트"),
     LASSO(EditMode.LASSO, "올가미"), CAPTURE(EditMode.CAPTURE, "캡쳐"), AI(null, "AI"),
@@ -178,7 +178,6 @@ private fun Modifier.spotiToolbarGlass(circle: Boolean = false): Modifier {
 private fun SpotiToolbarTool.icon(): ImageVector = when (this) {
     SpotiToolbarTool.READ -> Reicons.TouchApp
     SpotiToolbarTool.PEN -> Reicons.Create
-    SpotiToolbarTool.PENCIL -> Reicons.Brush
     SpotiToolbarTool.HIGHLIGHTER -> Reicons.Highlight
     SpotiToolbarTool.MASK -> Reicons.VisibilityOff
     SpotiToolbarTool.ERASE -> Reicons.Eraser
@@ -251,9 +250,10 @@ private fun SpotiActionButton(
     val shape = SpotiGlassShape(22.dp)
     val look = LocalSkinSettings.current
     val effects = rememberLiquidGlassEffectsAllowed() && !look.highContrast && look.spotiglassResponse > 0f
-    // A trigger uses the same rest -> lifted -> rest cycle as the tool pill.
+    // Only a trigger lifts on press, in the same rest -> lifted -> rest cycle as
+    // the tool pill; an ordinary button stays flat.
     val grow by androidx.compose.animation.core.animateFloatAsState(
-        if (pressed && effects) 1f + 0.08f * look.spotiglassResponse else 1f,
+        if (pressed && effects && persistentGlass) 1f + 0.08f * look.spotiglassResponse else 1f,
         if (effects) spring(0.78f, 430f) else tween(0), label = "기능 버튼 들림")
     Box(modifier.sizeIn(minWidth = 44.dp, minHeight = 44.dp)
         .semantics { contentDescription = label }
@@ -261,8 +261,7 @@ private fun SpotiActionButton(
         contentAlignment = Alignment.Center) {
         val body = Modifier.matchParentSize().graphicsLayer { scaleX = grow; scaleY = grow }
         Box(if (persistentGlass) body.spotiToolbarGlass(circle = true)
-            else body.spotiGlassMorph(pressed)
-                .background(if (selected) scheme.primary.copy(alpha = 0.12f) else scheme.onSurface.copy(alpha = 0.06f), shape))
+            else body.background(if (selected) scheme.primary.copy(alpha = 0.12f) else scheme.onSurface.copy(alpha = 0.06f), shape))
         Column(Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
             horizontalAlignment = Alignment.CenterHorizontally) {
             val color = (if (selected) scheme.primary else scheme.onSurface).copy(alpha = if (enabled) 1f else 0.38f)
