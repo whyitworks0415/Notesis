@@ -111,6 +111,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
@@ -133,6 +134,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
@@ -163,6 +165,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -3089,6 +3092,11 @@ private fun NoteScreen(
     }
 
     val window = (context as? ComponentActivity)?.window
+    // Split screen and pop-up view resize the window, and every resize is a
+    // configuration change; reading it here re-evaluates this then.
+    val sharedScreen = LocalConfiguration.current.let {
+        (context as? ComponentActivity)?.isInMultiWindowMode == true
+    }
     LaunchedEffect(fullscreen, window) {
         val view = window?.decorView ?: return@LaunchedEffect
         val controller = WindowCompat.getInsetsController(window, view)
@@ -3409,6 +3417,8 @@ private fun NoteScreen(
                     view.highlighterAboveInk = highlighterAboveInk
                     view.meshInk = meshInk
                     view.compatWetInk = compatWetInk
+                    view.wetSurfaceAllowed = noteRotation == 0
+                    view.softPredictionHead = !sharedScreen && webUrl == null && !referenceOpen
                     view.partialEraser = partialEraser
                     view.laserMode = laser
                     view.autoShapeRecognitionEnabled = autoShapes
@@ -3475,32 +3485,42 @@ private fun NoteScreen(
 
         // Autosave: each change restarts a short timer, so a burst of strokes
         // writes the note once instead of once per stroke.
-        LaunchedEffect(edits) {
-            if (edits == 0) return@LaunchedEffect
-            delay(AUTOSAVE_DELAY_MS)
-            val view = canvas ?: return@LaunchedEffect
-            // Snapshot on the UI thread before the serial worker writes it.
-            // Passing the live document to Dispatchers.IO raced pen commits and
-            // mesh rebuilds, which is the repeated CME found in crash.log.
-            store.saveLater(note.id, note.title, view.document)
+        //
+        // Both timers watch edits from a coroutine instead of using it as a
+        // LaunchedEffect key. A key is read during composition, so every pen-up
+        // recomposed this whole screen - page host, toolbar and panels - on the
+        // UI thread right when the next stroke was starting.
+        val latestNote by rememberUpdatedState(note)
+        LaunchedEffect(Unit) {
+            snapshotFlow { edits }.collectLatest { count ->
+                if (count == 0) return@collectLatest
+                delay(AUTOSAVE_DELAY_MS)
+                val view = canvas ?: return@collectLatest
+                // Snapshot on the UI thread before the serial worker writes it.
+                // Passing the live document to Dispatchers.IO raced pen commits and
+                // mesh rebuilds, which is the repeated CME found in crash.log.
+                store.saveLater(latestNote.id, latestNote.title, view.document)
+            }
         }
 
         // Handwriting recognition is useful search metadata, not part of
         // saving. Give it a longer quiet period and do not rerun it for toolbar
         // or image state that left the ink revision unchanged.
-        LaunchedEffect(edits) {
-            if (edits == 0) return@LaunchedEffect
-            delay(INK_INDEX_IDLE_MS)
-            val view = canvas ?: return@LaunchedEffect
-            val page = view.document.pages.getOrNull(view.currentPageIndex()) ?: return@LaunchedEffect
-            if (!page.loaded) return@LaunchedEffect
-            val revision = page.revision
-            if (indexedRevisions[page.id] == revision) return@LaunchedEffect
-            val strokes = page.strokes.toList()
-            withContext(Dispatchers.IO) {
-                indexer.textOf(strokes)?.let { store.writeInkIndex(note.id, page.id, it) }
+        LaunchedEffect(Unit) {
+            snapshotFlow { edits }.collectLatest { count ->
+                if (count == 0) return@collectLatest
+                delay(INK_INDEX_IDLE_MS)
+                val view = canvas ?: return@collectLatest
+                val page = view.document.pages.getOrNull(view.currentPageIndex()) ?: return@collectLatest
+                if (!page.loaded) return@collectLatest
+                val revision = page.revision
+                if (indexedRevisions[page.id] == revision) return@collectLatest
+                val strokes = page.strokes.toList()
+                withContext(Dispatchers.IO) {
+                    indexer.textOf(strokes)?.let { store.writeInkIndex(latestNote.id, page.id, it) }
+                }
+                indexedRevisions[page.id] = revision
             }
-            indexedRevisions[page.id] = revision
         }
 
         // Anything still unsaved when the screen goes away gets written now. If
@@ -4766,6 +4786,9 @@ private fun ReferencePanel(
                                 // 팝업 안에서는 페이지 폭이 패널 폭보다 작아지는
                                 // 축소를 허용하지 않습니다. 확대와 필기는 그대로입니다.
                                 minimumScaleIsFitWidth = true
+                                // A popup always shares the screen with the note
+                                // under it; see InkCanvasView.softPredictionHead.
+                                softPredictionHead = false
                                 // 작은 팝업에서는 같은 손가락 이동으로 더 많은 페이지를
                                 // 넘길 수 있게 하고, 관성 속도에도 같은 배율을 적용합니다.
                                 viewportPanMultiplier = REFERENCE_SCROLL_MULTIPLIER
@@ -5702,7 +5725,6 @@ private fun Toolbar(
         }
     }
     SpotiGlassToolbar(sizeLevel, onSizeLevel, mode,
-            inkColor = if (mode.tints) Color(pen.colorArgb.or(0xFF000000.toInt())) else null,
             toolColors = toolPens.filterKeys { it.tints }.mapValues { Color(it.value.colorArgb.or(0xFF000000.toInt())) },
             targetWidth = toolbarTargetWidth,
             docked = docked, modifier = modifier, onDrag = onDragBar,

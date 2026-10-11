@@ -237,7 +237,7 @@ internal class SpotiToolbarPopupPosition(private val atStart: Boolean, private v
 
 @Composable
 internal fun SpotiGlassToolbar(
-    sizeLevel: Int, onSizeLevel: (Int) -> Unit, mode: EditMode, inkColor: Color?,
+    sizeLevel: Int, onSizeLevel: (Int) -> Unit, mode: EditMode,
     toolColors: Map<EditMode, Color>,
     targetWidth: Dp,
     docked: Boolean, modifier: Modifier, onDrag: (Offset) -> Unit,
@@ -292,7 +292,7 @@ internal fun SpotiGlassToolbar(
                                     selectedIndex = if (open && page == ToolbarMenu.AI) tools.indexOf(SpotiToolbarTool.AI)
                                         else tools.indexOfFirst { it.mode == mode },
                                     onSelected = { pick(tools[it]) }, modifier = Modifier.fillMaxWidth(),
-                                    selectedContentColor = inkColor, showLabels = false, compact = sizeLevel == 0)
+                                    showLabels = false, compact = sizeLevel == 0)
                                   else ThemedToolbarTools(tools, mode, toolColors, sizeLevel == 0, ::pick)
                                 }
                               }

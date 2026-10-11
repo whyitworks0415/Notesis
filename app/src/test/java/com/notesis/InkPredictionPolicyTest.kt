@@ -76,4 +76,23 @@ class InkPredictionPolicyTest {
         assertEquals(4, predictionLeadForRefresh(4, 60f))
         assertEquals(9, predictionLeadForRefresh(9, 120f))
     }
+
+    @Test
+    fun `vsync bound ink on a 60Hz panel predicts further only in automatic mode`() {
+        assertEquals(12, predictionLeadForRefresh(0, 60f, vsyncBoundInk = true))
+        assertEquals(6, predictionLeadForRefresh(0, 120f, vsyncBoundInk = true))
+        assertEquals(9, predictionLeadForRefresh(9, 60f, vsyncBoundInk = true))
+
+        val fast = InkPredictionPolicy()
+        fast.reset(0f, 0f, 0L)
+        fast.add(5f, 0f, 4L, 12)
+        fast.add(10f, 0f, 8L, 12)
+        assertEquals(12, fast.add(15f, 0f, 12L, 12))
+
+        val medium = InkPredictionPolicy()
+        medium.reset(0f, 0f, 0L)
+        medium.add(4f, 0f, 8L, 12)
+        medium.add(8f, 0f, 16L, 12)
+        assertEquals(8, medium.add(12f, 0f, 24L, 12))
+    }
 }

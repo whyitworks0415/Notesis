@@ -270,7 +270,7 @@ internal fun Instrumentation.checkMeshCache(strokeCount: Int = 3000) {
         for (previewScale in listOf(1f, 8f, 0.5f)) {
             lateinit var previewView: CompatWetInkView
             runOnMainSync {
-                previewView = CompatWetInkView(targetContext).apply { layout(0, 0, width, height) }
+                previewView = CompatWetInkView(targetContext).apply { inkEnabled = true; layout(0, 0, width, height) }
                 val toPage = Matrix().apply {
                     setScale(1f / previewScale, 1f / previewScale)
                     postTranslate(-20f, -30f)
@@ -281,8 +281,8 @@ internal fun Instrumentation.checkMeshCache(strokeCount: Int = 3000) {
                 val up = android.view.MotionEvent.obtain(0L, 20L, android.view.MotionEvent.ACTION_UP,
                     450f, 330f, 0)
                 try {
-                    previewView.start(down, 0, brush, toPage)
-                    previewView.finish(up, 0)
+                    previewView.start("preview", down, 0, brush, toPage)
+                    previewView.finish("preview", up, 0)
                 } finally { down.recycle(); up.recycle() }
             }
             val preview = frame(true, true) { canvas -> runOnMainSync { previewView.draw(canvas) } }.second!!
@@ -294,7 +294,7 @@ internal fun Instrumentation.checkMeshCache(strokeCount: Int = 3000) {
                 report.appendLine("compatible wet ink ${previewScale}x: screen-position pixel=${Integer.toHexString(pixel)}")
             } finally {
                 preview.recycle()
-                runOnMainSync { previewView.clear() }
+                runOnMainSync { previewView.clearInk() }
             }
         }
     } finally {
