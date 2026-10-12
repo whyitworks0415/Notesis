@@ -50,4 +50,23 @@ class PenPresetTest {
         assertEquals(Tool.PRESSURE_PEN, PenPreset(Tool.PEN, 0, 5f, pressure = true).drawingTool())
         assertEquals(Tool.HIGHLIGHTER, PenPreset(Tool.HIGHLIGHTER, 0, 5f, nib = Tool.OIL).drawingTool())
     }
+
+    @Test
+    fun `the pencil draws with its chosen look, and graphite for anything else`() {
+        for ((look, _) in PENCIL_NIBS) {
+            assertEquals(look, PenPreset(Tool.PENCIL, 0, 5f, nib = look).drawingTool())
+        }
+        // A pencil saved before it had looks carries the pen's default nib.
+        assertEquals(Tool.PENCIL, PenPreset(Tool.PENCIL, 0, 5f).drawingTool())
+        assertEquals(Tool.PENCIL, PenPreset(Tool.PENCIL, 0, 5f, nib = Tool.CALLIGRAPHY).drawingTool())
+    }
+
+    @Test
+    fun `the pencil is back with its own defaults and a broad range`() {
+        val pencil = PenStore.DEFAULTS.getValue(EditMode.PENCIL)
+        assertEquals(Tool.PENCIL, pencil.tool)
+        assertTrue(pencil.width in PenStore.widthRange(EditMode.PENCIL))
+        assertTrue(PenStore.widthRange(EditMode.PENCIL).endInclusive > PenStore.widthRange(EditMode.PEN).endInclusive)
+        assertTrue(nibsFor(Tool.PENCIL).any { it.first == pencil.drawingTool() })
+    }
 }

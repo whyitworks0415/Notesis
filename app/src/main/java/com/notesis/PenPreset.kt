@@ -24,11 +24,12 @@ data class PenPreset(
      * gives that fifth the whole track back.
      */
     val maxWidth: Float = 0f,
-    /** Which pen: one of [PEN_NIBS]. Pens only. */
+    /** Which pen or pencil: one of [nibsFor] the tool. Pens and pencils only. */
     val nib: Tool = Tool.PEN,
 ) {
     /** The tool as it actually draws, which is where pressure and the nib are decided. */
     fun drawingTool(): Tool = when {
+        tool == Tool.PENCIL -> nib.takeIf { kind -> PENCIL_NIBS.any { it.first == kind } } ?: Tool.PENCIL
         tool != Tool.PEN -> tool
         nib != Tool.PEN -> nib
         pressure -> Tool.PRESSURE_PEN
@@ -40,6 +41,18 @@ data class PenPreset(
 val PEN_NIBS = listOf(
     Tool.PEN to "볼펜", Tool.FOUNTAIN to "만년필", Tool.CALLIGRAPHY to "캘리그라피",
 )
+
+/** The looks the pencil tool can draw with, in the order the settings offer them. */
+val PENCIL_NIBS = listOf(
+    Tool.PENCIL to "흑연", Tool.STAMP to "스탬프", Tool.BUBBLE to "버블", Tool.SPRAY to "스프레이",
+)
+
+/** The kinds offered for a tool, or none when it has only the one. */
+fun nibsFor(tool: Tool): List<Pair<Tool, String>> = when (tool) {
+    Tool.PEN -> PEN_NIBS
+    Tool.PENCIL -> PENCIL_NIBS
+    else -> emptyList()
+}
 
 // What one finger, two fingers and multi-finger double taps do. See InkCanvasView.
 const val FINGER_SCROLL = 0
@@ -363,8 +376,9 @@ class PenStore(context: Context) {
                     pressure = item.optBoolean("pressure", fallback.pressure),
                     maxWidth = item.optDouble("maxWidth", fallback.maxWidth.toDouble()).toFloat()
                         .takeIf { it.isFinite() }?.coerceIn(0f, widthRange(mode).endInclusive) ?: 0f,
-                    nib = runCatching { Tool.valueOf(item.optString("nib", "PEN")) }.getOrDefault(Tool.PEN)
-                        .takeIf { nib -> PEN_NIBS.any { it.first == nib } } ?: Tool.PEN,
+                    nib = runCatching { Tool.valueOf(item.optString("nib", fallback.nib.name)) }
+                        .getOrDefault(fallback.nib)
+                        .takeIf { nib -> nibsFor(fallback.tool).any { it.first == nib } } ?: fallback.nib,
                 )
             }.toMap()
         }.getOrNull().orEmpty()
@@ -408,6 +422,8 @@ class PenStore(context: Context) {
             // the pen on ACTION_DOWN instead of waiting for a move segment.
             EditMode.ERASE -> 1f..240f
             EditMode.HIGHLIGHTER, EditMode.MASK -> 1f..180f
+            // Dabs and spray read as a band, not a line, and want room to be broad.
+            EditMode.PENCIL -> 0.25f..80f
             else -> 0.25f..12f
         }
 
@@ -437,6 +453,7 @@ class PenStore(context: Context) {
             // Pressure on by default: the stylus has been reporting it all
              // along, and a pen that ignores it reads as a marker.
             EditMode.PEN to PenPreset(Tool.PEN, 0xFF000000.toInt(), 5f, pressure = true),
+            EditMode.PENCIL to PenPreset(Tool.PENCIL, 0xFFD32F2F.toInt(), 24f, nib = Tool.STAMP),
             EditMode.HIGHLIGHTER to PenPreset(Tool.HIGHLIGHTER, 0x66F9A825, 20f),
             EditMode.MASK to PenPreset(Tool.MASK, PageMask.DEFAULT_MASK_COLOR, 20f),
             EditMode.SHAPE to PenPreset(Tool.PEN, 0xFF1976D2.toInt(), 5f),

@@ -389,7 +389,12 @@ enum class Tool {
     /** Translucent wash whose overlaps build up, like layers of paint. */
     WATERCOLOR,
     /** A broad, squarish, pressure-loaded bristle laid on opaque. */
-    OIL;
+    OIL,
+
+    /** The pencil's dab looks. See [PencilBrushes]. */
+    STAMP,
+    BUBBLE,
+    SPRAY;
 
     fun brushFamily(): BrushFamily = when (this) {
         HIGHLIGHTER -> highlighter
@@ -403,6 +408,9 @@ enum class Tool {
         CALLIGRAPHY -> calligraphy
         WATERCOLOR -> watercolor
         OIL -> oil
+        STAMP -> PencilBrushes.stamp
+        BUBBLE -> PencilBrushes.bubble
+        SPRAY -> PencilBrushes.spray
         else -> pen
     }
 
@@ -572,6 +580,9 @@ enum class Tool {
             calligraphy -> CALLIGRAPHY
             watercolor -> WATERCOLOR
             oil -> OIL
+            PencilBrushes.stamp -> STAMP
+            PencilBrushes.bubble -> BUBBLE
+            PencilBrushes.spray -> SPRAY
             else -> PEN
         }
     }
@@ -579,7 +590,15 @@ enum class Tool {
 
 private fun Tool.isFreehandPen(): Boolean =
     this == Tool.PEN || this == Tool.PRESSURE_PEN || this == Tool.PENCIL || this == Tool.FOUNTAIN ||
-        this == Tool.CALLIGRAPHY || this == Tool.WATERCOLOR || this == Tool.OIL
+        this == Tool.CALLIGRAPHY || this == Tool.WATERCOLOR || this == Tool.OIL || isDabbed()
+
+/**
+ * Drawn as scattered particles rather than one line. A line pattern would
+ * replace the look outright, and the solid predicted head would show as a
+ * plain line ahead of the dabs, so neither applies to these.
+ */
+internal fun Tool.isDabbed(): Boolean =
+    this == Tool.STAMP || this == Tool.BUBBLE || this == Tool.SPRAY
 
 /**
  * The laser pointer's trail, in screen pixels. A fixed ring of samples that age
@@ -3321,7 +3340,7 @@ class InkCanvasView @JvmOverloads constructor(
         leadMs: Int,
     ) {
         if (predicted == null || !softPredictionHead || !predictionPolicy.shouldShowSoftHead(leadMs) ||
-            !tool.isFreehandPen() || dottedPattern != 0
+            !tool.isFreehandPen() || tool.isDabbed() || dottedPattern != 0
         ) {
             predictionHead.clear()
             return
@@ -3907,7 +3926,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     private fun currentBrush(): Brush {
         val epsilon = strokeEpsilon(strokeWidth, epsilonFor(currentScale()))
-        val brushTool = if (tool.isFreehandPen()) {
+        val brushTool = if (tool.isFreehandPen() && !tool.isDabbed()) {
             when (dottedPattern) {
                 1 -> Tool.DOTTED
                 2 -> Tool.DASHED

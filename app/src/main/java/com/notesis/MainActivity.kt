@@ -2500,12 +2500,23 @@ internal fun PenDialog(
                     )
 
                 }
-                if (mode == EditMode.PEN) {
+                // By mode, not tool: the shape tool's preset is a pen too.
+                val nibs = when (mode) {
+                    EditMode.PEN, EditMode.PENCIL -> nibsFor(start.tool)
+                    else -> emptyList()
+                }
+                if (nibs.isNotEmpty()) {
+                    // What the preset actually draws with, so a pencil saved
+                    // before it had kinds shows the one it is using.
+                    val drawing = start.copy(nib = nib).drawingTool()
                     Spacer(Modifier.height(10.dp))
-                    Text("펜 종류", style = MaterialTheme.typography.bodyMedium)
+                    Text(if (mode == EditMode.PENCIL) "연필 종류" else "펜 종류",
+                        style = MaterialTheme.typography.bodyMedium)
                     Row(Modifier.horizontalScroll(rememberScrollState())) {
-                        PEN_NIBS.forEach { (tool, label) ->
-                            SettingsChoiceChip(selected = nib == tool, onClick = { nib = tool },
+                        nibs.forEach { (tool, label) ->
+                            SettingsChoiceChip(
+                                selected = if (mode == EditMode.PENCIL) drawing == tool else nib == tool,
+                                onClick = { nib = tool },
                                 label = label, modifier = Modifier.padding(end = 6.dp))
                         }
                     }
@@ -2781,6 +2792,7 @@ internal fun PenDialog(
 
 private fun toolLabel(mode: EditMode): String = when (mode) {
     EditMode.PEN -> "펜"
+    EditMode.PENCIL -> "연필"
     EditMode.HIGHLIGHTER -> "형광펜"
     EditMode.MASK -> "마스킹테이프"
     EditMode.SHAPE -> "도형"
@@ -3543,11 +3555,11 @@ private val ChromeInsets: WindowInsets
  * What the pen does when it lands. One thing at a time, by construction, and
  * each one remembers its own colour and thickness rather than sharing a tray.
  */
-enum class EditMode { PEN, HIGHLIGHTER, MASK, LASSO, SHAPE, IMAGE, ERASE, READ, CAPTURE, TEXT }
+enum class EditMode { PEN, HIGHLIGHTER, MASK, LASSO, SHAPE, IMAGE, ERASE, READ, CAPTURE, TEXT, PENCIL }
 
 /** Whether this mode puts something on the page in the tool's own colour. */
 private val EditMode.tints: Boolean
-    get() = this == EditMode.PEN || this == EditMode.HIGHLIGHTER ||
+    get() = this == EditMode.PEN || this == EditMode.PENCIL || this == EditMode.HIGHLIGHTER ||
         this == EditMode.MASK || this == EditMode.SHAPE
 
 @Composable

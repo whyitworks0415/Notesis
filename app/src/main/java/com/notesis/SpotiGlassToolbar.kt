@@ -54,7 +54,7 @@ import kotlin.math.sin
 import com.kyant.backdrop.drawBackdrop
 
 internal enum class SpotiToolbarTool(val mode: EditMode?, val label: String) {
-    READ(EditMode.READ, "읽기"), PEN(EditMode.PEN, "펜"),
+    READ(EditMode.READ, "읽기"), PEN(EditMode.PEN, "펜"), PENCIL(EditMode.PENCIL, "연필"),
     HIGHLIGHTER(EditMode.HIGHLIGHTER, "형광펜"), MASK(EditMode.MASK, "마스킹"),
     ERASE(EditMode.ERASE, "지우개"), SHAPE(EditMode.SHAPE, "도형"), TEXT(EditMode.TEXT, "텍스트"),
     LASSO(EditMode.LASSO, "올가미"), CAPTURE(EditMode.CAPTURE, "캡쳐"), AI(null, "AI"),
@@ -79,10 +79,30 @@ internal object ToolbarLayout {
         context.getSharedPreferences("pens", android.content.Context.MODE_PRIVATE)
 
     fun load(context: android.content.Context) {
-        val saved = prefs(context).getString("toolbarTools", null) ?: return
+        val prefs = prefs(context)
+        val saved = prefs.getString("toolbarTools", null)
+        if (saved == null) {
+            // The default bar already has the pencil; nothing to put back later.
+            prefs.edit().putBoolean(PENCIL_RETURNED, true).apply()
+            return
+        }
         tools = saved.split(',').mapNotNull { name -> SpotiToolbarTool.entries.firstOrNull { it.name == name } }
             .ifEmpty { SpotiToolbarTool.entries.toList() }
+        // 0.35.1 took the pencil off the bar, so a bar arranged since then has
+        // no place for it. Put it back beside the pen once; after that, taking
+        // it off again in the editor is the person's own choice and sticks.
+        if (!prefs.getBoolean(PENCIL_RETURNED, false)) {
+            if (SpotiToolbarTool.PENCIL !in tools) {
+                val at = tools.indexOf(SpotiToolbarTool.PEN)
+                set(context, tools.toMutableList().apply {
+                    add(if (at >= 0) at + 1 else size, SpotiToolbarTool.PENCIL)
+                })
+            }
+            prefs.edit().putBoolean(PENCIL_RETURNED, true).apply()
+        }
     }
+
+    private const val PENCIL_RETURNED = "toolbarPencilReturned"
 
     fun set(context: android.content.Context, value: List<SpotiToolbarTool>) {
         tools = value.ifEmpty { listOf(SpotiToolbarTool.PEN) }
@@ -178,6 +198,7 @@ private fun Modifier.spotiToolbarGlass(circle: Boolean = false): Modifier {
 private fun SpotiToolbarTool.icon(): ImageVector = when (this) {
     SpotiToolbarTool.READ -> Reicons.TouchApp
     SpotiToolbarTool.PEN -> Reicons.Create
+    SpotiToolbarTool.PENCIL -> Reicons.Brush
     SpotiToolbarTool.HIGHLIGHTER -> Reicons.Highlight
     SpotiToolbarTool.MASK -> Reicons.VisibilityOff
     SpotiToolbarTool.ERASE -> Reicons.Eraser
