@@ -250,6 +250,16 @@ class MainActivity : ComponentActivity() {
             ) {
             ProvideSkin(skin, look) {
                 var openNote by remember { mutableStateOf<NoteMeta?>(null) }
+                // Lives here rather than in the list, which leaves composition
+                // while a note is open and used to come back at the top level.
+                var libraryFolder by remember { mutableStateOf("") }
+                fun closeNote(closed: NoteMeta) {
+                    // Back to where the note lives, which is also where it was
+                    // opened from unless it was found by searching.
+                    libraryFolder = closed.folder
+                    openNote = null
+                    incomingImportedNote = null
+                }
                 var pickedDocument by remember { mutableStateOf<ViewerRequest?>(null) }
                 // A locked note opens only past the master password, once per run of the app.
                 val noteLock = remember { NoteLock(this@MainActivity) }
@@ -309,13 +319,15 @@ class MainActivity : ComponentActivity() {
                         onOpenDocument = { pickedDocument = it },
                         onOpen = { incomingImportedNote = null; requestOpen(it) },
                         noteLock = noteLock,
+                        initialFolder = libraryFolder,
+                        onFolder = { libraryFolder = it },
                     )
                 } else if (note.kind == NoteKind.MARKDOWN) {
                     key(note.id) {
                         MarkdownNoteScreen(
                             store = store,
                             note = note,
-                            onBack = { openNote = null; incomingImportedNote = null },
+                            onBack = { closeNote(note) },
                         )
                     }
                 } else {
@@ -333,7 +345,7 @@ class MainActivity : ComponentActivity() {
                         },
                         onOpenNote = { requestOpen(it) },
                         onLookChange = { look = it; lookStore.save(it) },
-                        onBack = { openNote = null; incomingImportedNote = null },
+                        onBack = { closeNote(note) },
                     )
                     }
                 }
@@ -405,6 +417,8 @@ private fun NoteListScreen(
     onOpenDocument: (ViewerRequest) -> Unit,
     onOpen: (NoteMeta) -> Unit,
     noteLock: NoteLock? = null,
+    initialFolder: String = "",
+    onFolder: (String) -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -517,7 +531,9 @@ private fun NoteListScreen(
     }
     // Blank is the top level. Searching reaches across every folder, because
     // the point of searching is not knowing where a thing is.
-    var folder by remember { mutableStateOf("") }
+    var folder by remember { mutableStateOf(initialFolder) }
+    // Kept by the caller too, so closing a note comes back to this folder.
+    LaunchedEffect(folder) { onFolder(folder) }
     // Back leaves the folder before it leaves the app.
     BackHandler(enabled = folder.isNotBlank()) { folder = "" }
     var filing by remember { mutableStateOf<NoteMeta?>(null) }
@@ -2421,9 +2437,13 @@ internal fun PenDialog(
 
     val picked = Color.hsv(hue, saturation, value, alpha)
     val argb = picked.toArgb()
+    fun keep() = onConfirm(PenPreset(pen.tool, argb, width.coerceIn(range), pressure, maxWidth, nib))
 
     AlertDialog(
-        onDismissRequest = onDismiss,
+        // Tapping past the dialog, or back, keeps what was set: settling on a
+        // colour and then having to find 저장 lost the change too easily.
+        // 취소 is still there for leaving it as it was.
+        onDismissRequest = ::keep,
         title = { Text(toolLabel(mode)) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
@@ -2759,20 +2779,7 @@ internal fun PenDialog(
             }
         },
         confirmButton = {
-            TextButton(
-                onClick = {
-                    onConfirm(
-                        PenPreset(
-                            pen.tool,
-                            argb,
-                            width.coerceIn(range),
-                            pressure,
-                            maxWidth,
-                            nib,
-                        ),
-                    )
-                },
-            ) {
+            TextButton(onClick = ::keep) {
                 Text("저장")
             }
         },

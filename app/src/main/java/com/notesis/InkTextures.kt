@@ -18,12 +18,22 @@ object PencilTextureStore : TextureBitmapStore {
         }
         Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888)
     }
+    private val tooth: Bitmap by lazy {
+        val size = GRAPHITE_TILE
+        val pixels = IntArray(size * size)
+        for (y in 0 until size) for (x in 0 until size) {
+            pixels[y * size + x] = Color.argb(graphiteToothAlpha(x, y), 255, 255, 255)
+        }
+        Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888)
+    }
     private val opaque by lazy {
         Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888).also { it.eraseColor(Color.WHITE) }
     }
 
     override fun get(clientTextureId: String): Bitmap {
-        return if (clientTextureId == StockBrushes.pencilUnstableBackgroundTextureId) {
+        return if (clientTextureId == PencilBrushes.GRAPHITE_TEXTURE) {
+            tooth
+        } else if (clientTextureId == StockBrushes.pencilUnstableBackgroundTextureId) {
             graphite
         } else {
             // Ink asks only for registered brush texture ids. Returning a tiny

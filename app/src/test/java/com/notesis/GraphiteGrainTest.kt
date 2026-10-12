@@ -20,4 +20,23 @@ class GraphiteGrainTest {
         assertTrue(dark > 1000)
         assertTrue(adjoining > 1000)
     }
+
+    @Test fun `pencil tooth covers most of the line with an uneven speckle and no holes`() {
+        var total = 0L
+        var dense = 0
+        var light = 0
+        for (y in 0 until GRAPHITE_TILE) for (x in 0 until GRAPHITE_TILE) {
+            val alpha = graphiteToothAlpha(x, y)
+            assertEquals(alpha, graphiteToothAlpha(x, y))
+            // Never a hole: a light pencil line is still one line.
+            assertTrue(alpha in 70..255)
+            total += alpha
+            if (alpha >= 200) dense++
+            if (alpha <= 110) light++
+        }
+        val mean = total.toFloat() / (GRAPHITE_TILE * GRAPHITE_TILE)
+        assertTrue(mean in 140f..200f)
+        assertTrue(dense > 3000)
+        assertTrue(light > 1500)
+    }
 }

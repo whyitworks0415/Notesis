@@ -18,6 +18,7 @@ import android.view.SurfaceView
 import android.widget.FrameLayout
 import androidx.ink.brush.Brush
 import androidx.ink.brush.InputToolType
+import androidx.ink.geometry.BoxAccumulator
 import androidx.ink.rendering.android.canvas.CanvasStrokeRenderer
 import androidx.ink.strokes.InProgressStroke
 import androidx.ink.strokes.MutableStrokeInputBatch
@@ -132,6 +133,8 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
     private val pendingClear = RectF()
     private val dirtyF = RectF()
     private val extent = RectF()
+    private val updated = BoxAccumulator()
+    private val region = RectF()
     private val dirty = Rect()
     private val clipF = RectF()
     private var viewHasContent = false
@@ -494,10 +497,18 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
             flush(wet)
             if (!wet.changed) continue
             wet.changed = false
-            dirtyF.union(wet.drawn)
             extentOf(wet, extent)
+            // Only what Ink re-meshed since the last frame needs repainting;
+            // the rest of the stroke is still on the surface. Repainting the
+            // whole extent re-rasterised every dab of a long pencil scatter
+            // on the CPU every frame, slower the longer the stroke got.
+            if (!wet.drawn.isEmpty && updatedRegion(wet, region)) {
+                dirtyF.union(region)
+            } else {
+                dirtyF.union(wet.drawn)
+                dirtyF.union(extent)
+            }
             wet.drawn.set(extent)
-            dirtyF.union(extent)
         }
         if (cursorChanged) {
             cursorChanged = false
@@ -533,6 +544,27 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
         newestUnpostedEventMillis = Long.MIN_VALUE
         // Event times and System.nanoTime share the monotonic clock.
         if (newest != Long.MIN_VALUE) onFramePosted?.invoke(System.nanoTime() - newest * 1_000_000L)
+    }
+
+    /**
+     * The screen area whose geometry Ink added, changed or removed - a
+     * replaced prediction included - since this was last asked. False when
+     * Ink cannot say, and the caller falls back to the whole stroke.
+     */
+    private fun updatedRegion(wet: Wet, out: RectF): Boolean {
+        val box = runCatching {
+            wet.stroke.populateUpdatedRegion(updated.reset())
+            wet.stroke.resetUpdatedRegion()
+            updated.box
+        }.getOrElse { return false }
+        if (box == null) {
+            out.setEmpty()
+            return true
+        }
+        out.set(box.xMin, box.yMin, box.xMax, box.yMax)
+        wet.pageToScreen.mapRect(out)
+        out.inset(-REGION_PAD_PX, -REGION_PAD_PX)
+        return true
     }
 
     private fun drawContent(canvas: Canvas, clip: Rect?) {
@@ -580,6 +612,8 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
     private companion object {
         const val HALF_PI = (Math.PI / 2).toFloat()
         const val HANDOFF_TIMEOUT_MS = 250L
+        /** Antialiasing reaches a pixel or two past the mesh. */
+        const val REGION_PAD_PX = 4f
         const val STALE_FINISHED_MS = 1_500L
         const val SPARE_STROKES = 4
 

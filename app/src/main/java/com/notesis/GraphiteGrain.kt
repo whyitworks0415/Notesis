@@ -46,3 +46,22 @@ private fun grainHash(a: Int, b: Int, seed: Int): Int {
     bits = (bits xor (bits ushr 13)) * 1274126177
     return (bits xor (bits ushr 16)) ushr 24
 }
+
+/**
+ * Paper tooth for the pencil: graphite catches on the raised fibres and skips
+ * the hollows, so the line is mostly covered with a fine, uneven speckle
+ * rather than islands. Never fully empty - even the hollows hold a little -
+ * which keeps a light line reading as one line instead of dots.
+ */
+internal fun graphiteToothAlpha(x: Int, y: Int): Int {
+    val noise = latticeNoise(x, y, 8, 0x6A09E667) * 0.25f +
+        latticeNoise(x, y, 4, 0x3C6EF372) * 0.35f +
+        latticeNoise(x, y, 2, 0x510E527F) * 0.4f
+    val t = ((noise - TOOTH_LOW) / (TOOTH_HIGH - TOOTH_LOW)).coerceIn(0f, 1f)
+    val shaped = t * t * (3f - 2f * t)
+    return ((TOOTH_FLOOR + (1f - TOOTH_FLOOR) * shaped) * 255f).toInt()
+}
+
+private const val TOOTH_LOW = 0.3f
+private const val TOOTH_HIGH = 0.7f
+private const val TOOTH_FLOOR = 0.3f

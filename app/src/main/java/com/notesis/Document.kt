@@ -2006,7 +2006,7 @@ class NoteStore(context: Context) {
                             tool.brushFamily(),
                             color,
                             size,
-                            strokeEpsilon(size, epsilon),
+                            inkEpsilon(tool.brushFamily(), size, epsilon),
                         ),
                         inputs,
                     )

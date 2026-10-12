@@ -458,12 +458,8 @@ enum class Tool {
             pressurePenMesh -> pressurePen
             else -> family
         }
-        @OptIn(ExperimentalInkCustomBrushApi::class)
-        private val pencil by lazy {
-            // This stock brush carries graphite grain and pressure/tilt
-            // variation. The old pressure-pen copy was still a smooth ballpen.
-            StockBrushes.pencilUnstable
-        }
+        /** Graphite through paper tooth, answering pressure and tilt. See [PencilBrushes]. */
+        private val pencil by lazy { PencilBrushes.graphite }
 
         @OptIn(ExperimentalInkCustomBrushApi::class)
         private val dashed by lazy { StockBrushes.dashedLine() }
@@ -3925,7 +3921,6 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun currentBrush(): Brush {
-        val epsilon = strokeEpsilon(strokeWidth, epsilonFor(currentScale()))
         val brushTool = if (tool.isFreehandPen() && !tool.isDabbed()) {
             when (dottedPattern) {
                 1 -> Tool.DOTTED
@@ -3934,6 +3929,12 @@ class InkCanvasView @JvmOverloads constructor(
                 else -> tool
             }
         } else tool
+        // The bucketed zoom, the same one refineVisiblePages asks for. At the
+        // raw zoom a new stroke's epsilon differed from what the refine wanted
+        // at most zooms, so every stroke was rebuilt and its page re-recorded
+        // just after the pen lifted - a visible hitch for broad pencil strokes.
+        val epsilon = if (brushTool.isDabbed()) dabEpsilon(strokeWidth)
+            else strokeEpsilon(strokeWidth, epsilonFor(tessellationBucket(currentScale())))
         cachedBrush?.takeIf {
             cachedBrushTool == brushTool &&
                 cachedBrushColor == colorArgb &&
@@ -4001,7 +4002,7 @@ class InkCanvasView @JvmOverloads constructor(
             val right = viewport[2] - document.leftOf(index) + margin
             val bottom = viewport[3] - document.topOf(index) + margin
             val strokes = dry.strokesIn(page, left, top, right, bottom).filter { stroke ->
-                val wanted = strokeEpsilon(stroke.brush.size, epsilon)
+                val wanted = inkEpsilon(stroke.brush.family, stroke.brush.size, epsilon)
                 abs(stroke.brush.epsilon - wanted) >= EPSILON_SLOP
             }
             (page to strokes).takeIf { strokes.isNotEmpty() }
@@ -4053,7 +4054,7 @@ class InkCanvasView @JvmOverloads constructor(
                     for (stroke in snapshot) {
                         if (obsolete()) return@submit
                         rebuilt += Stroke(
-                            stroke.brush.copy(epsilon = strokeEpsilon(stroke.brush.size, epsilon)),
+                            stroke.brush.copy(epsilon = inkEpsilon(stroke.brush.family, stroke.brush.size, epsilon)),
                             stroke.inputs,
                         )
                         refinedCount++
@@ -6033,6 +6034,10 @@ class InkCanvasView @JvmOverloads constructor(
                 val stroke = when {
                     finishedTool == Tool.PEN ->
                         withoutStationaryStart(withoutContactSpurs(finishedStroke))
+                    // Dabs are laid by distance from the first input; dropping
+                    // one would move every dab after it, and a cap spur cannot
+                    // be seen under a scatter anyway.
+                    finishedTool.isDabbed() -> finishedStroke
                     finishedTool.isFreehandPen() -> withoutContactSpurs(finishedStroke)
                     else -> finishedStroke
                 }
