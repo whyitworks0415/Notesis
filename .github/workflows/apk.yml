@@ -66,6 +66,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.name.outputs.tag }}
+          # The commit this APK was built from. Left out, a new tag lands on
+          # the default branch, and every release run from a work branch was
+          # tagged at main instead of at its own code.
+          target_commitish: ${{ github.sha }}
           name: Notesis ${{ steps.name.outputs.version }} (${{ steps.name.outputs.code }})
           body_path: docs/releases/${{ steps.name.outputs.version }}.md
           files: Notesis-*.apk

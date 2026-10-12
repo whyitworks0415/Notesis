@@ -162,6 +162,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -2393,40 +2394,38 @@ internal fun SaturationValueField(
     hue: Float,
     saturation: Float,
     value: Float,
+    modifier: Modifier = Modifier.fillMaxWidth().height(150.dp),
+    shape: Shape = RoundedCornerShape(10.dp),
     onChange: (Float, Float) -> Unit,
 ) {
     val currentOnChange by rememberUpdatedState(onChange)
+    val inset = with(LocalDensity.current) { PICKER_THUMB_RADIUS.toPx() }
     Canvas(
-        Modifier
-            .fillMaxWidth()
-            .height(150.dp)
-            .clip(RoundedCornerShape(10.dp))
+        modifier
+            .clip(shape)
             .pointerInput(Unit) {
                 awaitEachGesture {
+                    fun take(at: Offset) = currentOnChange(
+                        trackFraction(at.x, size.width.toFloat(), inset),
+                        1f - trackFraction(at.y, size.height.toFloat(), inset),
+                    )
                     val down = awaitFirstDown(requireUnconsumed = false)
                     down.consume()
-                    emitSv(down.position, size.width, size.height, currentOnChange)
+                    take(down.position)
                     drag(down.id) { change ->
                         change.consume()
-                        emitSv(change.position, size.width, size.height, currentOnChange)
+                        take(change.position)
                     }
                 }
             },
     ) {
         drawRect(Brush.horizontalGradient(listOf(Color.White, Color.hsv(hue, 1f, 1f))))
         drawRect(Brush.verticalGradient(listOf(Color.Transparent, Color.Black)))
-        drawCircle(
-            color = Color.White,
-            radius = 7.dp.toPx(),
-            center = Offset(saturation * size.width, (1f - value) * size.height),
-            style = Stroke(width = 2.dp.toPx()),
-        )
+        drawPickerThumb(Offset(
+            trackPosition(saturation, size.width, inset),
+            trackPosition(1f - value, size.height, inset),
+        ), inset)
     }
-}
-
-private fun emitSv(at: Offset, width: Int, height: Int, onChange: (Float, Float) -> Unit) {
-    if (width == 0 || height == 0) return
-    onChange((at.x / width).coerceIn(0f, 1f), 1f - (at.y / height).coerceIn(0f, 1f))
 }
 
 /** A horizontal ramp with a handle: used for hue, and again for alpha. */
@@ -2434,22 +2433,23 @@ private fun emitSv(at: Offset, width: Int, height: Int, onChange: (Float, Float)
 internal fun GradientStrip(
     colors: List<Color>,
     position: Float,
+    modifier: Modifier = Modifier.fillMaxWidth().height(26.dp),
+    shape: Shape = RoundedCornerShape(13.dp),
     onChange: (Float) -> Unit,
 ) {
     val currentOnChange by rememberUpdatedState(onChange)
+    val inset = with(LocalDensity.current) { PICKER_THUMB_RADIUS.toPx() }
     Canvas(
-        Modifier
-            .fillMaxWidth()
-            .height(26.dp)
-            .clip(RoundedCornerShape(13.dp))
+        modifier
+            .clip(shape)
             .pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     down.consume()
-                    currentOnChange((down.position.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f))
+                    currentOnChange(trackFraction(down.position.x, size.width.toFloat(), inset))
                     drag(down.id) { change ->
                         change.consume()
-                        currentOnChange((change.position.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f))
+                        currentOnChange(trackFraction(change.position.x, size.width.toFloat(), inset))
                     }
                 }
             },
@@ -2458,14 +2458,30 @@ internal fun GradientStrip(
         // rather than as whatever happens to be behind the dialog.
         drawRect(Color.White)
         drawRect(Brush.horizontalGradient(colors))
-        drawCircle(
-            color = Color.White,
-            radius = size.height / 2f - 3.dp.toPx(),
-            center = Offset(position * size.width, size.height / 2f),
-            style = Stroke(width = 3.dp.toPx()),
-        )
+        drawPickerThumb(Offset(trackPosition(position, size.width, inset), size.height / 2f), inset)
     }
 }
+
+/**
+ * Every colour picker's handle: small, solid white, with a faint rim so it
+ * still shows on white. Drawn whole even at either end of its track - the
+ * track maps its range between one handle's radius in from each edge, see
+ * [trackFraction] - so it is never cut in half against the edge.
+ */
+internal val PICKER_THUMB_RADIUS = 7.dp
+
+internal fun androidx.compose.ui.graphics.drawscope.DrawScope.drawPickerThumb(at: Offset, radius: Float) {
+    drawCircle(Color.Black.copy(alpha = 0.22f), radius + 1.5.dp.toPx(), at)
+    drawCircle(Color.White, radius, at)
+}
+
+/** A touch at [position] along [length], as 0..1 between one [inset] in from each end. */
+internal fun trackFraction(position: Float, length: Float, inset: Float): Float =
+    ((position - inset) / (length - 2f * inset).coerceAtLeast(1f)).coerceIn(0f, 1f)
+
+/** Where a handle at [fraction] sits along [length], kept [inset] in from each end. */
+internal fun trackPosition(fraction: Float, length: Float, inset: Float): Float =
+    inset + fraction.coerceIn(0f, 1f) * (length - 2f * inset).coerceAtLeast(0f)
 
 
 /** The shape tool: tapping it offers the four, and picking one arms the pen. */

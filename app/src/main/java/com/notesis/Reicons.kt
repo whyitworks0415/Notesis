@@ -308,6 +308,12 @@ internal object Reicons {
             addPath(pathData = PathParser().parsePathString("M22.5 13.75C22.9142 13.75 23.25 14.0858 23.25 14.5V20.5C23.25 20.9142 22.9142 21.25 22.5 21.25H16.5C16.0858 21.25 15.75 20.9142 15.75 20.5C15.75 20.0858 16.0858 19.75 16.5 19.75H21.75V14.5C21.75 14.0858 22.0858 13.75 22.5 13.75Z").toNodes(), fill = SolidColor(Color.Black), stroke = null, strokeLineWidth = 1.0f, strokeLineCap = StrokeCap.Butt, strokeLineJoin = StrokeJoin.Miter, pathFillType = PathFillType.NonZero, fillAlpha = 1.0f, strokeAlpha = 1.0f)
         }.build()
     }
+    /** An eyedropper, for picking a colour off the page. */
+    val Colorize: ImageVector by lazy {
+        ImageVector.Builder(name = "Reicon.Colorize", defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f, autoMirror = false).apply {
+            addPath(pathData = PathParser().parsePathString("M20.71 5.63L18.37 3.29C17.98 2.9 17.35 2.9 16.96 3.29L13.84 6.41L11.91 4.5L10.5 5.91L11.92 7.33L3 16.25V21H7.75L16.67 12.08L18.09 13.5L19.5 12.09L17.58 10.17L20.7 7.05C21.1 6.65 21.1 6.02 20.71 5.63ZM6.92 19L5 17.08L13.06 9.02L14.98 10.94L6.92 19Z").toNodes(), fill = SolidColor(Color.Black), stroke = null, strokeLineWidth = 1.0f, strokeLineCap = StrokeCap.Butt, strokeLineJoin = StrokeJoin.Miter, pathFillType = PathFillType.NonZero, fillAlpha = 1.0f, strokeAlpha = 1.0f)
+        }.build()
+    }
     val Brush: ImageVector by lazy {
         ImageVector.Builder(name = "Reicon.Brush", defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f, autoMirror = false).apply {
             addPath(pathData = PathParser().parsePathString("M21.81 3.94012C20.27 7.78012 16.41 13.0001 13.18 15.5901L11.21 17.1701C10.96 17.3501 10.71 17.5101 10.43 17.6201C10.43 17.4401 10.42 17.2401 10.39 17.0501C10.28 16.2101 9.9 15.4301 9.23 14.7601C8.55 14.0801 7.72 13.6801 6.87 13.5701C6.67 13.5601 6.47 13.5401 6.27 13.5601C6.38 13.2501 6.55 12.9601 6.76 12.7201L8.32 10.7501C10.9 7.52012 16.14 3.64012 19.97 2.11012C20.56 1.89012 21.13 2.05012 21.49 2.42012C21.87 2.79012 22.05 3.36012 21.81 3.94012Z").toNodes(), fill = null, stroke = SolidColor(Color.Black), strokeLineWidth = 1.5f, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round, pathFillType = PathFillType.NonZero, fillAlpha = 1.0f, strokeAlpha = 1.0f)

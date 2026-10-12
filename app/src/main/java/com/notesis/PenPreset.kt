@@ -246,6 +246,11 @@ class PenStore(context: Context) {
         get() = prefs.getInt("colorPickerMode", 0).coerceAtLeast(0)
         set(value) = prefs.edit().putInt("colorPickerMode", value).apply()
 
+    /** Whether the colour pickers' bars and fields sit joined in one block, or apart. */
+    var colorPickerJoined: Boolean
+        get() = prefs.getBoolean("colorPickerJoined", true)
+        set(value) = prefs.edit().putBoolean("colorPickerJoined", value).apply()
+
     var axisSnap: Boolean
         get() = prefs.getBoolean("axisSnap", true)
         set(value) = prefs.edit().putBoolean("axisSnap", value).apply()
