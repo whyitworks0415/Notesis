@@ -5,16 +5,26 @@ import org.junit.Test
 import kotlin.math.roundToInt
 
 class SpotiGlassBarTest {
-    @Test fun `travelling lens previews the hovered tools own stored color`() {
-        val black = androidx.compose.ui.graphics.Color.Black
-        val yellow = androidx.compose.ui.graphics.Color.Yellow
-        val blue = androidx.compose.ui.graphics.Color.Blue
-        val tools = listOf(SpotiGlassItem("읽기"), SpotiGlassItem("펜", color = black),
-            SpotiGlassItem("형광펜", color = yellow), SpotiGlassItem("마스킹", color = blue))
-        assertEquals(black, spotiGlassHoverColor(tools, 1f, blue))
-        assertEquals(yellow, spotiGlassHoverColor(tools, 1.6f, black))
-        assertEquals(blue, spotiGlassHoverColor(tools, 3f, black))
-        assertEquals(blue, spotiGlassHoverColor(tools, -2f, blue))
+    @Test fun `lens in the middle of the bar keeps its size`() {
+        val body = spotiGlassLensBody(200f, 90f, 50f, barWidth = 400f, edge = 1f, minWidth = 60f)
+        assertEquals(200f, body.x, 0f)
+        assertEquals(90f, body.y, 0f)
+        assertEquals(50f, body.z, 0f)
+    }
+
+    @Test fun `lens at either end is pressed against the bar instead of cut off`() {
+        // First cell: a 90px lens centred at 36px would reach to -9px.
+        val first = spotiGlassLensBody(36f, 90f, 50f, barWidth = 400f, edge = 1f, minWidth = 60f)
+        assertEquals(1f, first.x - first.y / 2, 0.001f)
+        assertEquals(81f, first.x + first.y / 2, 0.001f)
+        org.junit.Assert.assertTrue(first.z > 50f)
+        val last = spotiGlassLensBody(364f, 90f, 50f, barWidth = 400f, edge = 1f, minWidth = 60f)
+        assertEquals(399f, last.x + last.y / 2, 0.001f)
+        assertEquals(319f, last.x - last.y / 2, 0.001f)
+        // A spring overshoot past the end squeezes it but never below a cell.
+        val overshoot = spotiGlassLensBody(-40f, 90f, 50f, barWidth = 400f, edge = 1f, minWidth = 60f)
+        assertEquals(1f, overshoot.x - overshoot.y / 2, 0.001f)
+        assertEquals(60f, overshoot.y, 0.001f)
     }
 
     @Test fun `tap lifts the glass then lands in a flat idle state`() {
@@ -65,5 +75,16 @@ class SpotiGlassBarTest {
         assertEquals(3f, spotiGlassPosition(900f, 400f, 4, false), 0f)
         assertEquals(0f, spotiGlassPosition(900f, 400f, 4, true), 0f)
         assertEquals(0f, spotiGlassPosition(50f, 0f, 4, false), 0f)
+    }
+
+    @Test fun `dragging past an end gives way a little and never more than the limit`() {
+        assertEquals(1.5f, spotiGlassDragPosition(200f, 400f, 4, false), 0f)
+        val past = spotiGlassDragPosition(-100f, 400f, 4, false)
+        org.junit.Assert.assertTrue(past < 0f && past > -SPOTIGLASS_RUBBER_CELLS)
+        val far = spotiGlassDragPosition(-100000f, 400f, 4, false)
+        org.junit.Assert.assertTrue(far > -SPOTIGLASS_RUBBER_CELLS && far < past)
+        val end = spotiGlassDragPosition(500f, 400f, 4, false)
+        org.junit.Assert.assertTrue(end > 3f && end < 3f + SPOTIGLASS_RUBBER_CELLS)
+        assertEquals(3f - end, spotiGlassDragPosition(500f, 400f, 4, true), 0.0001f)
     }
 }

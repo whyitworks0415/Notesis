@@ -868,7 +868,11 @@ class InkCanvasView @JvmOverloads constructor(
     /** Cut strokes where the eraser crosses them instead of removing them whole. */
     var partialEraser: Boolean = false
 
-    /** Diameter of the eraser tip, in page units, like [strokeWidth]. */
+    /**
+     * Diameter of the eraser tip in dp on screen. Unlike [strokeWidth] it does
+     * not follow the zoom: the same eraser covers the same part of the screen
+     * zoomed in or out; see [eraserPageWidth].
+     */
     var eraserWidth: Float = 24f
 
     /** What the eraser may take: pen ink (everything but highlighter), highlighter, tape. */
@@ -1108,6 +1112,20 @@ class InkCanvasView @JvmOverloads constructor(
     /** Zero is automatic; fixed 4/6/9ms values make A/B comparison repeatable. */
     var predictionLeadMs: Int = 0
 
+    /**
+     * The soft head drawn past fast front-buffer ink. It is an ordinary View,
+     * so each sample that moves it redraws the window - and with it a docked
+     * web page, a reference popup or a split-screen neighbour's share of the
+     * GPU - while the front buffer waits on the same RenderThread. The host
+     * turns it off whenever such content shares the screen.
+     */
+    var softPredictionHead: Boolean = true
+        set(value) {
+            if (field == value) return
+            field = value
+            if (!value) predictionHead.clear()
+        }
+
     /** Enables diagnostic sampling only while its HUD is actually visible. */
     var latencyMonitoringEnabled: Boolean = false
         set(value) {
@@ -1208,21 +1226,40 @@ class InkCanvasView @JvmOverloads constructor(
     private var compatWetStrokeId: InProgressStrokeId? = null
 
     /**
-     * Also draw the stroke being written through an ordinary View, for tablets
+     * Also draw the stroke being written on a surface of its own, for tablets
      * whose front-buffer layer only appears at pen-up; see [CompatWetInkView].
      */
     var compatWetInk: Boolean = frontBufferInkUnreliable()
         set(value) {
             if (field == value) return
             field = value
-            if (!value) cancelCompatWet(compatWetStrokeId)
+            compatWetStrokeId = null
+            compatWet.inkEnabled = value
         }
 
+    /**
+     * False while the host rotates this view: the compatible wet ink then
+     * draws inside the window, because a surface cannot follow a rotation.
+     */
+    var wetSurfaceAllowed: Boolean
+        get() = compatWet.surfaceAllowed
+        set(value) { compatWet.surfaceAllowed = value }
+
     private fun cancelCompatWet(strokeId: InProgressStrokeId?) {
-        if (strokeId == null || strokeId != compatWetStrokeId) return
-        compatWetStrokeId = null
-        compatWet.clear()
+        if (strokeId == null) return
+        if (strokeId == compatWetStrokeId) compatWetStrokeId = null
+        compatWet.cancel(strokeId)
     }
+
+    /**
+     * The eraser keeps one size on screen whatever the zoom: [eraserWidth] is
+     * its diameter in dp, and this is how much page that covers right now.
+     */
+    private fun eraserPageWidth(): Float =
+        (eraserWidth * resources.displayMetrics.density / currentScale()).coerceAtLeast(0.01f)
+
+    private fun eraserScreenRadius(): Float =
+        (eraserWidth * resources.displayMetrics.density / 2f).coerceAtLeast(0.5f)
     private val predictionHead = PredictionHeadView(context)
     private val laser = LaserView(context)
     private val ruler = RulerView(context).apply { visibility = GONE }
@@ -1310,9 +1347,6 @@ class InkCanvasView @JvmOverloads constructor(
     private val eraseStrokeHitSet: MutableSet<Stroke> =
         Collections.newSetFromMap(IdentityHashMap())
     private val eraseMaskHits = ArrayList<PageMask>()
-    private var eraserCursorVisible = false
-    private var eraserCursorX = 0f
-    private var eraserCursorY = 0f
     private var lastFocusX = 0f
     private var lastFocusY = 0f
     private var lastFingerEventTime = 0L
@@ -1623,6 +1657,8 @@ class InkCanvasView @JvmOverloads constructor(
         addView(ruler, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(eyedropper, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         wet.textureBitmapStore = PencilTextureStore
+        compatWet.inkEnabled = compatWetInk
+        compatWet.onFramePosted = { nanos -> if (latencyMonitoringEnabled) latency.add(nanos) }
         // InProgressStrokesView chooses its front-buffer implementation for
         // supported hardware. Do not force the deprecated high-latency helper;
         // eager initialization below removes its first-contact setup cost.
@@ -1633,6 +1669,9 @@ class InkCanvasView @JvmOverloads constructor(
             // returns - read the fields, never keep the object.
             override fun onLatencyData(latencyData: LatencyData) {
                 if (!latencyMonitoringEnabled) return
+                // The front buffer is not what this panel shows; the compatible
+                // surface reports its own frames instead.
+                if (compatWetInk) return
                 if (latencyData.eventAction != LatencyData.EventAction.MOVE) return
                 if (!latencyData.isOsDetectsEventSet) return
                 // Unset fields carry Long.MIN_VALUE, and subtracting a real
@@ -2516,20 +2555,12 @@ class InkCanvasView @JvmOverloads constructor(
         when (event.actionMasked) {
             MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE -> {
                 val show = !readMode && (tool == Tool.ERASER || event.isEraserGesture())
-                val changed = show != eraserCursorVisible ||
-                    (show && hypot(event.x - eraserCursorX, event.y - eraserCursorY) >= 0.5f)
-                eraserCursorVisible = show
-                if (show) {
-                    eraserCursorX = event.x
-                    eraserCursorY = event.y
-                }
-                if (changed) dry.postInvalidateOnAnimation()
+                // The cursor has a view of its own: drawn with the page, every
+                // hover sample re-recorded the whole page and its glass backdrop.
+                if (show) compatWet.showCursor(event.x, event.y, eraserScreenRadius())
+                else compatWet.hideCursor()
             }
-            MotionEvent.ACTION_HOVER_EXIT -> {
-                val changed = eraserCursorVisible
-                eraserCursorVisible = false
-                if (changed) dry.postInvalidateOnAnimation()
-            }
+            MotionEvent.ACTION_HOVER_EXIT -> compatWet.hideCursor()
         }
         return true
     }
@@ -2608,7 +2639,7 @@ class InkCanvasView @JvmOverloads constructor(
                 if (readMode && eraserGesture) {
                     onDrawingChanged?.invoke(true)
                     readingWithButton = true
-                    eraserCursorVisible = false
+                    compatWet.hideCursor()
                     capturePage = index
                     val x = event.getX(event.actionIndex)
                     val y = event.getY(event.actionIndex)
@@ -2741,8 +2772,10 @@ class InkCanvasView @JvmOverloads constructor(
                         motionEventToWorldTransform = toPage,
                     )
                     if (compatWetInk) {
-                        compatWet.start(event, pointerId, brush, toPage)
-                        compatWetStrokeId = activeStrokeId
+                        activeStrokeId?.let { id ->
+                            compatWet.start(id, event, pointerId, brush, toPage)
+                            compatWetStrokeId = id
+                        }
                     }
                     holdingStationaryStart = tool == Tool.PEN && !stabilizingStroke && dottedPattern == 0
                     stationaryStartX = event.getX(event.actionIndex)
@@ -2891,9 +2924,11 @@ class InkCanvasView @JvmOverloads constructor(
                     }
                     turn
                 }
+                val compatStroke = compatWetStrokeId == strokeId
                 val maximumLeadMs = predictionLeadForRefresh(
                     predictionLeadMs,
                     display?.refreshRate ?: 60f,
+                    vsyncBoundInk = compatStroke,
                 )
                 var leadMs = predictionLeadForEvent(inkEvent, pointerId, maximumLeadMs)
                 if (sharpTurn || (stabilizingStroke && !streamingStabilizer.predictionAllowed)) {
@@ -2910,9 +2945,18 @@ class InkCanvasView @JvmOverloads constructor(
                             (predicted.eventTime - event.eventTime).toDouble(),
                         )
                     }
-                    wet.addToStroke(inkEvent, pointerId, strokeId, predicted)
-                    if (compatWetStrokeId == strokeId) compatWet.add(inkEvent, pointerId, predicted)
-                    updatePredictionHead(inkEvent, predicted, pointerId, leadMs)
+                    // Where the front buffer is not what the panel shows, it
+                    // still renders; spare it the prediction it would redraw on
+                    // every sample, and a stale head when HWUI does reveal it.
+                    wet.addToStroke(inkEvent, pointerId, strokeId, if (compatStroke) null else predicted)
+                    if (compatStroke) {
+                        // The prediction is already part of the compatible
+                        // stroke. A separate head View would put every pen
+                        // frame back into the window the surface avoids.
+                        compatWet.add(strokeId, inkEvent, pointerId, predicted)
+                    } else {
+                        updatePredictionHead(inkEvent, predicted, pointerId, leadMs)
+                    }
                 } finally {
                     if (predicted !== rawPrediction) predicted?.recycle()
                     rawPrediction?.recycle()
@@ -3024,7 +3068,7 @@ class InkCanvasView @JvmOverloads constructor(
                             try {
                                 if (predictionEnabled) predictor.record(history)
                                 wet.addToStroke(history, pointerId, strokeId, null)
-                                if (compatWetStrokeId == strokeId) compatWet.add(history, pointerId, null)
+                                if (compatWetStrokeId == strokeId) compatWet.add(strokeId, history, pointerId, null)
                             } finally { history.recycle() }
                         }
                     }
@@ -3049,7 +3093,7 @@ class InkCanvasView @JvmOverloads constructor(
                         if (predictionEnabled) predictor.record(end)
                         pendingStrokeCommits.add(strokeId)
                         wet.finishStroke(end, pointerId, strokeId)
-                        if (compatWetStrokeId == strokeId) compatWet.finish(end, pointerId)
+                        if (compatWetStrokeId == strokeId) compatWet.finish(strokeId, end, pointerId)
                     } finally {
                         if (end !== event) end.recycle()
                     }
@@ -3276,7 +3320,7 @@ class InkCanvasView @JvmOverloads constructor(
         pointerId: Int,
         leadMs: Int,
     ) {
-        if (predicted == null || !predictionPolicy.shouldShowSoftHead(leadMs) ||
+        if (predicted == null || !softPredictionHead || !predictionPolicy.shouldShowSoftHead(leadMs) ||
             !tool.isFreehandPen() || dottedPattern != 0
         ) {
             predictionHead.clear()
@@ -3382,7 +3426,7 @@ class InkCanvasView @JvmOverloads constructor(
         eraseChanged = false
         activeEraseGroup = 0L
         hasLastErasePoint = false
-        eraserCursorVisible = false
+        compatWet.hideCursor()
         dry.postInvalidateOnAnimation()
         if (pendingClose != null) completePendingClose()
     }
@@ -5760,11 +5804,11 @@ class InkCanvasView @JvmOverloads constructor(
         val page = activePage ?: return
         val index = document.pages.indexOf(page)
         if (index < 0) return
-        eraserCursorVisible = true
-        eraserCursorX = event.getX(pointerIndex)
-        eraserCursorY = event.getY(pointerIndex)
-        dry.postInvalidateOnAnimation()
-        pageLocalInto(eraserCursorX, eraserCursorY, index, erasePagePoint)
+        val screenX = event.getX(pointerIndex)
+        val screenY = event.getY(pointerIndex)
+        compatWet.showCursor(screenX, screenY, eraserScreenRadius())
+        val eraserSize = eraserPageWidth()
+        pageLocalInto(screenX, screenY, index, erasePagePoint)
         val x = erasePagePoint[0]
         val y = erasePagePoint[1]
         if (hasLastErasePoint) {
@@ -5773,7 +5817,7 @@ class InkCanvasView @JvmOverloads constructor(
             // The previous square tip already covers this movement. Waiting for
             // a useful distance avoids dense-page intersection work at 240 Hz;
             // the next segment, or the forced UP sample, covers the whole gap.
-            if (!shouldProcessEraserMove(dx, dy, eraserWidth, force)) return
+            if (!shouldProcessEraserMove(dx, dy, eraserSize, force)) return
         }
         val hadPrevious = hasLastErasePoint
         val previousX = lastEraseX
@@ -5787,15 +5831,15 @@ class InkCanvasView @JvmOverloads constructor(
                 ImmutableVec(x, y),
             )
         } else null
-        // The tip is a square of eraserWidth around where the pen is now; the
+        // The tip is a square of eraserSize around where the pen is now; the
         // segment covers the gap to the previous sample, so a fast swipe still
         // erases along its whole path instead of leaving holes between samples.
         val tip = ImmutableBox.fromCenterAndDimensions(
             ImmutableVec(x, y),
-            eraserWidth,
-            eraserWidth,
+            eraserSize,
+            eraserSize,
         )
-        val radius = eraserWidth / 2f
+        val radius = eraserSize / 2f
         val candidateLeft = min(if (hadPrevious) previousX else x, x) - radius
         val candidateTop = min(if (hadPrevious) previousY else y, y) - radius
         val candidateRight = max(if (hadPrevious) previousX else x, x) + radius
@@ -6015,11 +6059,14 @@ class InkCanvasView @JvmOverloads constructor(
         }
         recognizeOnFinish = false
         wet.removeFinishedStrokes(finished.keys)
-        cancelCompatWet(compatWetStrokeId?.takeIf { it in finished.keys })
+        if (compatWetStrokeId in finished.keys) compatWetStrokeId = null
         if (page != null && committed.isNotEmpty()) {
             onStrokesCommitted?.invoke(document.pages.indexOf(page), committed)
         }
         if (page != null) afterEdit(page) else afterEdit()
+        // After the page was invalidated: the compatible ink waits for the
+        // frame that draws these strokes before it lets go of them.
+        compatWet.handOff(finished.keys)
         if (finalizeStarted != 0L) {
             latency.addPenFinalize(System.nanoTime() - finalizeStarted)
         }
@@ -6128,23 +6175,6 @@ class InkCanvasView @JvmOverloads constructor(
         private var lassoDashScale = Float.NaN
         private var lassoDashEffect: android.graphics.DashPathEffect? = null
         private val handle = Paint().apply { isAntiAlias = true; color = 0xFF3B7DDD.toInt() }
-        private val eraserCursorFill = Paint().apply {
-            isAntiAlias = true
-            style = Paint.Style.FILL
-            color = 0x183B7DDD
-        }
-        private val eraserCursorOuter = Paint().apply {
-            isAntiAlias = true
-            style = Paint.Style.STROKE
-            strokeWidth = 4f * resources.displayMetrics.density
-            color = Color.WHITE
-        }
-        private val eraserCursorInner = Paint().apply {
-            isAntiAlias = true
-            style = Paint.Style.STROKE
-            strokeWidth = 1.5f * resources.displayMetrics.density
-            color = 0xCC2459B8.toInt()
-        }
 
         // Twins share the stroke's inputs and mesh, so they cost a Brush and a
         // Stroke wrapper each. Weak keys: a stroke that leaves the page goes.
@@ -6529,12 +6559,6 @@ class InkCanvasView @JvmOverloads constructor(
                 }
             }
             inkTiles.endFrame()
-            if (eraserCursorVisible) {
-                val radius = (eraserWidth * currentScale() / 2f).coerceAtLeast(0.5f)
-                canvas.drawCircle(eraserCursorX, eraserCursorY, radius, eraserCursorFill)
-                canvas.drawCircle(eraserCursorX, eraserCursorY, radius, eraserCursorOuter)
-                canvas.drawCircle(eraserCursorX, eraserCursorY, radius, eraserCursorInner)
-            }
             if (started != 0L) {
                 lastVisibleStrokes = visibleCount
                 lastDrawMs = (System.nanoTime() - started) / 1e6

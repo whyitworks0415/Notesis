@@ -46,10 +46,56 @@ import kotlin.math.roundToInt
 
 data class SpotiGlassItem(val label: String, val icon: ImageVector? = null, val color: Color? = null)
 
-internal fun spotiGlassHoverColor(items: List<SpotiGlassItem>, position: Float, fallback: Color): Color {
-    val index = position.roundToInt().coerceIn(items.indices)
-    return items[index].color ?: fallback
+/** x = centre, y = width, z = height of a lens body kept inside the bar. */
+internal data class SpotiGlassLensBody(val x: Float, val y: Float, val z: Float)
+
+/**
+ * Keeps the travelling lens inside the capsule. It used to grow past the first
+ * and last cells and leave the bar, where the layer it is drawn in cut it off
+ * with a straight edge - and a spring overshoot at either end pushed it further
+ * out. Now the side that meets the end of the bar is pressed flat against it,
+ * like liquid against a wall, and gives the lost width back as a little height.
+ */
+internal fun spotiGlassLensBody(
+    centerX: Float, width: Float, height: Float,
+    barWidth: Float, edge: Float, minWidth: Float,
+): SpotiGlassLensBody {
+    val low = edge
+    val high = (barWidth - edge).coerceAtLeast(low)
+    var left = centerX - width / 2
+    var right = centerX + width / 2
+    val pressedLeft = left < low
+    if (pressedLeft) left = low
+    if (right > high) right = high
+    val floor = minOf(minWidth, high - low)
+    if (right - left < floor) {
+        if (pressedLeft) right = left + floor else left = right - floor
+    }
+    val kept = right - left
+    val squeeze = if (width > 0f) (1f - kept / width).coerceIn(0f, 1f) else 0f
+    return SpotiGlassLensBody((left + right) / 2, kept, height * (1f + 0.3f * squeeze))
 }
+
+/**
+ * Where the lens follows a finger that may run past either end of the bar.
+ * Inside it is [spotiGlassPosition]; beyond the ends it keeps moving with
+ * growing resistance, at most [SPOTIGLASS_RUBBER_CELLS] of a cell, so the lens
+ * presses into the end of the bar instead of stopping dead against it.
+ */
+internal fun spotiGlassDragPosition(x: Float, width: Float, count: Int, rtl: Boolean): Float {
+    if (count <= 1 || width <= 0f) return 0f
+    val raw = x / width * count - 0.5f
+    val last = (count - 1).toFloat()
+    fun rubber(over: Float) = SPOTIGLASS_RUBBER_CELLS * (1f - 1f / (1f + over / SPOTIGLASS_RUBBER_CELLS))
+    val visual = when {
+        raw < 0f -> -rubber(-raw)
+        raw > last -> last + rubber(raw - last)
+        else -> raw
+    }
+    return if (rtl) last - visual else visual
+}
+
+internal const val SPOTIGLASS_RUBBER_CELLS = 0.3f
 
 internal fun spotiGlassPosition(x: Float, width: Float, count: Int, rtl: Boolean): Float {
     if (count <= 1 || width <= 0f) return 0f
@@ -64,7 +110,7 @@ internal fun spotiGlassPosition(x: Float, width: Float, count: Int, rtl: Boolean
 @Composable
 fun SpotiGlassBar(
     items: List<SpotiGlassItem>, selectedIndex: Int, onSelected: (Int) -> Unit,
-    modifier: Modifier = Modifier, selectedContentColor: Color? = null,
+    modifier: Modifier = Modifier,
     showLabels: Boolean = true, compact: Boolean = false,
 ) {
     require(items.isNotEmpty())
@@ -100,6 +146,7 @@ fun SpotiGlassBar(
     BoxWithConstraints(modifier.height(barHeight + 16.dp).selectableGroup()) {
         val cell = (maxWidth - padding * 2).coerceAtLeast(1.dp) / items.size
         val widthPx = with(density) { cell.toPx() * items.size }
+        val barWidthPx = with(density) { maxWidth.toPx() }
         val paddingPx = with(density) { padding.toPx() }
         // Retargeting a drag never cancels/restarts the frame clock. Frame state
         // is read in drawing only, so icons and touch targets keep their layout.
@@ -130,9 +177,16 @@ fun SpotiGlassBar(
             val h = cellHeight * (1 + extra * motion.growY * response)
             val sx = 1 + motion.deviation * response
             val sy = 1 - motion.deviation * response
+            val body = with(density) {
+                spotiGlassLensBody(
+                    centerX = (padding + cell * (visual + 0.5f)).toPx(),
+                    width = (w * sx).toPx(), height = (h * sy).toPx(),
+                    barWidth = barWidthPx, edge = 1.dp.toPx(), minWidth = cell.toPx(),
+                )
+            }
             return SpotiGlassLensFrame(
-                center = with(density) { Offset((padding + cell * (visual + 0.5f)).toPx(), (8.dp + barHeight / 2).toPx()) },
-                size = with(density) { Size((w * sx).toPx(), (h * sy).toPx()) },
+                center = with(density) { Offset(body.x, (8.dp + barHeight / 2).toPx()) },
+                size = Size(body.y, body.z),
                 radius = with(density) { (h / 2).toPx() } * (look.spotiglassCorner / 32f).coerceIn(0f, 1.5f),
                 scale = Offset(sx, sy), progress = motion.progress, presence = motion.presence, fill = fill,
                 distortion = 0.04f * (look.refraction / 24f), band = look.depth,
@@ -142,7 +196,10 @@ fun SpotiGlassBar(
             fun IconShell(colored: Boolean, shellModifier: Modifier) {
                 Row(shellModifier.fillMaxWidth().height(cellHeight).align(Alignment.Center).padding(horizontal = padding)) {
                     items.forEachIndexed { index, item ->
-                        val color = if (colored) item.color ?: selectedContentColor ?: scheme.primary else scheme.onSurface
+                        // Under the glass a tool shows its own colour only. The
+                        // pen's ink colour no longer spills onto tools that have
+                        // none, so the ball itself never looks recoloured.
+                        val color = if (colored) item.color ?: scheme.primary else scheme.onSurface
                         var hit = Modifier.weight(1f).fillMaxSize()
                         if (!colored) hit = hit.semantics { this.selected = selected == index; contentDescription = item.label }
                             .clickable(role = Role.Tab, interactionSource = remember { MutableInteractionSource() }, indication = null) { choose(index) }
@@ -176,9 +233,9 @@ fun SpotiGlassBar(
                     val path = spotiGlassPath(body, radius).apply {
                         translate(frame.center - Offset(body.width / 2, body.height / 2))
                     }
-                    val tint = if (moving()) spotiGlassHoverColor(items, motion.position, scheme.primary)
-                        .copy(alpha = 0.04f * motion.presence) else fill
-                    drawPath(path, tint)
+                    // The ball keeps the bar's neutral fill while it travels;
+                    // only the icon underneath carries a colour.
+                    drawPath(path, fill)
                 }
                 drawContent()
             })
@@ -196,7 +253,7 @@ fun SpotiGlassBar(
                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
                             if (change.isConsumed) break
                             lastPosition = change.position
-                            motion.follow(spotiGlassPosition(lastPosition.x - paddingPx, widthPx, items.size, rtl))
+                            motion.follow(spotiGlassDragPosition(lastPosition.x - paddingPx, widthPx, items.size, rtl))
                             change.consume()
                             released = !change.pressed
                         }

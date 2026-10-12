@@ -79,9 +79,12 @@ internal class InkPredictionPolicy {
         if (speedPxPerMs < MIN_PREDICTION_SPEED_PX_PER_MS) return 0
 
         val allowedMaximum = sanitizePredictionLead(maximumLeadMs)
+        // A long horizon is only granted where the display needs it; medium
+        // speed then gets a share of it as well.
+        val medium = if (allowedMaximum >= VSYNC_BOUND_LEAD_MS) 8 else 6
         return when {
             speedPxPerMs < MEDIUM_SPEED_PX_PER_MS -> minOf(4, allowedMaximum)
-            speedPxPerMs < FAST_SPEED_PX_PER_MS -> minOf(6, allowedMaximum)
+            speedPxPerMs < FAST_SPEED_PX_PER_MS -> minOf(medium, allowedMaximum)
             else -> allowedMaximum
         }
     }
@@ -102,17 +105,31 @@ internal class InkPredictionPolicy {
     }
 }
 
-/** Fixed comparison points exposed by the pen settings. */
+/** Automatic mode's horizon for ink that waits for vsync on a 60Hz panel. */
+internal const val VSYNC_BOUND_LEAD_MS = 12
+
+/** Fixed comparison points exposed by the pen settings, plus the 60Hz horizon. */
 internal fun sanitizePredictionLead(value: Int): Int = when (value) {
-    4, 6, 9 -> value
+    4, 6, 9, VSYNC_BOUND_LEAD_MS -> value
     else -> 9
 }
 
 /**
  * Automatic mode keeps a shorter head on high-refresh displays. The fixed
  * 4/6/9ms modes bypass this choice so measurements are directly comparable.
+ *
+ * [vsyncBoundInk] is wet ink that is shown by a regular frame rather than a
+ * front buffer (the compatible path). At 60Hz that frame is presented a whole
+ * 16.7ms period after it was drawn, so the pen tip runs further ahead of the
+ * ink than on a front buffer; a slightly longer prediction closes most of
+ * that gap. Corners and slow strokes still get none or a short one.
  */
-internal fun predictionLeadForRefresh(configuredMs: Int, refreshRateHz: Float): Int {
+internal fun predictionLeadForRefresh(
+    configuredMs: Int,
+    refreshRateHz: Float,
+    vsyncBoundInk: Boolean = false,
+): Int {
     if (configuredMs == 4 || configuredMs == 6 || configuredMs == 9) return configuredMs
-    return if (refreshRateHz >= 90f) 6 else 9
+    if (refreshRateHz >= 90f) return 6
+    return if (vsyncBoundInk) VSYNC_BOUND_LEAD_MS else 9
 }

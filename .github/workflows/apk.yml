@@ -40,6 +40,12 @@ jobs:
         # it is useful and this build uses the JDK that was just set up.
         run: ./gradlew assembleRelease -Dorg.gradle.java.home="$JAVA_HOME" --no-daemon --stacktrace
 
+      - name: Unit tests
+        # Reported, not gating: a failing JVM test shows up red here without
+        # holding back the APK the tablet is waiting for.
+        continue-on-error: true
+        run: ./gradlew testReleaseUnitTest -Dorg.gradle.java.home="$JAVA_HOME" --no-daemon
+
       - name: Name the build
         id: name
         run: |
