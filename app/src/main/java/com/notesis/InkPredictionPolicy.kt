@@ -108,15 +108,13 @@ internal class InkPredictionPolicy {
 /** Automatic mode's horizon for ink that waits for vsync on a 60Hz panel. */
 internal const val VSYNC_BOUND_LEAD_MS = 12
 
-/** Fixed comparison points exposed by the pen settings, plus the 60Hz horizon. */
-internal fun sanitizePredictionLead(value: Int): Int = when (value) {
-    4, 6, 9, VSYNC_BOUND_LEAD_MS -> value
-    else -> 9
-}
+/** Any fixed lead the pen settings offer, 1 to 12ms; anything else falls back to 9. */
+internal fun sanitizePredictionLead(value: Int): Int =
+    if (value in 1..VSYNC_BOUND_LEAD_MS) value else 9
 
 /**
- * Automatic mode keeps a shorter head on high-refresh displays. The fixed
- * 4/6/9ms modes bypass this choice so measurements are directly comparable.
+ * Automatic mode keeps a shorter head on high-refresh displays. A fixed
+ * 1-12ms setting bypasses this choice, so what was asked for is what is used.
  *
  * [vsyncBoundInk] is wet ink that is shown by a regular frame rather than a
  * front buffer (the compatible path). At 60Hz that frame is presented a whole
@@ -129,7 +127,7 @@ internal fun predictionLeadForRefresh(
     refreshRateHz: Float,
     vsyncBoundInk: Boolean = false,
 ): Int {
-    if (configuredMs == 4 || configuredMs == 6 || configuredMs == 9) return configuredMs
+    if (configuredMs in 1..VSYNC_BOUND_LEAD_MS) return configuredMs
     if (refreshRateHz >= 90f) return 6
     return if (vsyncBoundInk) VSYNC_BOUND_LEAD_MS else 9
 }

@@ -1,0 +1,934 @@
+package com.notesis
+
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.drag
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import kotlin.math.atan2
+import kotlin.math.hypot
+import kotlin.math.min
+import kotlin.math.roundToInt
+import kotlin.math.sqrt
+
+/** The five ways of picking a colour. The choice is remembered across tools. */
+internal enum class ColorPickerMode(val label: String) {
+    SQUARE("사각형"),
+    BARS("HSV 막대"),
+    RING("링"),
+    RGB("RGB"),
+    DISC("컬러 디스크"),
+}
+
+/**
+ * The colour being set, held once as hue, saturation, value and alpha so that
+ * every picker reads and writes the same thing and switching pickers loses
+ * nothing - not even the hue of a grey, which RGB alone cannot keep.
+ */
+@Stable
+internal class PenColorState(argb: Int) {
+    var hue by mutableFloatStateOf(0f)
+    var saturation by mutableFloatStateOf(0f)
+    var value by mutableFloatStateOf(0f)
+    var alpha by mutableFloatStateOf(1f)
+
+    init { set(argb) }
+
+    /** Takes [argb] in; with [keepAlpha] the alpha already chosen stays. */
+    fun set(argb: Int, keepAlpha: Boolean = false) {
+        val hsv = FloatArray(3)
+        android.graphics.Color.colorToHSV(argb, hsv)
+        // A grey has no hue of its own; keep the one already there.
+        if (hsv[1] > 0f) hue = hsv[0]
+        saturation = hsv[1]
+        value = hsv[2]
+        if (!keepAlpha) alpha = android.graphics.Color.alpha(argb) / 255f
+    }
+
+    fun argb(): Int = android.graphics.Color.HSVToColor(
+        (alpha * 255f).roundToInt().coerceIn(0, 255), floatArrayOf(hue, saturation, value),
+    )
+
+    fun rgb(): Int = argb() or OPAQUE
+
+    fun setRgb(red: Int, green: Int, blue: Int) =
+        set(android.graphics.Color.rgb(red, green, blue), keepAlpha = true)
+
+    companion object {
+        const val OPAQUE = -0x1000000
+    }
+}
+
+/**
+ * How one tool is set, on a glass panel over the page: colour on top with the
+ * palette beside it, then thickness with a live preview, the kind of pen and
+ * its pressure, the line style - and everything else behind 세부, which opens
+ * the panel downward rather than crowding the top.
+ *
+ * Tapping past the panel, or back, keeps what was set. 취소 leaves the tool
+ * as it was.
+ */
+@Composable
+internal fun PenDialog(
+    mode: EditMode,
+    pen: PenPreset,
+    deferDetail: Boolean,
+    onDeferDetail: (Boolean) -> Unit,
+    highlighterAboveInk: Boolean,
+    onHighlighterAboveInk: (Boolean) -> Unit,
+    axisSnap: Boolean,
+    onAxisSnap: (Boolean) -> Unit,
+    onDismiss: () -> Unit,
+    onConfirm: (PenPreset) -> Unit,
+    meshInk: Boolean = true,
+    onMeshInk: (Boolean) -> Unit = {},
+    partialEraser: Boolean = false,
+    onPartialEraser: (Boolean) -> Unit = {},
+    compatWetInk: Boolean = false,
+    onCompatWetInk: (Boolean) -> Unit = {},
+    gestures: CanvasGestures = CanvasGestures(),
+    onGestures: (CanvasGestures) -> Unit = {},
+    onClearPage: (() -> Unit)? = null,
+    onEyedropper: (() -> Unit)? = null,
+    onCornerRadius: (Float) -> Unit = {},
+) {
+    val context = LocalContext.current
+    val store = remember { PenStore(context) }
+    val color = remember(pen) { PenColorState(pen.colorArgb) }
+    var width by remember(pen) { mutableFloatStateOf(pen.width) }
+    var pressure by remember(pen) { mutableStateOf(pen.pressure) }
+    var nib by remember(pen) { mutableStateOf(pen.nib) }
+    var maxWidth by remember(pen) { mutableFloatStateOf(pen.maxWidth) }
+    var leadMs by remember(pen) { mutableIntStateOf(pen.leadMs) }
+    var stabilizer by remember(pen) { mutableIntStateOf(pen.stabilizer) }
+    var linePattern by remember(pen) { mutableIntStateOf(pen.linePattern) }
+    var autoShapes by remember(pen) { mutableStateOf(pen.autoShapes) }
+    var details by remember { mutableStateOf(false) }
+    val opacity = allowsOpacity(mode)
+    val range = PenStore.widthRange(mode, pen.copy(maxWidth = maxWidth))
+    val drawing = pen.copy(nib = nib, pressure = pressure).drawingTool()
+    val freehand = mode == EditMode.PEN || mode == EditMode.PENCIL
+
+    fun current() = PenPreset(
+        tool = pen.tool,
+        colorArgb = if (opacity) color.argb() else color.rgb(),
+        width = width.coerceIn(range),
+        pressure = pressure,
+        maxWidth = maxWidth,
+        nib = nib,
+        leadMs = leadMs,
+        stabilizer = stabilizer,
+        linePattern = linePattern,
+        autoShapes = autoShapes,
+    )
+    fun keep() = onConfirm(current())
+
+    Dialog(onDismissRequest = ::keep, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        // A light dim: the page should still show through the glass.
+        (LocalView.current.parent as? DialogWindowProvider)?.window?.setDimAmount(0.12f)
+        val shape = RoundedCornerShape(28.dp)
+        val tallest = LocalConfiguration.current.screenHeightDp.dp * 0.9f
+        Column(
+            Modifier
+                .padding(16.dp)
+                .widthIn(max = 600.dp)
+                .fillMaxWidth()
+                .heightIn(max = tallest)
+                .liquidGlass(
+                    shape = shape,
+                    surfaceColor = MaterialTheme.colorScheme.surface,
+                    surfaceOpacity = 0.86f,
+                    useSpotiStyle = false,
+                )
+                .clip(shape)
+                .verticalScroll(rememberScrollState())
+                .animateContentSize()
+                .padding(horizontal = 18.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(toolLabel(mode), style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                TextButton(onClick = onDismiss) { Text("취소") }
+                TextButton(onClick = ::keep) { Text("저장") }
+            }
+
+            if (mode == EditMode.ERASE) {
+                EraserSection(partialEraser, onPartialEraser, gestures, onGestures)
+            } else if (mode.tints) {
+                ColorSection(
+                    color = color,
+                    opacity = opacity,
+                    initialMode = store.colorPickerMode,
+                    onMode = { store.colorPickerMode = it },
+                    onEyedropper = onEyedropper?.let { pick -> { keep(); pick() } },
+                )
+            }
+
+            WidthSection(
+                mode = mode,
+                width = width,
+                range = range,
+                onWidth = { width = it },
+                preview = if (mode == EditMode.ERASE) null
+                    else Color(if (opacity) color.argb() else color.rgb()),
+                linePattern = if (freehand && !drawing.isDabbed()) linePattern else 0,
+            )
+
+            val nibs = if (freehand) nibsFor(pen.tool) else emptyList()
+            if (nibs.isNotEmpty() || mode == EditMode.PEN) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.weight(1f).horizontalScroll(rememberScrollState())) {
+                        nibs.forEach { (tool, label) ->
+                            SettingsChoiceChip(
+                                selected = if (mode == EditMode.PENCIL) drawing == tool else nib == tool,
+                                onClick = { nib = tool },
+                                label = label,
+                                modifier = Modifier.padding(end = 6.dp),
+                            )
+                        }
+                    }
+                    if (mode == EditMode.PEN) {
+                        Text("필압", style = MaterialTheme.typography.bodyMedium)
+                        Spacer(Modifier.width(8.dp))
+                        SkinSwitch(checked = pressure, onCheckedChange = { pressure = it })
+                    }
+                }
+            }
+
+            if (freehand && !drawing.isDabbed()) {
+                Text("선 스타일", style = MaterialTheme.typography.labelLarge)
+                Row(Modifier.horizontalScroll(rememberScrollState())) {
+                    listOf("실선", "점선", "파선", "일점쇄선").forEachIndexed { index, label ->
+                        SettingsChoiceChip(
+                            selected = linePattern == index,
+                            onClick = { linePattern = index },
+                            label = label,
+                            modifier = Modifier.padding(end = 6.dp),
+                        )
+                    }
+                }
+            }
+
+            // 세부: everything else, opened downward on demand.
+            Row(
+                Modifier
+                    .clip(RoundedCornerShape(18.dp))
+                    .clickable { details = !details }
+                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Reicons.Tune, contentDescription = null, modifier = Modifier.size(20.dp))
+                }
+                Spacer(Modifier.width(10.dp))
+                Text(if (details) "세부 설정 접기" else "세부 설정", style = MaterialTheme.typography.bodyMedium)
+            }
+            AnimatedVisibility(
+                visible = details,
+                enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
+                exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(),
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    if (mode != EditMode.ERASE) {
+                        Text("이 도구", style = MaterialTheme.typography.labelLarge)
+                        PredictionSetting(leadMs) { leadMs = it }
+                    }
+                    if (freehand) {
+                        Text("획 보정 $stabilizer%", style = MaterialTheme.typography.bodyMedium)
+                        SkinSlider(
+                            value = stabilizer.toFloat(),
+                            onValueChange = { stabilizer = it.roundToInt() },
+                            valueRange = 0f..100f,
+                        )
+                        SwitchRow("자동 도형 인식", autoShapes) { autoShapes = it }
+                    }
+                    WidthCeilings(mode, range) { ceiling ->
+                        maxWidth = ceiling
+                        width = width.coerceAtMost(ceiling)
+                    }
+                    WidthControls(mode, width) {
+                        width = it
+                        if (it > range.endInclusive) maxWidth = it
+                    }
+                    if (mode == EditMode.SHAPE) {
+                        SwitchRow("직선을 90° 간격으로 보정", axisSnap, onChange = onAxisSnap)
+                        var corner by remember { mutableFloatStateOf(store.shapeCornerRadius) }
+                        Text("다각형 모서리 둥글기 ${corner.roundToInt()}", style = MaterialTheme.typography.bodyMedium)
+                        SkinSlider(corner, { corner = it; store.shapeCornerRadius = it; onCornerRadius(it) }, 0f..120f)
+                    }
+                    if (mode == EditMode.HIGHLIGHTER) {
+                        SwitchRow(if (highlighterAboveInk) "필기 위에 표시" else "필기 아래에 표시",
+                            highlighterAboveInk, onChange = onHighlighterAboveInk)
+                    }
+                    if (mode == EditMode.ERASE && onClearPage != null) {
+                        TextButton(onClick = onClearPage) {
+                            Icon(Reicons.Delete, contentDescription = null)
+                            Text(" 현재 페이지 모두 지우기")
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    Text("모든 도구 공통", style = MaterialTheme.typography.labelLarge)
+                    if (freehand) {
+                        SwitchRow("끝에서 멈추면 도형으로", gestures.holdToDraw) {
+                            onGestures(gestures.copy(holdToDraw = it))
+                        }
+                        SwitchRow("낙서로 지우기", gestures.scribbleErase) {
+                            onGestures(gestures.copy(scribbleErase = it))
+                        }
+                        SwitchRow("원을 그리고 멈추면 선택", gestures.circleToLasso) {
+                            onGestures(gestures.copy(circleToLasso = it))
+                        }
+                    }
+                    SwitchRow(
+                        "호환 필기 표시", compatWetInk,
+                        "쓰는 동안 획이 보이지 않고 펜을 떼야 나타나면 켜세요. Galaxy Tab S6 Lite에서는 기본으로 켜집니다",
+                        onCompatWetInk,
+                    )
+                    SwitchRow(
+                        "확대 후 선명하게", deferDetail,
+                        "확대하는 동안은 있는 그대로 그리고, 손을 떼면 그때 다시 선명하게 만듭니다",
+                        onDeferDetail,
+                    )
+                    SwitchRow(
+                        "메시 렌더링 (실험)", meshInk,
+                        "불투명한 펜·필압 펜을 Ink 셰이더로 그립니다. 끄면 이전 방식(경로 채우기)으로 돌아갑니다",
+                        onMeshInk,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 자동, off at 0, or a fixed 1-12ms; one slider so every millisecond is there. */
+@Composable
+private fun PredictionSetting(leadMs: Int, onLead: (Int) -> Unit) {
+    val auto = leadMs == LEAD_AUTO
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            "예측 " + when {
+                auto -> "자동"
+                leadMs == 0 -> "끔"
+                else -> "$leadMs ms"
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+        )
+        SettingsChoiceChip(selected = auto, onClick = { onLead(if (auto) AUTO_FALLBACK_MS else LEAD_AUTO) }, label = "자동")
+    }
+    SkinSlider(
+        value = (if (auto) AUTO_FALLBACK_MS else leadMs).toFloat(),
+        onValueChange = { onLead(it.roundToInt().coerceIn(0, MAX_LEAD_MS)) },
+        valueRange = 0f..MAX_LEAD_MS.toFloat(),
+    )
+    Text(
+        if (auto) "자동은 60Hz에서 9ms(호환 필기 표시는 12ms), 90Hz 이상에서 6ms까지 앞서 그립니다"
+        else "펜보다 이만큼 앞서 그립니다. 0은 예측을 끕니다. 길수록 빠르게 느껴지지만 획 끝이 흔들릴 수 있습니다",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.outline,
+    )
+}
+
+/** Where 자동 hands over to the slider: the 60Hz automatic horizon. */
+private const val AUTO_FALLBACK_MS = 9
+
+@Composable
+private fun SwitchRow(label: String, checked: Boolean, hint: String? = null, onChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+            if (hint != null) Text(
+                hint,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline,
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        SkinSwitch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+@Composable
+private fun EraserSection(
+    partialEraser: Boolean,
+    onPartialEraser: (Boolean) -> Unit,
+    gestures: CanvasGestures,
+    onGestures: (CanvasGestures) -> Unit,
+) {
+    Row {
+        SettingsChoiceChip(selected = !partialEraser, onClick = { onPartialEraser(false) },
+            label = "획 지우개", modifier = Modifier.padding(end = 8.dp))
+        SettingsChoiceChip(selected = partialEraser, onClick = { onPartialEraser(true) }, label = "부분 지우개")
+    }
+    Text(if (partialEraser) "지나간 부분만 지웁니다" else "닿은 획을 통째로 지웁니다",
+        style = MaterialTheme.typography.bodySmall)
+    Text("지울 대상", style = MaterialTheme.typography.labelLarge)
+    Row(Modifier.horizontalScroll(rememberScrollState())) {
+        listOf(
+            "펜" to gestures.eraseInk, "형광펜" to gestures.eraseHighlighter, "테이프" to gestures.eraseTape,
+            "이미지" to gestures.eraseImages, "텍스트 상자" to gestures.eraseText, "잠긴 객체" to gestures.eraseLocked,
+        ).forEach { (label, on) ->
+            SettingsChoiceChip(selected = on, label = label, modifier = Modifier.padding(end = 6.dp), onClick = {
+                onGestures(when (label) {
+                    "펜" -> gestures.copy(eraseInk = !on)
+                    "형광펜" -> gestures.copy(eraseHighlighter = !on)
+                    "테이프" -> gestures.copy(eraseTape = !on)
+                    "이미지" -> gestures.copy(eraseImages = !on)
+                    "텍스트 상자" -> gestures.copy(eraseText = !on)
+                    else -> gestures.copy(eraseLocked = !on)
+                })
+            })
+        }
+    }
+}
+
+// ---- colour ----------------------------------------------------------------
+
+@Composable
+private fun ColorSection(
+    color: PenColorState,
+    opacity: Boolean,
+    initialMode: Int,
+    onMode: (Int) -> Unit,
+    onEyedropper: (() -> Unit)?,
+) {
+    var pickerMode by remember {
+        mutableStateOf(ColorPickerMode.entries.getOrElse(initialMode) { ColorPickerMode.SQUARE })
+    }
+    Row(Modifier.horizontalScroll(rememberScrollState())) {
+        ColorPickerMode.entries.forEach { option ->
+            SettingsChoiceChip(
+                selected = pickerMode == option,
+                onClick = { pickerMode = option; onMode(option.ordinal) },
+                label = option.label,
+                modifier = Modifier.padding(end = 6.dp),
+            )
+        }
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            when (pickerMode) {
+                ColorPickerMode.SQUARE -> SquarePicker(color)
+                ColorPickerMode.BARS -> BarsPicker(color)
+                ColorPickerMode.RING -> RingPicker(color)
+                ColorPickerMode.RGB -> RgbPicker(color)
+                ColorPickerMode.DISC -> DiscPicker(color)
+            }
+            if (opacity) {
+                Text("투명도 ${(color.alpha * 100).roundToInt()}%", style = MaterialTheme.typography.bodySmall)
+                GradientStrip(
+                    colors = listOf(Color(color.rgb()).copy(alpha = 0f), Color(color.rgb())),
+                    position = color.alpha,
+                ) { color.alpha = it }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                HexField(color, opacity, Modifier.weight(1f))
+                if (onEyedropper != null) TextButton(onClick = onEyedropper) { Text("스포이드") }
+            }
+        }
+        PalettePanel(color, opacity, Modifier.width(92.dp).height(PICKER_HEIGHT + 40.dp))
+    }
+}
+
+private val PICKER_HEIGHT = 190.dp
+
+/** 1. Saturation across, value down, hue on the strip below. */
+@Composable
+private fun SquarePicker(color: PenColorState) {
+    SaturationValueField(color.hue, color.saturation, color.value) { s, v ->
+        color.saturation = s
+        color.value = v
+    }
+    GradientStrip(colors = HUES, position = color.hue / 360f) { color.hue = it * 360f }
+}
+
+/** 2. Three upright H, S and V bars, with the colour itself beside them. */
+@Composable
+private fun BarsPicker(color: PenColorState) {
+    Row(Modifier.fillMaxWidth().height(PICKER_HEIGHT), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        VerticalStrip(HUES, color.hue / 360f, "H") { color.hue = it * 360f }
+        VerticalStrip(
+            listOf(Color.hsv(color.hue, 0f, color.value), Color.hsv(color.hue, 1f, color.value)),
+            color.saturation, "S",
+        ) { color.saturation = it }
+        VerticalStrip(
+            listOf(Color.Black, Color.hsv(color.hue, color.saturation, 1f)),
+            color.value, "V",
+        ) { color.value = it }
+        Box(
+            Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color.White)
+                .background(Color(color.argb())),
+            contentAlignment = Alignment.BottomStart,
+        ) {
+            Text(
+                "H ${color.hue.roundToInt()}°  S ${(color.saturation * 100).roundToInt()}%  V ${(color.value * 100).roundToInt()}%",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (color.value > 0.6f && color.saturation < 0.5f) Color.Black else Color.White,
+                modifier = Modifier.padding(8.dp),
+            )
+        }
+    }
+}
+
+/** 3. A hue ring around the saturation-value square, with the numbers to type. */
+@Composable
+private fun RingPicker(color: PenColorState) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Canvas(
+            Modifier
+                .size(PICKER_HEIGHT)
+                .pointerInput(color) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        down.consume()
+                        val c = Offset(size.width / 2f, size.height / 2f)
+                        val outer = min(size.width, size.height) / 2f
+                        val ring = outer * RING_FRACTION
+                        val onRing = hypot(down.position.x - c.x, down.position.y - c.y) >= outer - ring - 2f
+                        fun take(at: Offset) {
+                            if (onRing) {
+                                color.hue = angleOf(at - c)
+                            } else {
+                                val half = innerHalf(outer, ring)
+                                color.saturation = ((at.x - (c.x - half)) / (2 * half)).coerceIn(0f, 1f)
+                                color.value = 1f - ((at.y - (c.y - half)) / (2 * half)).coerceIn(0f, 1f)
+                            }
+                        }
+                        take(down.position)
+                        drag(down.id) { change -> change.consume(); take(change.position) }
+                    }
+                },
+        ) {
+            val c = center
+            val outer = size.minDimension / 2f
+            val ring = outer * RING_FRACTION
+            drawCircle(Brush.sweepGradient(HUES, c), radius = outer - ring / 2f, center = c, style = Stroke(ring))
+            val half = innerHalf(outer, ring)
+            val topLeft = Offset(c.x - half, c.y - half)
+            val box = Size(half * 2, half * 2)
+            drawRect(Brush.horizontalGradient(listOf(Color.White, Color.hsv(color.hue, 1f, 1f)),
+                startX = topLeft.x, endX = topLeft.x + box.width), topLeft, box)
+            drawRect(Brush.verticalGradient(listOf(Color.Transparent, Color.Black),
+                startY = topLeft.y, endY = topLeft.y + box.height), topLeft, box)
+            val angle = Math.toRadians(color.hue.toDouble())
+            val r = outer - ring / 2f
+            drawCircle(Color.White, ring / 2.6f,
+                Offset(c.x + (r * kotlin.math.cos(angle)).toFloat(), c.y + (r * kotlin.math.sin(angle)).toFloat()),
+                style = Stroke(2.dp.toPx()))
+            drawCircle(Color.White, 6.dp.toPx(),
+                Offset(topLeft.x + color.saturation * box.width, topLeft.y + (1f - color.value) * box.height),
+                style = Stroke(2.dp.toPx()))
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            NumberField("H", color.hue.roundToInt(), 0..360, "°") { color.hue = it.toFloat() % 360f }
+            NumberField("S", (color.saturation * 100).roundToInt(), 0..100, "%") { color.saturation = it / 100f }
+            NumberField("V", (color.value * 100).roundToInt(), 0..100, "%") { color.value = it / 100f }
+        }
+    }
+}
+
+/** 4. Red, green and blue, each on a strip that shows where it would go. */
+@Composable
+private fun RgbPicker(color: PenColorState) {
+    val rgb = color.rgb()
+    val red = android.graphics.Color.red(rgb)
+    val green = android.graphics.Color.green(rgb)
+    val blue = android.graphics.Color.blue(rgb)
+    listOf(
+        Triple("R", red, listOf(Color(0, green, blue), Color(255, green, blue))),
+        Triple("G", green, listOf(Color(red, 0, blue), Color(red, 255, blue))),
+        Triple("B", blue, listOf(Color(red, green, 0), Color(red, green, 255))),
+    ).forEach { (label, channel, ramp) ->
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(label, style = MaterialTheme.typography.labelLarge, modifier = Modifier.width(18.dp))
+            Box(Modifier.weight(1f)) {
+                GradientStrip(colors = ramp, position = channel / 255f) { fraction ->
+                    val next = (fraction * 255f).roundToInt()
+                    when (label) {
+                        "R" -> color.setRgb(next, green, blue)
+                        "G" -> color.setRgb(red, next, blue)
+                        else -> color.setRgb(red, green, next)
+                    }
+                }
+            }
+            Spacer(Modifier.width(8.dp))
+            NumberField(null, channel, 0..255, null, Modifier.width(72.dp)) { typed ->
+                when (label) {
+                    "R" -> color.setRgb(typed, green, blue)
+                    "G" -> color.setRgb(red, typed, blue)
+                    else -> color.setRgb(red, green, typed)
+                }
+            }
+        }
+    }
+}
+
+/** 5. A colour disc - hue around, saturation outward - and brightness beside it. */
+@Composable
+private fun DiscPicker(color: PenColorState) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Canvas(
+            Modifier
+                .size(PICKER_HEIGHT)
+                .pointerInput(color) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        down.consume()
+                        fun take(at: Offset) {
+                            val c = Offset(size.width / 2f, size.height / 2f)
+                            val radius = min(size.width, size.height) / 2f
+                            val d = at - c
+                            color.hue = angleOf(d)
+                            color.saturation = (hypot(d.x, d.y) / radius).coerceIn(0f, 1f)
+                        }
+                        take(down.position)
+                        drag(down.id) { change -> change.consume(); take(change.position) }
+                    }
+                },
+        ) {
+            val radius = size.minDimension / 2f
+            drawCircle(Brush.sweepGradient(HUES, center), radius)
+            drawCircle(Brush.radialGradient(listOf(Color.White, Color.White.copy(alpha = 0f)), center, radius), radius)
+            drawCircle(Color.Black.copy(alpha = 1f - color.value), radius)
+            val angle = Math.toRadians(color.hue.toDouble())
+            val r = color.saturation * radius
+            drawCircle(Color.White, 7.dp.toPx(),
+                Offset(center.x + (r * kotlin.math.cos(angle)).toFloat(), center.y + (r * kotlin.math.sin(angle)).toFloat()),
+                style = Stroke(2.dp.toPx()))
+        }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("명도", style = MaterialTheme.typography.labelMedium)
+            Box(Modifier.height(PICKER_HEIGHT - 44.dp)) {
+                VerticalStrip(
+                    listOf(Color.Black, Color.hsv(color.hue, color.saturation, 1f)),
+                    color.value, null,
+                ) { color.value = it }
+            }
+            Text("${(color.value * 100).roundToInt()}%", style = MaterialTheme.typography.labelMedium)
+        }
+    }
+}
+
+/** The palette beside the picker: the built-in and saved colour sets, a tap each. */
+@Composable
+private fun PalettePanel(color: PenColorState, opacity: Boolean, modifier: Modifier) {
+    val context = LocalContext.current
+    val store = remember { PenStore(context) }
+    var custom by remember { mutableStateOf(store.colorTemplates()) }
+    var adding by remember { mutableStateOf(false) }
+    if (adding) TemplateEditor(onDismiss = { adding = false }, onSave = { name, colors ->
+        custom = custom + (name to colors)
+        store.saveColorTemplates(custom)
+        adding = false
+    })
+    Column(
+        modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
+            .verticalScroll(rememberScrollState())
+            .padding(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text("팔레트", style = MaterialTheme.typography.labelMedium)
+        for ((name, colors) in COLOR_TEMPLATES + custom) {
+            Text(name, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+            colors.chunked(3).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    row.forEach { argb ->
+                        Box(
+                            Modifier
+                                .size(22.dp)
+                                .clip(CircleShape)
+                                .background(Color(argb))
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                                .clickable {
+                                    // A see-through swatch brings its alpha only
+                                    // where the tool can be see-through at all.
+                                    val translucent = android.graphics.Color.alpha(argb) < 255
+                                    color.set(argb, keepAlpha = !(opacity && translucent))
+                                },
+                        )
+                    }
+                }
+            }
+        }
+        TextButton(onClick = { adding = true }) { Text("+ 추가") }
+    }
+}
+
+/** #RRGGBB, or #AARRGGBB where the tool can be see-through; applied as soon as it parses. */
+@Composable
+private fun HexField(color: PenColorState, opacity: Boolean, modifier: Modifier) {
+    val shown = if (opacity) "%08X".format(color.argb()) else "%06X".format(color.rgb() and 0xFFFFFF)
+    var draft by remember { mutableStateOf<String?>(null) }
+    var focused by remember { mutableStateOf(false) }
+    LaunchedEffect(shown) { if (!focused) draft = null }
+    OutlinedTextField(
+        value = draft ?: shown,
+        onValueChange = { typed ->
+            val clean = typed.removePrefix("#").filter { it.isLetterOrDigit() }.take(if (opacity) 8 else 6)
+            draft = clean
+            val parsed = clean.toLongOrNull(16)
+            if (parsed != null && (clean.length == 6 || (opacity && clean.length == 8))) {
+                val argb = if (clean.length == 6) (parsed.toInt() or PenColorState.OPAQUE) else parsed.toInt()
+                color.set(argb, keepAlpha = clean.length == 6)
+            }
+        },
+        prefix = { Text("#") },
+        singleLine = true,
+        modifier = modifier.onFocusChanged { focused = it.isFocused; if (!it.isFocused) draft = null },
+    )
+}
+
+/** A small number box that applies whatever it holds once it is a number in [range]. */
+@Composable
+private fun NumberField(
+    label: String?,
+    value: Int,
+    range: IntRange,
+    suffix: String?,
+    modifier: Modifier = Modifier.width(96.dp),
+    onValue: (Int) -> Unit,
+) {
+    var draft by remember { mutableStateOf<String?>(null) }
+    var focused by remember { mutableStateOf(false) }
+    LaunchedEffect(value) { if (!focused) draft = null }
+    OutlinedTextField(
+        value = draft ?: value.toString(),
+        onValueChange = { typed ->
+            val digits = typed.filter { it.isDigit() }.take(3)
+            draft = digits
+            digits.toIntOrNull()?.takeIf { it in range }?.let(onValue)
+        },
+        label = if (label != null) { { Text(label) } } else null,
+        suffix = if (suffix != null) { { Text(suffix) } } else null,
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        modifier = modifier.onFocusChanged { focused = it.isFocused; if (!it.isFocused) draft = null },
+    )
+}
+
+/** An upright ramp with a handle: the top is 1, the bottom 0. */
+@Composable
+private fun VerticalStrip(colors: List<Color>, position: Float, label: String?, onChange: (Float) -> Unit) {
+    val currentOnChange by rememberUpdatedState(onChange)
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        if (label != null) Text(label, style = MaterialTheme.typography.labelSmall)
+        Canvas(
+            Modifier
+                .width(30.dp)
+                .weight(1f, fill = true)
+                .clip(RoundedCornerShape(15.dp))
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        down.consume()
+                        fun take(at: Offset) =
+                            currentOnChange(1f - (at.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f))
+                        take(down.position)
+                        drag(down.id) { change -> change.consume(); take(change.position) }
+                    }
+                },
+        ) {
+            drawRect(Color.White)
+            drawRect(Brush.verticalGradient(colors.reversed()))
+            drawCircle(
+                Color.White, size.width / 2f - 3.dp.toPx(),
+                Offset(size.width / 2f, (1f - position) * size.height),
+                style = Stroke(3.dp.toPx()),
+            )
+        }
+    }
+}
+
+private val HUES = (0..6).map { Color.hsv(it * 60f % 360f, 1f, 1f) }
+
+/** How much of the ring picker's radius the hue ring takes. */
+private const val RING_FRACTION = 0.18f
+
+/** Half the side of the square that fits inside the ring with a little air. */
+private fun innerHalf(outer: Float, ring: Float): Float = (outer - ring) / sqrt(2f) * 0.92f
+
+/** Degrees clockwise from three o'clock, as the sweep gradients run. */
+private fun angleOf(d: Offset): Float {
+    val degrees = Math.toDegrees(atan2(d.y, d.x).toDouble()).toFloat()
+    return (degrees + 360f) % 360f
+}
+
+// ---- thickness ---------------------------------------------------------------
+
+@Composable
+private fun WidthSection(
+    mode: EditMode,
+    width: Float,
+    range: ClosedFloatingPointRange<Float>,
+    onWidth: (Float) -> Unit,
+    preview: Color?,
+    linePattern: Int,
+) {
+    val context = LocalContext.current
+    val store = remember { PenStore(context) }
+    var favorites by remember(mode) { mutableStateOf(store.favoriteWidths(mode)) }
+    val shown = width.coerceIn(range)
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.weight(1f)) {
+            SkinSlider(value = shown, onValueChange = onWidth, valueRange = range)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { onWidth((shown - WIDTH_STEP).coerceIn(range)) }) { Text("−") }
+                Text(widthLabel(shown), style = MaterialTheme.typography.bodyMedium)
+                TextButton(onClick = { onWidth((shown + WIDTH_STEP).coerceIn(range)) }) { Text("+") }
+                val starred = favorites.any { kotlin.math.abs(it - shown) < 0.005f }
+                TextButton(onClick = {
+                    favorites = if (starred) favorites.filterNot { kotlin.math.abs(it - shown) < 0.005f }
+                        else (favorites + shown).sorted()
+                    store.saveFavoriteWidths(mode, favorites)
+                }) { Text(if (starred) "★" else "☆") }
+            }
+            if (favorites.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState())) {
+                favorites.forEach { favorite ->
+                    SettingsChoiceChip(
+                        selected = kotlin.math.abs(favorite - shown) < 0.005f,
+                        onClick = { onWidth(favorite.coerceIn(range)) },
+                        label = widthLabel(favorite),
+                        modifier = Modifier.padding(end = 6.dp),
+                    )
+                }
+            }
+        }
+        StrokePreview(width = shown, color = preview, linePattern = linePattern,
+            modifier = Modifier.width(150.dp).height(72.dp))
+    }
+}
+
+/** The line as it will draw - colour, see-through, thickness and pattern - or the eraser's reach. */
+@Composable
+private fun StrokePreview(width: Float, color: Color?, linePattern: Int, modifier: Modifier) {
+    val outline = MaterialTheme.colorScheme.outline
+    Canvas(
+        modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.White)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp)),
+    ) {
+        val stroke = width.dp.toPx().coerceIn(1f, size.height * 0.45f)
+        if (color == null) {
+            drawCircle(outline, stroke / 2f, center, style = Stroke(2.dp.toPx()))
+            return@Canvas
+        }
+        val pad = stroke / 2f + 8.dp.toPx()
+        val path = Path().apply {
+            val left = pad
+            val right = size.width - pad
+            val mid = size.height / 2f
+            val swing = (size.height / 2f - pad).coerceAtLeast(0f)
+            moveTo(left, mid + swing * 0.4f)
+            cubicTo(
+                left + (right - left) * 0.3f, mid - swing,
+                left + (right - left) * 0.55f, mid - swing,
+                left + (right - left) * 0.7f, mid + swing * 0.3f,
+            )
+            quadraticTo(left + (right - left) * 0.85f, mid + swing, right, mid)
+        }
+        val dash = stroke.coerceAtLeast(2f)
+        val effect = when (linePattern) {
+            1 -> PathEffect.dashPathEffect(floatArrayOf(0.1f, dash * 2f))
+            2 -> PathEffect.dashPathEffect(floatArrayOf(dash * 3f, dash * 2f))
+            3 -> PathEffect.dashPathEffect(floatArrayOf(dash * 3f, dash * 1.5f, 0.1f, dash * 1.5f))
+            else -> null
+        }
+        drawPath(path, color, style = Stroke(width = stroke, cap = StrokeCap.Round, pathEffect = effect))
+    }
+}
+
+/** Where the thickness slider tops out: 얇게, 중간 or the tool's own 최대. */
+@Composable
+private fun WidthCeilings(mode: EditMode, range: ClosedFloatingPointRange<Float>, onCeiling: (Float) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("굵기 상한", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        for ((label, ceiling) in PenStore.widthCeilings(mode)) {
+            SettingsChoiceChip(
+                selected = kotlin.math.abs(range.endInclusive - ceiling) < 0.01f,
+                onClick = { onCeiling(ceiling) },
+                label = label,
+                modifier = Modifier.padding(start = 6.dp),
+            )
+        }
+    }
+}

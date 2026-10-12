@@ -2377,427 +2377,7 @@ private fun ToolChip(
     ) { onMode(tool) }
 }
 
-/**
- * Sets the colour and thickness of the tool in hand. Colour is picked in
- * HSV - which is how people actually describe a colour - with alpha on its own
- * strip, because a highlighter is exactly a pen whose alpha is not 255.
- */
-@Composable
-internal fun PenDialog(
-    mode: EditMode,
-    pen: PenPreset,
-    /** Global rather than per tool, but this is where a hand is being set up. */
-    prediction: Boolean,
-    onPrediction: (Boolean) -> Unit,
-    predictionLeadMs: Int,
-    onPredictionLeadMs: (Int) -> Unit,
-    deferDetail: Boolean,
-    onDeferDetail: (Boolean) -> Unit,
-    stabilizer: Int,
-    onStabilizer: (Int) -> Unit,
-    highlighterAboveInk: Boolean,
-    onHighlighterAboveInk: (Boolean) -> Unit,
-    autoShapes: Boolean,
-    onAutoShapes: (Boolean) -> Unit,
-    axisSnap: Boolean,
-    onAxisSnap: (Boolean) -> Unit,
-    dottedPattern: Int,
-    onDottedPattern: (Int) -> Unit,
-    onDismiss: () -> Unit,
-    onConfirm: (PenPreset) -> Unit,
-    meshInk: Boolean = true,
-    onMeshInk: (Boolean) -> Unit = {},
-    partialEraser: Boolean = false,
-    onPartialEraser: (Boolean) -> Unit = {},
-    compatWetInk: Boolean = false,
-    onCompatWetInk: (Boolean) -> Unit = {},
-    gestures: CanvasGestures = CanvasGestures(),
-    onGestures: (CanvasGestures) -> Unit = {},
-    onClearPage: (() -> Unit)? = null,
-    onEyedropper: (() -> Unit)? = null,
-    onCornerRadius: (Float) -> Unit = {},
-) {
-    val context = LocalContext.current
-    val start = pen
-    val hsv = remember(pen) {
-        FloatArray(3).also { android.graphics.Color.colorToHSV(start.colorArgb, it) }
-    }
-    var hue by remember(pen) { mutableFloatStateOf(hsv[0]) }
-    var saturation by remember(pen) { mutableFloatStateOf(hsv[1]) }
-    var value by remember(pen) { mutableFloatStateOf(hsv[2]) }
-    var alpha by remember(pen) {
-        mutableFloatStateOf(android.graphics.Color.alpha(start.colorArgb) / 255f)
-    }
-    var width by remember(pen) { mutableFloatStateOf(start.width) }
-    var pressure by remember(pen) { mutableStateOf(start.pressure) }
-    var nib by remember(pen) { mutableStateOf(start.nib) }
-    var maxWidth by remember(pen) { mutableFloatStateOf(start.maxWidth) }
-    var paletteOpen by remember { mutableStateOf(false) }
-    val range = PenStore.widthRange(mode, start.copy(maxWidth = maxWidth))
-
-    val picked = Color.hsv(hue, saturation, value, alpha)
-    val argb = picked.toArgb()
-    fun keep() = onConfirm(PenPreset(pen.tool, argb, width.coerceIn(range), pressure, maxWidth, nib))
-
-    AlertDialog(
-        // Tapping past the dialog, or back, keeps what was set: settling on a
-        // colour and then having to find 저장 lost the change too easily.
-        // 취소 is still there for leaving it as it was.
-        onDismissRequest = ::keep,
-        title = { Text(toolLabel(mode)) },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                if (mode == EditMode.ERASE) {
-                    Row {
-                        SettingsChoiceChip(selected = !partialEraser,
-                            onClick = { onPartialEraser(false) }, label = "획 지우개",
-                            modifier = Modifier.padding(end = 8.dp))
-                        SettingsChoiceChip(selected = partialEraser,
-                            onClick = { onPartialEraser(true) }, label = "부분 지우개")
-                    }
-                    Text(if (partialEraser) "지나간 부분만 지웁니다" else "닿은 획을 통째로 지웁니다",
-                        style = MaterialTheme.typography.bodySmall)
-                    Spacer(Modifier.height(10.dp))
-                    Text("지울 대상", style = MaterialTheme.typography.bodyMedium)
-                    Row {
-                        SettingsChoiceChip(selected = gestures.eraseInk,
-                            onClick = { onGestures(gestures.copy(eraseInk = !gestures.eraseInk)) },
-                            label = "펜", modifier = Modifier.padding(end = 8.dp))
-                        SettingsChoiceChip(selected = gestures.eraseHighlighter,
-                            onClick = { onGestures(gestures.copy(eraseHighlighter = !gestures.eraseHighlighter)) },
-                            label = "형광펜", modifier = Modifier.padding(end = 8.dp))
-                        SettingsChoiceChip(selected = gestures.eraseTape,
-                            onClick = { onGestures(gestures.copy(eraseTape = !gestures.eraseTape)) },
-                            label = "테이프")
-                    }
-                    Row(Modifier.padding(top = 6.dp)) {
-                        SettingsChoiceChip(selected = gestures.eraseImages,
-                            onClick = { onGestures(gestures.copy(eraseImages = !gestures.eraseImages)) },
-                            label = "이미지", modifier = Modifier.padding(end = 8.dp))
-                        SettingsChoiceChip(selected = gestures.eraseText,
-                            onClick = { onGestures(gestures.copy(eraseText = !gestures.eraseText)) },
-                            label = "텍스트 상자", modifier = Modifier.padding(end = 8.dp))
-                        SettingsChoiceChip(selected = gestures.eraseLocked,
-                            onClick = { onGestures(gestures.copy(eraseLocked = !gestures.eraseLocked)) },
-                            label = "잠긴 객체")
-                    }
-                    if (onClearPage != null) {
-                        Spacer(Modifier.height(10.dp))
-                        TextButton(onClick = onClearPage) {
-                            Icon(Reicons.Delete, contentDescription = null)
-                            Text(" 현재 페이지 모두 지우기")
-                        }
-                    }
-                }
-                if (mode.tints) {
-                    Row {
-                        TextButton(onClick = { paletteOpen = true }) { Text("색 팔레트") }
-                        if (onEyedropper != null) TextButton(onClick = onEyedropper) { Text("스포이드") }
-                    }
-                    SaturationValueField(hue, saturation, value) { s, v ->
-                        saturation = s
-                        value = v
-                    }
-                    Spacer(Modifier.height(10.dp))
-                    GradientStrip(
-                        colors = (0..6).map { Color.hsv(it * 60f % 360f, 1f, 1f) },
-                        position = hue / 360f,
-                    ) { hue = it * 360f }
-                    Spacer(Modifier.height(10.dp))
-                    GradientStrip(
-                        colors = listOf(
-                            Color.hsv(hue, saturation, value, 0f),
-                            Color.hsv(hue, saturation, value),
-                        ),
-                        position = alpha,
-                    ) { alpha = it }
-
-                    Spacer(Modifier.height(10.dp))
-                    Text(
-                        "#%08X".format(argb),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.outline,
-                    )
-
-                }
-                // By mode, not tool: the shape tool's preset is a pen too.
-                val nibs = when (mode) {
-                    EditMode.PEN, EditMode.PENCIL -> nibsFor(start.tool)
-                    else -> emptyList()
-                }
-                if (nibs.isNotEmpty()) {
-                    // What the preset actually draws with, so a pencil saved
-                    // before it had kinds shows the one it is using.
-                    val drawing = start.copy(nib = nib).drawingTool()
-                    Spacer(Modifier.height(10.dp))
-                    Text(if (mode == EditMode.PENCIL) "연필 종류" else "펜 종류",
-                        style = MaterialTheme.typography.bodyMedium)
-                    Row(Modifier.horizontalScroll(rememberScrollState())) {
-                        nibs.forEach { (tool, label) ->
-                            SettingsChoiceChip(
-                                selected = if (mode == EditMode.PENCIL) drawing == tool else nib == tool,
-                                onClick = { nib = tool },
-                                label = label, modifier = Modifier.padding(end = 6.dp))
-                        }
-                    }
-                }
-                if (mode == EditMode.PEN) {
-                    Spacer(Modifier.height(10.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        SkinSwitch(checked = pressure, onCheckedChange = { pressure = it })
-                        Spacer(Modifier.width(10.dp))
-                        Column {
-                            Text("필압", style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                "세게 누를수록 굵게",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.outline,
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(10.dp))
-                    Text("획 보정 $stabilizer%", style = MaterialTheme.typography.bodyMedium)
-                    SkinSlider(
-                        value = stabilizer.toFloat(),
-                        onValueChange = { onStabilizer(it.roundToInt()) },
-                        valueRange = 0f..100f,
-                    )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        SkinSwitch(checked = autoShapes, onCheckedChange = onAutoShapes)
-                        Spacer(Modifier.width(10.dp))
-                        Text("자동 도형 인식")
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        SkinSwitch(checked = gestures.holdToDraw,
-                            onCheckedChange = { onGestures(gestures.copy(holdToDraw = it)) })
-                        Spacer(Modifier.width(10.dp))
-                        Text("끝에서 멈추면 도형으로")
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        SkinSwitch(checked = gestures.scribbleErase,
-                            onCheckedChange = { onGestures(gestures.copy(scribbleErase = it)) })
-                        Spacer(Modifier.width(10.dp))
-                        Text("낙서로 지우기")
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        SkinSwitch(checked = gestures.circleToLasso,
-                            onCheckedChange = { onGestures(gestures.copy(circleToLasso = it)) })
-                        Spacer(Modifier.width(10.dp))
-                        Text("원을 그리고 멈추면 선택")
-                    }
-                    Text("선 스타일", style = MaterialTheme.typography.bodyMedium)
-                    Row(Modifier.horizontalScroll(rememberScrollState())) {
-                        listOf("실선", "점선", "파선", "일점쇄선").forEachIndexed { index, label ->
-                            SettingsChoiceChip(
-                                selected = dottedPattern == index,
-                                onClick = { onDottedPattern(index) },
-                                label = label,
-                                modifier = Modifier.padding(end = 6.dp),
-                            )
-                        }
-                    }
-                }
-                if (mode == EditMode.SHAPE) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        SkinSwitch(checked = axisSnap, onCheckedChange = onAxisSnap)
-                        Spacer(Modifier.width(10.dp))
-                        Text("직선을 90° 간격으로 보정")
-                    }
-                    val shapeStore = remember { PenStore(context) }
-                    var corner by remember { mutableFloatStateOf(shapeStore.shapeCornerRadius) }
-                    Text("다각형 모서리 둥글기 ${corner.roundToInt()}", style = MaterialTheme.typography.bodyMedium)
-                    SkinSlider(corner, { corner = it; shapeStore.shapeCornerRadius = it; onCornerRadius(it) }, 0f..120f)
-                }
-                if (mode == EditMode.HIGHLIGHTER) {
-                    Spacer(Modifier.height(10.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        SkinSwitch(checked = highlighterAboveInk,
-                            onCheckedChange = onHighlighterAboveInk)
-                        Spacer(Modifier.width(10.dp))
-                        Text(if (highlighterAboveInk) "필기 위에 표시" else "필기 아래에 표시")
-                    }
-                }
-                if (mode == EditMode.PEN) {
-                  Spacer(Modifier.height(10.dp))
-                  Row(verticalAlignment = Alignment.CenterVertically) {
-                    SkinSwitch(checked = meshInk, onCheckedChange = onMeshInk)
-                    Spacer(Modifier.width(10.dp))
-                    Column {
-                        Text("메시 렌더링 (실험)", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            "불투명한 펜·필압 펜을 Ink 셰이더로 그립니다. 끄면 이전 방식(경로 채우기)으로 돌아갑니다",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.outline,
-                        )
-                    }
-                  }
-                }
-                Spacer(Modifier.height(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    SkinSwitch(checked = compatWetInk, onCheckedChange = onCompatWetInk)
-                    Spacer(Modifier.width(10.dp))
-                    Column {
-                        Text("호환 필기 표시", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            "쓰는 동안 획이 보이지 않고 펜을 떼야 나타나면 켜세요. Galaxy Tab S6 Lite에서는 기본으로 켜집니다",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.outline,
-                        )
-                    }
-                }
-                Spacer(Modifier.height(10.dp))
-                // The same two settings below, as the three modes people ask for by name.
-                Text("필기 지연", style = MaterialTheme.typography.bodyMedium)
-                Row(Modifier.horizontalScroll(rememberScrollState())) {
-                    SettingsChoiceChip(selected = !prediction, onClick = { onPrediction(false) }, label = "끄기",
-                        modifier = Modifier.padding(end = 6.dp))
-                    SettingsChoiceChip(selected = prediction && predictionLeadMs == 0,
-                        onClick = { onPrediction(true); onPredictionLeadMs(0) }, label = "표준",
-                        modifier = Modifier.padding(end = 6.dp))
-                    SettingsChoiceChip(selected = prediction && predictionLeadMs == FAST_LEAD_MS,
-                        onClick = { onPrediction(true); onPredictionLeadMs(FAST_LEAD_MS) }, label = "빠름 · 실험적")
-                }
-                if (prediction && predictionLeadMs == FAST_LEAD_MS) Text(
-                    "빠름은 일부 기기에서 획 끝이 흔들리거나 불안정할 수 있습니다",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                )
-                Spacer(Modifier.height(6.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    SkinSwitch(checked = prediction, onCheckedChange = onPrediction)
-                    Spacer(Modifier.width(10.dp))
-                    Column {
-                        Text("예측", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            "펜보다 한 프레임 앞서 그립니다. 획이 각져 보이면 꺼보세요",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.outline,
-                        )
-                    }
-                }
-                if (prediction) {
-                    Text("예측 거리", style = MaterialTheme.typography.bodyMedium)
-                    Row(Modifier.horizontalScroll(rememberScrollState())) {
-                        listOf(0 to "자동", 4 to "4 ms", 6 to "6 ms", 9 to "9 ms")
-                            .forEach { (lead, label) ->
-                                SettingsChoiceChip(
-                                    selected = predictionLeadMs == lead,
-                                    onClick = { onPredictionLeadMs(lead) },
-                                    label = label,
-                                    modifier = Modifier.padding(end = 6.dp),
-                                )
-                            }
-                    }
-                    Text(
-                        "자동은 60Hz에서 9ms, 90Hz 이상에서 6ms를 상한으로 사용합니다",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.outline,
-                    )
-                }
-                Spacer(Modifier.height(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    SkinSwitch(checked = deferDetail, onCheckedChange = onDeferDetail)
-                    Spacer(Modifier.width(10.dp))
-                    Column {
-                        Text("확대 후 선명하게", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            "확대하는 동안은 있는 그대로 그리고, 손을 떼면 그때 다시 " +
-                                "선명하게 만듭니다. 글이 많은 페이지에서 확대가 버벅이면 켜두세요",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.outline,
-                        )
-                    }
-                }
-                Spacer(Modifier.height(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "굵기 " + "%.1f".format(width),
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.weight(1f),
-                    )
-                    // Where the slider's top end sits. One range has to cover a
-                    // hairline and a broad highlighter, and the pen half of it
-                    // was living in a fifth of the track.
-                    for ((label, ceiling) in PenStore.widthCeilings(mode)) {
-                        val chosen = kotlin.math.abs(range.endInclusive - ceiling) < 0.01f
-                        TextButton(onClick = { maxWidth = ceiling; width = width.coerceAtMost(ceiling) }) {
-                            Text(
-                                label,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = if (chosen) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                },
-                            )
-                        }
-                    }
-                }
-                WidthControls(mode, width) {
-                    width = it
-                    if (it > range.endInclusive) maxWidth = it
-                }
-                Row {
-                    TextButton(onClick = { width = (width - WIDTH_STEP).coerceIn(range) }) { Text("−") }
-                    Text(widthLabel(width.coerceIn(range)), Modifier.align(Alignment.CenterVertically))
-                    TextButton(onClick = { width = (width + WIDTH_STEP).coerceIn(range) }) { Text("+") }
-                }
-                SkinSlider(
-                    value = width.coerceIn(range),
-                    onValueChange = { width = it },
-                    valueRange = range,
-                )
-                if (mode == EditMode.ERASE) {
-                    // The eraser's reach, at the same scale as the pen preview.
-                    Box(Modifier.fillMaxWidth().height(64.dp), contentAlignment = Alignment.Center) {
-                        Box(
-                            Modifier
-                                .size(width.dp.coerceIn(4.dp, 60.dp))
-                                .border(2.dp, MaterialTheme.colorScheme.outline, CircleShape),
-                        )
-                    }
-                }
-                if (mode.tints) {
-                    // The pen as it will draw: real thickness, real transparency.
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .height(44.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color.White),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Box(
-                            Modifier
-                                .fillMaxWidth(0.9f)
-                                .height(width.dp.coerceAtMost(36.dp))
-                                .clip(CircleShape)
-                                .background(picked),
-                        )
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = ::keep) {
-                Text("저장")
-            }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
-    )
-    if (paletteOpen) {
-        PaletteDialog(onDismiss = { paletteOpen = false }, onPick = { rgb ->
-            val next = FloatArray(3)
-            android.graphics.Color.colorToHSV(rgb, next)
-            hue = next[0]; saturation = next[1]; value = next[2]
-            if (android.graphics.Color.alpha(rgb) < 255) alpha = android.graphics.Color.alpha(rgb) / 255f
-            paletteOpen = false
-        })
-    }
-
-}
-
-private fun toolLabel(mode: EditMode): String = when (mode) {
+internal fun toolLabel(mode: EditMode): String = when (mode) {
     EditMode.PEN -> "펜"
     EditMode.PENCIL -> "연필"
     EditMode.HIGHLIGHTER -> "형광펜"
@@ -3565,7 +3145,7 @@ private val ChromeInsets: WindowInsets
 enum class EditMode { PEN, HIGHLIGHTER, MASK, LASSO, SHAPE, IMAGE, ERASE, READ, CAPTURE, TEXT, PENCIL }
 
 /** Whether this mode puts something on the page in the tool's own colour. */
-private val EditMode.tints: Boolean
+internal val EditMode.tints: Boolean
     get() = this == EditMode.PEN || this == EditMode.PENCIL || this == EditMode.HIGHLIGHTER ||
         this == EditMode.MASK || this == EditMode.SHAPE
 
@@ -3782,10 +3362,12 @@ private fun NoteScreen(
     // Flush against the top edge, or floating over the page. Kept in
     // preferences: where the toolbar sits is a habit, not a per-note choice.
     var docked by remember { mutableStateOf(penStore.docked) }
-    var prediction by remember { mutableStateOf(penStore.prediction) }
-    var predictionLeadMs by remember { mutableIntStateOf(penStore.predictionLeadMs) }
+    // Prediction, smoothing, line style and shape straightening belong to
+    // the tool in hand; picking up another tool brings its own.
+    val prediction = pen.leadMs != 0
+    val predictionLeadMs = if (pen.leadMs == LEAD_AUTO) 0 else pen.leadMs
     var deferDetail by remember { mutableStateOf(penStore.deferDetail) }
-    var stabilizer by remember { mutableIntStateOf(penStore.stabilizer) }
+    val stabilizer = pen.stabilizer
     var highlighterAboveInk by remember { mutableStateOf(penStore.highlighterAboveInk) }
     var meshInk by remember { mutableStateOf(penStore.meshInk) }
     var compatWetInk by remember { mutableStateOf(penStore.compatWetInk) }
@@ -3794,9 +3376,9 @@ private fun NoteScreen(
     fun setGestures(value: CanvasGestures) { gestures = value; penStore.gestures = value }
     /** Bumped on copy and cut so the paste bar sees the clipboard change. */
     var clipRevision by remember { mutableIntStateOf(0) }
-    var autoShapes by remember { mutableStateOf(penStore.autoShapes) }
+    val autoShapes = pen.autoShapes
     var axisSnap by remember { mutableStateOf(penStore.axisSnap) }
-    var dottedPattern by remember { mutableIntStateOf(penStore.dottedPattern) }
+    val dottedPattern = pen.linePattern
     var noteRotation by remember { mutableIntStateOf(penStore.noteRotation) }
     // Null until it is dragged: the bar sits centred at the top by default, and
     // there is no sensible centre to store before anything has been measured.
@@ -4749,23 +4331,11 @@ private fun NoteScreen(
             PenDialog(
                 mode = mode,
                 pen = pen,
-                prediction = prediction,
-                onPrediction = {
-                    prediction = it
-                    penStore.prediction = it
-                },
-                predictionLeadMs = predictionLeadMs,
-                onPredictionLeadMs = {
-                    predictionLeadMs = it
-                    penStore.predictionLeadMs = it
-                },
                 deferDetail = deferDetail,
                 onDeferDetail = {
                     deferDetail = it
                     penStore.deferDetail = it
                 },
-                stabilizer = stabilizer,
-                onStabilizer = { stabilizer = it; penStore.stabilizer = it },
                 highlighterAboveInk = highlighterAboveInk,
                 onHighlighterAboveInk = {
                     highlighterAboveInk = it; penStore.highlighterAboveInk = it
@@ -4795,12 +4365,8 @@ private fun NoteScreen(
                         editingPen = true
                     }
                 },
-                autoShapes = autoShapes,
-                onAutoShapes = { autoShapes = it; penStore.autoShapes = it },
                 axisSnap = axisSnap,
                 onAxisSnap = { axisSnap = it; penStore.axisSnap = it },
-                dottedPattern = dottedPattern,
-                onDottedPattern = { dottedPattern = it; penStore.dottedPattern = it },
                 onDismiss = { editingPen = false },
                 onConfirm = { saved ->
                     settings = settings + (mode to saved)
@@ -5369,14 +4935,7 @@ private fun NoteScreen(
 
         selectionColorMode?.let { colorMode ->
             PenDialog(mode = colorMode, pen = settings.getValue(colorMode),
-                prediction = prediction, onPrediction = { prediction = it; penStore.prediction = it },
-                predictionLeadMs = predictionLeadMs,
-                onPredictionLeadMs = {
-                    predictionLeadMs = it; penStore.predictionLeadMs = it
-                },
                 deferDetail = deferDetail, onDeferDetail = { deferDetail = it; penStore.deferDetail = it },
-                stabilizer = stabilizer,
-                onStabilizer = { stabilizer = it; penStore.stabilizer = it },
                 highlighterAboveInk = highlighterAboveInk,
                 onHighlighterAboveInk = {
                     highlighterAboveInk = it; penStore.highlighterAboveInk = it
@@ -5385,12 +4944,8 @@ private fun NoteScreen(
                 onMeshInk = { meshInk = it; penStore.meshInk = it },
                 compatWetInk = compatWetInk,
                 onCompatWetInk = { compatWetInk = it; penStore.compatWetInk = it },
-                autoShapes = autoShapes,
-                onAutoShapes = { autoShapes = it; penStore.autoShapes = it },
                 axisSnap = axisSnap,
                 onAxisSnap = { axisSnap = it; penStore.axisSnap = it },
-                dottedPattern = dottedPattern,
-                onDottedPattern = { dottedPattern = it; penStore.dottedPattern = it },
                 onDismiss = { selectionColorMode = null }, onConfirm = {
                     settings = settings + (colorMode to it)
                     penStore.save(settings)
@@ -7813,7 +7368,7 @@ private val AI_SITES = listOf(
     "Cerebras" to "https://inference.cerebras.ai/",
 )
 
-private val COLOR_TEMPLATES = listOf(
+internal val COLOR_TEMPLATES = listOf(
     "기본" to listOf(0xFF000000, 0xFFD32F2F, 0xFF1976D2, 0xFF388E3C, 0xFFF9A825),
     "파스텔" to listOf(0xFF6D6875, 0xFFE5989B, 0xFF9AC1D9, 0xFFA8D5BA, 0xFFF6D186),
     "형광" to listOf(0x66FFEB3B, 0x6676FF03, 0x6600E5FF, 0x66FF4081, 0x66FF9100),

@@ -26,6 +26,19 @@ data class PenPreset(
     val maxWidth: Float = 0f,
     /** Which pen or pencil: one of [nibsFor] the tool. Pens and pencils only. */
     val nib: Tool = Tool.PEN,
+    /**
+     * How far ahead of the pen this tool draws: [LEAD_AUTO] to follow the
+     * display, 0 for no prediction, or a fixed 1-[MAX_LEAD_MS] ms. Per tool,
+     * like everything below: a pencil sketched slowly and a pen written fast
+     * want different hands.
+     */
+    val leadMs: Int = LEAD_AUTO,
+    /** Stroke smoothing, 0-100. */
+    val stabilizer: Int = 0,
+    /** 0 solid, 1 dotted, 2 dashed, 3 dash-dot. */
+    val linePattern: Int = 0,
+    /** Whether a drawn shape is straightened into a clean one. */
+    val autoShapes: Boolean = false,
 ) {
     /** The tool as it actually draws, which is where pressure and the nib are decided. */
     fun drawingTool(): Tool = when {
@@ -36,6 +49,19 @@ data class PenPreset(
         else -> Tool.PEN
     }
 }
+
+/** [PenPreset.leadMs] for following the display's refresh rate. */
+const val LEAD_AUTO = -1
+
+/** The longest fixed prediction offered. */
+const val MAX_LEAD_MS = 12
+
+/**
+ * Whether a tool's colour may be see-through. A pen and tape are solid by
+ * nature; a pencil and a highlighter are partly about how much shows through.
+ */
+fun allowsOpacity(mode: EditMode): Boolean =
+    mode == EditMode.PENCIL || mode == EditMode.HIGHLIGHTER || mode == EditMode.SHAPE
 
 /** The pens the pen tool can be, in the order the settings offer them. */
 val PEN_NIBS = listOf(
@@ -215,6 +241,11 @@ class PenStore(context: Context) {
         get() = prefs.getBoolean("autoShapes", false)
         set(value) = prefs.edit().putBoolean("autoShapes", value).apply()
 
+    /** Which of the colour pickers the tool settings open on. See ColorPickerMode. */
+    var colorPickerMode: Int
+        get() = prefs.getInt("colorPickerMode", 0).coerceAtLeast(0)
+        set(value) = prefs.edit().putInt("colorPickerMode", value).apply()
+
     var axisSnap: Boolean
         get() = prefs.getBoolean("axisSnap", true)
         set(value) = prefs.edit().putBoolean("axisSnap", value).apply()
@@ -362,12 +393,28 @@ class PenStore(context: Context) {
         set(value) = prefs.edit().putBoolean(REFERENCE_FIT, value).apply()
 
     fun load(): Map<EditMode, PenPreset> {
-        val raw = prefs.getString(KEY, null) ?: return DEFAULTS
+        // Before these were per tool they were one set for every tool; a tool
+        // that has never had its own starts from what that set was.
+        val legacy = PenPreset(
+            Tool.PEN, 0, 1f,
+            leadMs = when {
+                !prediction -> 0
+                predictionLeadMs == 0 -> LEAD_AUTO
+                else -> predictionLeadMs
+            },
+            stabilizer = stabilizer,
+            linePattern = dottedPattern,
+            autoShapes = autoShapes,
+        )
+        fun PenPreset.withLegacy() = copy(leadMs = legacy.leadMs, stabilizer = legacy.stabilizer,
+            linePattern = legacy.linePattern, autoShapes = legacy.autoShapes)
+        val defaults = DEFAULTS.mapValues { (_, pen) -> pen.withLegacy() }
+        val raw = prefs.getString(KEY, null) ?: return defaults.solidWhereRequired()
         val saved = runCatching {
             val json = JSONObject(raw)
             DEFAULTS.keys.mapNotNull { mode ->
                 val item = json.optJSONObject(mode.name) ?: return@mapNotNull null
-                val fallback = DEFAULTS.getValue(mode)
+                val fallback = defaults.getValue(mode)
                 mode to PenPreset(
                     tool = fallback.tool,
                     colorArgb = item.optInt("color", fallback.colorArgb),
@@ -379,13 +426,26 @@ class PenStore(context: Context) {
                     nib = runCatching { Tool.valueOf(item.optString("nib", fallback.nib.name)) }
                         .getOrDefault(fallback.nib)
                         .takeIf { nib -> nibsFor(fallback.tool).any { it.first == nib } } ?: fallback.nib,
+                    leadMs = item.optInt("leadMs", fallback.leadMs).let {
+                        if (it == LEAD_AUTO) it else it.coerceIn(0, MAX_LEAD_MS)
+                    },
+                    stabilizer = item.optInt("stabilizer", fallback.stabilizer).coerceIn(0, 100),
+                    linePattern = item.optInt("linePattern", fallback.linePattern).coerceIn(0, 3),
+                    autoShapes = item.optBoolean("autoShapes", fallback.autoShapes),
                 )
             }.toMap()
         }.getOrNull().orEmpty()
         // Defaults underneath, so a tool added in a later version arrives set up
         // rather than missing.
-        return DEFAULTS + saved
+        return (defaults + saved).solidWhereRequired()
     }
+
+    /** A pen or tape saved see-through before that stopped being offered draws solid. */
+    private fun Map<EditMode, PenPreset>.solidWhereRequired(): Map<EditMode, PenPreset> =
+        mapValues { (mode, pen) ->
+            if (allowsOpacity(mode) || mode == EditMode.ERASE) pen
+            else pen.copy(colorArgb = pen.colorArgb or OPAQUE)
+        }
 
     fun save(settings: Map<EditMode, PenPreset>) {
         val json = JSONObject()
@@ -397,13 +457,18 @@ class PenStore(context: Context) {
                     .put("width", pen.width.toDouble())
                     .put("pressure", pen.pressure)
                     .put("maxWidth", pen.maxWidth.toDouble())
-                    .put("nib", pen.nib.name),
+                    .put("nib", pen.nib.name)
+                    .put("leadMs", pen.leadMs)
+                    .put("stabilizer", pen.stabilizer)
+                    .put("linePattern", pen.linePattern)
+                    .put("autoShapes", pen.autoShapes),
             )
         }
         prefs.edit().putString(KEY, json.toString()).apply()
     }
 
     companion object {
+        private const val OPAQUE = -0x1000000
         const val MAX_QUICK_COLORS = 8
         private const val KEY = "tools"
         private const val DOCKED = "docked"

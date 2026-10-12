@@ -95,4 +95,15 @@ class InkPredictionPolicyTest {
         medium.add(8f, 0f, 16L, 12)
         assertEquals(8, medium.add(12f, 0f, 24L, 12))
     }
+
+    @Test
+    fun `any fixed lead from one to twelve milliseconds is used as set`() {
+        for (lead in 1..12) {
+            assertEquals(lead, predictionLeadForRefresh(lead, 60f))
+            assertEquals(lead, predictionLeadForRefresh(lead, 120f, vsyncBoundInk = true))
+            assertEquals(lead, sanitizePredictionLead(lead))
+        }
+        assertEquals(9, predictionLeadForRefresh(0, 60f))
+        assertEquals(9, sanitizePredictionLead(40))
+    }
 }

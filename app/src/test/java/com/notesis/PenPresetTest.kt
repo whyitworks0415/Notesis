@@ -69,4 +69,25 @@ class PenPresetTest {
         assertTrue(PenStore.widthRange(EditMode.PENCIL).endInclusive > PenStore.widthRange(EditMode.PEN).endInclusive)
         assertTrue(nibsFor(Tool.PENCIL).any { it.first == pencil.drawingTool() })
     }
+
+    @Test
+    fun `only the pencil highlighter and shapes may be see-through`() {
+        assertTrue(allowsOpacity(EditMode.PENCIL))
+        assertTrue(allowsOpacity(EditMode.HIGHLIGHTER))
+        assertTrue(!allowsOpacity(EditMode.PEN))
+        assertTrue(!allowsOpacity(EditMode.MASK))
+    }
+
+    @Test
+    fun `each tool carries its own handling, following the display by default`() {
+        val pen = PenStore.DEFAULTS.getValue(EditMode.PEN)
+        assertEquals(LEAD_AUTO, pen.leadMs)
+        assertEquals(0, pen.stabilizer)
+        assertEquals(0, pen.linePattern)
+        val pencil = PenStore.DEFAULTS.getValue(EditMode.PENCIL).copy(leadMs = 3, stabilizer = 40)
+        // Changing one tool's hand leaves the others alone.
+        assertEquals(LEAD_AUTO, PenStore.DEFAULTS.getValue(EditMode.PEN).leadMs)
+        assertEquals(3, pencil.leadMs)
+        assertTrue(MAX_LEAD_MS == 12)
+    }
 }
