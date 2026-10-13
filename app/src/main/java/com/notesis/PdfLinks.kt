@@ -8,6 +8,9 @@ import com.tom_roush.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink
 import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.destination.PDDestination
 import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.destination.PDNamedDestination
 import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.destination.PDPageDestination
+import com.tom_roush.pdfbox.io.MemoryUsageSetting
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 import kotlin.math.max
 import kotlin.math.min
@@ -35,7 +38,9 @@ data class PdfPageLink(
  */
 internal fun loadPdfPageLinks(file: File): Map<Int, List<PdfPageLink>> =
     runCatching {
-        PDDocument.load(file).use { document ->
+        // Spill to a temp file rather than holding a large PDF's whole object
+        // graph in the heap; this runs beside drawing, which needs the memory.
+        PDDocument.load(file, MemoryUsageSetting.setupTempFileOnly()).use { document ->
             buildMap {
                 for (pageIndex in 0 until document.numberOfPages) {
                     val page = document.getPage(pageIndex)
@@ -116,3 +121,63 @@ internal fun pdfRectangleToPage(
         targetPageIndex = targetPageIndex,
     )
 }
+
+/**
+ * The links [loadPdfPageLinks] found in [pdf], read back from [cache], or null
+ * when there is no cache or it was written for a different file - a PDF that
+ * has since been replaced, or grown, has links of its own to find.
+ */
+internal fun readPdfLinksCache(cache: File, pdf: File): Map<Int, List<PdfPageLink>>? = runCatching {
+    if (!cache.isFile) return null
+    val json = JSONObject(cache.readText())
+    if (json.optInt("version") != LINKS_CACHE_VERSION ||
+        json.optLong("size") != pdf.length() || json.optLong("modified") != pdf.lastModified()
+    ) return null
+    val pages = json.getJSONObject("pages")
+    buildMap {
+        for (key in pages.keys()) {
+            val array = pages.getJSONArray(key)
+            put(key.toInt(), (0 until array.length()).map { index ->
+                val item = array.getJSONObject(index)
+                PdfPageLink(
+                    left = item.getDouble("l").toFloat(),
+                    top = item.getDouble("t").toFloat(),
+                    right = item.getDouble("r").toFloat(),
+                    bottom = item.getDouble("b").toFloat(),
+                    targetPageIndex = item.getInt("p"),
+                    webUrl = if (item.has("u")) item.getString("u") else null,
+                )
+            })
+        }
+    }
+}.getOrNull()
+
+/** Keeps [links] beside [pdf] so the next opening does not have to parse it again. */
+internal fun writePdfLinksCache(cache: File, pdf: File, links: Map<Int, List<PdfPageLink>>) {
+    runCatching {
+        val pages = JSONObject()
+        for ((page, list) in links) {
+            pages.put(page.toString(), JSONArray(list.map { link ->
+                JSONObject()
+                    .put("l", link.left.toDouble())
+                    .put("t", link.top.toDouble())
+                    .put("r", link.right.toDouble())
+                    .put("b", link.bottom.toDouble())
+                    .put("p", link.targetPageIndex)
+                    .apply { link.webUrl?.let { put("u", it) } }
+            }))
+        }
+        val json = JSONObject()
+            .put("version", LINKS_CACHE_VERSION)
+            .put("size", pdf.length())
+            .put("modified", pdf.lastModified())
+            .put("pages", pages)
+        // Beside it and renamed over it, so a note opened twice at once never
+        // reads a half-written cache.
+        val temp = File(cache.parentFile, "${cache.name}.${Thread.currentThread().id}.tmp")
+        temp.writeText(json.toString())
+        if (!temp.renameTo(cache)) temp.delete()
+    }
+}
+
+private const val LINKS_CACHE_VERSION = 1

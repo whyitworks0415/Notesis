@@ -835,16 +835,20 @@ class NoteStore(context: Context) {
             )
         }
         val document = Document(pages.toMutableList())
-        // Extract the text now, while the PDF is already open. Doing it at search
-        // time would mean re-opening every PDF the user owns on every keystroke.
-        for (page in document.pages) {
-            if (page.pdfPageIndex < 0) continue
-            runCatching {
-                File(root, "$id/pages/${page.id}.txt")
-                    .writeText(source.textOf(page.pdfPageIndex))
+        // Extract the text now, while the PDF is already open - doing it at
+        // search time would mean re-opening every PDF on every keystroke - but
+        // behind the import rather than in front of it: a long PDF read page
+        // by page held the new note closed until its last page was read.
+        val textPages = document.pages.filter { it.pdfPageIndex >= 0 }.map { it.id to it.pdfPageIndex }
+        textWorker.execute {
+            try {
+                for ((pageId, pdfIndex) in textPages) {
+                    runCatching { File(root, "$id/pages/$pageId.txt").writeText(source.textOf(pdfIndex)) }
+                }
+            } finally {
+                source.close()
             }
         }
-        source.close()
         writeMeta(id, title, document)
         // Drawn now, so the card in the list is not blank until the first save.
         writeAutoThumbnail(id, document)
@@ -1977,7 +1981,13 @@ class NoteStore(context: Context) {
 
     private fun readStrokes(file: File, epsilon: Float = STROKE_EPSILON): List<Stroke> {
         if (!file.isFile) return emptyList()
-        val strokes = mutableListOf<Stroke>()
+        // Reading the file is quick; rebuilding each stroke's geometry from its
+        // inputs is nearly all of the cost. So read every record first, then
+        // rebuild them across the cores at once instead of one after another.
+        val records = mutableListOf<StoredStroke>()
+        // One Brush per tool, colour and size: a page of the same pen
+        // otherwise made a native brush for every stroke.
+        val brushes = HashMap<Triple<Tool, Int, Float>, Brush>()
         runCatching {
             DataInputStream(file.inputStream().buffered()).use { input ->
                 if (input.readInt() != MAGIC) return emptyList()
@@ -1998,25 +2008,15 @@ class NoteStore(context: Context) {
                     // app used a coarser mesh gets the current fidelity for free.
                     input.readFloat()
                     val bytes = ByteArray(input.readInt()).also { input.readFully(it) }
-                    // Only raw inputs are stored; the mesh is rebuilt here. That
-                    // is what keeps saved notes readable across ink versions.
-                    val inputs = StrokeInputBatchSerialization.decode(ByteArrayInputStream(bytes))
-                    val stroke = Stroke(
-                        Brush.createWithColorIntArgb(
-                            tool.brushFamily(),
-                            color,
-                            size,
-                            inkEpsilon(tool.brushFamily(), size, epsilon),
-                        ),
-                        inputs,
-                    )
-                    val loaded = if (tool == Tool.PEN) withoutStationaryStart(stroke) else stroke
-                    StrokeTags.set(loaded, StrokeTags.tagOf(rawTool))
-                    strokes += loaded
+                    val brush = brushes.getOrPut(Triple(tool, color, size)) {
+                        val family = tool.brushFamily()
+                        Brush.createWithColorIntArgb(family, color, size, inkEpsilon(family, size, epsilon))
+                    }
+                    records += StoredStroke(tool, rawTool, brush, bytes)
                 }
             }
         }
-        return strokes
+        return StrokeBuilder.buildAll(records)
     }
 
     companion object {
@@ -2067,3 +2067,67 @@ private class FileOutputStreamAt(
  */
 internal fun canAppendStrokes(onDisk: Int, total: Int, fileExists: Boolean): Boolean =
     fileExists && onDisk > 0 && total > onDisk
+
+/** One stroke as it sits in a page file, before its geometry is rebuilt. */
+internal class StoredStroke(val tool: Tool, val rawTool: Int, val brush: Brush, val inputs: ByteArray)
+
+/**
+ * Rebuilds strokes from their saved inputs on every spare core.
+ *
+ * Only raw inputs are stored and the mesh is rebuilt on load - that is what
+ * keeps saved notes readable across ink versions - but it made opening a
+ * dense page wait on one core while the others sat idle. Strokes are
+ * independent, so they are built in contiguous slices in parallel and put
+ * back in their saved order, which is also their drawing order.
+ */
+internal object StrokeBuilder {
+    private val threads = (Runtime.getRuntime().availableProcessors() - 1).coerceIn(1, 6)
+    private val pool = java.util.concurrent.Executors.newFixedThreadPool(threads) { runnable ->
+        Thread(runnable, "notesis-ink-build").apply { isDaemon = true }
+    }
+
+    /** Below this many, handing work to other threads costs more than it saves. */
+    private const val PARALLEL_FROM = 48
+
+    fun buildAll(records: List<StoredStroke>): List<Stroke> {
+        if (records.size < PARALLEL_FROM || threads == 1) return records.mapNotNull(::build)
+        val slices = (threads * 2).coerceAtMost(records.size)
+        val per = (records.size + slices - 1) / slices
+        val futures = records.chunked(per).map { slice ->
+            pool.submit(java.util.concurrent.Callable { slice.mapNotNull(::build) })
+        }
+        val built = ArrayList<Stroke>(records.size)
+        for (future in futures) {
+            // A cancelled load (the page scrolled away) gives up waiting; what
+            // was built so far is returned like a file that ends early.
+            val part = try {
+                future.get()
+            } catch (_: InterruptedException) {
+                // Keep the flag for the caller, which checks it to drop the load.
+                Thread.currentThread().interrupt()
+                futures.forEach { it.cancel(false) }
+                break
+            } catch (_: Exception) {
+                break
+            }
+            built += part
+        }
+        return built
+    }
+
+    private fun build(record: StoredStroke): Stroke? = runCatching {
+        val inputs = StrokeInputBatchSerialization.decode(ByteArrayInputStream(record.inputs))
+        val stroke = Stroke(record.brush, inputs)
+        val loaded = if (record.tool == Tool.PEN) withoutStationaryStart(stroke) else stroke
+        StrokeTags.set(loaded, StrokeTags.tagOf(record.rawTool))
+        loaded
+    }.getOrNull()
+}
+
+/** Extracts imported PDFs' text for search, one at a time, out of the way. */
+private val textWorker = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+    Thread(runnable, "notesis-pdf-text").apply {
+        isDaemon = true
+        priority = Thread.MIN_PRIORITY
+    }
+}

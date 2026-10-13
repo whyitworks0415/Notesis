@@ -48,9 +48,16 @@ sealed interface PdfLink {
 class PdfSource private constructor(
     private val descriptor: ParcelFileDescriptor,
     private val renderer: PdfRenderer,
-    private val pageLinks: Map<Int, List<PdfPageLink>>,
     cacheBytes: Int,
 ) : AutoCloseable {
+
+    /**
+     * The PDF's own link annotations, by page. Empty until they are known:
+     * read from the note's small link cache when there is one, otherwise found
+     * by a full PDFBox parse on a background thread after the note is already
+     * on screen - that parse used to hold the whole note closed until it ended.
+     */
+    @Volatile private var pageLinks: Map<Int, List<PdfPageLink>> = emptyMap()
 
     val pageCount: Int = renderer.pageCount
 
@@ -148,6 +155,20 @@ class PdfSource private constructor(
     }
 
     /** Page size in world units, or null if the page is out of range. */
+    private fun loadLinks(file: File) {
+        val cache = File(file.parentFile, LINKS_CACHE)
+        readPdfLinksCache(cache, file)?.let {
+            pageLinks = it
+            return
+        }
+        linkWorker.execute {
+            if (closed) return@execute
+            val found = loadPdfPageLinks(file)
+            writePdfLinksCache(cache, file, found)
+            if (!closed) pageLinks = found
+        }
+    }
+
     fun pageSize(index: Int): Pair<Float, Float>? = synchronized(renderLock) {
         if (closed || index !in 0 until pageCount) return null
         runCatching {
@@ -614,14 +635,31 @@ class PdfSource private constructor(
             return bytes.coerceIn(MIN_CACHE_BYTES.toLong(), MAX_CACHE_BYTES.toLong()).toInt()
         }
 
-        fun open(file: File, cacheBytes: Int = MIN_CACHE_BYTES): PdfSource? {
+        /**
+         * Opens [file] for drawing. With [links], the PDF's link annotations
+         * are made available too - only the note being read needs them, so
+         * thumbnails, exports and indexing never pay for finding them.
+         */
+        fun open(file: File, cacheBytes: Int = MIN_CACHE_BYTES, links: Boolean = false): PdfSource? {
             if (!file.isFile) return null
-            return runCatching {
-                val links = loadPdfPageLinks(file)
+            val source = runCatching {
                 val descriptor =
                     ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
-                PdfSource(descriptor, PdfRenderer(descriptor), links, cacheBytes)
-            }.getOrNull()
+                PdfSource(descriptor, PdfRenderer(descriptor), cacheBytes)
+            }.getOrNull() ?: return null
+            if (links) source.loadLinks(file)
+            return source
         }
+
+        private val linkWorker = Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "notesis-pdf-links").apply {
+                isDaemon = true
+                // Behind rendering and ink loading: a link is only needed when tapped.
+                priority = Thread.MIN_PRIORITY
+            }
+        }
+
+        /** Beside the note's PDF; see [readPdfLinksCache]. */
+        private const val LINKS_CACHE = "pdf-links.json"
     }
 }

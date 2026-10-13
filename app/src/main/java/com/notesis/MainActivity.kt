@@ -177,6 +177,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -3658,10 +3659,12 @@ private fun NoteScreen(
     // On the main thread that is a visible freeze, and it grows with the note.
     LaunchedEffect(note.id) {
         opened = withContext(Dispatchers.IO) {
-            store.load(note.id) to PdfSource.open(
-                store.pdfFile(note.id),
-                PdfSource.cacheBytesFor(context),
-            )
+            // The PDF and the page list do not depend on each other; open them
+            // side by side rather than one after the other.
+            val pdf = async {
+                PdfSource.open(store.pdfFile(note.id), PdfSource.cacheBytesFor(context), links = true)
+            }
+            store.load(note.id) to pdf.await()
         }
     }
 
@@ -5701,7 +5704,7 @@ private fun ReferencePanel(
         try {
             opened = withContext(Dispatchers.IO) {
                 val document = sharedDocument ?: store.load(noteId)
-                pendingPdf = PdfSource.open(store.pdfFile(noteId), PdfSource.cacheBytesFor(context))
+                pendingPdf = PdfSource.open(store.pdfFile(noteId), PdfSource.cacheBytesFor(context), links = true)
                 document to pendingPdf
             }
             pendingPdf = null
