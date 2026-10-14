@@ -16,6 +16,7 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.Executors
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import kotlin.math.ceil
 import kotlin.math.floor
 
 /** One rendered piece of a PDF page, with the page-local region it covers. */
@@ -223,7 +224,7 @@ class PdfSource private constructor(
         request: Boolean = true,
     ): List<PdfTile> {
         if (closed || index !in 0 until pageCount) return emptyList()
-        val density = densityFor(pixelsPerUnit)
+        val density = densityFor(pixelsPerUnit, visible.width(), visible.height())
         val tileUnits = TILE_PX / density
         val firstX = floor(visible.left / tileUnits).toInt().coerceAtLeast(0)
         val lastX = floor((visible.right - 1e-3f) / tileUnits).toInt()
@@ -332,11 +333,36 @@ class PdfSource private constructor(
         }
     }
 
-    /** Powers of two, so panning at one zoom keeps hitting the same tiles. */
-    private fun densityFor(pixelsPerUnit: Float): Float {
+    /**
+     * Powers of two, so panning at one zoom keeps hitting the same tiles - and
+     * never so dense that the tiles on screen outgrow the tile cache.
+     *
+     * Just past each power of two a tile covers barely more than half a
+     * screen-tile, so a screenful needed about four times as many: some 30
+     * tiles of 4MB on a 2560px tablet, more than the cache holds. Rendering
+     * them evicted the ones already drawn, every finished render asked for the
+     * evicted ones again, and the text went sharp and blurry by turns for as
+     * long as the page sat still. One density lower is all but as sharp there
+     * (the step just crossed was a few percent), and the set fits.
+     */
+    private fun densityFor(pixelsPerUnit: Float, visibleWidth: Float, visibleHeight: Float): Float {
         var density = 1f
         while (density < pixelsPerUnit && density < MAX_TILE_DENSITY) density *= 2f
+        val budget = tileCache.maxSize().toLong() * TILE_BUDGET_PERCENT / 100
+        while (density > 1f && tileBytesAtMost(visibleWidth, visibleHeight, density) > budget) density /= 2f
         return density
+    }
+
+    /**
+     * The most a visible area this size can need at [density], wherever it
+     * sits against the tile grid - so the choice does not flip back and forth
+     * as the page is panned a little.
+     */
+    private fun tileBytesAtMost(visibleWidth: Float, visibleHeight: Float, density: Float): Long {
+        val units = TILE_PX / density
+        val cols = ceil(visibleWidth.coerceAtLeast(0f) / units).toLong() + 1
+        val rows = ceil(visibleHeight.coerceAtLeast(0f) / units).toLong() + 1
+        return cols * rows * (TILE_PX * TILE_PX * 4).toLong()
     }
 
     /** Every text run on a page, joined - used to build the search index. */
@@ -608,6 +634,8 @@ class PdfSource private constructor(
         private const val MAX_CROP_PX = 4096
         /** Tile edge in pixels. Big enough that a screen needs only a handful. */
         private const val TILE_PX = 1024f
+        /** Of the tile cache, what one page's visible tiles may take; the rest is for a neighbour. */
+        private const val TILE_BUDGET_PERCENT = 85
         // The canvas can reach 16 screen pixels per page unit. Matching that
         // ceiling keeps glyph edges one source pixel per display pixel even at
         // maximum zoom instead of magnifying the last tile bucket twofold.
