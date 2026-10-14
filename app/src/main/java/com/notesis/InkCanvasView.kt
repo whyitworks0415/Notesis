@@ -5533,8 +5533,6 @@ class InkCanvasView @JvmOverloads constructor(
     private var lastImageTap = 0L
     private var pendingTextEdit = false
 
-    fun selectedTable(): PageImage? = selectedImage?.takeIf { it.box == PageImage.BOX_TABLE }
-
     /**
      * Puts picture [imageId] where the part [area] (fractions of the selected
      * picture's box) of the selected picture was: a crop keeps what it kept in place.
@@ -5690,26 +5688,6 @@ class InkCanvasView @JvmOverloads constructor(
         foldSticky(page, hit)
         clearImageSelection()
         return true
-    }
-
-    /** Puts a table's freshly drawn grid where the selected one was, or new in the middle of the page. */
-    fun putTable(imageId: String, rows: Int, cols: Int, width: Float, height: Float, replacing: PageImage? = null) {
-        val page = if (replacing != null) document.pages.firstOrNull { replacing in it.images } ?: return
-            else document.pages.getOrNull(currentPage.coerceIn(document.pages.indices)) ?: return
-        val table = replacing?.copy(id = imageId, width = width, height = height)?.also { it.rows = rows; it.cols = cols }
-            ?: PageImage(imageId, (page.width - width) / 2f, (page.height - height) / 2f, width, height,
-                box = PageImage.BOX_TABLE, rows = rows, cols = cols)
-        if (replacing != null) {
-            val at = page.images.indexOf(replacing)
-            page.images[at] = table
-            undoStack += Edit.ImageReplaced(page, replacing, table, at)
-        } else {
-            page.images += table
-            undoStack += Edit.ImageAdded(page, table)
-        }
-        redoStack.clear()
-        select(table, page)
-        afterEdit(page)
     }
 
     private fun dragImage(event: MotionEvent, pointerIndex: Int) {

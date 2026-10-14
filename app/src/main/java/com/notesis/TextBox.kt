@@ -264,18 +264,3 @@ internal fun TextBoxDialog(initial: TextBoxContent?, onDismiss: () -> Unit, onSa
         dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
     )
 }
-
-/** A table's grid drawn [width] x [height] pixels, with the first row shaded as a header when [header] is on. */
-internal fun renderTable(rows: Int, cols: Int, width: Int, height: Int, line: Int, header: Int): Bitmap {
-    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-    val canvas = Canvas(bitmap)
-    val rowHeight = height / rows.toFloat()
-    val colWidth = width / cols.toFloat()
-    if (header != 0) canvas.drawRect(0f, 0f, width.toFloat(), rowHeight, Paint().apply { color = header })
-    val pen = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = line; strokeWidth = 3f; style = Paint.Style.STROKE }
-    for (r in 0..rows) canvas.drawLine(0f, (r * rowHeight).coerceIn(1.5f, height - 1.5f), width.toFloat(),
-        (r * rowHeight).coerceIn(1.5f, height - 1.5f), pen)
-    for (c in 0..cols) canvas.drawLine((c * colWidth).coerceIn(1.5f, width - 1.5f), 0f,
-        (c * colWidth).coerceIn(1.5f, width - 1.5f), height.toFloat(), pen)
-    return bitmap
-}

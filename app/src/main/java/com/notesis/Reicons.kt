@@ -308,6 +308,22 @@ internal object Reicons {
             addPath(pathData = PathParser().parsePathString("M22.5 13.75C22.9142 13.75 23.25 14.0858 23.25 14.5V20.5C23.25 20.9142 22.9142 21.25 22.5 21.25H16.5C16.0858 21.25 15.75 20.9142 15.75 20.5C15.75 20.0858 16.0858 19.75 16.5 19.75H21.75V14.5C21.75 14.0858 22.0858 13.75 22.5 13.75Z").toNodes(), fill = SolidColor(Color.Black), stroke = null, strokeLineWidth = 1.0f, strokeLineCap = StrokeCap.Butt, strokeLineJoin = StrokeJoin.Miter, pathFillType = PathFillType.NonZero, fillAlpha = 1.0f, strokeAlpha = 1.0f)
         }.build()
     }
+    /** A clock face, a timer and an alarm clock, for the clock. */
+    val Clock: ImageVector by lazy {
+        ImageVector.Builder(name = "Reicon.Clock", defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f, autoMirror = false).apply {
+            addPath(pathData = PathParser().parsePathString("M11.99 2C6.47 2 2 6.48 2 12C2 17.52 6.47 22 11.99 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 11.99 2ZM12 20C7.58 20 4 16.42 4 12C4 7.58 7.58 4 12 4C16.42 4 20 7.58 20 12C20 16.42 16.42 20 12 20ZM12.5 7H11V13L16.25 16.15L17 14.92L12.5 12.25V7Z").toNodes(), fill = SolidColor(Color.Black), stroke = null, strokeLineWidth = 1.0f, strokeLineCap = StrokeCap.Butt, strokeLineJoin = StrokeJoin.Miter, pathFillType = PathFillType.NonZero, fillAlpha = 1.0f, strokeAlpha = 1.0f)
+        }.build()
+    }
+    val Timer: ImageVector by lazy {
+        ImageVector.Builder(name = "Reicon.Timer", defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f, autoMirror = false).apply {
+            addPath(pathData = PathParser().parsePathString("M15 1H9V3H15V1ZM11 14H13V8H11V14ZM19.03 7.39L20.45 5.97C20.02 5.46 19.55 4.98 19.04 4.56L17.62 5.98C16.07 4.74 14.12 4 12 4C7.03 4 3 8.03 3 13C3 17.97 7.02 22 12 22C16.98 22 21 17.97 21 13C21 10.88 20.26 8.93 19.03 7.39ZM12 20C8.13 20 5 16.87 5 13C5 9.13 8.13 6 12 6C15.87 6 19 9.13 19 13C19 16.87 15.87 20 12 20Z").toNodes(), fill = SolidColor(Color.Black), stroke = null, strokeLineWidth = 1.0f, strokeLineCap = StrokeCap.Butt, strokeLineJoin = StrokeJoin.Miter, pathFillType = PathFillType.NonZero, fillAlpha = 1.0f, strokeAlpha = 1.0f)
+        }.build()
+    }
+    val Alarm: ImageVector by lazy {
+        ImageVector.Builder(name = "Reicon.Alarm", defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f, autoMirror = false).apply {
+            addPath(pathData = PathParser().parsePathString("M22 5.72L17.4 1.86L16.11 3.39L20.71 7.25L22 5.72ZM7.88 3.39L6.6 1.86L2 5.71L3.29 7.24L7.88 3.39ZM12.5 8H11V14L15.75 16.85L16.5 15.62L12.5 13.25V8ZM12 4C7.03 4 3 8.03 3 13C3 17.97 7.02 22 12 22C16.97 22 21 17.97 21 13C21 8.03 16.97 4 12 4ZM12 20C8.13 20 5 16.87 5 13C5 9.13 8.13 6 12 6C15.87 6 19 9.13 19 13C19 16.87 15.87 20 12 20Z").toNodes(), fill = SolidColor(Color.Black), stroke = null, strokeLineWidth = 1.0f, strokeLineCap = StrokeCap.Butt, strokeLineJoin = StrokeJoin.Miter, pathFillType = PathFillType.NonZero, fillAlpha = 1.0f, strokeAlpha = 1.0f)
+        }.build()
+    }
     /** An eyedropper, for picking a colour off the page. */
     val Colorize: ImageVector by lazy {
         ImageVector.Builder(name = "Reicon.Colorize", defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f, autoMirror = false).apply {

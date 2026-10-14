@@ -176,6 +176,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -215,6 +216,7 @@ class MainActivity : ComponentActivity() {
         // opt in properly and let the insets be dispatched instead of guessed.
         enableEdgeToEdge()
         hideSystemBars()
+        StudyClock.init(applicationContext)
         val store = NoteStore(this)
         noteStore = store
         val prefs = PenStore(this)
@@ -285,6 +287,22 @@ class MainActivity : ComponentActivity() {
                 }
                 val viewedDocument = incomingViewerRequest ?: pickedDocument
                 val note = openNote ?: incomingImportedNote
+                // One ticker for the whole app: timer, alarms and study time
+                // move on whichever screen is showing. Stopped while the app
+                // is out of sight; the first tick back catches up on whatever
+                // ended meanwhile, since all of it is kept as wall-clock moments.
+                LaunchedEffect(Unit) {
+                    this@MainActivity.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                        while (true) {
+                            StudyClock.tick()
+                            delay(CLOCK_TICK_MS)
+                        }
+                    }
+                }
+                // Study time is counted while a note is what is open.
+                val studying = viewedDocument == null && !settingsOpen && note != null
+                SideEffect { StudyClock.noteOpen = studying }
+                Box(Modifier.fillMaxSize()) {
                 if (viewedDocument != null) {
                     ReadOnlyDocumentScreen(
                         request = viewedDocument,
@@ -351,9 +369,40 @@ class MainActivity : ComponentActivity() {
                     )
                     }
                 }
+                // The library and the ink note float the clock on their own
+                // glass; anywhere else, a finished timer or a ringing alarm
+                // still has to be seen.
+                val clockHosted = viewedDocument == null && !settingsOpen &&
+                    (note == null || note.kind != NoteKind.MARKDOWN)
+                if (!clockHosted) ClockOverlay()
+                }
             }
         }
         }
+    }
+
+    // Every touch and every hovering pen counts as being at work, for the
+    // study clock. Seen here, before any view takes it, and cheap: one write.
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        StudyClock.touched()
+        return super.dispatchTouchEvent(ev)
+    }
+
+    override fun dispatchGenericMotionEvent(ev: android.view.MotionEvent): Boolean {
+        StudyClock.touched()
+        return super.dispatchGenericMotionEvent(ev)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        StudyClock.foreground = true
+        StudyClock.touched()
+    }
+
+    override fun onPause() {
+        StudyClock.foreground = false
+        StudyClock.save()
+        super.onPause()
     }
 
     override fun onNewIntent(intent: android.content.Intent) {
@@ -778,6 +827,8 @@ private fun NoteListScreen(
         LocalBackdrop provides backdrop,
         LocalLiquidGlassBackdrop provides if (currentSkin.isRefractive) liquidBackdrop else null,
     ) {
+    // The clock floats over the library too, on the same glass as its bars.
+    Box(Modifier.fillMaxSize()) {
     Scaffold(
         // Ctrl+N a note, Ctrl+Shift+N a folder, Ctrl+F the search box.
         modifier = Modifier.onPreviewKeyEvent { event ->
@@ -1156,6 +1207,8 @@ private fun NoteListScreen(
         }
         }
     }
+    ClockOverlay()
+    }
     }
 
     busy?.let { label ->
@@ -1493,52 +1546,6 @@ internal fun InputSettingsDialog(gestures: CanvasGestures, onGestures: (CanvasGe
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("닫기") } },
-    )
-}
-
-/** How a new sticky note starts: yellow, rounded, roomy, and square however little is written. */
-internal val STICKY_STYLE = TextBoxContent(
-    text = "", size = 28f, background = 0xFFFFF59D.toInt(), corner = 10f, padding = 18f, minSize = 260f,
-)
-internal const val TABLE_CELL_WIDTH = 220f
-internal const val TABLE_CELL_HEIGHT = 110f
-
-/** Rows, columns, line colour and an optional header row for a table. */
-@Composable
-internal fun TableDialog(rows: Int, cols: Int, onDismiss: () -> Unit, onSave: (Int, Int, Int, Int) -> Unit) {
-    var r by remember { mutableIntStateOf(rows) }
-    var c by remember { mutableIntStateOf(cols) }
-    var line by remember { mutableIntStateOf(0xFF616161.toInt()) }
-    var header by remember { mutableStateOf(true) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("표") },
-        text = {
-            Column {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("행 $r", Modifier.width(60.dp))
-                    TextButton(onClick = { if (r > 1) r-- }) { Text("−") }
-                    TextButton(onClick = { if (r < 30) r++ }) { Text("+") }
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("열 $c", Modifier.width(60.dp))
-                    TextButton(onClick = { if (c > 1) c-- }) { Text("−") }
-                    TextButton(onClick = { if (c < 12) c++ }) { Text("+") }
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    SkinSwitch(checked = header, onCheckedChange = { header = it })
-                    Spacer(Modifier.width(8.dp))
-                    Text("첫 행 강조")
-                }
-                Text("선 색", style = MaterialTheme.typography.bodySmall)
-                ColorInput(line) { line = it }
-                Text("표 위에 쓰거나 붙인 내용은 표를 옮길 때 함께 움직입니다.", style = MaterialTheme.typography.bodySmall)
-            }
-        },
-        confirmButton = { TextButton(onClick = {
-            onSave(r, c, line, if (header) (line and 0x00FFFFFF) or 0x22000000 else 0)
-        }) { Text("저장") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
     )
 }
 
@@ -3152,7 +3159,7 @@ private fun NameDialog(
  * safeDrawing minus the keyboard. safeDrawing counts the IME, so every bar and
  * the canvas itself jumped whenever a text field took focus.
  */
-private val ChromeInsets: WindowInsets
+internal val ChromeInsets: WindowInsets
     @Composable get() = WindowInsets.systemBars.union(WindowInsets.displayCutout)
 
 /**
@@ -3317,9 +3324,6 @@ private fun NoteScreen(
     }
     var imageSelected by remember { mutableStateOf(false) }
     var showTextBox by remember { mutableStateOf(false) }
-    var creatingSticky by remember { mutableStateOf(false) }
-    /** A table being made (an empty PageImage) or changed; null when neither. */
-    var editingTable by remember { mutableStateOf<PageImage?>(null) }
     /** 1 cropping the selected picture, 2 styling it, 0 neither. */
     var editingPicture by remember { mutableIntStateOf(0) }
     var replacingText by remember { mutableStateOf<PageImage?>(null) }
@@ -3784,13 +3788,7 @@ private fun NoteScreen(
                 canvas?.let { it.addPage(it.currentPageIndex()); it.scrollToPage(it.currentPageIndex() + 1) }
                 edits++
             },
-            onStickyNote = {
-                creatingSticky = true
-                replacingText = null
-                textPosition = null
-                showTextBox = true
-            },
-            onTable = { editingTable = PageImage() },
+            onClock = { StudyClock.openPanel() },
             onEditTools = { editingTools = true },
             onZoomBox = { if (zoomBox && referenceOpen) { referenceOpen = false; zoomBox = false } else openZoomBox(canvas?.currentPageIndex() ?: 0) },
             onNoteMenu = { noteMenu = true },
@@ -4240,6 +4238,8 @@ private fun NoteScreen(
             }
         }
 
+        // Above the page and the bar, on the same glass as the bar.
+        ClockOverlay()
 
         if (showSkinSettings) {
             Dialog(onDismissRequest = { showSkinSettings = false },
@@ -4740,10 +4740,8 @@ private fun NoteScreen(
             },
         ) }
 
-        if (showTextBox) TextBoxDialog(replacingText?.textContent ?: if (creatingSticky) STICKY_STYLE else null,
-            onDismiss = { showTextBox = false; creatingSticky = false }, onSave = { content ->
-                val box = if (creatingSticky) PageImage.BOX_STICKY else PageImage.BOX_NONE
-                creatingSticky = false
+        if (showTextBox) TextBoxDialog(replacingText?.textContent,
+            onDismiss = { showTextBox = false }, onSave = { content ->
                 val replacing = replacingText
                 scope.launch {
                     val result = withContext(Dispatchers.IO) { runCatching {
@@ -4754,7 +4752,7 @@ private fun NoteScreen(
                         } finally { bitmap.recycle() }
                     } }
                     result.onSuccess { (id, width, height) ->
-                        canvas?.putTextBox(id, width, height, content, replacing, textPosition, box)
+                        canvas?.putTextBox(id, width, height, content, replacing, textPosition)
                         mode = EditMode.TEXT
                         edits++
                         showTextBox = false
@@ -4770,7 +4768,6 @@ private fun NoteScreen(
                 isText = canvas?.selectedTextBox() != null,
                 box = selectedBox,
                 onFold = { canvas?.toggleSelectedFolded(); edits++ },
-                onTable = { editingTable = canvas?.selectedTable() },
                 onEdit = { replacingText = canvas?.selectedTextBox(); showTextBox = true },
                 onDelete = {
                     canvas?.deleteSelectedImage()
@@ -4928,28 +4925,6 @@ private fun NoteScreen(
                     }
                 }
             }
-        }
-
-        editingTable?.let { table ->
-            TableDialog(table.rows.takeIf { it > 0 } ?: 3, table.cols.takeIf { it > 0 } ?: 3,
-                onDismiss = { editingTable = null },
-                onSave = { rows, cols, line, header ->
-                    val existing = table.takeIf { it.rows > 0 }
-                    editingTable = null
-                    scope.launch {
-                        // Wide enough for handwriting in each cell; a changed table keeps its size.
-                        val width = existing?.width ?: (cols * TABLE_CELL_WIDTH)
-                        val height = existing?.height ?: (rows * TABLE_CELL_HEIGHT)
-                        val added = withContext(Dispatchers.IO) {
-                            store.addImage(note.id, renderTable(rows, cols, (width * 2).toInt(), (height * 2).toInt(), line, header))
-                        }
-                        if (added != null) {
-                            canvas?.putTable(added.first, rows, cols, width, height, existing)
-                            mode = EditMode.IMAGE
-                            edits++
-                        }
-                    }
-                })
         }
 
         selectionColorMode?.let { colorMode ->
@@ -5483,7 +5458,6 @@ private fun ImageActions(
     isText: Boolean,
     box: Int = PageImage.BOX_NONE,
     onFold: () -> Unit = {},
-    onTable: () -> Unit = {},
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onDone: () -> Unit,
@@ -5508,9 +5482,10 @@ private fun ImageActions(
                 else -> if (isText) "텍스트" else "사진"
             }, style = MaterialTheme.typography.bodyMedium)
             if (box == PageImage.BOX_STICKY) TextButton(onClick = onFold) { Text("접기·펼치기") }
-            if (box == PageImage.BOX_TABLE) TextButton(onClick = onTable) { Text("표 편집") }
-            else if (isText) TextButton(onClick = onEdit) { Text("편집") }
-            else {
+            // Tables can no longer be made or rebuilt; one already on a page is
+            // a picture of a grid, kept as it is.
+            if (isText) TextButton(onClick = onEdit) { Text("편집") }
+            else if (box != PageImage.BOX_TABLE) {
                 TextButton(onClick = onCrop) { Text("자르기") }
                 TextButton(onClick = onStyle) { Text("스타일") }
             }
@@ -7007,8 +6982,7 @@ private fun Toolbar(
     onRuler: (RulerKind?) -> Unit = {},
     onAddPage: () -> Unit = {},
     onInputSettings: () -> Unit = {},
-    onStickyNote: () -> Unit = {},
-    onTable: () -> Unit = {},
+    onClock: () -> Unit = {},
     onEditTools: () -> Unit = {},
     onQuickColor: (Int) -> Unit = {},
     onZoomBox: () -> Unit = {},
@@ -7120,8 +7094,7 @@ private fun Toolbar(
                 )
             }
             RulerButton(ruler, onRuler)
-            TextButton(onClick = onStickyNote) { Text("메모") }
-            TextButton(onClick = onTable) { Text("표") }
+            IconButton(onClick = onClock) { Icon(Reicons.Clock, contentDescription = "시계") }
             IconButton(onClick = onInputSettings) { Icon(Reicons.TouchApp, contentDescription = "손가락·제스처") }
             IconButton(onClick = onAddPage) {
                 Icon(Reicons.Add, contentDescription = "페이지 추가")
@@ -7162,8 +7135,7 @@ private fun Toolbar(
                     onEditPen()
                 }))
                 add(SpotiToolbarAction("사진", Reicons.AddPhotoAlternate, onClick = onPickImage))
-                add(SpotiToolbarAction("스티키 노트", Reicons.Description, onClick = onStickyNote))
-                add(SpotiToolbarAction("표", Reicons.AutoAwesomeMosaic, onClick = onTable))
+                add(SpotiToolbarAction("시계", Reicons.Clock, onClick = onClock))
                 add(SpotiToolbarAction("손가락·제스처", Reicons.TouchApp, onClick = onInputSettings))
                 add(SpotiToolbarAction("도구 편집", Reicons.Tune, onClick = onEditTools))
                 add(SpotiToolbarAction("확대 필기창", Reicons.ZoomOutMap, onClick = onZoomBox))
