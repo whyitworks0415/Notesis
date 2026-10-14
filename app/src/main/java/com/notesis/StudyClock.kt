@@ -222,7 +222,7 @@ internal object StudyClock {
 
     // ---- button ------------------------------------------------------------------
 
-    fun setButtonShown(shown: Boolean) {
+    fun updateButtonShown(shown: Boolean) {
         buttonShown = shown
         prefs?.edit()?.putBoolean("buttonShown", shown)?.apply()
     }
@@ -343,18 +343,18 @@ internal object StudyClock {
 
     // ---- study time ------------------------------------------------------------------
 
-    fun setAutoStudy(auto: Boolean) {
+    fun updateAutoStudy(auto: Boolean) {
         if (auto && manualRunning) stopManual()
         autoStudy = auto
         prefs?.edit()?.putBoolean("autoStudy", auto)?.apply()
     }
 
-    fun setDailyReset(reset: Boolean) {
+    fun updateDailyReset(reset: Boolean) {
         dailyReset = reset
         prefs?.edit()?.putBoolean("dailyReset", reset)?.apply()
     }
 
-    fun setIdleMinutes(minutes: Int) {
+    fun updateIdleMinutes(minutes: Int) {
         idleMinutes = minutes.coerceIn(1, 60)
         prefs?.edit()?.putInt("idleMinutes", idleMinutes)?.apply()
     }

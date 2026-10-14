@@ -330,7 +330,7 @@ private fun ClockPanel() {
             "화면에 시계 버튼",
             "꺼도 타이머와 알람은 화면에 표시됩니다",
             clock.buttonShown,
-        ) { clock.setButtonShown(it) }
+        ) { clock.updateButtonShown(it) }
     }
     }
 }
@@ -585,13 +585,13 @@ private fun StudyTab() {
         "자동 측정",
         "노트가 열려 있고 펜이나 손가락 입력이 있는 동안만 셉니다. 끄면 시작·정지로 직접 잽니다",
         clock.autoStudy,
-    ) { clock.setAutoStudy(it) }
+    ) { clock.updateAutoStudy(it) }
     if (clock.autoStudy) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("입력 없이 멈추기까지", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
             listOf(1, 3, 5, 10).forEach { minutes ->
                 Spacer(Modifier.width(6.dp))
-                ClockChip("${minutes}분", clock.idleMinutes == minutes) { clock.setIdleMinutes(minutes) }
+                ClockChip("${minutes}분", clock.idleMinutes == minutes) { clock.updateIdleMinutes(minutes) }
             }
         }
     }
@@ -599,7 +599,7 @@ private fun StudyTab() {
         "하루마다 초기화",
         "자정에 0부터 다시 셉니다. 끄면 직접 초기화할 때까지 계속 쌓입니다",
         clock.dailyReset,
-    ) { clock.setDailyReset(it) }
+    ) { clock.updateDailyReset(it) }
     ClockButton(
         when {
             confirmReset -> "한 번 더 누르면 초기화"
