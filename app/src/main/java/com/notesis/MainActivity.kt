@@ -736,6 +736,48 @@ private fun NoteListScreen(
         }
     }
 
+    // Settings travel on their own, small enough to keep anywhere and to
+    // carry to another tablet without the notes.
+    val saveSettings = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        StudyClock.save()
+        scope.launch {
+            val count = withContext(Dispatchers.IO) {
+                runCatching {
+                    val version = context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: ""
+                    context.contentResolver.openOutputStream(uri)?.use { SettingsBackup.export(context, it, version) }
+                }.getOrNull()
+            }
+            report = if (count != null) "설정 ${count}개를 저장했습니다" else "설정을 저장하지 못했습니다"
+        }
+    }
+    val openSettings = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        // What the clock holds in memory goes down first, so loading the
+        // file over it is not then undone by the clock's next save.
+        StudyClock.save()
+        scope.launch {
+            val count = withContext(Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openInputStream(uri)?.use { SettingsBackup.import(context, it) }
+                }.getOrNull()
+            }
+            if (count == null) {
+                report = "Notesis 설정 파일이 아닙니다"
+                return@launch
+            }
+            StudyClock.reload(context)
+            android.widget.Toast.makeText(context, "설정 ${count}개를 불러왔습니다", android.widget.Toast.LENGTH_SHORT).show()
+            // Pens, skin, gestures and the bars all read their settings as
+            // the screen is built, so it is built again.
+            (context as? android.app.Activity)?.recreate()
+        }
+    }
+
     val indexer = remember { InkIndexer(context) }
     DisposableEffect(Unit) { onDispose { indexer.close() } }
 
@@ -953,6 +995,8 @@ private fun NoteListScreen(
                 BackupButton(
                     onBackupAll = { saveAllArchive.launch("Notesis-백업") },
                     onRestore = { openArchive.launch(arrayOf("*/*")) },
+                    onSaveSettings = { saveSettings.launch("Notesis-설정.json") },
+                    onLoadSettings = { openSettings.launch(arrayOf("*/*")) },
                 )
                 GlassFab(
                     onClick = { pickPdf.launch(arrayOf("application/pdf")) },
@@ -2292,9 +2336,14 @@ private fun GlassFab(
     }
 }
 
-/** Whole-library backup and restore, kept together because they are one job. */
+/** Whole-library backup and restore, and the settings beside them: one place for keeping things safe. */
 @Composable
-private fun BackupButton(onBackupAll: () -> Unit, onRestore: () -> Unit) {
+private fun BackupButton(
+    onBackupAll: () -> Unit,
+    onRestore: () -> Unit,
+    onSaveSettings: () -> Unit,
+    onLoadSettings: () -> Unit,
+) {
     var open by remember { mutableStateOf(false) }
     Box {
         GlassFab(
@@ -2318,6 +2367,23 @@ private fun BackupButton(onBackupAll: () -> Unit, onRestore: () -> Unit) {
                 onClick = {
                     open = false
                     onRestore()
+                },
+            )
+            HorizontalDivider()
+            DropdownMenuItem(
+                text = { Text("설정 저장") },
+                leadingIcon = { Icon(Reicons.Tune, contentDescription = null) },
+                onClick = {
+                    open = false
+                    onSaveSettings()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("설정 불러오기") },
+                leadingIcon = { Icon(Reicons.Restore, contentDescription = null) },
+                onClick = {
+                    open = false
+                    onLoadSettings()
                 },
             )
         }

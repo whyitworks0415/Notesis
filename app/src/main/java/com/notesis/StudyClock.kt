@@ -172,6 +172,12 @@ internal object StudyClock {
         runCatching { load(p) }
     }
 
+    /** Reads the clock's settings again, after a settings file was loaded over them. */
+    fun reload(context: Context) {
+        val p = prefs ?: context.getSharedPreferences("clock", Context.MODE_PRIVATE).also { prefs = it }
+        runCatching { load(p) }
+    }
+
     /** A touch or a hovering pen: the person is at work. Called for every event, so only a write. */
     fun touched() {
         lastInput = SystemClock.elapsedRealtime()
