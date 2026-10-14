@@ -3914,6 +3914,20 @@ class InkCanvasView @JvmOverloads constructor(
         return document.pageAt(scratch[0], scratch[1])
     }
 
+    /**
+     * The paper and the committed ink, for a glass backdrop to record - and
+     * nothing else. Recording the whole view took its wet-ink SurfaceViews
+     * along, and a SurfaceView sits wherever it was drawn last in a frame: the
+     * glass bars draw their recording again, shifted and a little scaled, so
+     * while the pen was down the wet ink showed there instead of under the
+     * pen, and only the committed stroke, drawn by the page, landed where it
+     * was written.
+     */
+    fun drawBackdrop(canvas: Canvas) {
+        if (!canvas.isHardwareAccelerated || !dry.pageNode.hasDisplayList()) return
+        canvas.drawRenderNode(dry.pageNode)
+    }
+
     private fun screenToPage(index: Int): Matrix {
         strokeTransform.set(screenToDocument)
         strokeTransform.postTranslate(-document.leftOf(index), -document.topOf(index))
@@ -6423,6 +6437,27 @@ class InkCanvasView @JvmOverloads constructor(
                 } }.onFailure { inkBitmapPending.remove(key) }
             }
             return cached
+        }
+
+        /**
+         * The page, recorded on its own so the glass above can show it
+         * without drawing this whole view a second time. See [drawBackdrop].
+         */
+        val pageNode = android.graphics.RenderNode("notesis-page")
+
+        override fun draw(canvas: Canvas) {
+            if (!canvas.isHardwareAccelerated) {
+                super.draw(canvas)
+                return
+            }
+            pageNode.setPosition(0, 0, width, height)
+            val recording = pageNode.beginRecording(width, height)
+            try {
+                super.draw(recording)
+            } finally {
+                pageNode.endRecording()
+            }
+            canvas.drawRenderNode(pageNode)
         }
 
         override fun onDraw(canvas: Canvas) {

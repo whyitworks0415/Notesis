@@ -128,6 +128,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.ui.geometry.Offset
@@ -3952,14 +3956,37 @@ private fun NoteScreen(
         // draws that blurred over the sharp copy already on screen - the same
         // light twice, which is the wash that made the middle of every panel
         // paler than the page beside it.
+        // What the glass sees is the ground and the page the canvas has drawn,
+        // never the canvas view itself: that view holds the wet-ink surfaces,
+        // and a surface drawn into a recording moves to wherever the glass
+        // draws that recording - the ink then showed beside the pen until it
+        // lifted. Turned with the note, as the view is below.
+        val pageBackdrop: DrawScope.() -> Unit = {
+            drawRect(Color(0xFFE9E7E2))
+            val view = canvas
+            if (view != null) {
+                val turned = noteRotation % 180 != 0 && size.width > 0f && size.height > 0f
+                val fit = if (turned) minOf(size.width / size.height, size.height / size.width) else 1f
+                withTransform({
+                    rotate(noteRotation.toFloat())
+                    scale(fit, fit)
+                }) {
+                    drawIntoCanvas { view.drawBackdrop(it.nativeCanvas) }
+                }
+            }
+        }
         Box(
             Modifier
                 .fillMaxSize()
-                .recordBackdrop(backdrop)
+                .recordBackdrop(backdrop, pageBackdrop)
                 .onGloballyPositioned { pageLayerOrigin = it.positionOnScreen() }
                 .then(
                     if (skin.isRefractive) {
-                        Modifier.captureLiquidGlassBackdrop(requireNotNull(liquidBackdrop), paused = { drawingPage || movingPage })
+                        Modifier.captureLiquidGlassBackdrop(
+                            requireNotNull(liquidBackdrop),
+                            paused = { drawingPage || movingPage },
+                            source = pageBackdrop,
+                        )
                     } else {
                         Modifier
                     },

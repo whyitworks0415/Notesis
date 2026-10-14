@@ -297,8 +297,13 @@ fun rememberBackdrop(active: Boolean): Backdrop {
     return remember(layer) { Backdrop(layer) }
 }
 
-/** Records everything drawn inside it, for the panes above to look through. */
-fun Modifier.recordBackdrop(backdrop: Backdrop): Modifier {
+/**
+ * Records everything drawn inside it, for the panes above to look through -
+ * or, given a [source], only what that draws, while the content itself is
+ * drawn as usual. A source is how a screen keeps a view that holds surfaces
+ * out of the recording.
+ */
+fun Modifier.recordBackdrop(backdrop: Backdrop, source: (DrawScope.() -> Unit)? = null): Modifier {
     val layer = backdrop.layer ?: return this
     return this
         .onGloballyPositioned { backdrop.origin = it.positionInRoot() }
@@ -307,6 +312,11 @@ fun Modifier.recordBackdrop(backdrop: Backdrop): Modifier {
             // invalidates one draw instead of recomposing the screen.
             if (backdrop.paused) {
                 drawContent()
+                return@drawWithContent
+            }
+            if (source != null) {
+                drawContent()
+                layer.record { source() }
                 return@drawWithContent
             }
             layer.record { this@drawWithContent.drawContent() }
