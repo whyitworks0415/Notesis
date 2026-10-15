@@ -409,6 +409,11 @@ class MainActivity : ComponentActivity() {
         super.onPause()
     }
 
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        MemoryTrim.trim(level)
+    }
+
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -5772,7 +5777,9 @@ private fun ReferencePanel(
         try {
             opened = withContext(Dispatchers.IO) {
                 val document = sharedDocument ?: store.load(noteId)
-                pendingPdf = PdfSource.open(store.pdfFile(noteId), PdfSource.cacheBytesFor(context), links = true)
+                // A second view of a PDF beside the note: half the budget, so the
+                // two together do not hold twice what one may.
+                pendingPdf = PdfSource.open(store.pdfFile(noteId), PdfSource.cacheBytesFor(context, share = 2), links = true)
                 document to pendingPdf
             }
             pendingPdf = null

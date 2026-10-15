@@ -537,7 +537,7 @@ class NoteStore(context: Context) {
     fun templateFile(id: String): File = File(root, "templates/$id.png")
 
     fun addPageTemplate(name: String, input: java.io.InputStream): UserPageTemplate? = runCatching {
-        val bitmap = BitmapFactory.decodeStream(input) ?: error("이미지를 읽을 수 없습니다")
+        val bitmap = decodeSampled(input, MAX_TEMPLATE_PX) ?: error("이미지를 읽을 수 없습니다")
         val item = UserPageTemplate(UUID.randomUUID().toString(),
             name.trim().ifBlank { "내 템플릿" })
         val file = templateFile(item.id)
@@ -1424,7 +1424,7 @@ class NoteStore(context: Context) {
      * the caller needs to place it, or null if it could not be read.
      */
     fun addImage(id: String, input: java.io.InputStream): Pair<String, Float>? {
-        val bitmap = runCatching { BitmapFactory.decodeStream(input) }.getOrNull() ?: return null
+        val bitmap = runCatching { decodeSampled(input, MAX_IMAGE_PX) }.getOrNull() ?: return null
         return addImage(id, bitmap)
     }
 
@@ -1463,7 +1463,9 @@ class NoteStore(context: Context) {
      * way in, because a phone photo is many megabytes and this is a card.
      */
     fun setThumbnail(id: String, input: java.io.InputStream): Boolean = runCatching {
-        val source = BitmapFactory.decodeStream(input) ?: return false
+        // Sampled by the longer side; four times the card width leaves the
+        // shorter side wide enough even for a tall picture.
+        val source = decodeSampled(input, THUMB_WIDTH * 4) ?: return false
         val scale = (THUMB_WIDTH.toFloat() / source.width).coerceAtMost(1f)
         val scaled = if (scale < 1f) {
             Bitmap.createScaledBitmap(
@@ -2028,6 +2030,8 @@ class NoteStore(context: Context) {
         const val AUTO_THUMB = "auto.png"
         const val THUMB_WIDTH = 480
         const val MAX_IMAGE_PX = 2048
+        /** A page template is a whole page of background; this keeps it sharp at 150dpi A4 and then some. */
+        const val MAX_TEMPLATE_PX = 4096
         const val INK_INDEX = ".ink"
         const val TRASHED = "trashed"
         const val FAVORITE = "favorite"
@@ -2130,4 +2134,31 @@ private val textWorker = java.util.concurrent.Executors.newSingleThreadExecutor 
         isDaemon = true
         priority = Thread.MIN_PRIORITY
     }
+}
+
+/**
+ * Decodes a picture no larger than it has to be: at least [targetPx] along
+ * its longer side where it has that many, decoded at a power-of-two step of
+ * its full size. A 48MP photo decoded whole took about 190MB for a moment,
+ * just to be shrunk to [NoteStore.MAX_IMAGE_PX] straight afterwards - enough
+ * to run a tablet out of memory mid-import. Callers still scale to the exact
+ * size they keep.
+ */
+internal fun decodeSampled(input: java.io.InputStream, targetPx: Int): Bitmap? {
+    val bytes = input.readBytes()
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+    val options = BitmapFactory.Options().apply {
+        inSampleSize = sampleSizeFor(bounds.outWidth, bounds.outHeight, targetPx)
+    }
+    return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+}
+
+/** The largest power of two that still leaves the longer side at [targetPx] or more. */
+internal fun sampleSizeFor(width: Int, height: Int, targetPx: Int): Int {
+    val longest = maxOf(width, height)
+    var sample = 1
+    while (longest / (sample * 2) >= targetPx.coerceAtLeast(1)) sample *= 2
+    return sample
 }

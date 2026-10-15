@@ -124,7 +124,18 @@ class PdfSource private constructor(
 
     private val tileCache = object : LruCache<TileKey, Bitmap>((detailBytes - detailBytes / 2).coerceAtLeast(1)) {
         override fun sizeOf(key: TileKey, value: Bitmap) = value.byteCount
+        override fun entryRemoved(evicted: Boolean, key: TileKey, oldValue: Bitmap, newValue: Bitmap?) {
+            tilesHeld.remove(key, oldValue)
+        }
     }
+
+    /**
+     * What [tileCache] holds, readable without counting as a use. A stand-in
+     * tile read through the cache itself became its newest entry and pushed
+     * out the right tiles as they rendered - the very churn the density
+     * budget is there to prevent.
+     */
+    private val tilesHeld = java.util.concurrent.ConcurrentHashMap<TileKey, Bitmap>()
 
     /** Called on the worker thread once a requested render has landed. */
     var onReady: ((Int) -> Unit)? = null
@@ -152,7 +163,39 @@ class PdfSource private constructor(
                 pendingTiles.clear()
             }
         }
-        for (page in ordered) bitmap(page, widthPx, request = true)
+        // Nearest first, and only as many at full size as the page cache
+        // holds alongside each other; the next few at the smallest step; the
+        // rest only as previews. Seven pages at 2048px were asked for at
+        // once, and as the far ones landed the LRU pushed out the near ones -
+        // the very pages the next short scroll shows - to be rendered again.
+        var budget = cache.maxSize().toLong() * PREFETCH_BUDGET_PERCENT / 100
+        val full = bucketFor(widthPx)
+        for (page in ordered) {
+            val fullBytes = pageBytes(full, A4_ASPECT)
+            val smallBytes = pageBytes(MIN_PAGE_WIDTH, A4_ASPECT)
+            when {
+                fullBytes <= budget -> {
+                    budget -= fullBytes
+                    bitmap(page, full, request = true)
+                }
+                smallBytes <= budget -> {
+                    budget -= smallBytes
+                    bitmap(page, MIN_PAGE_WIDTH, request = true)
+                }
+                else -> bitmap(page, MIN_PAGE_WIDTH, request = false)
+            }
+        }
+    }
+
+    /**
+     * Gives memory back when the system asks: tiles and sharp pages are only
+     * ever copies of the PDF and come back on demand. [severe] is the app
+     * being in the background or memory running out; then only previews stay.
+     */
+    fun trimMemory(severe: Boolean) {
+        if (closed) return
+        tileCache.evictAll()
+        if (severe) cache.evictAll() else cache.trimToSize(cache.maxSize() / 2)
     }
 
     /** Page size in world units, or null if the page is out of range. */
@@ -184,8 +227,16 @@ class PdfSource private constructor(
      * [wantPx]. Bucketing by powers of two is what stops every pinch frame from
      * kicking off a fresh render of the same page.
      */
-    fun bitmap(index: Int, wantPx: Int, request: Boolean = true): Bitmap? {
-        val width = bucketFor(wantPx)
+    fun bitmap(
+        index: Int,
+        wantPx: Int,
+        request: Boolean = true,
+        /** How many PDF pages are on screen together, all wanting this size. */
+        sharing: Int = 1,
+        /** Height over width, for what one page at a size costs. */
+        aspect: Float = A4_ASPECT,
+    ): Bitmap? {
+        val width = fittingWidth(bucketFor(wantPx), sharing, aspect)
         if (closed || index !in 0 until pageCount) return null
         val preview = previewCache.get(index)
         if (preview == null) request(keyOf(index, PREVIEW_WIDTH)) {
@@ -233,6 +284,7 @@ class PdfSource private constructor(
 
         val ready = ArrayList<PdfTile>()
         val missing = ArrayList<TileKey>()
+        val fallback = ArrayList<PdfTile>()
         for (ty in firstY..lastY) {
             for (tx in firstX..lastX) {
                 val source = RectF(
@@ -244,14 +296,64 @@ class PdfSource private constructor(
                 if (source.width() <= 0f || source.height() <= 0f) continue
                 val key = TileKey(index, density, tx, ty)
                 val bitmap = tileCache.get(key)
-                if (bitmap != null) ready += PdfTile(source, bitmap) else missing += key
+                if (bitmap != null) ready += PdfTile(source, bitmap) else {
+                    missing += key
+                    fallbackTiles(index, density, tx, ty, pageWidth, pageHeight, fallback)
+                }
             }
         }
         if (request && missing.isNotEmpty()) {
             requestTiles(index, missing, tileUnits, density, pageWidth, pageHeight)
         }
-        return ready
+        if (fallback.isEmpty()) return ready
+        // Stand-ins first, so the right tiles are drawn over them.
+        fallback += ready
+        return fallback
     }
+
+    /**
+     * While the tile at [density] is on its way, the same place from the
+     * zoom just left: the coarser tile that contains it, or the finer ones
+     * inside it. Right after a zoom step this is a nearly sharp page instead
+     * of the soft whole-page bitmap underneath.
+     */
+    private fun fallbackTiles(
+        index: Int,
+        density: Float,
+        tx: Int,
+        ty: Int,
+        pageWidth: Float,
+        pageHeight: Float,
+        out: MutableList<PdfTile>,
+    ) {
+        val coarser = density / 2f
+        if (coarser >= 1f) {
+            val units = TILE_PX / coarser
+            val key = TileKey(index, coarser, tx / 2, ty / 2)
+            val bitmap = tilesHeld[key]
+            if (bitmap != null) {
+                val source = tileRect(key.tileX, key.tileY, units, pageWidth, pageHeight)
+                if (out.none { it.bitmap === bitmap }) out += PdfTile(source, bitmap)
+                return
+            }
+        }
+        val finer = density * 2f
+        if (finer > MAX_TILE_DENSITY) return
+        val units = TILE_PX / finer
+        for (dy in 0..1) for (dx in 0..1) {
+            val key = TileKey(index, finer, tx * 2 + dx, ty * 2 + dy)
+            val bitmap = tilesHeld[key] ?: continue
+            val source = tileRect(key.tileX, key.tileY, units, pageWidth, pageHeight)
+            if (source.width() > 0f && source.height() > 0f) out += PdfTile(source, bitmap)
+        }
+    }
+
+    private fun tileRect(tx: Int, ty: Int, units: Float, pageWidth: Float, pageHeight: Float) = RectF(
+        tx * units,
+        ty * units,
+        minOf((tx + 1) * units, pageWidth),
+        minOf((ty + 1) * units, pageHeight),
+    )
 
     /** All the missing tiles of one page in a single job, so the page opens once. */
     private fun requestTiles(
@@ -313,6 +415,7 @@ class PdfSource private constructor(
                             val keep = synchronized(stateLock) {
                                 if (shouldPublishRender(generation, viewportGeneration, closed)) {
                                     tileCache.put(key, bitmap)
+                                    tilesHeld[key] = bitmap
                                     true
                                 } else false
                             }
@@ -441,6 +544,23 @@ class PdfSource private constructor(
         while (width < wantPx && width < MAX_PAGE_WIDTH) width *= 2
         return width
     }
+
+    /**
+     * [width], or the largest step below it at which [sharing] pages fit in
+     * the page cache together. Two pages on screen at 2048px are about 48MB;
+     * where the cache held only one, each render evicted the other, which went
+     * soft, asked again and evicted the first - both flickering for as long
+     * as they sat there. A steady step down is far better than that.
+     */
+    private fun fittingWidth(width: Int, sharing: Int, aspect: Float): Int {
+        var fitted = width
+        val room = cache.maxSize().toLong()
+        while (fitted > MIN_PAGE_WIDTH && sharing.coerceAtLeast(1) * pageBytes(fitted, aspect) > room) fitted /= 2
+        return fitted
+    }
+
+    private fun pageBytes(width: Int, aspect: Float): Long =
+        width.toLong() * (width * aspect.coerceIn(0.2f, 5f)).toLong() * 4L
 
     private fun finerThan(index: Int, width: Int): Bitmap? {
         var candidate = width * 2
@@ -643,6 +763,11 @@ class PdfSource private constructor(
         private const val DETAIL_MARGIN = 0.25f
         private const val MIN_CACHE_BYTES = 64 * 1024 * 1024
         private const val MAX_CACHE_BYTES = 256 * 1024 * 1024
+        private const val MB = 1024L * 1024L
+        /** A4, height over width: what a page is assumed to be where its size is not to hand. */
+        private const val A4_ASPECT = 1.414f
+        /** Of the page cache, what a prefetch may fill; the rest keeps what is on screen. */
+        private const val PREFETCH_BUDGET_PERCENT = 85
         private const val TRACE_PDF_RENDER = "Notesis PDF render"
         private val closeWorker = Executors.newSingleThreadExecutor { runnable ->
             Thread(runnable, "notesis-pdf-close").apply { isDaemon = true }
@@ -657,10 +782,22 @@ class PdfSource private constructor(
         /** Beyond this many pixels across, a page needs tiles to stay sharp. */
         fun baseWidthLimit(): Int = MAX_PAGE_WIDTH
 
-        fun cacheBytesFor(context: android.content.Context): Int {
+        /**
+         * The budget for one open PDF. Bitmaps live outside the Java heap, so
+         * the heap class alone undersold a tablet with plenty of RAM; the
+         * device's total memory sets the ceiling instead, and a tablet with
+         * more of it keeps more of a long PDF sharp when scrolling back.
+         * A [share] above 1 is for a second view of a PDF, such as the
+         * reference popup, which should not claim as much as the note itself.
+         */
+        fun cacheBytesFor(context: android.content.Context, share: Int = 1): Int {
             val manager = context.getSystemService(android.app.ActivityManager::class.java)
-            val bytes = (manager?.largeMemoryClass ?: 128).toLong() * 1024 * 1024 / 2
-            return bytes.coerceIn(MIN_CACHE_BYTES.toLong(), MAX_CACHE_BYTES.toLong()).toInt()
+            val heap = (manager?.largeMemoryClass ?: 128).toLong() * MB / 2
+            val info = android.app.ActivityManager.MemoryInfo()
+            val total = runCatching { manager?.getMemoryInfo(info); info.totalMem }.getOrDefault(0L)
+            val ceiling = pdfCacheCeilingFor(total)
+            val bytes = maxOf(heap, total / 32).coerceIn(MIN_CACHE_BYTES.toLong(), ceiling)
+            return (bytes / share.coerceAtLeast(1)).coerceAtLeast(MIN_CACHE_BYTES.toLong()).toInt()
         }
 
         /**
@@ -689,5 +826,17 @@ class PdfSource private constructor(
 
         /** Beside the note's PDF; see [readPdfLinksCache]. */
         private const val LINKS_CACHE = "pdf-links.json"
+    }
+}
+
+/** One PDF's cache ceiling: under 3GB of RAM 128MB, under 7GB 256MB as before, more RAM up to 384MB. */
+internal fun pdfCacheCeilingFor(totalMem: Long): Long {
+    val mb = 1024L * 1024L
+    val gb = 1024L * mb
+    return when {
+        totalMem <= 0L -> 256L * mb
+        totalMem < 3L * gb -> 128L * mb
+        totalMem < 7L * gb -> 256L * mb
+        else -> 384L * mb
     }
 }

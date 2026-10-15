@@ -796,7 +796,7 @@ class InkCanvasView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
     defStyleAttr: Int = 0,
-) : FrameLayout(context, attrs, defStyleAttr), InProgressStrokesFinishedListener {
+) : FrameLayout(context, attrs, defStyleAttr), InProgressStrokesFinishedListener, MemoryTrim.Trimmable {
 
     var tool: Tool = Tool.PEN
     var colorArgb: Int = 0xFF000000.toInt()
@@ -1820,8 +1820,21 @@ class InkCanvasView @JvmOverloads constructor(
         fitWidth()
     }
 
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        MemoryTrim.register(this)
+    }
+
+    /** Android wants memory back: everything here that a redraw can rebuild goes. */
+    override fun trimMemory(severe: Boolean) {
+        pdf?.trimMemory(severe)
+        dry.trimCaches(severe)
+        if (!disposed) dry.postInvalidateOnAnimation()
+    }
+
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
+        MemoryTrim.unregister(this)
         registeredDocument?.detachCanvas(sharedInkChanged)
         registeredDocument = null
         stopFling(resumeDetail = false)
@@ -6256,13 +6269,21 @@ class InkCanvasView @JvmOverloads constructor(
 
         private val inkTileViewport = RectF()
         private val inkTiles = InkTileCache(
-            byteBudget = if (context.getSystemService(android.app.ActivityManager::class.java)
-                    ?.isLowRamDevice == true) 24 * 1024 * 1024 else 48 * 1024 * 1024,
+            byteBudget = inkTileBudget(context),
             screenStroke = ::onScreen,
             query = ::strokesIn,
         )
 
         fun clearInkTiles() = inkTiles.clear()
+
+        /** Ink bitmaps always; when [severe], the recorded ink tiles and page nodes too. */
+        fun trimCaches(severe: Boolean) {
+            inkBitmaps.evictAll()
+            if (severe) {
+                inkTiles.clear()
+                discardInkNodes()
+            }
+        }
 
         /**
          * The page's ink node, re-recorded when it no longer matches. Strokes
@@ -6475,6 +6496,13 @@ class InkCanvasView @JvmOverloads constructor(
             // were at 1:1, which is exactly what made zoomed-in ink look soft and
             // bend its corners.
             inkTiles.beginFrame()
+            visiblePdfPages = 0
+            for (i in document.pagesIntersecting(viewport[1], viewport[3])) {
+                val page = document.pages.getOrNull(i) ?: continue
+                val top = document.topOf(i)
+                if (top > viewport[3] || top + page.height < viewport[1]) continue
+                if (page.background == PageBackground.PDF) visiblePdfPages++
+            }
             renderer.drawWithStrokes(canvas) { scoped, scope ->
                 for (i in document.pagesIntersecting(viewport[1], viewport[3])) {
                     val page = document.pages.getOrNull(i) ?: continue
@@ -6938,6 +6966,9 @@ class InkCanvasView @JvmOverloads constructor(
             }
         }
 
+        /** PDF pages on screen this frame: they share the page cache. */
+        private var visiblePdfPages = 1
+
         /** Returns true when the page was actually painted. */
         private fun drawPdf(canvas: Canvas, page: Page, index: Int): Boolean {
             val source = pdf ?: return false
@@ -6951,7 +6982,13 @@ class InkCanvasView @JvmOverloads constructor(
             // The whole page at modest resolution is the floor: it is cheap, it
             // is always there, and it means a tile that has not arrived yet
             // shows slightly soft rather than blank.
-            val base = source.bitmap(page.pdfPageIndex, (page.width * scale).toInt(), render)
+            val base = source.bitmap(
+                page.pdfPageIndex,
+                (page.width * scale).toInt(),
+                render,
+                sharing = visiblePdfPages,
+                aspect = if (page.width > 0f) page.height / page.width else 1.414f,
+            )
             if (base != null) {
                 canvas.drawBitmap(base, null, pageRect, bitmapPaint)
             } else {
@@ -7167,3 +7204,16 @@ private fun MotionEvent.isEraserGesture(): Boolean =
     getToolType(actionIndex) == MotionEvent.TOOL_TYPE_ERASER ||
         buttonState and
         (MotionEvent.BUTTON_STYLUS_PRIMARY or MotionEvent.BUTTON_SECONDARY) != 0
+
+/**
+ * Recorded ink tiles: 24MB on a low-RAM device, 48MB as before on most, and
+ * 96MB with 7GB or more, where scrolling back over a dense page should find
+ * its ink still recorded.
+ */
+private fun inkTileBudget(context: Context): Int {
+    val manager = context.getSystemService(android.app.ActivityManager::class.java)
+    if (manager?.isLowRamDevice == true) return 24 * 1024 * 1024
+    val info = android.app.ActivityManager.MemoryInfo()
+    val total = runCatching { manager?.getMemoryInfo(info); info.totalMem }.getOrDefault(0L)
+    return if (total >= 7L * 1024 * 1024 * 1024) 96 * 1024 * 1024 else 48 * 1024 * 1024
+}
