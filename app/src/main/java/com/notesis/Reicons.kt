@@ -324,6 +324,32 @@ internal object Reicons {
             addPath(pathData = PathParser().parsePathString("M22 5.72L17.4 1.86L16.11 3.39L20.71 7.25L22 5.72ZM7.88 3.39L6.6 1.86L2 5.71L3.29 7.24L7.88 3.39ZM12.5 8H11V14L15.75 16.85L16.5 15.62L12.5 13.25V8ZM12 4C7.03 4 3 8.03 3 13C3 17.97 7.02 22 12 22C16.97 22 21 17.97 21 13C21 8.03 16.97 4 12 4ZM12 20C8.13 20 5 16.87 5 13C5 9.13 8.13 6 12 6C15.87 6 19 9.13 19 13C19 16.87 15.87 20 12 20Z").toNodes(), fill = SolidColor(Color.Black), stroke = null, strokeLineWidth = 1.0f, strokeLineCap = StrokeCap.Butt, strokeLineJoin = StrokeJoin.Miter, pathFillType = PathFillType.NonZero, fillAlpha = 1.0f, strokeAlpha = 1.0f)
         }.build()
     }
+    /** A ticked box, the calculator, a checklist and a month, for the shape tool and the tools panel. */
+    val CheckBox: ImageVector by lazy {
+        ImageVector.Builder(name = "Reicon.CheckBox", defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f, autoMirror = false).apply {
+            addPath(pathData = PathParser().parsePathString("M19,3H5C3.89,3 3,3.9 3,5v14c0,1.1 0.89,2 2,2h14c1.11,0 2,-0.9 2,-2V5C21,3.9 20.11,3 19,3zM10,17l-5,-5 1.41,-1.41L10,14.17l7.59,-7.59L19,8l-9,9z").toNodes(), fill = SolidColor(Color.Black), stroke = null, strokeLineWidth = 1.0f, strokeLineCap = StrokeCap.Butt, strokeLineJoin = StrokeJoin.Miter, pathFillType = PathFillType.NonZero, fillAlpha = 1.0f, strokeAlpha = 1.0f)
+        }.build()
+    }
+    val Calculate: ImageVector by lazy {
+        ImageVector.Builder(name = "Reicon.Calculate", defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f, autoMirror = false).apply {
+            addPath(pathData = PathParser().parsePathString("M19,3H5C3.9,3 3,3.9 3,5v14c0,1.1 0.9,2 2,2h14c1.1,0 2,-0.9 2,-2V5C21,3.9 20.1,3 19,3zM13.03,7.06L14.09,6l1.41,1.41L16.91,6l1.06,1.06 -1.41,1.41 1.41,1.41 -1.06,1.06 -1.41,-1.4 -1.41,1.41 -1.06,-1.06 1.41,-1.41L13.03,7.06zM6.25,7.72h5v1.5h-5V7.72zM11.5,16h-2v2H8v-2H6v-1.5h2v-2h1.5v2h2V16zM18,17.25h-5v-1.5h5V17.25zM18,14.75h-5v-1.5h5V14.75z").toNodes(), fill = SolidColor(Color.Black), stroke = null, strokeLineWidth = 1.0f, strokeLineCap = StrokeCap.Butt, strokeLineJoin = StrokeJoin.Miter, pathFillType = PathFillType.NonZero, fillAlpha = 1.0f, strokeAlpha = 1.0f)
+        }.build()
+    }
+    val Checklist: ImageVector by lazy {
+        ImageVector.Builder(name = "Reicon.Checklist", defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f, autoMirror = false).apply {
+            addPath(pathData = PathParser().parsePathString("M22,7h-9v2h9V7zM22,15h-9v2h9V15zM5.54,11L2,7.46l1.41,-1.41 2.12,2.12 4.24,-4.24 1.41,1.41L5.54,11zM5.54,19L2,15.46l1.41,-1.41 2.12,2.12 4.24,-4.24 1.41,1.41L5.54,19z").toNodes(), fill = SolidColor(Color.Black), stroke = null, strokeLineWidth = 1.0f, strokeLineCap = StrokeCap.Butt, strokeLineJoin = StrokeJoin.Miter, pathFillType = PathFillType.NonZero, fillAlpha = 1.0f, strokeAlpha = 1.0f)
+        }.build()
+    }
+    val CalendarMonth: ImageVector by lazy {
+        ImageVector.Builder(name = "Reicon.CalendarMonth", defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f, autoMirror = false).apply {
+            addPath(pathData = PathParser().parsePathString("M19,4h-1V2h-2v2H8V2H6v2H5C3.89,4 3.01,4.9 3.01,6L3,20c0,1.1 0.89,2 2,2h14c1.1,0 2,-0.9 2,-2V6C21,4.9 20.1,4 19,4zM19,20H5V10h14V20zM9,14H7v-2h2V14zM13,14h-2v-2h2V14zM17,14h-2v-2h2V14zM9,18H7v-2h2V18zM13,18h-2v-2h2V18zM17,18h-2v-2h2V18z").toNodes(), fill = SolidColor(Color.Black), stroke = null, strokeLineWidth = 1.0f, strokeLineCap = StrokeCap.Butt, strokeLineJoin = StrokeJoin.Miter, pathFillType = PathFillType.NonZero, fillAlpha = 1.0f, strokeAlpha = 1.0f)
+        }.build()
+    }
+    val Backspace: ImageVector by lazy {
+        ImageVector.Builder(name = "Reicon.Backspace", defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f, autoMirror = false).apply {
+            addPath(pathData = PathParser().parsePathString("M22,3H7c-0.69,0 -1.23,0.35 -1.59,0.88L0,12l5.41,8.11c0.36,0.53 0.9,0.89 1.59,0.89h15c1.1,0 2,-0.9 2,-2V5c0,-1.1 -0.9,-2 -2,-2zM19,15.59L17.59,17 14,13.41 10.41,17 9,15.59 12.59,12 9,8.41 10.41,7 14,10.59 17.59,7 19,8.41 15.41,12 19,15.59z").toNodes(), fill = SolidColor(Color.Black), stroke = null, strokeLineWidth = 1.0f, strokeLineCap = StrokeCap.Butt, strokeLineJoin = StrokeJoin.Miter, pathFillType = PathFillType.NonZero, fillAlpha = 1.0f, strokeAlpha = 1.0f)
+        }.build()
+    }
     /** An eyedropper, for picking a colour off the page. */
     val Colorize: ImageVector by lazy {
         ImageVector.Builder(name = "Reicon.Colorize", defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f, autoMirror = false).apply {

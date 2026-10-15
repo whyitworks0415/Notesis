@@ -50,11 +50,17 @@ class PageImage(
     /** A table's grid, so it can be redrawn with more rows or columns. */
     var rows: Int = 0,
     var cols: Int = 0,
+    /** A [BOX_CHECK] that has been ticked. */
+    val checked: Boolean = false,
+    /** A [BOX_CHECK]'s ink colour; 0 for the default dark grey. */
+    val color: Int = 0,
 ) {
     companion object {
         const val BOX_NONE = 0
         const val BOX_STICKY = 1
         const val BOX_TABLE = 2
+        /** A box to tick, drawn rather than pictured: there is no image file behind it. */
+        const val BOX_CHECK = 3
         /** The side of a folded sticky note, in page units. */
         const val FOLDED_SIZE = 56f
     }
@@ -67,8 +73,9 @@ class PageImage(
         width: Float = this.width,
         height: Float = this.height,
         textContent: TextBoxContent? = this.textContent,
+        checked: Boolean = this.checked,
     ) = PageImage(id, x, y, width, height, textContent, locked, group, opacity, rotation,
-        box, collapsed, expandedWidth, expandedHeight, rows, cols)
+        box, collapsed, expandedWidth, expandedHeight, rows, cols, checked, color)
 }
 
 /**
@@ -1367,7 +1374,9 @@ class NoteStore(context: Context) {
                     .put("ew", image.expandedWidth.toDouble())
                     .put("eh", image.expandedHeight.toDouble())
                     .put("rows", image.rows)
-                    .put("cols", image.cols),
+                    .put("cols", image.cols)
+                    .put("checked", image.checked)
+                    .put("color", image.color),
             )
         }
         return array
@@ -1411,6 +1420,8 @@ class NoteStore(context: Context) {
                 expandedHeight = item.optDouble("eh", 0.0).toFloat(),
                 rows = item.optInt("rows", 0),
                 cols = item.optInt("cols", 0),
+                checked = item.optBoolean("checked", false),
+                color = item.optInt("color", 0),
             )
         }
         return images
@@ -1771,6 +1782,11 @@ class NoteStore(context: Context) {
         }
         val transform = Matrix().apply { setScale(scale, scale) }
         for (image in page.images) {
+            if (image.box == PageImage.BOX_CHECK) {
+                drawCheckbox(canvas, android.graphics.RectF(image.x * scale, image.y * scale,
+                    (image.x + image.width) * scale, (image.y + image.height) * scale), image.color, image.checked)
+                continue
+            }
             val bitmap = runCatching {
                 BitmapFactory.decodeFile(imageFile(id, image.id).path)
             }.getOrNull() ?: continue

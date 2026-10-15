@@ -2764,6 +2764,9 @@ class InkCanvasView @JvmOverloads constructor(
                     beginImageGesture(event, index)
                     return true
                 }
+                if (!eraserGesture && tool != Tool.ERASER &&
+                    toggleCheckboxAt(event.getX(event.actionIndex), event.getY(event.actionIndex), index)
+                ) return true
                 if (rulerKind != null && !readMode && !eraserGesture && tool != Tool.ERASER) {
                     val edge = ruler.edgeAt(event.x, event.y)
                     if (edge != null) {
@@ -4638,6 +4641,11 @@ class InkCanvasView @JvmOverloads constructor(
             dry.invalidate()
             return
         }
+        if (!ruled && kind == ShapeKind.CHECKBOX) {
+            rulerPoints.clear()
+            placeCheckbox(page, shapeStart, shapeEnd)
+            return
+        }
         val points = if (ruled) rulerPoints.toList() else shapePoints(kind!!, shapeStart, shapeEnd)
         rulerPoints.clear()
         if (points.size < 2) {
@@ -4660,6 +4668,72 @@ class InkCanvasView @JvmOverloads constructor(
         }
         redoStack.clear()
         afterEdit(page)
+    }
+
+    /**
+     * A checkbox where the pen went down: one line tall where it was only
+     * tapped, centred on the tap, or the square the pen dragged out. In the
+     * pen's colour, unticked.
+     */
+    private fun placeCheckbox(page: Page, from: FloatArray, to: FloatArray) {
+        val dx = to[0] - from[0]
+        val dy = to[1] - from[1]
+        val dragged = max(abs(dx), abs(dy))
+        val box = if (dragged < CHECKBOX_MIN_SIZE) {
+            val side = CHECKBOX_SIZE
+            RectF(from[0] - side / 2f, from[1] - side / 2f, from[0] + side / 2f, from[1] + side / 2f)
+        } else {
+            val side = dragged
+            val left = if (dx >= 0f) from[0] else from[0] - side
+            val top = if (dy >= 0f) from[1] else from[1] - side
+            RectF(left, top, left + side, top + side)
+        }
+        // Kept on the page, so a tap at the very edge does not hang off it.
+        box.offset(
+            (-box.left).coerceAtLeast(0f) - (box.right - page.width).coerceAtLeast(0f),
+            (-box.top).coerceAtLeast(0f) - (box.bottom - page.height).coerceAtLeast(0f),
+        )
+        val image = PageImage(
+            x = box.left,
+            y = box.top,
+            width = box.width(),
+            height = box.height(),
+            box = PageImage.BOX_CHECK,
+            color = colorArgb or -0x1000000,
+        )
+        page.images += image
+        undoStack += Edit.ImageAdded(page, image)
+        redoStack.clear()
+        afterEdit(page)
+    }
+
+    /**
+     * Ticks or unticks the checkbox under a pen that has just landed at
+     * ([screenX], [screenY]) on page [index]. True when there was one, and
+     * the touch is then spent on it rather than on ink. Undoable, since a
+     * ticked list is work too.
+     */
+    private fun toggleCheckboxAt(screenX: Float, screenY: Float, index: Int): Boolean {
+        val page = document.pages.getOrNull(index) ?: return false
+        if (page.images.none { it.box == PageImage.BOX_CHECK }) return false
+        pageLocalInto(screenX, screenY, index, scratch)
+        val x = scratch[0]
+        val y = scratch[1]
+        // A little past the edge counts: the box is small and the pen is not.
+        val slop = CHECKBOX_TOUCH_SLOP_PX / currentScale().coerceAtLeast(0.01f)
+        val at = page.images.indexOfLast {
+            it.box == PageImage.BOX_CHECK &&
+                x >= it.x - slop && x <= it.x + it.width + slop &&
+                y >= it.y - slop && y <= it.y + it.height + slop
+        }
+        if (at < 0) return false
+        val before = page.images[at]
+        val after = before.copy(checked = !before.checked)
+        page.images[at] = after
+        undoStack += Edit.ImageReplaced(page, before, after, at)
+        redoStack.clear()
+        afterEdit(page)
+        return true
     }
 
     private fun shapeStrokes(kind: ShapeKind, from: FloatArray, to: FloatArray, brush: Brush): List<Stroke> =
@@ -6731,6 +6805,18 @@ class InkCanvasView @JvmOverloads constructor(
                     }, foldPaint)
                     continue
                 }
+                if (image.box == PageImage.BOX_CHECK) {
+                    imageRect.set(image.x, image.y, image.x + image.width, image.y + image.height)
+                    if (liftedPage && lassoImages.any { it === image }) imageRect.offset(lassoDx, lassoDy)
+                    val turned = image.rotation != 0f
+                    if (turned) {
+                        canvas.save()
+                        canvas.rotate(image.rotation, imageRect.centerX(), imageRect.centerY())
+                    }
+                    drawCheckbox(canvas, imageRect, image.color, image.checked, image.opacity)
+                    if (turned) canvas.restore()
+                    continue
+                }
                 val bitmap = loader(image.id) ?: continue
                 imageRect.set(
                     image.x,
@@ -7176,6 +7262,8 @@ class InkCanvasView @JvmOverloads constructor(
         const val CIRCLE_MIN_EXTENT_PX = 48f
         const val WHOLE_CHECK_SAMPLES = 32
         const val KEY_ZOOM_STEP = 1.25f
+        /** How far outside a checkbox, in screen pixels, a tap still ticks it. */
+        const val CHECKBOX_TOUCH_SLOP_PX = 14f
         /** ln(1.15): a wheel notch zooms by about 15%. */
         const val WHEEL_ZOOM_PER_NOTCH = 0.1398f
         const val KEY_PAN_FRACTION = 0.15f

@@ -24,6 +24,8 @@ enum class ShapeKind {
     CURVE,
     /** Tapped out a corner at a time; closes on the first corner, ends on a double tap. */
     POLYGON,
+    /** A box to tick: a tap places one, a drag sizes it. Not drawn as ink - see [drawCheckbox]. */
+    CHECKBOX,
 }
 
 /** Shapes whose box is worth squaring when the drag is nearly square. */
@@ -158,6 +160,13 @@ internal fun shapeOutline(kind: ShapeKind, x0: Float, y0: Float, x1: Float, y1: 
         }
         // Built corner by corner on the canvas; a drag alone is a line.
         ShapeKind.POLYGON -> listOf(p(x0, y0), p(x1, y1))
+        // Only ever previewed: the square the checkbox will fill.
+        ShapeKind.CHECKBOX -> {
+            val side = max(w, h)
+            val l = if (x1 >= x0) x0 else x0 - side
+            val t = if (y1 >= y0) y0 else y0 - side
+            listOf(p(l, t), p(l + side, t), p(l + side, t + side), p(l, t + side), p(l, t))
+        }
         ShapeKind.CYLINDER -> {
             val ry = min(h * 0.15f, w * 0.3f)
             val rx = w / 2f

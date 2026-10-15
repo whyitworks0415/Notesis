@@ -221,6 +221,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         hideSystemBars()
         StudyClock.init(applicationContext)
+        Planner.init(applicationContext)
         val store = NoteStore(this)
         noteStore = store
         val prefs = PenStore(this)
@@ -902,6 +903,7 @@ private fun NoteListScreen(
                         selectionMode = !selectionMode
                         selectedIds.clear()
                     }) { Text(if (selectionMode) "선택 종료" else "여러 노트 선택") }
+                    ToolsMenuButton()
                     IconButton(onClick = { creatingFolder = true }) {
                         Icon(Reicons.Folder, contentDescription = "폴더 만들기")
                     }
@@ -2578,7 +2580,8 @@ private fun ShapeButton(
     Box {
         ToolButton(shapeIcon(kind), "도형", selected) { open = true }
         DropdownMenu(open, onDismissRequest = { open = false }) {
-            for (option in ShapeKind.entries) {
+            // The other shapes stay in the code for a later fix, but not on offer.
+            for (option in OFFERED_SHAPES) {
                 DropdownMenuItem(
                     text = { Text(shapeLabel(option)) },
                     leadingIcon = { Icon(shapeIcon(option), contentDescription = null) },
@@ -2592,8 +2595,12 @@ private fun ShapeButton(
     }
 }
 
+/** What the shape tool offers for now: a straight line, and a box to tick. */
+private val OFFERED_SHAPES = listOf(ShapeKind.LINE, ShapeKind.CHECKBOX)
+
 private fun shapeIcon(kind: ShapeKind): ImageVector = when (kind) {
     ShapeKind.LINE -> Reicons.Remove
+    ShapeKind.CHECKBOX -> Reicons.CheckBox
     ShapeKind.ARROW, ShapeKind.DOUBLE_ARROW -> Reicons.TrendingUp
     ShapeKind.RECT, ShapeKind.CUBE -> Reicons.CropSquare
     ShapeKind.OVAL, ShapeKind.CYLINDER -> Reicons.Circle
@@ -2625,6 +2632,7 @@ private fun shapeLabel(kind: ShapeKind): String = when (kind) {
     ShapeKind.CYLINDER -> "원기둥"
     ShapeKind.CURVE -> "곡선"
     ShapeKind.POLYGON -> "다각형 · 연속 직선"
+    ShapeKind.CHECKBOX -> "체크박스 (누르면 생성 · 다시 누르면 체크)"
 }
 
 /** Opens one of the AI sites in the side panel. */
@@ -5582,13 +5590,14 @@ private fun ImageActions(
             Text(when (box) {
                 PageImage.BOX_STICKY -> "스티키 노트"
                 PageImage.BOX_TABLE -> "표"
+                PageImage.BOX_CHECK -> "체크박스"
                 else -> if (isText) "텍스트" else "사진"
             }, style = MaterialTheme.typography.bodyMedium)
             if (box == PageImage.BOX_STICKY) TextButton(onClick = onFold) { Text("접기·펼치기") }
             // Tables can no longer be made or rebuilt; one already on a page is
             // a picture of a grid, kept as it is.
             if (isText) TextButton(onClick = onEdit) { Text("편집") }
-            else if (box != PageImage.BOX_TABLE) {
+            else if (box != PageImage.BOX_TABLE && box != PageImage.BOX_CHECK) {
                 TextButton(onClick = onCrop) { Text("자르기") }
                 TextButton(onClick = onStyle) { Text("스타일") }
             }
@@ -7201,7 +7210,8 @@ private fun Toolbar(
                 )
             }
             RulerButton(ruler, onRuler)
-            IconButton(onClick = onClock) { Icon(Reicons.Clock, contentDescription = "시계") }
+            // The clock, the calculator, the to-do list and the calendar.
+            ToolsMenuButton()
             IconButton(onClick = onInputSettings) { Icon(Reicons.TouchApp, contentDescription = "손가락·제스처") }
             IconButton(onClick = onAddPage) {
                 Icon(Reicons.Add, contentDescription = "페이지 추가")
@@ -7243,6 +7253,9 @@ private fun Toolbar(
                 }))
                 add(SpotiToolbarAction("사진", Reicons.AddPhotoAlternate, onClick = onPickImage))
                 add(SpotiToolbarAction("시계", Reicons.Clock, onClick = onClock))
+                add(SpotiToolbarAction("계산기", Reicons.Calculate, onClick = { Planner.show(ToolPanel.CALCULATOR) }))
+                add(SpotiToolbarAction("할 일", Reicons.Checklist, onClick = { Planner.show(ToolPanel.TODO) }))
+                add(SpotiToolbarAction("캘린더", Reicons.CalendarMonth, onClick = { Planner.show(ToolPanel.CALENDAR) }))
                 add(SpotiToolbarAction("손가락·제스처", Reicons.TouchApp, onClick = onInputSettings))
                 add(SpotiToolbarAction("도구 편집", Reicons.Tune, onClick = onEditTools))
                 add(SpotiToolbarAction("확대 필기창", Reicons.ZoomOutMap, onClick = onZoomBox))

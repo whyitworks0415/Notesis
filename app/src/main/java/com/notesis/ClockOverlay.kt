@@ -18,7 +18,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.BoxWithConstraintsScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -119,11 +121,12 @@ internal fun ClockOverlay(modifier: Modifier = Modifier) {
                 BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(ChromeInsets)) { ClockPill(current) }
             }
             if (clock.panelOpen) ClockPanel()
+            Planner.open?.let { ToolPanelHost(it) }
         }
     }
 }
 
-private val TabularDigits = TextStyle(fontFeatureSettings = "tnum")
+internal val TabularDigits = TextStyle(fontFeatureSettings = "tnum")
 
 // ---- the pill ------------------------------------------------------------------------
 
@@ -279,41 +282,7 @@ private fun ConfirmChip(onClick: () -> Unit) {
 @Composable
 private fun ClockPanel() {
     val clock = StudyClock
-    BackHandler { clock.panelOpen = false }
-    // A tap past the panel closes it.
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.06f))
-            .pointerInput(Unit) { detectTapGestures { clock.panelOpen = false } },
-    )
-    // Kept above the keyboard, which the alarm's time fields bring up.
-    Box(Modifier.fillMaxSize().windowInsetsPadding(ChromeInsets).imePadding()) {
-    val shape = RoundedCornerShape(28.dp)
-    Column(
-        Modifier
-            .align(Alignment.Center)
-            .padding(16.dp)
-            .widthIn(max = 440.dp)
-            .fillMaxWidth()
-            .liquidGlass(
-                shape = shape,
-                surfaceColor = MaterialTheme.colorScheme.surface,
-                surfaceOpacity = 0.84f,
-                useSpotiStyle = false,
-            )
-            .clip(shape)
-            // Taps on the panel's own background stay on the panel.
-            .pointerInput(Unit) { detectTapGestures { } }
-            .verticalScroll(rememberScrollState())
-            .animateContentSize()
-            .padding(horizontal = 18.dp, vertical = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("시계", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-            IconButton(onClick = { clock.panelOpen = false }) { Icon(Reicons.Close, contentDescription = "닫기") }
-        }
+    GlassSheet(title = "시계", onClose = { clock.panelOpen = false }) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ClockTab.entries.forEach { option ->
                 ClockChip(option.label, clock.tab == option, Modifier.weight(1f)) { clock.tab = option }
@@ -332,6 +301,59 @@ private fun ClockPanel() {
             clock.buttonShown,
         ) { clock.updateButtonShown(it) }
     }
+}
+
+/**
+ * A panel over the screen on liquid glass: a light scrim that closes it when
+ * tapped, back to close as well, and a centred card that scrolls when its
+ * content runs taller than the screen. The clock and the tools share it.
+ */
+@Composable
+internal fun GlassSheet(
+    title: String,
+    onClose: () -> Unit,
+    maxWidth: androidx.compose.ui.unit.Dp = 440.dp,
+    headerExtra: @Composable RowScope.() -> Unit = {},
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    BackHandler(onBack = onClose)
+    // A tap past the panel closes it.
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.06f))
+            .pointerInput(Unit) { detectTapGestures { onClose() } },
+    )
+    // Kept above the keyboard, which a text field brings up.
+    Box(Modifier.fillMaxSize().windowInsetsPadding(ChromeInsets).imePadding()) {
+        val shape = RoundedCornerShape(28.dp)
+        Column(
+            Modifier
+                .align(Alignment.Center)
+                .padding(16.dp)
+                .widthIn(max = maxWidth)
+                .fillMaxWidth()
+                .liquidGlass(
+                    shape = shape,
+                    surfaceColor = MaterialTheme.colorScheme.surface,
+                    surfaceOpacity = 0.84f,
+                    useSpotiStyle = false,
+                )
+                .clip(shape)
+                // Taps on the panel's own background stay on the panel.
+                .pointerInput(Unit) { detectTapGestures { } }
+                .verticalScroll(rememberScrollState())
+                .animateContentSize()
+                .padding(horizontal = 18.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                headerExtra()
+                IconButton(onClick = onClose) { Icon(Reicons.Close, contentDescription = "닫기") }
+            }
+            content()
+        }
     }
 }
 
@@ -657,7 +679,7 @@ private fun WeekBars(days: Map<String, Long>, now: Long) {
     }
 }
 
-private val StudyGreen = Color(0xFF34C759)
+internal val StudyGreen = Color(0xFF34C759)
 
 /** HH:mm of a wall-clock moment, where the person is. */
 private fun clockTime(at: Long): String {
@@ -668,7 +690,7 @@ private fun clockTime(at: Long): String {
 // ---- small parts ----------------------------------------------------------------------
 
 @Composable
-private fun ClockButton(
+internal fun ClockButton(
     label: String,
     primary: Boolean,
     modifier: Modifier = Modifier,
@@ -690,7 +712,7 @@ private fun ClockButton(
 }
 
 @Composable
-private fun ClockChip(label: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+internal fun ClockChip(label: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     Box(
         modifier
@@ -711,7 +733,7 @@ private fun ClockChip(label: String, selected: Boolean, modifier: Modifier = Mod
 }
 
 @Composable
-private fun SettingRow(label: String, hint: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+internal fun SettingRow(label: String, hint: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(label, style = MaterialTheme.typography.bodyMedium)

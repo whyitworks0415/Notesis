@@ -187,6 +187,10 @@ private fun drawImages(
 ) {
     val unit = PdfSource.POINTS_TO_WORLD
     for (placement in page.images) {
+        if (placement.box == PageImage.BOX_CHECK) {
+            drawCheckbox(stream, placement, unit)
+            continue
+        }
         val bitmap = BitmapFactory.decodeFile(imageFile(placement.id).path) ?: continue
         try {
             val image = LosslessFactory.createFromImage(document, bitmap)
@@ -251,6 +255,37 @@ private fun drawStroke(stream: PDPageContentStream, stroke: Stroke) {
         // render group. Even-odd turns overlapping outlines into empty holes,
         // particularly at short pen caps and where masking/highlighter loops.
         if (hasPath) stream.fill()
+    }
+    stream.restoreGraphicsState()
+}
+
+/** A checkbox as vector lines, the same square and tick the page draws. */
+@Suppress("DEPRECATION")
+private fun drawCheckbox(stream: PDPageContentStream, box: PageImage, unit: Float) {
+    val x = box.x / unit
+    val y = box.y / unit
+    val w = box.width / unit
+    val h = box.height / unit
+    val side = minOf(w, h)
+    if (side <= 0f) return
+    val ink = if (box.color == 0) CHECKBOX_DEFAULT_COLOR else box.color
+    val r = (ink shr 16) and 0xFF
+    val g = (ink shr 8) and 0xFF
+    val b = ink and 0xFF
+    val edge = side * 0.08f
+    stream.saveGraphicsState()
+    stream.setStrokingColor(r, g, b)
+    stream.setLineWidth(edge)
+    stream.addRect(x + edge / 2f, y + edge / 2f, w - edge, h - edge)
+    stream.stroke()
+    if (box.checked) {
+        stream.setLineWidth(side * 0.12f)
+        stream.setLineCapStyle(1)
+        stream.setLineJoinStyle(1)
+        stream.moveTo(x + w * CHECK_TICK[0], y + h * CHECK_TICK[1])
+        stream.lineTo(x + w * CHECK_TICK[2], y + h * CHECK_TICK[3])
+        stream.lineTo(x + w * CHECK_TICK[4], y + h * CHECK_TICK[5])
+        stream.stroke()
     }
     stream.restoreGraphicsState()
 }
