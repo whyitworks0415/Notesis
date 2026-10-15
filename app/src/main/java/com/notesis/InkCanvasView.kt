@@ -394,7 +394,14 @@ enum class Tool {
     /** The pencil's dab looks. See [PencilBrushes]. */
     STAMP,
     BUBBLE,
-    SPRAY;
+    SPRAY,
+
+    // Added after the rest so every saved stroke keeps the tool it was made with.
+
+    /** The fountain pen whose line thins as it moves faster. */
+    SPEED_FOUNTAIN,
+    /** A soft, grainy lead whose darkness follows pressure. See [PencilBrushes.soft]. */
+    SOFT_PENCIL;
 
     fun brushFamily(): BrushFamily = when (this) {
         HIGHLIGHTER -> highlighter
@@ -411,6 +418,8 @@ enum class Tool {
         STAMP -> PencilBrushes.stamp
         BUBBLE -> PencilBrushes.bubble
         SPRAY -> PencilBrushes.spray
+        SPEED_FOUNTAIN -> speedFountain
+        SOFT_PENCIL -> PencilBrushes.soft
         else -> pen
     }
 
@@ -505,6 +514,14 @@ enum class Tool {
         private val fountain by lazy {
             nib(StockBrushes.pressurePen(), "notesis.fountain", 0.55f, -30f, 0.8f, SelfOverlap.DISCARD)
         }
+        @OptIn(ExperimentalInkCustomBrushApi::class)
+        private val speedFountain by lazy {
+            val base = nib(StockBrushes.pressurePen(), "notesis.fountain.speed", 0.55f, -30f, 0.8f, SelfOverlap.DISCARD)
+            val coat = base.coats.first()
+            base.copy(coat = coat.copy(tip = coat.tip.copy(
+                behaviors = coat.tip.behaviors + PencilBrushes.speedThinning(),
+            )))
+        }
         private val calligraphy by lazy {
             nib(StockBrushes.marker(), "notesis.calligraphy", 0.18f, -45f, 0.25f, SelfOverlap.DISCARD)
         }
@@ -579,6 +596,8 @@ enum class Tool {
             PencilBrushes.stamp -> STAMP
             PencilBrushes.bubble -> BUBBLE
             PencilBrushes.spray -> SPRAY
+            speedFountain -> SPEED_FOUNTAIN
+            PencilBrushes.soft -> SOFT_PENCIL
             else -> PEN
         }
     }
@@ -586,7 +605,8 @@ enum class Tool {
 
 private fun Tool.isFreehandPen(): Boolean =
     this == Tool.PEN || this == Tool.PRESSURE_PEN || this == Tool.PENCIL || this == Tool.FOUNTAIN ||
-        this == Tool.CALLIGRAPHY || this == Tool.WATERCOLOR || this == Tool.OIL || isDabbed()
+        this == Tool.CALLIGRAPHY || this == Tool.WATERCOLOR || this == Tool.OIL || this == Tool.SPEED_FOUNTAIN ||
+        isDabbed()
 
 /**
  * Drawn as scattered particles rather than one line. A line pattern would
@@ -594,7 +614,7 @@ private fun Tool.isFreehandPen(): Boolean =
  * plain line ahead of the dabs, so neither applies to these.
  */
 internal fun Tool.isDabbed(): Boolean =
-    this == Tool.STAMP || this == Tool.BUBBLE || this == Tool.SPRAY
+    this == Tool.STAMP || this == Tool.BUBBLE || this == Tool.SPRAY || this == Tool.SOFT_PENCIL
 
 /**
  * The laser pointer's trail, in screen pixels. A fixed ring of samples that age
@@ -1315,7 +1335,9 @@ class InkCanvasView @JvmOverloads constructor(
     /** The common one-pen prediction path reuses these instead of feeding the GC every sample. */
     private val predictedPointerProperties = arrayOf(MotionEvent.PointerProperties())
     private val predictedPointerCoordinates = arrayOf(MotionEvent.PointerCoords())
-    private val predictionPolicy = InkPredictionPolicy()
+    private val predictionPolicy = InkPredictionPolicy().apply {
+        pxPerMm = resources.displayMetrics.xdpi / 25.4f
+    }
     private val streamingStabilizer = AdaptiveStrokeStabilizer()
     private val pressureStabilizer = AdaptivePressureStabilizer()
     private var stabilizingStroke = false
@@ -1756,12 +1778,18 @@ class InkCanvasView @JvmOverloads constructor(
         scheduleRefine()
     }
 
+    /**
+     * What becomes of this view's PDF when it is done with it. Closed, unless
+     * the screen hands it to [PdfHold] so that coming straight back is quick.
+     */
+    var releasePdf: (PdfSource) -> Unit = { it.close() }
+
     fun open(document: Document, pdf: PdfSource?, initialPage: Int = 0) {
         registeredDocument?.detachCanvas(sharedInkChanged)
         registeredDocument = document
         document.attachCanvas(sharedInkChanged)
         this.pdf?.diagnostics = null
-        this.pdf?.close()
+        this.pdf?.takeIf { it !== pdf }?.let(releasePdf)
         this.document = document
         dry.clearStrokeIndexes()
         pdfPriorityInitialized = false
@@ -1851,7 +1879,7 @@ class InkCanvasView @JvmOverloads constructor(
         refiner.shutdownNow()
         predictionHead.clear()
         pdf?.diagnostics = null
-        pdf?.close()
+        pdf?.let(releasePdf)
         pdf = null
     }
 
@@ -1944,6 +1972,32 @@ class InkCanvasView @JvmOverloads constructor(
     private fun panBy(dx: Float, dy: Float) {
         documentToScreen.postTranslate(dx, dy)
         onTransformChanged()
+    }
+
+    /**
+     * A mouse wheel or a trackpad's two-finger scroll: the wheel moves the
+     * page, Shift+wheel moves it sideways, and Ctrl (or Cmd)+wheel zooms
+     * about the pointer, so the spot under it stays put.
+     */
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked != MotionEvent.ACTION_SCROLL ||
+            !event.isFromSource(android.view.InputDevice.SOURCE_CLASS_POINTER)
+        ) return super.onGenericMotionEvent(event)
+        val vertical = event.getAxisValue(MotionEvent.AXIS_VSCROLL)
+        val horizontal = event.getAxisValue(MotionEvent.AXIS_HSCROLL)
+        if (event.isCtrlPressed || event.isMetaPressed) {
+            if (vertical != 0f) zoomBy(exp(vertical * WHEEL_ZOOM_PER_NOTCH), event.x, event.y)
+            return true
+        }
+        val config = android.view.ViewConfiguration.get(context)
+        var dx = -horizontal * config.scaledHorizontalScrollFactor
+        var dy = vertical * config.scaledVerticalScrollFactor
+        if (event.isShiftPressed && horizontal == 0f) {
+            dx = dy
+            dy = 0f
+        }
+        if (dx != 0f || dy != 0f) panBy(dx, dy)
+        return true
     }
 
     fun scrollToPage(index: Int) {
@@ -2953,14 +3007,22 @@ class InkCanvasView @JvmOverloads constructor(
                     turn
                 }
                 val compatStroke = compatWetStrokeId == strokeId
-                val maximumLeadMs = predictionLeadForRefresh(
+                val refreshRate = display?.refreshRate ?: 60f
+                val fixedLeadMs = predictionLeadForRefresh(
                     predictionLeadMs,
-                    display?.refreshRate ?: 60f,
+                    refreshRate,
                     vsyncBoundInk = compatStroke,
                 )
+                // Automatic horizon on the compatible path: as far ahead as
+                // this sample will wait to be seen, from where it fell in the frame.
+                val maximumLeadMs = if (compatStroke && predictionLeadMs !in 1..MAX_LEAD_MS) {
+                    vsyncAlignedLeadMs(fixedLeadMs, event.eventTime * 1_000_000L, compatWet.lastVsyncNanos, refreshRate)
+                } else fixedLeadMs
                 var leadMs = predictionLeadForEvent(inkEvent, pointerId, maximumLeadMs)
                 if (sharpTurn || (stabilizingStroke && !streamingStabilizer.predictionAllowed)) {
                     leadMs = 0
+                } else if (stabilizingStroke) {
+                    leadMs = stabilizedLeadMs(leadMs, stabilizer)
                 }
                 if (predictionEnabled) predictor.record(inkEvent)
                 val rawPrediction = if (predictionEnabled && leadMs > 0) predictor.predict() else null
@@ -7113,6 +7175,8 @@ class InkCanvasView @JvmOverloads constructor(
         const val CIRCLE_MIN_EXTENT_PX = 48f
         const val WHOLE_CHECK_SAMPLES = 32
         const val KEY_ZOOM_STEP = 1.25f
+        /** ln(1.15): a wheel notch zooms by about 15%. */
+        const val WHEEL_ZOOM_PER_NOTCH = 0.1398f
         const val KEY_PAN_FRACTION = 0.15f
         /** Pages this far either side of the screen stay in memory. */
         const val KEEP_PAGES = 3

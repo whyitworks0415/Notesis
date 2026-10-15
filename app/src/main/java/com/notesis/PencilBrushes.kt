@@ -46,11 +46,15 @@ internal object PencilBrushes {
                     fromInput(BrushBehavior.Source.NORMALIZED_PRESSURE, 0f, 0.8f,
                         BrushBehavior.Target.OPACITY_MULTIPLIER, 0.3f, 1f),
                     // Tilt is radians from upright; the S Pen on some tablets
-                    // reports none, and then these simply do not apply.
-                    fromInput(BrushBehavior.Source.TILT_IN_RADIANS, 0.45f, 1.2f,
-                        BrushBehavior.Target.SIZE_MULTIPLIER, 1f, 1.9f),
-                    fromInput(BrushBehavior.Source.TILT_IN_RADIANS, 0.45f, 1.2f,
-                        BrushBehavior.Target.OPACITY_MULTIPLIER, 1f, 0.55f),
+                    // reports none, and then these simply do not apply. Damped
+                    // over a little distance: tilt arrives noisy, and taken raw
+                    // its jitter showed as a shading stroke that kept swelling
+                    // and fading. Over distance rather than time, so a stroke
+                    // rebuilt from its inputs comes out exactly as it went on.
+                    fromDampedInput(BrushBehavior.Source.TILT_IN_RADIANS, 0.45f, 1.2f,
+                        BrushBehavior.Target.SIZE_MULTIPLIER, 1f, 1.9f, TILT_DAMPING),
+                    fromDampedInput(BrushBehavior.Source.TILT_IN_RADIANS, 0.45f, 1.2f,
+                        BrushBehavior.Target.OPACITY_MULTIPLIER, 1f, 0.55f, TILT_DAMPING),
                 ),
             ),
             paint = BrushPaint(
@@ -181,6 +185,78 @@ internal object PencilBrushes {
         paint = dabPaint,
     )
 
+    /**
+     * A soft lead laid down grain by grain: pressure decides how dark it goes
+     * - from a whisper to most of the colour - while the width stays the
+     * lead's own, the way a pencil behaves and a pen does not. Small dabs,
+     * slightly uneven in size and place, build up where they overlap, which
+     * is the grain; the second coat is the scattered tooth at the edges.
+     */
+    val soft: BrushFamily by lazy {
+        BrushFamily(
+            coats = listOf(
+                BrushCoat(
+                    tip = BrushTip(
+                        scaleX = 0.5f,
+                        scaleY = 0.5f,
+                        cornerRounding = 1f,
+                        particleGapDistanceScale = 0.12f,
+                        behaviors = listOf(
+                            scatter(BrushBehavior.Target.SIZE_MULTIPLIER, 0.8f, 1f, seed = 401, period = 3.3f),
+                            scatter(LATERAL, -0.22f, 0.22f, seed = 402, period = 2.7f),
+                            scatter(FORWARD, -0.06f, 0.06f, seed = 403, period = 3.9f),
+                            scatter(BrushBehavior.Target.OPACITY_MULTIPLIER, 0.75f, 1f, seed = 404, period = 4.1f),
+                            // Each dab is faint; about four overlap at any
+                            // point, so the line runs from ~0.1 to ~0.75 of
+                            // the colour across the pressure range.
+                            fromInput(BrushBehavior.Source.NORMALIZED_PRESSURE, 0f, 1f,
+                                BrushBehavior.Target.OPACITY_MULTIPLIER, 0.035f, 0.32f),
+                        ),
+                    ),
+                    paint = dabPaint,
+                ),
+                BrushCoat(
+                    tip = BrushTip(
+                        scaleX = 0.09f,
+                        scaleY = 0.09f,
+                        cornerRounding = 1f,
+                        particleGapDistanceScale = 0.09f,
+                        behaviors = listOf(
+                            scatter(BrushBehavior.Target.SIZE_MULTIPLIER, 0.5f, 1.4f, seed = 411, period = 2.3f),
+                            scatter(LATERAL, -0.42f, 0.42f, seed = 412, period = 1.9f),
+                            fromInput(BrushBehavior.Source.NORMALIZED_PRESSURE, 0f, 1f,
+                                BrushBehavior.Target.OPACITY_MULTIPLIER, 0.06f, 0.4f),
+                        ),
+                    ),
+                    paint = dabPaint,
+                ),
+            ),
+            clientBrushFamilyId = SOFT_ID,
+        )
+    }
+
+    /**
+     * Writing faster draws a finer line, as ink runs thinner from a nib that
+     * is moving: down to about 60% of the width at a brisk stroke. Damped
+     * over distance, so the width eases between speeds instead of following
+     * every jolt of the hand, and a rebuilt stroke matches the one written.
+     */
+    fun speedThinning(): BrushBehavior = BrushBehavior(
+        listOf(
+            BrushBehavior.TargetNode(
+                BrushBehavior.Target.SIZE_MULTIPLIER, 1f, 0.6f,
+                BrushBehavior.DampingNode(
+                    BrushBehavior.DampingSource.DISTANCE_IN_MULTIPLES_OF_BRUSH_SIZE,
+                    SPEED_DAMPING,
+                    BrushBehavior.SourceNode(
+                        BrushBehavior.Source.SPEED_IN_MULTIPLES_OF_BRUSH_SIZE_PER_SECOND, 4f, 90f,
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    private const val SOFT_ID = "notesis.pencil.soft"
     private const val STAMP_ID = "notesis.pencil.stamp"
     private const val BUBBLE_ID = "notesis.pencil.bubble"
     private const val SPRAY_ID = "notesis.pencil.spray"
@@ -190,7 +266,7 @@ internal object PencilBrushes {
      * and true of copies Ink hands back as much as of the originals here.
      */
     fun isDab(family: BrushFamily): Boolean = family.clientBrushFamilyId.let {
-        it == STAMP_ID || it == BUBBLE_ID || it == SPRAY_ID
+        it == STAMP_ID || it == BUBBLE_ID || it == SPRAY_ID || it == SOFT_ID
     }
 
     /** Graphite tooth tile size on the page, in page units. */
@@ -225,6 +301,29 @@ internal object PencilBrushes {
 
     private fun scatter(target: BrushBehavior.Target, from: Float, to: Float, seed: Int, period: Float) =
         BrushBehavior(listOf(BrushBehavior.TargetNode(target, from, to, wander(seed, period))))
+
+    /** Brush sizes over which tilt is smoothed. */
+    private const val TILT_DAMPING = 1.5f
+
+    /** Brush sizes over which speed is smoothed for [speedThinning]. */
+    private const val SPEED_DAMPING = 3f
+
+    /** As [fromInput], with the source smoothed over [damping] brush sizes of travel. */
+    private fun fromDampedInput(
+        source: BrushBehavior.Source, sourceFrom: Float, sourceTo: Float,
+        target: BrushBehavior.Target, from: Float, to: Float, damping: Float,
+    ) = BrushBehavior(
+        listOf(
+            BrushBehavior.TargetNode(
+                target, from, to,
+                BrushBehavior.DampingNode(
+                    BrushBehavior.DampingSource.DISTANCE_IN_MULTIPLES_OF_BRUSH_SIZE,
+                    damping,
+                    BrushBehavior.SourceNode(source, sourceFrom, sourceTo),
+                ),
+            ),
+        ),
+    )
 
     /** [source] across [sourceFrom]..[sourceTo] mapped onto [target] across [from]..[to]. */
     private fun fromInput(

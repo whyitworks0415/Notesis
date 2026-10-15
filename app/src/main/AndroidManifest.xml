@@ -4,6 +4,9 @@
     <!-- The side panel is a WebView; looking things up is the whole point. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- A recording keeps going when another app is in front, as a microphone foreground service. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <!-- Dictation asks the device's speech service, which Android 11+ hides unless named. -->
     <queries>
@@ -47,6 +50,11 @@
                 <data android:mimeType="application/vnd.hancom.hwpx" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".RecordingService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
         <!-- Sharing a capture hands out a content:// uri for one cache file
              rather than a path no other app is allowed to read. -->

@@ -3326,6 +3326,7 @@ private fun NoteScreen(
         val valid = runCatching { active.stop() }.isSuccess
         active.release()
         recorder = null
+        RecordingService.stop(context)
         if (!valid) recordingFile?.delete()
         else recordingFile?.let { RecordingTimeline.save(it, recordingEvents.toList()) }
         recordingEvents.clear()
@@ -3350,6 +3351,7 @@ private fun NoteScreen(
             active.start()
         }.isSuccess
         if (started) {
+            RecordingService.start(context)
             recordingFile = file
             recorder = active
             recordingEvents.clear()
@@ -3367,6 +3369,7 @@ private fun NoteScreen(
         onDispose {
             runCatching { recorder?.stop() }
             recorder?.release()
+            if (recorder != null) RecordingService.stop(context)
             voicePlayer?.release()
         }
     }
@@ -3741,7 +3744,7 @@ private fun NoteScreen(
             // The PDF and the page list do not depend on each other; open them
             // side by side rather than one after the other.
             val pdf = async {
-                PdfSource.open(store.pdfFile(note.id), PdfSource.cacheBytesFor(context), links = true)
+                PdfHold.take(store.pdfFile(note.id), PdfSource.cacheBytesFor(context))
             }
             store.load(note.id) to pdf.await()
         }
@@ -4018,6 +4021,8 @@ private fun NoteScreen(
                     },
                 factory = { viewContext ->
                     InkCanvasView(viewContext).apply {
+                        // Let go into PdfHold, so leaving and coming straight back is quick.
+                        releasePdf = { PdfHold.release(it) }
                         pageLoader = { page, epsilon ->
                             store.loadPage(note.id, page, epsilon)
                         }
@@ -5779,7 +5784,7 @@ private fun ReferencePanel(
                 val document = sharedDocument ?: store.load(noteId)
                 // A second view of a PDF beside the note: half the budget, so the
                 // two together do not hold twice what one may.
-                pendingPdf = PdfSource.open(store.pdfFile(noteId), PdfSource.cacheBytesFor(context, share = 2), links = true)
+                pendingPdf = PdfHold.take(store.pdfFile(noteId), PdfSource.cacheBytesFor(context, share = 2))
                 document to pendingPdf
             }
             pendingPdf = null
@@ -6006,6 +6011,8 @@ private fun ReferencePanel(
                         modifier = Modifier.fillMaxSize(),
                         factory = { viewContext ->
                             InkCanvasView(viewContext).apply {
+                                // Let go into PdfHold, so leaving and coming straight back is quick.
+                                releasePdf = { PdfHold.release(it) }
                                 // 팝업 안에서는 페이지 폭이 패널 폭보다 작아지는
                                 // 축소를 허용하지 않습니다. 확대와 필기는 그대로입니다.
                                 minimumScaleIsFitWidth = true

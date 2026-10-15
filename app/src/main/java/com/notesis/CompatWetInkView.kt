@@ -163,10 +163,15 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
     var onFramePosted: ((Long) -> Unit)? = null
     private var newestUnpostedEventMillis = Long.MIN_VALUE
 
-    private val frameCallback = Choreographer.FrameCallback {
+    private val frameCallback = Choreographer.FrameCallback { frameTimeNanos ->
         framePosted = false
+        lastVsyncNanos = frameTimeNanos
         renderSurface()
     }
+
+    /** When the last frame this view drew for began: the vsync grid its ink is shown on. */
+    var lastVsyncNanos: Long = 0L
+        private set
 
     init {
         setWillNotDraw(false)

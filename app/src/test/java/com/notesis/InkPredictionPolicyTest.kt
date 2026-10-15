@@ -106,4 +106,51 @@ class InkPredictionPolicyTest {
         assertEquals(9, predictionLeadForRefresh(0, 60f))
         assertEquals(9, sanitizePredictionLead(40))
     }
+
+    @Test
+    fun `a pen braking to a stop gets no prediction`() {
+        val policy = InkPredictionPolicy()
+        policy.reset(0f, 0f, 0L)
+        var x = 0f
+        for (t in 1..6) { x += 5f; policy.add(x, 0f, t * 4L, 9) }
+        // A tenth of the stroke's speed: stopping.
+        assertEquals(0, policy.add(x + 0.5f, 0f, 28L, 9))
+    }
+
+    @Test
+    fun `speed thresholds follow the panel density`() {
+        // 3.2px per 8ms is medium speed on the reference panel...
+        val reference = InkPredictionPolicy()
+        reference.reset(0f, 0f, 0L)
+        reference.add(3.2f, 0f, 8L, 9)
+        reference.add(6.4f, 0f, 16L, 9)
+        assertEquals(6, reference.add(9.6f, 0f, 24L, 9))
+        // ...but on a panel with twice the pixels per millimetre the pen is
+        // moving half as fast, and gets the short head.
+        val dense = InkPredictionPolicy().apply { pxPerMm = 2f * 287f / 25.4f }
+        dense.reset(0f, 0f, 0L)
+        dense.add(3.2f, 0f, 8L, 9)
+        dense.add(6.4f, 0f, 16L, 9)
+        assertEquals(4, dense.add(9.6f, 0f, 24L, 9))
+    }
+
+    @Test
+    fun `stabilized strokes keep a shorter head`() {
+        assertEquals(9, stabilizedLeadMs(9, 0))
+        assertEquals(4, stabilizedLeadMs(9, 100))
+        assertEquals(0, stabilizedLeadMs(0, 50))
+    }
+
+    @Test
+    fun `compatible ink predicts by where the sample fell in the frame`() {
+        val period = 16_666_667L
+        val vsync = 1_000_000_000L
+        // Just after a vsync: almost two periods to wait, so the full horizon.
+        assertEquals(12, vsyncAlignedLeadMs(12, vsync + 1_000_000L, vsync, 60f))
+        // Just before the next: a little over one period.
+        assertEquals(8, vsyncAlignedLeadMs(12, vsync + period - 1_000_000L, vsync, 60f))
+        // No frame to go by: the fixed horizon.
+        assertEquals(12, vsyncAlignedLeadMs(12, vsync, 0L, 60f))
+        assertEquals(12, vsyncAlignedLeadMs(12, vsync + 20 * period, vsync, 60f))
+    }
 }

@@ -65,12 +65,12 @@ fun allowsOpacity(mode: EditMode): Boolean =
 
 /** The pens the pen tool can be, in the order the settings offer them. */
 val PEN_NIBS = listOf(
-    Tool.PEN to "볼펜", Tool.FOUNTAIN to "만년필", Tool.CALLIGRAPHY to "캘리그라피",
+    Tool.PEN to "볼펜", Tool.FOUNTAIN to "만년필", Tool.SPEED_FOUNTAIN to "만년필(속도)", Tool.CALLIGRAPHY to "캘리그라피",
 )
 
 /** The looks the pencil tool can draw with, in the order the settings offer them. */
 val PENCIL_NIBS = listOf(
-    Tool.PENCIL to "흑연", Tool.STAMP to "스탬프", Tool.BUBBLE to "버블", Tool.SPRAY to "스프레이",
+    Tool.PENCIL to "흑연", Tool.SOFT_PENCIL to "소프트", Tool.STAMP to "스탬프", Tool.BUBBLE to "버블", Tool.SPRAY to "스프레이",
 )
 
 /** The kinds offered for a tool, or none when it has only the one. */

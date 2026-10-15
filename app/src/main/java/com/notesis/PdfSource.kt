@@ -49,8 +49,13 @@ sealed interface PdfLink {
 class PdfSource private constructor(
     private val descriptor: ParcelFileDescriptor,
     private val renderer: PdfRenderer,
-    cacheBytes: Int,
+    /** The whole memory budget this source was opened with. */
+    val cacheBytes: Int,
 ) : AutoCloseable {
+
+    /** The file this was opened from, for [PdfHold] to know it again. */
+    var file: File? = null
+        private set
 
     /**
      * The PDF's own link annotations, by page. Empty until they are known:
@@ -100,6 +105,8 @@ class PdfSource private constructor(
 
     @Volatile
     private var closed = false
+
+    val isClosed: Boolean get() = closed
 
     // [cacheBytes] remains one total budget. Detail space fits a 2048px A4
     // page at the minimum budget and keeps a screenful of sharp tiles.
@@ -812,6 +819,7 @@ class PdfSource private constructor(
                     ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
                 PdfSource(descriptor, PdfRenderer(descriptor), cacheBytes)
             }.getOrNull() ?: return null
+            source.file = file
             if (links) source.loadLinks(file)
             return source
         }
