@@ -1985,14 +1985,15 @@ class InkCanvasView @JvmOverloads constructor(
         ) return super.onGenericMotionEvent(event)
         val vertical = event.getAxisValue(MotionEvent.AXIS_VSCROLL)
         val horizontal = event.getAxisValue(MotionEvent.AXIS_HSCROLL)
-        if (event.isCtrlPressed || event.isMetaPressed) {
+        val meta = event.metaState
+        if (meta and (KeyEvent.META_CTRL_ON or KeyEvent.META_META_ON) != 0) {
             if (vertical != 0f) zoomBy(exp(vertical * WHEEL_ZOOM_PER_NOTCH), event.x, event.y)
             return true
         }
         val config = android.view.ViewConfiguration.get(context)
         var dx = -horizontal * config.scaledHorizontalScrollFactor
         var dy = vertical * config.scaledVerticalScrollFactor
-        if (event.isShiftPressed && horizontal == 0f) {
+        if (meta and KeyEvent.META_SHIFT_ON != 0 && horizontal == 0f) {
             dx = dy
             dy = 0f
         }
