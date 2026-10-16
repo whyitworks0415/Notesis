@@ -617,9 +617,10 @@ internal fun Tool.isDabbed(): Boolean =
     this == Tool.STAMP || this == Tool.BUBBLE || this == Tool.SPRAY || this == Tool.SOFT_PENCIL
 
 /**
- * The laser pointer's trail, in screen pixels. A fixed ring of samples that age
- * out after [LIFE_MS], so the trail follows the pen and fades behind it without
- * ever touching the page or its history.
+ * What the pen just did in reading (gesture) mode, in screen pixels: the
+ * path a drag took, and a ring where a tap with the button landed. A fixed
+ * ring of samples that age out after [LIFE_MS], so the trail follows the pen
+ * and fades behind it without ever touching the page or its history.
  */
 private class LaserView(context: Context) : View(context) {
     private val xs = FloatArray(CAPACITY)
@@ -640,9 +641,34 @@ private class LaserView(context: Context) : View(context) {
         strokeCap = Paint.Cap.ROUND
     }
     private val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFF3B30.toInt() }
+    private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+    private var tapX = 0f
+    private var tapY = 0f
+    private var tapTime = Long.MIN_VALUE
 
     /** False draws only the dot under the pen, with nothing trailing behind it. */
     var trail = true
+
+    /** The trail's colour: a glow of it, with a pale core. */
+    fun tint(color: Int) {
+        glow.color = color
+        dot.color = color
+        ring.color = color
+        core.color = blend(color, 0xFFFFFFFF.toInt(), 0.78f)
+    }
+
+    /** A ring spreading from where a tap landed, so the tap shows where it was. */
+    fun tapAt(x: Float, y: Float, time: Long) {
+        tapX = x
+        tapY = y
+        tapTime = time
+        postInvalidateOnAnimation()
+    }
+
+    private fun blend(a: Int, b: Int, t: Float): Int {
+        fun ch(shift: Int) = (((a shr shift) and 0xFF) * (1 - t) + ((b shr shift) and 0xFF) * t).toInt() shl shift
+        return -0x1000000 or ch(16) or ch(8) or ch(0)
+    }
 
     init {
         setWillNotDraw(false)
@@ -680,7 +706,21 @@ private class LaserView(context: Context) : View(context) {
             start = (start + 1) % CAPACITY
             count--
         }
-        if (count == 0) return
+        val tapAge = now - tapTime
+        val tapping = tapTime != Long.MIN_VALUE && tapAge in 0..TAP_LIFE_MS
+        if (tapping) {
+            val t = tapAge.toFloat() / TAP_LIFE_MS
+            ring.alpha = (220 * (1f - t)).toInt()
+            ring.strokeWidth = 2.5f * density
+            canvas.drawCircle(tapX, tapY, (10f + 22f * t) * density, ring)
+            dot.alpha = (200 * (1f - t)).toInt()
+            canvas.drawCircle(tapX, tapY, 4f * density, dot)
+            dot.alpha = 255
+        }
+        if (count == 0) {
+            if (tapping) postInvalidateOnAnimation()
+            return
+        }
         if (trail) for (i in 1 until count) {
             val a = (start + i - 1) % CAPACITY
             val b = (start + i) % CAPACITY
@@ -702,6 +742,7 @@ private class LaserView(context: Context) : View(context) {
     private companion object {
         const val CAPACITY = 512
         const val LIFE_MS = 650L
+        const val TAP_LIFE_MS = 600L
     }
 }
 
@@ -1296,7 +1337,42 @@ class InkCanvasView @JvmOverloads constructor(
     private fun eraserScreenRadius(): Float =
         (eraserWidth * resources.displayMetrics.density / 2f).coerceAtLeast(0.5f)
     private val predictionHead = PredictionHeadView(context)
-    private val laser = LaserView(context)
+    // The laser pointer is gone; its trail shows what the pen did in reading mode.
+    private val laser = LaserView(context).apply { tint(GESTURE_TRAIL_COLOR) }
+    private var gestureTrail = false
+    private var gestureButton = false
+    private var gestureMoved = false
+    private var gestureDownX = 0f
+    private var gestureDownY = 0f
+
+    /** In reading mode, the pen leaves a fading trail of where it went. */
+    private fun startGestureTrail(event: MotionEvent, button: Boolean) {
+        val i = event.actionIndex
+        gestureTrail = true
+        gestureButton = button
+        gestureMoved = false
+        gestureDownX = event.getX(i)
+        gestureDownY = event.getY(i)
+        laser.add(gestureDownX, gestureDownY, event.eventTime, true)
+    }
+
+    private fun addGestureTrail(event: MotionEvent, index: Int) {
+        for (h in 0 until event.historySize) {
+            laser.add(event.getHistoricalX(index, h), event.getHistoricalY(index, h), event.getHistoricalEventTime(h), true)
+        }
+        val x = event.getX(index)
+        val y = event.getY(index)
+        if (hypot(x - gestureDownX, y - gestureDownY) > touchSlop) gestureMoved = true
+        laser.add(x, y, event.eventTime, true)
+    }
+
+    /** A tap with the button held leaves a ring where it landed; any drag just fades. */
+    private fun finishGestureTrail(event: MotionEvent) {
+        if (!gestureTrail) return
+        gestureTrail = false
+        if (gestureButton && !gestureMoved) laser.tapAt(gestureDownX, gestureDownY, event.eventTime)
+        laser.lift()
+    }
     private val ruler = RulerView(context).apply { visibility = GONE }
     private val eyedropper = EyedropperView(context)
 
@@ -1894,6 +1970,7 @@ class InkCanvasView @JvmOverloads constructor(
         refineFuture = null
         refiningPages = emptyList()
         refiner.shutdownNow()
+        selectionWorker.shutdownNow()
         predictionHead.clear()
         pdf?.diagnostics = null
         pdf?.let(releasePdf)
@@ -2726,16 +2803,13 @@ class InkCanvasView @JvmOverloads constructor(
                 // The barrel button held (not the pen turned to its eraser end) can mean something else.
                 val buttonHeld = samsungSideButton || (event.getToolType(event.actionIndex) != MotionEvent.TOOL_TYPE_ERASER &&
                     event.isEraserGesture())
-                if (buttonHeld && !readMode && penButton == PEN_BUTTON_LASER) {
-                    activeStylusPointer = null
-                    return onLaser(event)
-                }
                 if (buttonHeld && !readMode && penButton == PEN_BUTTON_LASSO) {
                     onDrawingChanged?.invoke(true)
                     beginLasso(event, index)
                     return true
                 }
                 val eraserGesture = event.isEraserGesture() || samsungSideButton
+                if (readMode) startGestureTrail(event, eraserGesture)
                 if (readMode && eraserGesture) {
                     onDrawingChanged?.invoke(true)
                     readingWithButton = true
@@ -2923,6 +2997,7 @@ class InkCanvasView @JvmOverloads constructor(
                 val pointerId = activeStylusPointer ?: return false
                 val index = event.findPointerIndex(pointerId)
                 if (index < 0) return false
+                if (gestureTrail) addGestureTrail(event, index)
                 if (readingWithButton) {
                     updateReadButtonCapture(event, index)
                     return true
@@ -3081,6 +3156,7 @@ class InkCanvasView @JvmOverloads constructor(
                 val pointerId = activeStylusPointer ?: return false
                 // A palm/finger lifting must not finish the stylus stroke.
                 if (event.getPointerId(event.actionIndex) != pointerId) return true
+                finishGestureTrail(event)
                 predictionHead.clear()
                 if (readingWithButton) {
                     // Include the lift position even when no final MOVE was delivered.
@@ -3215,6 +3291,10 @@ class InkCanvasView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_CANCEL -> {
+                if (gestureTrail) {
+                    gestureTrail = false
+                    laser.lift()
+                }
                 if (readingWithButton) {
                     readButtonGesture.reset()
                     capturing = false
@@ -4436,12 +4516,36 @@ class InkCanvasView @JvmOverloads constructor(
 
     @Volatile private var selectionSerial = 0
 
+    /** Results from requests at or below this were cancelled and are never shown. */
+    @Volatile private var selectionCancelledAt = 0
+
+    /** The newest request whose result is on screen. */
+    private var selectionShown = 0
+
+    /**
+     * Text selection's own worker. On the refiner it queued behind stroke
+     * rebuilds; and a result was only shown if no newer request had come in
+     * meanwhile, which while the pen was still dragging was never - so the
+     * selection appeared only once the pen lifted. Now the newest request
+     * waiting is the one worked out next, and each answer is shown as it
+     * arrives unless something newer is already on screen.
+     */
+    private val selectionWorker = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "notesis-text-select").apply { isDaemon = true }
+    }
+
     private fun requestSelection(source: PdfSource, pdfPage: Int, start: RectF, end: RectF) {
         val serial = ++selectionSerial
-        refiner.execute {
+        if (selectionWorker.isShutdown) return
+        selectionWorker.execute {
+            // A newer request is queued behind this one: let it answer instead.
             if (serial != selectionSerial) return@execute
             val found = source.select(pdfPage, start, end)
-            post { if (serial == selectionSerial) setSelection(found) }
+            post {
+                if (serial <= selectionCancelledAt || serial < selectionShown) return@post
+                selectionShown = serial
+                setSelection(found)
+            }
         }
     }
 
@@ -4511,7 +4615,7 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     fun clearSelection() {
-        selectionSerial++
+        selectionCancelledAt = ++selectionSerial
         readButtonGesture.reset()
         selectionAnchor = null
         if (selection == null) return
@@ -5903,7 +6007,7 @@ class InkCanvasView @JvmOverloads constructor(
         if (!readButtonGesture.dragging) return
         if (!capturing) {
             // Clear the text overlay without resetting the active button drag.
-            selectionSerial++
+            selectionCancelledAt = ++selectionSerial
             selectionAnchor = null
             if (selection != null) setSelection(null)
         }
@@ -7280,6 +7384,8 @@ class InkCanvasView @JvmOverloads constructor(
         const val CIRCLE_MIN_EXTENT_PX = 48f
         const val WHOLE_CHECK_SAMPLES = 32
         const val KEY_ZOOM_STEP = 1.25f
+        /** The reading-mode trail and tap ring: the selection's blue. */
+        const val GESTURE_TRAIL_COLOR = 0xFF3B7DDD.toInt()
         const val MEASURED_LATENCY_REFRESH_MS = 500L
         /** How far outside a checkbox, in screen pixels, a tap still ticks it. */
         const val CHECKBOX_TOUCH_SLOP_PX = 14f

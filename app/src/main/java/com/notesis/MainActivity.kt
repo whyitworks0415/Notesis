@@ -1596,8 +1596,8 @@ internal fun InputSettingsDialog(gestures: CanvasGestures, onGestures: (CanvasGe
                 toggle("길게 눌러 메뉴 열기", gestures.longPressMenu) { onGestures(gestures.copy(longPressMenu = it)) }
                 toggle("링크 객체에 파란 표시", gestures.linkOverlay) { onGestures(gestures.copy(linkOverlay = it)) }
                 toggle("지우개로 지운 뒤 이전 도구로", gestures.eraserReturns) { onGestures(gestures.copy(eraserReturns = it)) }
-                choices("펜 버튼 누르고 쓰기", listOf(PEN_BUTTON_ERASE to "지우개", PEN_BUTTON_LASER to "레이저",
-                    PEN_BUTTON_LASSO to "올가미"), gestures.penButton) { onGestures(gestures.copy(penButton = it)) }
+                choices("펜 버튼 누르고 쓰기", listOf(PEN_BUTTON_ERASE to "지우개",
+                    PEN_BUTTON_LASSO to "올가미"), gestures.penButton.takeIf { it != PEN_BUTTON_LASER } ?: PEN_BUTTON_ERASE) { onGestures(gestures.copy(penButton = it)) }
                 Text("손바닥이 닿는다면 한 손가락을 '무시'로, 두 손가락을 '스크롤'로 두세요. 그리기 모드에서는 두 손가락으로 화면을 움직입니다.",
                     style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
             }
@@ -7208,14 +7208,6 @@ private fun Toolbar(
                     )
                 }
             }
-            IconButton(onClick = onToggleLaser) {
-                Icon(
-                    Reicons.FilterCenterFocus,
-                    contentDescription = if (!laser) "레이저 포인터" else if (laserDot) "레이저 점 · 끄기" else "레이저 선 · 점으로",
-                    tint = if (laser) Color(0xFFFF3B30) else LocalContentColor.current,
-                )
-            }
-            RulerButton(ruler, onRuler)
             // The clock, the calculator, the to-do list and the calendar.
             ToolsMenuButton()
             IconButton(onClick = onInputSettings) { Icon(Reicons.TouchApp, contentDescription = "손가락·제스처") }
@@ -7246,12 +7238,6 @@ private fun Toolbar(
                     selected = docked, slot = 1, onClick = onToggleDock))
                 add(SpotiToolbarAction("노트 회전", Reicons.ScreenRotation, slot = 7, onClick = onRotate))
                 add(SpotiToolbarAction("캡쳐", Reicons.CropFree, slot = 5, onClick = { onMode(EditMode.CAPTURE) }))
-                add(SpotiToolbarAction(if (!laser) "레이저 포인터" else if (laserDot) "레이저 점" else "레이저 선",
-                    Reicons.FilterCenterFocus, selected = laser, onClick = onToggleLaser))
-                for (kind in RulerKind.entries) {
-                    add(SpotiToolbarAction(rulerLabel(kind), Reicons.Remove, selected = ruler == kind,
-                        onClick = { onRuler(if (ruler == kind) null else kind) }))
-                }
                 add(SpotiToolbarAction("페이지 추가", Reicons.Add, onClick = onAddPage))
                 add(SpotiToolbarAction("필기 설정", Reicons.Create, slot = 4, onClick = {
                     if (mode !in PenStore.DEFAULTS) onMode(EditMode.PEN)
@@ -7315,26 +7301,6 @@ internal fun rulerLabel(kind: RulerKind): String = when (kind) {
     RulerKind.PROTRACTOR -> "각도기"
 }
 
-/** Lays a ruler, set square or protractor on the screen; tapping the one in hand again asks for its angle. */
-@Composable
-private fun RulerButton(ruler: RulerKind?, onRuler: (RulerKind?) -> Unit) {
-    var open by remember { mutableStateOf(false) }
-    Box {
-        IconButton(onClick = { open = true }) {
-            Icon(Reicons.Remove, contentDescription = "자",
-                tint = if (ruler != null) MaterialTheme.colorScheme.primary else LocalContentColor.current)
-        }
-        DropdownMenu(open, onDismissRequest = { open = false }) {
-            for (kind in RulerKind.entries) {
-                DropdownMenuItem(
-                    text = { Text((if (ruler == kind) "✓ " else "") + rulerLabel(kind)) },
-                    onClick = { open = false; onRuler(kind) },
-                )
-            }
-            if (ruler != null) DropdownMenuItem(text = { Text("치우기") }, onClick = { open = false; onRuler(null) })
-        }
-    }
-}
 
 /** Jumps straight to another note without going back through the list. */
 @Composable
