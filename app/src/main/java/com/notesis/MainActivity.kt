@@ -3991,10 +3991,9 @@ private fun NoteScreen(
             drawRect(Color(0xFFE9E7E2))
             val view = canvas
             if (view != null) {
-                val fit = rotatedFit(size.width, size.height, noteRotation)
+                // The canvas turns its own page about its middle; the glass sees it the same way.
                 withTransform({
                     rotate(noteRotation)
-                    scale(fit, fit)
                 }) {
                     drawIntoCanvas { view.drawBackdrop(it.nativeCanvas) }
                 }
@@ -4029,10 +4028,6 @@ private fun NoteScreen(
                     // AndroidView를 Backdrop 레이어에 안정적으로 합성합니다.
                     .graphicsLayer {
                         alpha = 1f
-                        rotationZ = noteRotation
-                        val fit = rotatedFit(size.width, size.height, noteRotation)
-                        scaleX = fit
-                        scaleY = fit
                     },
                 factory = { viewContext ->
                     InkCanvasView(viewContext).apply {
@@ -4107,6 +4102,9 @@ private fun NoteScreen(
                     view.meshInk = meshInk
                     view.compatWetInk = compatWetInk
                     view.wetSurfaceAllowed = noteRotation == 0f
+                    // Turned inside the canvas, not as a view: a turned view clipped the
+                    // page's corners and left the wet ink's surface behind the pen.
+                    view.viewRotation = noteRotation
                     view.onRotateNote = { delta ->
                         noteRotation = ((noteRotation + delta) % 360f + 360f) % 360f
                     }
@@ -6344,20 +6342,6 @@ private fun PageScrubber(
 
 /** Within this many degrees of a quarter turn, a turned note settles onto it. */
 private const val ROTATION_SNAP_DEGREES = 4f
-
-/**
- * How much a view turned by [degrees] has to shrink to stay inside its own
- * [width] x [height] box: 1 upright, the short side over the long one at a
- * quarter turn, and the bounding box of the turned rectangle in between.
- */
-internal fun rotatedFit(width: Float, height: Float, degrees: Float): Float {
-    if (width <= 0f || height <= 0f) return 1f
-    val radians = Math.toRadians(degrees.toDouble())
-    val c = abs(kotlin.math.cos(radians)).toFloat()
-    val s = abs(kotlin.math.sin(radians)).toFloat()
-    if (s < 1e-4f) return 1f
-    return minOf(width / (width * c + height * s), height / (width * s + height * c))
-}
 
 @Composable
 private fun PageSidebar(

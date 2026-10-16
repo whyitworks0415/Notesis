@@ -1341,6 +1341,126 @@ class InkCanvasView @JvmOverloads constructor(
         get() = compatWet.surfaceAllowed
         set(value) { compatWet.surfaceAllowed = value }
 
+    /**
+     * Degrees the note is turned on screen, about the middle of this view.
+     *
+     * The view itself is never turned. Turning it from outside clipped the
+     * page to the turned rectangle, so the corners went missing, and the wet
+     * ink - drawn on a surface, which cannot follow a rotation - landed away
+     * from the pen. Instead everything in here keeps working in the unturned
+     * ("layout") frame: touches are turned into it on the way in, children
+     * are drawn turned on the way out, and only the wet layer stays in the
+     * screen's frame, fed screen-frame events and a matching transform.
+     */
+    var viewRotation: Float = 0f
+        set(value) {
+            val turned = ((value % 360f) + 360f) % 360f
+            if (field == turned) return
+            field = turned
+            updateRotation()
+            dry.invalidate()
+            invalidate()
+            // A turned screen shows parts of the page an upright one did not.
+            scheduleRefine()
+        }
+    private val layoutToScreen = Matrix()
+    private val screenToLayout = Matrix()
+    private val wetTransform = Matrix()
+    private val rotationCorners = FloatArray(8)
+
+    private fun updateRotation() {
+        layoutToScreen.setRotate(viewRotation, width / 2f, height / 2f)
+        layoutToScreen.invert(screenToLayout)
+        // Turned, the children draw past their own edges into the corners.
+        clipChildren = viewRotation == 0f
+    }
+
+    /** The part of the layout frame that is on screen, as the box round it: [left, top, right, bottom]. */
+    private fun layoutViewport(out: FloatArray) {
+        if (viewRotation == 0f) {
+            out[0] = 0f; out[1] = 0f; out[2] = width.toFloat(); out[3] = height.toFloat()
+            return
+        }
+        val w = width.toFloat()
+        val h = height.toFloat()
+        rotationCorners[0] = 0f; rotationCorners[1] = 0f
+        rotationCorners[2] = w; rotationCorners[3] = 0f
+        rotationCorners[4] = w; rotationCorners[5] = h
+        rotationCorners[6] = 0f; rotationCorners[7] = h
+        screenToLayout.mapPoints(rotationCorners)
+        out[0] = minOf(rotationCorners[0], rotationCorners[2], rotationCorners[4], rotationCorners[6])
+        out[1] = minOf(rotationCorners[1], rotationCorners[3], rotationCorners[5], rotationCorners[7])
+        out[2] = maxOf(rotationCorners[0], rotationCorners[2], rotationCorners[4], rotationCorners[6])
+        out[3] = maxOf(rotationCorners[1], rotationCorners[3], rotationCorners[5], rotationCorners[7])
+    }
+
+    /** [event], in the layout frame, back in the screen's frame for the wet layer. Recycle it when not the same. */
+    private fun wetEvent(event: MotionEvent): MotionEvent {
+        if (viewRotation == 0f) return event
+        return MotionEvent.obtain(event).also { it.transform(layoutToScreen) }
+    }
+
+    private inline fun <T> withWetEvent(event: MotionEvent, block: (MotionEvent) -> T): T {
+        val screen = wetEvent(event)
+        try {
+            return block(screen)
+        } finally {
+            if (screen !== event) screen.recycle()
+        }
+    }
+
+    /** [toPage], from the layout frame, made to start from the screen's frame instead. */
+    private fun wetTransformOf(toPage: Matrix): Matrix {
+        if (viewRotation == 0f) return toPage
+        wetTransform.set(toPage)
+        wetTransform.preConcat(screenToLayout)
+        return wetTransform
+    }
+
+    /** The touch as the screen saw it, while a turned copy of it is being handled. */
+    private var screenEvent: MotionEvent? = null
+
+    /** Runs [handle] on [event] turned into the layout frame. */
+    private inline fun inLayoutFrame(event: MotionEvent, handle: (MotionEvent) -> Boolean): Boolean {
+        if (viewRotation == 0f) return handle(event)
+        val turned = MotionEvent.obtain(event)
+        turned.transform(screenToLayout)
+        val outer = screenEvent
+        screenEvent = event
+        try {
+            return handle(turned)
+        } finally {
+            screenEvent = outer
+            turned.recycle()
+        }
+    }
+
+    override fun dispatchDraw(canvas: Canvas) {
+        if (viewRotation == 0f) {
+            super.dispatchDraw(canvas)
+            return
+        }
+        canvas.save()
+        canvas.concat(layoutToScreen)
+        try {
+            super.dispatchDraw(canvas)
+        } finally {
+            canvas.restore()
+        }
+    }
+
+    override fun drawChild(canvas: Canvas, child: View, drawingTime: Long): Boolean {
+        // The wet layer's surface cannot turn; its window-side drawing must not either.
+        if (viewRotation == 0f || child !== wet) return super.drawChild(canvas, child, drawingTime)
+        canvas.save()
+        canvas.concat(screenToLayout)
+        try {
+            return super.drawChild(canvas, child, drawingTime)
+        } finally {
+            canvas.restore()
+        }
+    }
+
     private fun cancelCompatWet(strokeId: InProgressStrokeId?) {
         if (strokeId == null) return
         if (strokeId == compatWetStrokeId) compatWetStrokeId = null
@@ -1962,6 +2082,7 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        updateRotation()
         excludeEdgesFromBackGesture(w, h)
         super.onSizeChanged(w, h, oldw, oldh)
         if (!fitted && w > 0) {
@@ -2147,7 +2268,9 @@ class InkCanvasView @JvmOverloads constructor(
      * page, Shift+wheel moves it sideways, and Ctrl (or Cmd)+wheel zooms
      * about the pointer, so the spot under it stays put.
      */
-    override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean = inLayoutFrame(event) { onGenericInLayout(it) }
+
+    private fun onGenericInLayout(event: MotionEvent): Boolean {
         if (event.actionMasked != MotionEvent.ACTION_SCROLL ||
             !event.isFromSource(android.view.InputDevice.SOURCE_CLASS_POINTER)
         ) return super.onGenericMotionEvent(event)
@@ -2741,7 +2864,9 @@ class InkCanvasView @JvmOverloads constructor(
         }
     }
 
-    override fun onTouchEvent(event: MotionEvent): Boolean {
+    override fun onTouchEvent(event: MotionEvent): Boolean = inLayoutFrame(event) { onTouchEventInLayout(it) }
+
+    private fun onTouchEventInLayout(event: MotionEvent): Boolean {
         // Samsung reports a touch made with the S Pen side button held through
         // its own action codes instead of DOWN/MOVE/UP with a button state, so
         // without this the barrel-button eraser never sees a single event.
@@ -2800,7 +2925,9 @@ class InkCanvasView @JvmOverloads constructor(
         return try { onStylus(event) } finally { Trace.endSection() }
     }
 
-    override fun onHoverEvent(event: MotionEvent): Boolean {
+    override fun onHoverEvent(event: MotionEvent): Boolean = inLayoutFrame(event) { onHoverInLayout(it) }
+
+    private fun onHoverInLayout(event: MotionEvent): Boolean {
         val stylus = event.getToolType(event.actionIndex) == MotionEvent.TOOL_TYPE_STYLUS
         if (!stylus) return super.onHoverEvent(event)
         when (event.actionMasked) {
@@ -3076,12 +3203,14 @@ class InkCanvasView @JvmOverloads constructor(
                     // "World" here is the page, so the finished stroke comes
                     // back in page-local coordinates and stays with its page.
                     val toPage = screenToPage(index)
-                    activeStrokeId = wet.startStroke(
-                        event = event,
-                        pointerId = pointerId,
-                        brush = brush,
-                        motionEventToWorldTransform = toPage,
-                    )
+                    activeStrokeId = withWetEvent(event) { screen ->
+                        wet.startStroke(
+                            event = screen,
+                            pointerId = pointerId,
+                            brush = brush,
+                            motionEventToWorldTransform = wetTransformOf(toPage),
+                        )
+                    }
                     if (compatWetInk) {
                         activeStrokeId?.let { id ->
                             compatWet.start(id, event, pointerId, brush, toPage)
@@ -3269,7 +3398,14 @@ class InkCanvasView @JvmOverloads constructor(
                     // Where the front buffer is not what the panel shows, it
                     // still renders; spare it the prediction it would redraw on
                     // every sample, and a stale head when HWUI does reveal it.
-                    wet.addToStroke(inkEvent, pointerId, strokeId, if (compatStroke) null else predicted)
+                    withWetEvent(inkEvent) { screen ->
+                        val head = if (compatStroke) null else predicted?.let(::wetEvent)
+                        try {
+                            wet.addToStroke(screen, pointerId, strokeId, head)
+                        } finally {
+                            if (head != null && head !== predicted) head.recycle()
+                        }
+                    }
                     if (compatStroke) {
                         // The prediction is already part of the compatible
                         // stroke. A separate head View would put every pen
@@ -3389,7 +3525,7 @@ class InkCanvasView @JvmOverloads constructor(
                         stabilizedHistoryEvent(event, pointerId, endingStroke = true)?.let { history ->
                             try {
                                 if (predictionEnabled) predictor.record(history)
-                                wet.addToStroke(history, pointerId, strokeId, null)
+                                withWetEvent(history) { wet.addToStroke(it, pointerId, strokeId, null) }
                                 if (compatWetStrokeId == strokeId) compatWet.add(strokeId, history, pointerId, null)
                             } finally { history.recycle() }
                         }
@@ -3414,7 +3550,7 @@ class InkCanvasView @JvmOverloads constructor(
                     try {
                         if (predictionEnabled) predictor.record(end)
                         pendingStrokeCommits.add(strokeId)
-                        wet.finishStroke(end, pointerId, strokeId)
+                        withWetEvent(end) { wet.finishStroke(it, pointerId, strokeId) }
                         if (compatWetStrokeId == strokeId) compatWet.finish(strokeId, end, pointerId)
                     } finally {
                         if (end !== event) end.recycle()
@@ -3436,7 +3572,7 @@ class InkCanvasView @JvmOverloads constructor(
                 }
                 predictionHead.clear()
                 if (predictionEnabled && activeStrokeId != null) predictor.record(event)
-                activeStrokeId?.let { wet.cancelStroke(it, event) }
+                activeStrokeId?.let { id -> withWetEvent(event) { wet.cancelStroke(id, it) } }
                 cancelCompatWet(activeStrokeId)
                 if (erasing) finishEraseGesture()
                 endStylus()
@@ -3848,8 +3984,8 @@ class InkCanvasView @JvmOverloads constructor(
                     val rawFocus = rawFingerFocus(event)
                     val spread = rawFingerSpread(event, rawFocus[0], rawFocus[1])
                     // Turning the hand turns the note; sliding it still moves the panel.
-                    if (have3Fingers && trackNoteTurn(event, rawFocus[0], rawFocus[1])) {
-                        recordFingerAngles(event, rawFocus[0], rawFocus[1])
+                    if (have3Fingers && trackNoteTurn(event)) {
+                        recordFingerAngles(event)
                         prev3fX = rawFocus[0]
                         prev3fY = rawFocus[1]
                         prev3fSpread = spread
@@ -3903,7 +4039,7 @@ class InkCanvasView @JvmOverloads constructor(
                         onOpenReference?.invoke(focus[0], focus[1])
                         opened3fThisGesture = true
                     }
-                    recordFingerAngles(event, rawFocus[0], rawFocus[1])
+                    recordFingerAngles(event)
                     prev3fX = rawFocus[0]
                     prev3fY = rawFocus[1]
                     prev3fSpread = spread
@@ -4202,13 +4338,29 @@ class InkCanvasView @JvmOverloads constructor(
     private val scratch = FloatArray(2)
 
     /** Each finger's angle about the hand's centre, in screen terms, for the next [trackNoteTurn]. */
-    private fun recordFingerAngles(event: MotionEvent, cx: Float, cy: Float) {
-        val count = min(event.pointerCount, MAX_TURN_POINTERS)
+    private fun recordFingerAngles(event: MotionEvent) {
+        val screen = screenEvent ?: event
+        val count = min(screen.pointerCount, MAX_TURN_POINTERS)
+        handCentre(screen)
         for (i in 0 until count) {
-            fingerAngleIds[i] = event.getPointerId(i)
-            fingerAngles[i] = atan2(event.getRawY(i) - cy, event.getRawX(i) - cx)
+            fingerAngleIds[i] = screen.getPointerId(i)
+            fingerAngles[i] = atan2(screen.getY(i) - handCentre[1], screen.getX(i) - handCentre[0])
         }
         fingerAngleCount = count
+    }
+
+    private val handCentre = FloatArray(2)
+
+    /** The fingers' centre, in the screen's frame - the turn is measured there, not in the turning one. */
+    private fun handCentre(screen: MotionEvent) {
+        var x = 0f
+        var y = 0f
+        for (i in 0 until screen.pointerCount) {
+            x += screen.getX(i)
+            y += screen.getY(i)
+        }
+        handCentre[0] = x / screen.pointerCount
+        handCentre[1] = y / screen.pointerCount
     }
 
     /**
@@ -4218,17 +4370,19 @@ class InkCanvasView @JvmOverloads constructor(
      * coordinates, because the view itself is what is turning. True while
      * the gesture is a turn.
      */
-    private fun trackNoteTurn(event: MotionEvent, cx: Float, cy: Float): Boolean {
+    private fun trackNoteTurn(event: MotionEvent): Boolean {
         val handler = onRotateNote ?: return false
         if (fingerAngleCount == 0) return rotating3f
+        val screen = screenEvent ?: event
+        handCentre(screen)
         var sum = 0f
         var counted = 0
-        for (i in 0 until min(event.pointerCount, MAX_TURN_POINTERS)) {
-            val dx = event.getRawX(i) - cx
-            val dy = event.getRawY(i) - cy
+        for (i in 0 until min(screen.pointerCount, MAX_TURN_POINTERS)) {
+            val dx = screen.getX(i) - handCentre[0]
+            val dy = screen.getY(i) - handCentre[1]
             // A finger near the centre swings wildly for no turn at all.
             if (hypot(dx, dy) < MIN_SPREAD_PX) continue
-            val id = event.getPointerId(i)
+            val id = screen.getPointerId(i)
             var before = -1
             for (j in 0 until fingerAngleCount) if (fingerAngleIds[j] == id) { before = j; break }
             if (before < 0) continue
@@ -4604,7 +4758,8 @@ class InkCanvasView @JvmOverloads constructor(
 
     private fun visiblePages(): List<Page> {
         if (width == 0 || height == 0) return emptyList()
-        val bounds = floatArrayOf(0f, 0f, width.toFloat(), height.toFloat())
+        val bounds = FloatArray(4)
+        layoutViewport(bounds)
         screenToDocument.mapPoints(bounds)
         val top = minOf(bounds[1], bounds[3])
         val bottom = maxOf(bounds[1], bounds[3])
@@ -6974,6 +7129,8 @@ class InkCanvasView @JvmOverloads constructor(
                 return
             }
             pageNode.setPosition(0, 0, width, height)
+            // Turned, the page reaches past the view's edges into the screen's corners.
+            pageNode.setClipToBounds(viewRotation == 0f)
             val recording = pageNode.beginRecording(width, height)
             try {
                 super.draw(recording)
@@ -7561,10 +7718,7 @@ class InkCanvasView @JvmOverloads constructor(
 
         /** Screen rect mapped back into document space: [xMin, yMin, xMax, yMax]. */
         fun visibleDocumentBounds(out: FloatArray) {
-            out[0] = 0f
-            out[1] = 0f
-            out[2] = width.toFloat()
-            out[3] = height.toFloat()
+            layoutViewport(out)
             screenToDocument.mapPoints(out)
             val xMin = minOf(out[0], out[2])
             val xMax = maxOf(out[0], out[2])
