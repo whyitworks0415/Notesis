@@ -6232,9 +6232,14 @@ private fun PageScrubber(
         label = "page scrubber width",
     )
     val travel = (trackHeight - thumbHeightPx).coerceAtLeast(0f)
-    val thumbY = (fraction * travel).roundToInt()
+    // Held, the handle follows the finger, not the page it lands on; let go,
+    // it eases onto that page's place on the track.
+    var dragFraction by remember { mutableFloatStateOf(NOT_DRAGGING) }
+    val shown = sliderShownFraction(fraction, dragFraction)
+    val thumbY = (shown * travel).roundToInt()
 
     fun jumpAt(y: Float) {
+        if (dragging && travel > 0f) dragFraction = ((y - thumbHeightPx / 2f) / travel).coerceIn(0f, 1f)
         onJump(scrubbedPage(y, trackHeight.toFloat(), thumbHeightPx, pageCount))
     }
 
@@ -6248,8 +6253,8 @@ private fun PageScrubber(
                         dragging = true
                         jumpAt(it.y)
                     },
-                    onDragEnd = { dragging = false },
-                    onDragCancel = { dragging = false },
+                    onDragEnd = { dragging = false; dragFraction = NOT_DRAGGING },
+                    onDragCancel = { dragging = false; dragFraction = NOT_DRAGGING },
                 ) { change, _ ->
                     change.consume()
                     jumpAt(change.position.y)
@@ -6268,11 +6273,11 @@ private fun PageScrubber(
                 .clip(CircleShape)
                 .background(scheme.onSurface.copy(alpha = if (liquid) 0.16f else 0.12f)),
         ) {
-            if (fraction > 0f) {
+            if (shown > 0f) {
                 Box(
                     Modifier
                         .fillMaxWidth()
-                        .fillMaxHeight(fraction)
+                        .fillMaxHeight(shown)
                         .clip(CircleShape)
                         .background(scheme.primary.copy(alpha = if (liquid) 0.84f else 1f)),
                 )

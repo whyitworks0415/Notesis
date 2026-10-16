@@ -649,7 +649,11 @@ fun SkinSlider(
     // is measured at the resting width: letting the swell move the scale would
     // make the value drift under a finger that is holding still.
     val half = with(density) { SLIDER_THUMB_W.toPx() } / 2f
-    val centre = half + fraction * ((width - 2f * half).coerceAtLeast(1f))
+    // Held, the handle follows the finger itself, not the stepped value under
+    // it; let go, it eases onto the value it chose. See [sliderShownFraction].
+    var dragFraction by remember { mutableFloatStateOf(NOT_DRAGGING) }
+    val shown = sliderShownFraction(fraction, dragFraction)
+    val centre = half + shown * ((width - 2f * half).coerceAtLeast(1f))
 
     // A gesture block outlives the composition that started it, so both the
     // width it measures against and the callback it reports to are read at the
@@ -659,7 +663,9 @@ fun SkinSlider(
     val latest by rememberUpdatedState(onValueChange)
     fun report(x: Float) {
         val travel = (width - 2f * half).coerceAtLeast(1f)
-        latest(spotiSliderValue((x - half) / travel, valueRange, steps))
+        val raw = ((x - half) / travel).coerceIn(0f, 1f)
+        dragFraction = raw
+        latest(spotiSliderValue(raw, valueRange, steps))
     }
 
     Box(
@@ -675,10 +681,12 @@ fun SkinSlider(
                     onDragEnd = {
                         held = false
                         motionStretch = 0f
+                        dragFraction = NOT_DRAGGING
                     },
                     onDragCancel = {
                         held = false
                         motionStretch = 0f
+                        dragFraction = NOT_DRAGGING
                     },
                 ) { change, dragAmount ->
                     change.consume()
@@ -698,6 +706,7 @@ fun SkinSlider(
                         tryAwaitRelease()
                         held = false
                         motionStretch = 0f
+                        dragFraction = NOT_DRAGGING
                     },
                 )
             },
@@ -1090,4 +1099,27 @@ internal fun sliderSteps(range: ClosedFloatingPointRange<Float>, step: Float): I
     if (!(span > 0f)) return 0
     val size = if (step > 0f) step else span / 100f
     return ((span / size).roundToInt() - 1).coerceIn(0, 10_000)
+}
+
+/** A slider handle's drag position when no finger is on it. */
+internal const val NOT_DRAGGING = -1f
+
+/**
+ * Where a slider's handle is drawn. While held ([dragFraction] at or above 0)
+ * it stays under the finger, moving as smoothly as the finger does, whatever
+ * stepped value that lands on. Released, it settles onto [valueFraction] - the
+ * stop it chose - with a short spring rather than a jump.
+ */
+@Composable
+internal fun sliderShownFraction(valueFraction: Float, dragFraction: Float): Float {
+    val dragging = dragFraction >= 0f
+    val shown by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (dragging) dragFraction else valueFraction,
+        animationSpec = if (dragging) androidx.compose.animation.core.snap() else spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow,
+        ),
+        label = "slider handle",
+    )
+    return shown.coerceIn(0f, 1f)
 }

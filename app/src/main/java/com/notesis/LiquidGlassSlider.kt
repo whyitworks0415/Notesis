@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -115,11 +116,15 @@ fun LiquidGlassSlider(
     val thumbHeight = 25.dp
     val thumbRadiusPx = with(density) { restingThumbWidth.toPx() / 2f }
     val travel = (trackWidth - thumbRadiusPx * 2f).coerceAtLeast(1f)
-    val centerX = thumbRadiusPx + travel * fraction
+    // The handle under the finger while held, easing onto the chosen stop after.
+    var dragFraction by remember { mutableFloatStateOf(NOT_DRAGGING) }
+    val shown = sliderShownFraction(fraction, dragFraction)
+    val centerX = thumbRadiusPx + travel * shown
 
     fun report(pointerX: Float) {
         if (!enabled) return
         val next = ((pointerX - thumbRadiusPx) / travel).coerceIn(0f, 1f)
+        dragFraction = next
         latestChange(spotiSliderValue(next, valueRange, steps))
     }
 
@@ -153,6 +158,7 @@ fun LiquidGlassSlider(
                         }
                     } finally {
                         dragging = false
+                        dragFraction = NOT_DRAGGING
                         latestFinished?.invoke()
                     }
                 }
@@ -183,7 +189,7 @@ fun LiquidGlassSlider(
             ) {
                 Box(
                     Modifier
-                        .fillMaxWidth(fraction)
+                        .fillMaxWidth(shown)
                         .fillMaxHeight()
                         .clip(CircleShape)
                         .background(

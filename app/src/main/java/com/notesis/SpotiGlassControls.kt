@@ -161,11 +161,16 @@ internal fun SpotiGlassSlider(
     val density = androidx.compose.ui.platform.LocalDensity.current
     val inset = with(density) { 29.dp.toPx() }
     val travel = (width - 2 * inset).coerceAtLeast(1f)
-    val springy = rememberControlMotion(fraction, held && enabled, travel / density.density)
-    // A slider with stops stands on the stop itself: the glass still swells
-    // and settles, but the handle does not glide through the values between.
-    val motion = if (steps > 0) springy.copy(position = fraction) else springy
-    fun report(f: Float) { change(spotiSliderValue(f, valueRange, steps)) }
+    // Held, the lens follows the finger itself; the stepped value it lands on
+    // is only what is reported. Let go, it settles onto that value's stop.
+    var dragFraction by remember { mutableFloatStateOf(NOT_DRAGGING) }
+    val target = if (held && dragFraction >= 0f) dragFraction else fraction
+    val motion = rememberControlMotion(target, held && enabled, travel / density.density)
+    fun report(f: Float) {
+        val raw = f.coerceIn(0f, 1f)
+        if (held) dragFraction = raw
+        change(spotiSliderValue(raw, valueRange, steps))
+    }
     ControlScene(modifier.fillMaxWidth().height(48.dp).onSizeChanged { width = it.width }
         .semantics(mergeDescendants = true) {
             contentDescription = "$label ${valueFormatter(value)}"
@@ -209,6 +214,7 @@ internal fun SpotiGlassSlider(
                     }
                 } finally {
                     held = false
+                    dragFraction = NOT_DRAGGING
                     if (committed) finish?.invoke()
                 }
             }
