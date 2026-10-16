@@ -34,8 +34,8 @@ import kotlin.math.roundToInt
 /** The zooms always offered, in percent of fit-to-width. */
 internal val ZOOM_PRESETS = listOf(100, 200, 400, 1000)
 
-/** The range a typed zoom is held to; the top is the canvas's own limit. */
-internal val ZOOM_PERCENT_RANGE = 10..(InkCanvasView.MAX_ZOOM * 100).roundToInt()
+/** The range a typed zoom is held to; the top is the canvas's own limit, [InkCanvasView]'s MAX_ZOOM. */
+internal val ZOOM_PERCENT_RANGE = 10..1000
 
 /**
  * What tapping the zoom reading opens: the fixed steps, the ones saved here,

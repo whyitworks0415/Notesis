@@ -3490,7 +3490,8 @@ private fun NoteScreen(
     val straightLine = pen.straightLine
     var axisSnap by remember { mutableStateOf(penStore.axisSnap) }
     val dottedPattern = pen.linePattern
-    var noteRotation by remember { mutableIntStateOf(penStore.noteRotation) }
+    // Degrees, any angle: three fingers turn the note freely. See InkCanvasView.onRotateNote.
+    var noteRotation by remember { mutableFloatStateOf(penStore.noteRotation.toFloat()) }
     // Null until it is dragged: the bar sits centred at the top by default, and
     // there is no sensible centre to store before anything has been measured.
     var barOffset by remember { mutableStateOf<Offset?>(null) }
@@ -3897,10 +3898,11 @@ private fun NoteScreen(
             onInputSettings = { showInput = true },
             recording = recorder != null,
             onVoice = { showVoice = true },
-            noteRotation = noteRotation,
+            noteRotation = noteRotation.roundToInt(),
             onRotate = {
-                noteRotation = (noteRotation + 90) % 360
-                penStore.noteRotation = noteRotation
+                // The button turns to the next quarter, from wherever three fingers left it.
+                noteRotation = (((noteRotation / 90f).roundToInt() + 1) * 90 % 360).toFloat()
+                penStore.noteRotation = noteRotation.roundToInt()
             },
             onTogglePages = { showPages = !showPages },
             onCollapse = { setToolbarSize((toolbarSize + 1).coerceAtMost(3)) },
@@ -3989,10 +3991,9 @@ private fun NoteScreen(
             drawRect(Color(0xFFE9E7E2))
             val view = canvas
             if (view != null) {
-                val turned = noteRotation % 180 != 0 && size.width > 0f && size.height > 0f
-                val fit = if (turned) minOf(size.width / size.height, size.height / size.width) else 1f
+                val fit = rotatedFit(size.width, size.height, noteRotation)
                 withTransform({
-                    rotate(noteRotation.toFloat())
+                    rotate(noteRotation)
                     scale(fit, fit)
                 }) {
                     drawIntoCanvas { view.drawBackdrop(it.nativeCanvas) }
@@ -4028,12 +4029,10 @@ private fun NoteScreen(
                     // AndroidView를 Backdrop 레이어에 안정적으로 합성합니다.
                     .graphicsLayer {
                         alpha = 1f
-                        rotationZ = noteRotation.toFloat()
-                        if (noteRotation % 180 != 0 && size.width > 0f && size.height > 0f) {
-                            val fit = minOf(size.width / size.height, size.height / size.width)
-                            scaleX = fit
-                            scaleY = fit
-                        }
+                        rotationZ = noteRotation
+                        val fit = rotatedFit(size.width, size.height, noteRotation)
+                        scaleX = fit
+                        scaleY = fit
                     },
                 factory = { viewContext ->
                     InkCanvasView(viewContext).apply {
@@ -4107,7 +4106,16 @@ private fun NoteScreen(
                     view.highlighterAboveInk = highlighterAboveInk
                     view.meshInk = meshInk
                     view.compatWetInk = compatWetInk
-                    view.wetSurfaceAllowed = noteRotation == 0
+                    view.wetSurfaceAllowed = noteRotation == 0f
+                    view.onRotateNote = { delta ->
+                        noteRotation = ((noteRotation + delta) % 360f + 360f) % 360f
+                    }
+                    view.onRotateNoteEnd = {
+                        // Close to square is square: a quarter turn by hand lands a degree or two off.
+                        val quarter = (noteRotation / 90f).roundToInt() * 90f
+                        if (abs(noteRotation - quarter) <= ROTATION_SNAP_DEGREES) noteRotation = quarter % 360f
+                        penStore.noteRotation = noteRotation.roundToInt()
+                    }
                     view.softPredictionHead = !sharedScreen && webUrl == null && !referenceOpen
                     view.partialEraser = partialEraser
                     view.applyGestures(gestures)
@@ -6332,6 +6340,23 @@ private fun PageScrubber(
             SkinSurface(modifier = thumbPlace, corner = 100.dp) { pageLabel() }
         }
     }
+}
+
+/** Within this many degrees of a quarter turn, a turned note settles onto it. */
+private const val ROTATION_SNAP_DEGREES = 4f
+
+/**
+ * How much a view turned by [degrees] has to shrink to stay inside its own
+ * [width] x [height] box: 1 upright, the short side over the long one at a
+ * quarter turn, and the bounding box of the turned rectangle in between.
+ */
+internal fun rotatedFit(width: Float, height: Float, degrees: Float): Float {
+    if (width <= 0f || height <= 0f) return 1f
+    val radians = Math.toRadians(degrees.toDouble())
+    val c = abs(kotlin.math.cos(radians)).toFloat()
+    val s = abs(kotlin.math.sin(radians)).toFloat()
+    if (s < 1e-4f) return 1f
+    return minOf(width / (width * c + height * s), height / (width * s + height * c))
 }
 
 @Composable

@@ -1361,7 +1361,7 @@ class InkCanvasView @JvmOverloads constructor(
     private val laser = LaserView(context).apply { tint(GESTURE_TRAIL_COLOR) }
     private var gestureTrail = false
     private var gestureButton = false
-    private var gestureMoved = false
+    private var gestureTrailMoved = false
     private var gestureDownX = 0f
     private var gestureDownY = 0f
 
@@ -1370,7 +1370,7 @@ class InkCanvasView @JvmOverloads constructor(
         val i = event.actionIndex
         gestureTrail = true
         gestureButton = button
-        gestureMoved = false
+        gestureTrailMoved = false
         gestureDownX = event.getX(i)
         gestureDownY = event.getY(i)
         laser.add(gestureDownX, gestureDownY, event.eventTime, true)
@@ -1382,7 +1382,7 @@ class InkCanvasView @JvmOverloads constructor(
         }
         val x = event.getX(index)
         val y = event.getY(index)
-        if (hypot(x - gestureDownX, y - gestureDownY) > touchSlop) gestureMoved = true
+        if (hypot(x - gestureDownX, y - gestureDownY) > touchSlop) gestureTrailMoved = true
         laser.add(x, y, event.eventTime, true)
     }
 
@@ -1390,7 +1390,7 @@ class InkCanvasView @JvmOverloads constructor(
     private fun finishGestureTrail(event: MotionEvent) {
         if (!gestureTrail) return
         gestureTrail = false
-        if (gestureButton && !gestureMoved) laser.tapAt(gestureDownX, gestureDownY, event.eventTime)
+        if (gestureButton && !gestureTrailMoved) laser.tapAt(gestureDownX, gestureDownY, event.eventTime)
         laser.lift()
     }
     private val ruler = RulerView(context).apply { visibility = GONE }
@@ -1517,6 +1517,21 @@ class InkCanvasView @JvmOverloads constructor(
     // Three fingers are their own zone; these three track only the sustained
     // drag once a third finger has actually landed, not the whole gesture.
     private var have3Fingers = false
+
+    /**
+     * Three fingers turning on the page turn the note, by the degrees passed;
+     * [onRotateNoteEnd] when the hand lets go. Without a listener three
+     * fingers keep only their panel and redo uses.
+     */
+    var onRotateNote: ((Float) -> Unit)? = null
+    var onRotateNoteEnd: (() -> Unit)? = null
+    private var rotating3f = false
+    /** Whether this hand turned the note at all, so its lift is not also a three-finger tap. */
+    private var turnedThisGesture = false
+    private var turn3fSoFar = 0f
+    private var fingerAngleCount = 0
+    private val fingerAngleIds = IntArray(MAX_TURN_POINTERS)
+    private val fingerAngles = FloatArray(MAX_TURN_POINTERS)
     private var opened3fThisGesture = false
     private var closed3fThisGesture = false
     private var gestureStart3fY = 0f
@@ -3780,6 +3795,10 @@ class InkCanvasView @JvmOverloads constructor(
                 gestureStartTime = System.currentTimeMillis()
                 gestureMoved = 0f
                 have3Fingers = false
+                rotating3f = false
+                turnedThisGesture = false
+                turn3fSoFar = 0f
+                fingerAngleCount = 0
                 opened3fThisGesture = false
                 closed3fThisGesture = false
                 zooming = false
@@ -3805,6 +3824,8 @@ class InkCanvasView @JvmOverloads constructor(
                 // A pointer-count change is a fresh anchor; never compare its
                 // centroid/spread with the previous set of fingers.
                 have3Fingers = false
+                fingerAngleCount = 0
+                endNoteTurn()
                 return true
             }
 
@@ -3826,6 +3847,16 @@ class InkCanvasView @JvmOverloads constructor(
                 if (event.pointerCount >= 3) {
                     val rawFocus = rawFingerFocus(event)
                     val spread = rawFingerSpread(event, rawFocus[0], rawFocus[1])
+                    // Turning the hand turns the note; sliding it still moves the panel.
+                    if (have3Fingers && trackNoteTurn(event, rawFocus[0], rawFocus[1])) {
+                        recordFingerAngles(event, rawFocus[0], rawFocus[1])
+                        prev3fX = rawFocus[0]
+                        prev3fY = rawFocus[1]
+                        prev3fSpread = spread
+                        lastFocusX = focus[0]
+                        lastFocusY = focus[1]
+                        return true
+                    }
                     if (!have3Fingers) {
                         have3Fingers = true
                         referenceDismissGesture.reset()
@@ -3872,6 +3903,7 @@ class InkCanvasView @JvmOverloads constructor(
                         onOpenReference?.invoke(focus[0], focus[1])
                         opened3fThisGesture = true
                     }
+                    recordFingerAngles(event, rawFocus[0], rawFocus[1])
                     prev3fX = rawFocus[0]
                     prev3fY = rawFocus[1]
                     prev3fSpread = spread
@@ -3913,6 +3945,7 @@ class InkCanvasView @JvmOverloads constructor(
 
             MotionEvent.ACTION_UP -> {
                 removeCallbacks(fingerLongPress)
+                endNoteTurn()
                 if (pullArmed) {
                     pullArmed = false
                     pullPastEnd = 0f
@@ -3942,6 +3975,7 @@ class InkCanvasView @JvmOverloads constructor(
 
             MotionEvent.ACTION_CANCEL -> {
                 removeCallbacks(fingerLongPress)
+                endNoteTurn()
                 val endedZoom = zooming
                 viewportInteracting = false
                 viewportSpeedPxPerSecond = 0f
@@ -4043,7 +4077,7 @@ class InkCanvasView @JvmOverloads constructor(
      */
     private fun maybeHandleTap() {
         val duration = System.currentTimeMillis() - gestureStartTime
-        if (gestureMaxPointers !in 1..3 || duration >= TAP_MAX_MS || gestureMoved >= TAP_SLOP_PX) {
+        if (gestureMaxPointers !in 1..3 || duration >= TAP_MAX_MS || gestureMoved >= TAP_SLOP_PX || turnedThisGesture) {
             return
         }
         if (gestureMaxPointers == 1 && !doubleTapZoom) return
@@ -4166,6 +4200,65 @@ class InkCanvasView @JvmOverloads constructor(
     private val focus = FloatArray(2)
     private val rawFocus = FloatArray(2)
     private val scratch = FloatArray(2)
+
+    /** Each finger's angle about the hand's centre, in screen terms, for the next [trackNoteTurn]. */
+    private fun recordFingerAngles(event: MotionEvent, cx: Float, cy: Float) {
+        val count = min(event.pointerCount, MAX_TURN_POINTERS)
+        for (i in 0 until count) {
+            fingerAngleIds[i] = event.getPointerId(i)
+            fingerAngles[i] = atan2(event.getRawY(i) - cy, event.getRawX(i) - cx)
+        }
+        fingerAngleCount = count
+    }
+
+    /**
+     * How far the fingers turned about their centre since the last sample,
+     * passed on as a turn of the note once it is clearly a turn and not a
+     * slide: [ROTATE_START_DEGREES] of it before anything moves. Raw screen
+     * coordinates, because the view itself is what is turning. True while
+     * the gesture is a turn.
+     */
+    private fun trackNoteTurn(event: MotionEvent, cx: Float, cy: Float): Boolean {
+        val handler = onRotateNote ?: return false
+        if (fingerAngleCount == 0) return rotating3f
+        var sum = 0f
+        var counted = 0
+        for (i in 0 until min(event.pointerCount, MAX_TURN_POINTERS)) {
+            val dx = event.getRawX(i) - cx
+            val dy = event.getRawY(i) - cy
+            // A finger near the centre swings wildly for no turn at all.
+            if (hypot(dx, dy) < MIN_SPREAD_PX) continue
+            val id = event.getPointerId(i)
+            var before = -1
+            for (j in 0 until fingerAngleCount) if (fingerAngleIds[j] == id) { before = j; break }
+            if (before < 0) continue
+            var delta = atan2(dy, dx) - fingerAngles[before]
+            if (delta > PI_F) delta -= 2f * PI_F
+            if (delta < -PI_F) delta += 2f * PI_F
+            sum += delta
+            counted++
+        }
+        if (counted == 0) return rotating3f
+        val turn = Math.toDegrees((sum / counted).toDouble()).toFloat()
+        if (!rotating3f) {
+            if (draggedReference || opened3fThisGesture || closed3fThisGesture) return false
+            turn3fSoFar += turn
+            if (abs(turn3fSoFar) < ROTATE_START_DEGREES) return false
+            rotating3f = true
+            turnedThisGesture = true
+            handler(turn3fSoFar)
+            return true
+        }
+        handler(turn)
+        return true
+    }
+
+    private fun endNoteTurn() {
+        if (!rotating3f) return
+        rotating3f = false
+        turn3fSoFar = 0f
+        onRotateNoteEnd?.invoke()
+    }
 
     private fun rawFingerFocus(event: MotionEvent): FloatArray {
         var x = 0f
@@ -7557,6 +7650,10 @@ class InkCanvasView @JvmOverloads constructor(
         private const val LASSO_PREVIEW_MS = 50L
         /** The wash's margin round each caught stroke, in screen pixels. */
         private const val LASSO_PREVIEW_PAD_PX = 3f
+        /** Degrees three fingers must turn before the note follows. */
+        private const val ROTATE_START_DEGREES = 12f
+        private const val MAX_TURN_POINTERS = 10
+        private const val PI_F = Math.PI.toFloat()
         const val GESTURE_TRAIL_COLOR = 0xFF3B7DDD.toInt()
         const val MEASURED_LATENCY_REFRESH_MS = 500L
         /** How far outside a checkbox, in screen pixels, a tap still ticks it. */
