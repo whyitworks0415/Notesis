@@ -117,18 +117,13 @@ fun Modifier.liquidGlass(
         val circle = shape == androidx.compose.foundation.shape.CircleShape
         val square = shape == RoundedCornerShape(0.dp)
         val spotiShape = if (circle || square) shape else SpotiGlassShape(settings.spotiglassCorner.dp)
-        val effects = enabled && rememberLiquidGlassEffectsAllowed() && !settings.highContrast && settings.spotiglassClarity > 0f
-        return this.spotiGlassLens(effects && settings.refraction > 0f && settings.depth > 0f) { size, density ->
-            SpotiGlassLensFrame(
-                center = androidx.compose.ui.geometry.Offset(size.width / 2, size.height / 2),
-                size = size,
-                radius = if (circle) size.minDimension / 2 else if (square) 0f else settings.spotiglassCorner * density,
-                distortion = 0.02f * settings.refraction / 24f * intensity,
-                band = 8f * settings.depth / 12f,
-                dispersion = 0f,
-                borderWidth = 0f,
-            )
-        }.spotiGlassSurface(spotiShape, settings, elevation = shadowElevation, rim = drawBorder)
+        // No lens over a resting surface. The lens is a shader over the
+        // element's whole drawing, so it ran every icon, line of text and
+        // control on a panel through refraction and resampling, and they came
+        // out soft and stair-stepped at their edges. The blur and the rim are
+        // what make the glass; the bar and the controls still bend the light
+        // while they move, where nothing small has to be read.
+        return this.spotiGlassSurface(spotiShape, settings, elevation = shadowElevation, rim = drawBorder)
     }
     val amount = intensity.coerceIn(0f, 1f)
     val backdrop = LocalLiquidGlassBackdrop.current

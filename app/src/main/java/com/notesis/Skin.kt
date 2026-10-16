@@ -587,14 +587,22 @@ fun SkinSlider(
     onValueChange: (Float) -> Unit,
     valueRange: ClosedFloatingPointRange<Float>,
     modifier: Modifier = Modifier,
+    /**
+     * The interval values come in. The handle only ever stands on one of
+     * them and the value reported is always one, rather than gliding across
+     * the track in between. 0 picks a hundredth of the range.
+     */
+    step: Float = 0f,
 ) {
     val skin = LocalSkin.current
+    val steps = sliderSteps(valueRange, step)
     if (skin.isRefractive) {
         LiquidGlassSlider(
             value = value,
             onValueChange = onValueChange,
             valueRange = valueRange,
             modifier = modifier,
+            steps = steps,
             label = "값",
         )
         return
@@ -651,7 +659,7 @@ fun SkinSlider(
     val latest by rememberUpdatedState(onValueChange)
     fun report(x: Float) {
         val travel = (width - 2f * half).coerceAtLeast(1f)
-        latest(valueRange.start + ((x - half) / travel).coerceIn(0f, 1f) * span)
+        latest(spotiSliderValue((x - half) / travel, valueRange, steps))
     }
 
     Box(
@@ -1071,3 +1079,15 @@ fun skinColors(base: ColorScheme, skin: Skin, look: SkinSettings): ColorScheme {
 
 /** Clearer than frost, still solid enough for a popup window with no backdrop capture. */
 private const val LIQUID_POPUP_ALPHA = 0.80f
+
+/**
+ * Stops between the ends of a slider for values every [step] across
+ * [range] - the count the sliders take - or every hundredth when no step is
+ * given. A step that does not divide the range lands on the nearest count.
+ */
+internal fun sliderSteps(range: ClosedFloatingPointRange<Float>, step: Float): Int {
+    val span = range.endInclusive - range.start
+    if (!(span > 0f)) return 0
+    val size = if (step > 0f) step else span / 100f
+    return ((span / size).roundToInt() - 1).coerceIn(0, 10_000)
+}

@@ -247,10 +247,10 @@ internal fun TextBoxDialog(initial: TextBoxContent?, onDismiss: () -> Unit, onSa
             if (background != 0) {
                 ColorInput(background) { background = it }
                 Text("모서리 ${corner.toInt()}", style = MaterialTheme.typography.bodySmall)
-                SkinSlider(corner, { corner = it }, 0f..40f)
+                SkinSlider(corner, { corner = it }, 0f..40f, step = 1f)
             }
             Text("여백 ${padding.toInt()}", style = MaterialTheme.typography.bodySmall)
-            SkinSlider(padding, { padding = it }, 0f..40f)
+            SkinSlider(padding, { padding = it }, 0f..40f, step = 1f)
             Text("글자를 선택하고 B·I·U·S를 누르면 그 부분에만, 선택하지 않으면 전체에 적용됩니다.",
                 style = MaterialTheme.typography.bodySmall)
         } },

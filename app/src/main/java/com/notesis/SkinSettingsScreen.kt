@@ -548,6 +548,8 @@ private fun Setting(
             onValueChange = onChange,
             valueRange = range,
             modifier = Modifier.fillMaxWidth(),
+            // Whole steps where the range is wide enough to be counted in them.
+            step = if (range.endInclusive - range.start >= 20f) 1f else 0f,
         )
     }
 }

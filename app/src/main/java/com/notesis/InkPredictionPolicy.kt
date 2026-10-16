@@ -204,21 +204,47 @@ internal fun sanitizePredictionLead(value: Int): Int =
     if (value in 1..VSYNC_BOUND_LEAD_MS) value else 9
 
 /**
- * Automatic mode keeps a shorter head on high-refresh displays. A fixed
- * 1-12ms setting bypasses this choice, so what was asked for is what is used.
- *
- * [vsyncBoundInk] is wet ink that is shown by a regular frame rather than a
- * front buffer (the compatible path). At 60Hz that frame is presented a whole
- * 16.7ms period after it was drawn, so the pen tip runs further ahead of the
- * ink than on a front buffer; a slightly longer prediction closes most of
- * that gap. Corners and slow strokes still get none or a short one.
+ * How far ahead the pen's ink is drawn. A fixed 1-12ms setting is used as
+ * set; automatic mode works it out from how long the ink actually takes to
+ * be seen - see [autoPredictionLeadMs].
  */
 internal fun predictionLeadForRefresh(
     configuredMs: Int,
     refreshRateHz: Float,
     vsyncBoundInk: Boolean = false,
+    measuredLatencyMs: Double? = null,
 ): Int {
     if (configuredMs in 1..VSYNC_BOUND_LEAD_MS) return configuredMs
-    if (refreshRateHz >= 90f) return 6
-    return if (vsyncBoundInk) VSYNC_BOUND_LEAD_MS else 9
+    return autoPredictionLeadMs(refreshRateHz, vsyncBoundInk, measuredLatencyMs)
 }
+
+/**
+ * Automatic prediction, from the display's timing and, where it has been
+ * measured, the ink's own latency.
+ *
+ * Front-buffered ink lights up as the panel scans past it, half a frame on
+ * average after it is drawn; predicting that far ahead closes the gap without
+ * reaching past the pen. That is 4ms at 120Hz - what reads most natural on a
+ * Galaxy Tab S8 Ultra - 6ms at 90Hz and 8ms at 60Hz. Ink drawn by a regular
+ * frame ([vsyncBoundInk], the compatible path) waits for the next frame as
+ * well, so it gets most of a frame: 12ms at 60Hz. When the ink is measured
+ * to take longer than a frame to appear - a busy device - half of what is
+ * over is added, within the 12ms the settings allow.
+ */
+internal fun autoPredictionLeadMs(
+    refreshRateHz: Float,
+    vsyncBoundInk: Boolean = false,
+    measuredLatencyMs: Double? = null,
+): Int {
+    val hz = if (refreshRateHz.isFinite() && refreshRateHz >= 30f) refreshRateHz else 60f
+    val periodMs = 1000.0 / hz
+    var lead = periodMs * if (vsyncBoundInk) VSYNC_BOUND_SHARE else FRONT_BUFFER_SHARE
+    if (measuredLatencyMs != null && measuredLatencyMs.isFinite() && measuredLatencyMs > periodMs) {
+        lead += (measuredLatencyMs - periodMs) * 0.5
+    }
+    return lead.roundToInt().coerceIn(MIN_AUTO_LEAD_MS, VSYNC_BOUND_LEAD_MS)
+}
+
+private const val FRONT_BUFFER_SHARE = 0.5
+private const val VSYNC_BOUND_SHARE = 0.72
+private const val MIN_AUTO_LEAD_MS = 2

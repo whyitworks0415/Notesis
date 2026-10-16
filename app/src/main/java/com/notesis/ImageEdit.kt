@@ -191,12 +191,12 @@ internal fun ImageStyleDialog(
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 Text("투명도 ${(alpha * 100).toInt()}%")
-                SkinSlider(alpha, { alpha = it; onOpacity(it) }, 0.1f..1f)
+                SkinSlider(alpha, { alpha = it; onOpacity(it) }, 0.1f..1f, step = 0.01f)
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))
                 Text("모서리 ${(corner * 100).toInt()}%")
-                SkinSlider(corner, { corner = it }, 0f..0.5f)
+                SkinSlider(corner, { corner = it }, 0f..0.5f, step = 0.01f)
                 Text("테두리 ${border.toInt()}px")
-                SkinSlider(border, { border = it }, 0f..40f)
+                SkinSlider(border, { border = it }, 0f..40f, step = 1f)
                 if (border > 0f) ColorInput(color) { color = it }
                 TextButton(onClick = { onDecorate(corner, border, color) }) { Text("모서리·테두리 적용") }
             }

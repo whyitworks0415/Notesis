@@ -1550,6 +1550,8 @@ private fun SearchHitRow(note: NoteMeta, hit: PageHit, onOpen: () -> Unit) {
 /** "Fast" writing latency: the longest prediction lead offered. */
 internal const val FAST_LEAD_MS = 9
 internal const val WIDTH_STEP = 0.5f
+/** The width sliders' stops: a tenth, fine enough to land between the − and + steps. */
+internal const val WIDTH_SLIDER_STEP = 0.1f
 
 internal val NOTE_LABELS = listOf(
     0xFFE53935.toInt(), 0xFFFB8C00.toInt(), 0xFFFDD835.toInt(), 0xFF43A047.toInt(),
@@ -3392,7 +3394,6 @@ private fun NoteScreen(
     // A straight line in the highlighter's or the mask's own ink, without
     // leaving the tool to reach the separate shape pen. Scoped to those two
     // modes only - the shape button already covers the ordinary pen.
-    var straightLine by remember { mutableStateOf(false) }
     /** True while the colour and thickness of the tool in hand is being set. */
     var editingPen by remember { mutableStateOf(false) }
     var lassoCount by remember { mutableIntStateOf(0) }
@@ -3484,6 +3485,7 @@ private fun NoteScreen(
     /** Bumped on copy and cut so the paste bar sees the clipboard change. */
     var clipRevision by remember { mutableIntStateOf(0) }
     val autoShapes = pen.autoShapes
+    val straightLine = pen.straightLine
     var axisSnap by remember { mutableStateOf(penStore.axisSnap) }
     val dottedPattern = pen.linePattern
     var noteRotation by remember { mutableIntStateOf(penStore.noteRotation) }
@@ -3810,7 +3812,10 @@ private fun NoteScreen(
             mode = mode,
             shapeKind = shapeKind,
             straightLine = straightLine,
-            onToggleStraightLine = { straightLine = !straightLine },
+            onToggleStraightLine = {
+                val updated = pen.copy(straightLine = !pen.straightLine)
+                settings = settings + (mode to updated)
+            },
             showLatency = showLatency,
             // edits is read here so drawing or erasing recomposes the toolbar and
             // undo/redo can re-evaluate whether there is anything on the stacks.
@@ -4131,10 +4136,8 @@ private fun NoteScreen(
                     view.readMode = mode == EditMode.READ
                     view.shapeKind = when {
                         mode == EditMode.SHAPE -> shapeKind
-                        // The toggle only appears for these two, so the ink
-                        // that lands is whichever of them is actually in hand.
-                        straightLine && (mode == EditMode.HIGHLIGHTER || mode == EditMode.MASK) ->
-                            ShapeKind.LINE
+                        // Each tool keeps its own; the one in hand decides.
+                        straightLine && mode in STRAIGHT_LINE_MODES -> ShapeKind.LINE
                         else -> null
                     }
                     view.textMode = mode == EditMode.TEXT
@@ -6071,9 +6074,7 @@ private fun ReferencePanel(
                             v.imageMode = mode == EditMode.IMAGE || mode == EditMode.TEXT
                             v.shapeKind = when {
                                 mode == EditMode.SHAPE -> shapeKind
-                                straightLine &&
-                                    (mode == EditMode.HIGHLIGHTER || mode == EditMode.MASK) ->
-                                    ShapeKind.LINE
+                                straightLine && mode in STRAIGHT_LINE_MODES -> ShapeKind.LINE
                                 else -> null
                             }
                             v.colorArgb = if (tool == Tool.MASK) {
@@ -7283,7 +7284,7 @@ private fun Toolbar(
                         Icon(Reicons.Palette, "색상 템플릿", Modifier.size(20.dp))
                     }
                 }
-                if (mode == EditMode.HIGHLIGHTER || mode == EditMode.MASK) {
+                if (mode in STRAIGHT_LINE_MODES) {
                     ToolButton(Reicons.Remove, "직선", straightLine, onClick = onToggleStraightLine)
                 }
               }
@@ -7291,7 +7292,7 @@ private fun Toolbar(
                 if (mode in PenStore.DEFAULTS) {
                     val range = PenStore.widthRange(mode, pen)
                     FavoriteWidthButton(mode, pen.width, onWidth)
-                    SkinSlider(pen.width.coerceIn(range), onWidth, range, Modifier.weight(1f).widthIn(min = 64.dp))
+                    SkinSlider(pen.width.coerceIn(range), onWidth, range, Modifier.weight(1f).widthIn(min = 64.dp), step = WIDTH_SLIDER_STEP)
                 }
               }
               Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {

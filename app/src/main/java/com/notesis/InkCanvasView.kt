@@ -1335,6 +1335,23 @@ class InkCanvasView @JvmOverloads constructor(
     /** The common one-pen prediction path reuses these instead of feeding the GC every sample. */
     private val predictedPointerProperties = arrayOf(MotionEvent.PointerProperties())
     private val predictedPointerCoordinates = arrayOf(MotionEvent.PointerCoords())
+    private var measuredLatencyAt = Long.MIN_VALUE
+    private var measuredLatency: Double? = null
+
+    /**
+     * The wet ink's measured latency, for automatic prediction: known only
+     * while the latency readout is on, and re-read twice a second at most,
+     * since reading it sorts every sample kept.
+     */
+    private fun measuredInkLatencyMs(now: Long): Double? {
+        if (!latencyMonitoringEnabled) return null
+        if (now - measuredLatencyAt >= MEASURED_LATENCY_REFRESH_MS) {
+            measuredLatencyAt = now
+            measuredLatency = latency.snapshot(PerformanceMetric.WET_INK)?.p50
+        }
+        return measuredLatency
+    }
+
     private val predictionPolicy = InkPredictionPolicy().apply {
         pxPerMm = resources.displayMetrics.xdpi / 25.4f
     }
@@ -3016,6 +3033,7 @@ class InkCanvasView @JvmOverloads constructor(
                     predictionLeadMs,
                     refreshRate,
                     vsyncBoundInk = compatStroke,
+                    measuredLatencyMs = measuredInkLatencyMs(event.eventTime),
                 )
                 // Automatic horizon on the compatible path: as far ahead as
                 // this sample will wait to be seen, from where it fell in the frame.
@@ -7262,6 +7280,7 @@ class InkCanvasView @JvmOverloads constructor(
         const val CIRCLE_MIN_EXTENT_PX = 48f
         const val WHOLE_CHECK_SAMPLES = 32
         const val KEY_ZOOM_STEP = 1.25f
+        const val MEASURED_LATENCY_REFRESH_MS = 500L
         /** How far outside a checkbox, in screen pixels, a tap still ticks it. */
         const val CHECKBOX_TOUCH_SLOP_PX = 14f
         /** ln(1.15): a wheel notch zooms by about 15%. */

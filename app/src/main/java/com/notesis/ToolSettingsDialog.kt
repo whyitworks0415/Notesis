@@ -173,6 +173,7 @@ internal fun PenDialog(
     var stabilizer by remember(pen) { mutableIntStateOf(pen.stabilizer) }
     var linePattern by remember(pen) { mutableIntStateOf(pen.linePattern) }
     var autoShapes by remember(pen) { mutableStateOf(pen.autoShapes) }
+    var straightLine by remember(pen) { mutableStateOf(pen.straightLine) }
     var details by remember { mutableStateOf(false) }
     var joined by remember { mutableStateOf(store.colorPickerJoined) }
     val opacity = allowsOpacity(mode)
@@ -191,6 +192,7 @@ internal fun PenDialog(
         stabilizer = stabilizer,
         linePattern = linePattern,
         autoShapes = autoShapes,
+        straightLine = straightLine,
     )
     fun keep() = onConfirm(current())
 
@@ -285,6 +287,14 @@ internal fun PenDialog(
                 }
             }
 
+            if (mode in STRAIGHT_LINE_MODES) {
+                SwitchRow(
+                    "직선",
+                    straightLine,
+                    hint = "펜을 댄 곳에서 뗀 곳까지 곧은 선으로 그립니다",
+                ) { straightLine = it }
+            }
+
             // 세부: everything else, opened downward on demand.
             Row(
                 Modifier
@@ -322,6 +332,7 @@ internal fun PenDialog(
                             value = stabilizer.toFloat(),
                             onValueChange = { stabilizer = it.roundToInt() },
                             valueRange = 0f..100f,
+                            step = 1f,
                         )
                         SwitchRow("자동 도형 인식", autoShapes) { autoShapes = it }
                     }
@@ -337,7 +348,7 @@ internal fun PenDialog(
                         SwitchRow("직선을 90° 간격으로 보정", axisSnap, onChange = onAxisSnap)
                         var corner by remember { mutableFloatStateOf(store.shapeCornerRadius) }
                         Text("다각형 모서리 둥글기 ${corner.roundToInt()}", style = MaterialTheme.typography.bodyMedium)
-                        SkinSlider(corner, { corner = it; store.shapeCornerRadius = it; onCornerRadius(it) }, 0f..120f)
+                        SkinSlider(corner, { corner = it; store.shapeCornerRadius = it; onCornerRadius(it) }, 0f..120f, step = 1f)
                     }
                     if (mode == EditMode.HIGHLIGHTER) {
                         SwitchRow(if (highlighterAboveInk) "필기 위에 표시" else "필기 아래에 표시",
@@ -392,22 +403,26 @@ internal fun PenDialog(
 @Composable
 private fun PredictionSetting(leadMs: Int, onLead: (Int) -> Unit) {
     val auto = leadMs == LEAD_AUTO
+    // What automatic comes to on this screen: half a frame on most tablets.
+    val refresh = LocalView.current.display?.refreshRate ?: 60f
+    val autoMs = autoPredictionLeadMs(refresh, vsyncBoundInk = frontBufferInkUnreliable())
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
             "예측 " + when {
-                auto -> "자동"
+                auto -> "자동 · $autoMs ms (${refresh.roundToInt()}Hz)"
                 leadMs == 0 -> "끔"
                 else -> "$leadMs ms"
             },
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.weight(1f),
         )
-        SettingsChoiceChip(selected = auto, onClick = { onLead(if (auto) AUTO_FALLBACK_MS else LEAD_AUTO) }, label = "자동")
+        SettingsChoiceChip(selected = auto, onClick = { onLead(if (auto) autoMs else LEAD_AUTO) }, label = "자동")
     }
     SkinSlider(
-        value = (if (auto) AUTO_FALLBACK_MS else leadMs).toFloat(),
+        value = (if (auto) autoMs else leadMs).toFloat(),
         onValueChange = { onLead(it.roundToInt().coerceIn(0, MAX_LEAD_MS)) },
         valueRange = 0f..MAX_LEAD_MS.toFloat(),
+        step = 1f,
     )
     Text(
         if (auto) "자동은 60Hz에서 9ms(호환 필기 표시는 12ms), 90Hz 이상에서 6ms까지 앞서 그립니다"
@@ -416,9 +431,6 @@ private fun PredictionSetting(leadMs: Int, onLead: (Int) -> Unit) {
         color = MaterialTheme.colorScheme.outline,
     )
 }
-
-/** Where 자동 hands over to the slider: the 60Hz automatic horizon. */
-private const val AUTO_FALLBACK_MS = 9
 
 @Composable
 private fun SwitchRow(label: String, checked: Boolean, hint: String? = null, onChange: (Boolean) -> Unit) {
@@ -1018,7 +1030,7 @@ private fun WidthSection(
     val shown = width.coerceIn(range)
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(GAP)) {
         Column(Modifier.weight(1f)) {
-            SkinSlider(value = shown, onValueChange = onWidth, valueRange = range)
+            SkinSlider(value = shown, onValueChange = onWidth, valueRange = range, step = WIDTH_SLIDER_STEP)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = { onWidth((shown - WIDTH_STEP).coerceIn(range)) }) { Text("−") }
                 Text(widthLabel(shown), style = MaterialTheme.typography.bodyMedium)
@@ -1101,3 +1113,6 @@ private fun WidthCeilings(mode: EditMode, range: ClosedFloatingPointRange<Float>
         }
     }
 }
+
+/** The tools whose strokes can be drawn as straight lines instead. */
+internal val STRAIGHT_LINE_MODES = setOf(EditMode.PEN, EditMode.PENCIL, EditMode.HIGHLIGHTER, EditMode.MASK)

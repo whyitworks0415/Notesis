@@ -39,6 +39,8 @@ data class PenPreset(
     val linePattern: Int = 0,
     /** Whether a drawn shape is straightened into a clean one. */
     val autoShapes: Boolean = false,
+    /** Every stroke a straight line from where the pen lands to where it lifts. */
+    val straightLine: Boolean = false,
 ) {
     /** The tool as it actually draws, which is where pressure and the nib are decided. */
     fun drawingTool(): Tool = when {
@@ -437,6 +439,7 @@ class PenStore(context: Context) {
                     stabilizer = item.optInt("stabilizer", fallback.stabilizer).coerceIn(0, 100),
                     linePattern = item.optInt("linePattern", fallback.linePattern).coerceIn(0, 3),
                     autoShapes = item.optBoolean("autoShapes", fallback.autoShapes),
+                    straightLine = item.optBoolean("straightLine", fallback.straightLine),
                 )
             }.toMap()
         }.getOrNull().orEmpty()
@@ -466,7 +469,8 @@ class PenStore(context: Context) {
                     .put("leadMs", pen.leadMs)
                     .put("stabilizer", pen.stabilizer)
                     .put("linePattern", pen.linePattern)
-                    .put("autoShapes", pen.autoShapes),
+                    .put("autoShapes", pen.autoShapes)
+                    .put("straightLine", pen.straightLine),
             )
         }
         prefs.edit().putString(KEY, json.toString()).apply()

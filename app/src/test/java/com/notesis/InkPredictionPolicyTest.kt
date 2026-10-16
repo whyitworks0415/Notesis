@@ -71,8 +71,10 @@ class InkPredictionPolicyTest {
 
     @Test
     fun `automatic lead follows refresh rate and fixed modes remain comparable`() {
-        assertEquals(9, predictionLeadForRefresh(0, 60f))
-        assertEquals(6, predictionLeadForRefresh(0, 120f))
+        // Half a frame on a front buffer: 4ms at 120Hz, as on a Tab S8 Ultra.
+        assertEquals(8, predictionLeadForRefresh(0, 60f))
+        assertEquals(6, predictionLeadForRefresh(0, 90f))
+        assertEquals(4, predictionLeadForRefresh(0, 120f))
         assertEquals(4, predictionLeadForRefresh(4, 60f))
         assertEquals(9, predictionLeadForRefresh(9, 120f))
     }
@@ -81,6 +83,9 @@ class InkPredictionPolicyTest {
     fun `vsync bound ink on a 60Hz panel predicts further only in automatic mode`() {
         assertEquals(12, predictionLeadForRefresh(0, 60f, vsyncBoundInk = true))
         assertEquals(6, predictionLeadForRefresh(0, 120f, vsyncBoundInk = true))
+        // A device measured to show ink a frame late predicts further, within 12ms.
+        assertEquals(8, predictionLeadForRefresh(0, 120f, measuredLatencyMs = 16.0))
+        assertEquals(12, predictionLeadForRefresh(0, 60f, measuredLatencyMs = 60.0))
         assertEquals(9, predictionLeadForRefresh(9, 60f, vsyncBoundInk = true))
 
         val fast = InkPredictionPolicy()
@@ -103,7 +108,7 @@ class InkPredictionPolicyTest {
             assertEquals(lead, predictionLeadForRefresh(lead, 120f, vsyncBoundInk = true))
             assertEquals(lead, sanitizePredictionLead(lead))
         }
-        assertEquals(9, predictionLeadForRefresh(0, 60f))
+        assertEquals(8, predictionLeadForRefresh(0, 60f))
         assertEquals(9, sanitizePredictionLead(40))
     }
 

@@ -120,7 +120,7 @@ fun LiquidGlassSlider(
     fun report(pointerX: Float) {
         if (!enabled) return
         val next = ((pointerX - thumbRadiusPx) / travel).coerceIn(0f, 1f)
-        latestChange(valueRange.start + safeRange * next)
+        latestChange(spotiSliderValue(next, valueRange, steps))
     }
 
     Box(
