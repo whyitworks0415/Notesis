@@ -68,6 +68,7 @@ fun allowsOpacity(mode: EditMode): Boolean =
 /** The pens the pen tool can be, in the order the settings offer them. */
 val PEN_NIBS = listOf(
     Tool.PEN to "볼펜", Tool.FOUNTAIN to "만년필", Tool.SPEED_FOUNTAIN to "만년필(속도)", Tool.CALLIGRAPHY to "캘리그라피",
+    Tool.VANISHING_PEN to "기화펜",
 )
 
 /** The looks the pencil tool can draw with, in the order the settings offer them. */
@@ -125,7 +126,25 @@ data class CanvasGestures(
     val linkOverlay: Boolean = true,
     val eraserReturns: Boolean = false,
     val penButton: Int = PEN_BUTTON_ERASE,
+    /** The eraser's size follows how hard the pen presses. */
+    val pressureEraser: Boolean = false,
+    /** How strongly pressure reaches the ink, 0-100; [PRESSURE_RESPONSE_DEFAULT] is the stylus as it reports. */
+    val pressureResponse: Int = PRESSURE_RESPONSE_DEFAULT,
 )
+
+const val PRESSURE_RESPONSE_DEFAULT = 10
+
+/**
+ * Pressure through the response curve: [PRESSURE_RESPONSE_DEFAULT] leaves it
+ * alone, 0 ignores it (always full), and higher values thin out a light touch
+ * more, so only a firm press reaches the full width.
+ */
+fun pressureCurve(pressure: Float, response: Int): Float {
+    val p = pressure.coerceIn(0f, 1f)
+    if (response == PRESSURE_RESPONSE_DEFAULT) return p
+    if (response <= 0) return 1f
+    return Math.pow(p.toDouble(), response / PRESSURE_RESPONSE_DEFAULT.toDouble()).toFloat()
+}
 
 fun InkCanvasView.applyGestures(gestures: CanvasGestures) {
     eraseInk = gestures.eraseInk
@@ -152,6 +171,8 @@ fun InkCanvasView.applyGestures(gestures: CanvasGestures) {
     twoFingerTap = gestures.twoFingerTap
     threeFingerTap = gestures.threeFingerTap
     penButton = gestures.penButton
+    pressureEraser = gestures.pressureEraser
+    pressureResponse = gestures.pressureResponse.coerceIn(0, 100)
 }
 
 /**
@@ -304,6 +325,12 @@ class PenStore(context: Context) {
             ?: listOf(0xFF000000.toInt(), 0xFF1E88E5.toInt(), 0xFFE53935.toInt(), 0xFF43A047.toInt())
         set(value) = prefs.edit().putString("quickColors", value.distinct().take(MAX_QUICK_COLORS).joinToString(",")).apply()
 
+    /** Zooms, in percent, saved beside the fixed ones in the zoom menu. */
+    var zoomPresets: List<Int>
+        get() = prefs.getString("zoomPresets", null)?.split(',')?.mapNotNull { it.toIntOrNull() }
+            ?.filter { it in ZOOM_PERCENT_RANGE }?.distinct()?.sorted() ?: emptyList()
+        set(value) = prefs.edit().putString("zoomPresets", value.distinct().sorted().joinToString(",")).apply()
+
     /** A recording that finishes starts the next one in the note's list. */
     var autoPlayNext: Boolean
         get() = prefs.getBoolean("autoPlayNext", false)
@@ -338,6 +365,8 @@ class PenStore(context: Context) {
             linkOverlay = prefs.getBoolean("linkOverlay", true),
             eraserReturns = prefs.getBoolean("eraserReturns", false),
             penButton = prefs.getInt("penButton", PEN_BUTTON_ERASE),
+            pressureEraser = prefs.getBoolean("pressureEraser", false),
+            pressureResponse = prefs.getInt("pressureResponse", PRESSURE_RESPONSE_DEFAULT).coerceIn(0, 100),
         )
         set(value) = prefs.edit()
             .putBoolean("eraseInk", value.eraseInk)
@@ -367,6 +396,8 @@ class PenStore(context: Context) {
             .putBoolean("linkOverlay", value.linkOverlay)
             .putBoolean("eraserReturns", value.eraserReturns)
             .putInt("penButton", value.penButton)
+            .putBoolean("pressureEraser", value.pressureEraser)
+            .putInt("pressureResponse", value.pressureResponse.coerceIn(0, 100))
             .apply()
 
     /** See [InkCanvasView.compatWetInk]; on by default where the front buffer is known to fail. */

@@ -141,6 +141,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -222,6 +223,7 @@ class MainActivity : ComponentActivity() {
         hideSystemBars()
         StudyClock.init(applicationContext)
         Planner.init(applicationContext)
+        ToolbarMotion.init(applicationContext)
         val store = NoteStore(this)
         noteStore = store
         val prefs = PenStore(this)
@@ -3592,7 +3594,7 @@ private fun NoteScreen(
     val toolbarEffects = rememberLiquidGlassEffectsAllowed() && !LocalSkinSettings.current.highContrast
     val floatingBarWidth = animateDpAsState(
         minOf(maxBarWidth, spotiToolbarWidth(toolbarSize)),
-        if (skin != Skin.MATERIAL && toolbarEffects) tween(240, easing = androidx.compose.animation.core.FastOutSlowInEasing) else tween(0),
+        if (skin != Skin.MATERIAL && toolbarEffects) ToolbarMotion.spec() else tween(0),
         label = "상단 바 모드 너비",
     )
     var showLatency by remember { mutableStateOf(false) }
@@ -3625,6 +3627,7 @@ private fun NoteScreen(
     }
     // A multiple of fit-to-width, which is the 100% anybody means.
     var zoom by remember { mutableFloatStateOf(1f) }
+    var zoomMenu by remember { mutableStateOf(false) }
     var canvas by remember { mutableStateOf<InkCanvasView?>(null) }
     /** Puts [text] on the page as a text box in the middle of the screen. */
     fun putTypedText(text: String) {
@@ -3859,7 +3862,7 @@ private fun NoteScreen(
                 canvas?.redo()
                 edits++
             },
-            onFitWidth = { canvas?.fitWidth() },
+            onZoomLabel = { zoomMenu = true },
             zoomLabel = "${(zoom * 100).roundToInt()}%",
             onToggleLatency = { showLatency = !showLatency },
             laser = laser,
@@ -5039,6 +5042,17 @@ private fun NoteScreen(
                     }
                 }
             }
+        }
+
+        if (zoomMenu) {
+            ZoomPresetDialog(
+                current = zoom,
+                onPick = { percent ->
+                    canvas?.zoomTo(percent / 100f)
+                    zoomMenu = false
+                },
+                onDismiss = { zoomMenu = false },
+            )
         }
 
         selectionColorMode?.let { colorMode ->
@@ -6235,6 +6249,7 @@ private fun PageScrubber(
     // Held, the handle follows the finger, not the page it lands on; let go,
     // it eases onto that page's place on the track.
     var dragFraction by remember { mutableFloatStateOf(NOT_DRAGGING) }
+    var pressed by remember { mutableStateOf(false) }
     val shown = sliderShownFraction(fraction, dragFraction)
     val thumbY = (shown * travel).roundToInt()
 
@@ -6261,7 +6276,14 @@ private fun PageScrubber(
                 }
             }
             .pointerInput(pageCount, trackHeight, onJump) {
-                detectTapGestures { jumpAt(it.y) }
+                detectTapGestures(
+                    onPress = {
+                        pressed = true
+                        tryAwaitRelease()
+                        pressed = false
+                    },
+                    onTap = { jumpAt(it.y) },
+                )
             },
         contentAlignment = Alignment.TopCenter,
     ) {
@@ -6283,13 +6305,7 @@ private fun PageScrubber(
                 )
             }
         }
-        SkinSurface(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .offset { IntOffset(0, thumbY) }
-                .size(thumbWidth, thumbHeight),
-            corner = 100.dp,
-        ) {
+        val pageLabel: @Composable () -> Unit = {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
                     "${page + 1}",
@@ -6297,6 +6313,23 @@ private fun PageScrubber(
                     color = scheme.onSurface,
                 )
             }
+        }
+        val thumbPlace = Modifier
+            .align(Alignment.TopCenter)
+            .offset { IntOffset(0, thumbY) }
+            .size(thumbWidth, thumbHeight)
+        // Spoti glass: a plain solid handle at rest, turning to liquid glass
+        // only while it is held - glass where the finger is, quiet otherwise.
+        if (LocalSkin.current == Skin.SPOTIGLASS && !dragging && !pressed) {
+            Box(
+                thumbPlace
+                    .shadow(2.dp, CircleShape, clip = false)
+                    .clip(CircleShape)
+                    .background(scheme.surfaceContainerHighest)
+                    .border(0.5.dp, scheme.outlineVariant, CircleShape),
+            ) { pageLabel() }
+        } else {
+            SkinSurface(modifier = thumbPlace, corner = 100.dp) { pageLabel() }
         }
     }
 }
@@ -7075,8 +7108,9 @@ private fun Toolbar(
     onWidth: (Float) -> Unit,
     onUndo: () -> Unit,
     onRedo: () -> Unit,
-    onFitWidth: () -> Unit,
-    /** The zoom as a percentage of fit-to-width, which is what the button resets to. */
+    /** Opens the zoom presets. */
+    onZoomLabel: () -> Unit,
+    /** The zoom as a percentage of fit-to-width. */
     zoomLabel: String,
     onToggleLatency: () -> Unit,
     recording: Boolean,
@@ -7169,22 +7203,17 @@ private fun Toolbar(
             }
             // 확대 아이콘과 수치는 분리해 둘을 감싸는 강조 칸은 만들지 않고,
             // 숫자는 행의 정중앙에 놓습니다.
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(
-                    onClick = onFitWidth,
-                    modifier = Modifier.size(40.dp),
-                ) {
-                    Icon(Reicons.ZoomOutMap, contentDescription = "화면에 맞추기")
-                }
-                Text(
-                    zoomLabel,
-                    style = MaterialTheme.typography.labelMedium,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .widthIn(min = 44.dp)
-                        .padding(horizontal = 4.dp),
-                )
-            }
+            // The reading is the button: tapping it offers the zoom steps.
+            Text(
+                zoomLabel,
+                style = MaterialTheme.typography.labelMedium,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable(onClick = onZoomLabel)
+                    .widthIn(min = 52.dp)
+                    .padding(horizontal = 6.dp, vertical = 10.dp),
+            )
             SkinButton(skin, onSkin)
             IconButton(onClick = onToggleDock) {
                 Icon(
@@ -7254,7 +7283,7 @@ private fun Toolbar(
                 add(SpotiToolbarAction("노트 · 보기 방식", Reicons.MoreVert, onClick = onNoteMenu))
                 add(SpotiToolbarAction("사진 찍어 넣기", Reicons.Image, onClick = onCamera))
                 add(SpotiToolbarAction("UI · 화면 설정", Reicons.AutoAwesomeMosaic, slot = 6, onClick = onScreenSettings))
-                add(SpotiToolbarAction("화면 맞추기 · $zoomLabel", Reicons.ZoomOutMap, onClick = onFitWidth))
+                add(SpotiToolbarAction("확대 · $zoomLabel", Reicons.ZoomOutMap, onClick = onZoomLabel))
                 add(SpotiToolbarAction("인터넷", Reicons.Language, onClick = { onWeb(SEARCH_HOME) }))
                 add(SpotiToolbarAction("지연 측정", Reicons.Speed, selected = showLatency, onClick = onToggleLatency))
                 if (canResetBar) add(SpotiToolbarAction("도구막대 제자리로", Reicons.FilterCenterFocus, onClick = onResetBar))

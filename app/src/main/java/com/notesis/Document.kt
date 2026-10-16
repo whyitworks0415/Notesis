@@ -1192,8 +1192,10 @@ class NoteStore(context: Context) {
         for ((index, page) in document.pages.withIndex()) {
             // A page never loaded cannot have changed, and its file must stay.
             if (!page.loaded || !page.dirty) continue
-            appendOrWriteStrokes(File(dir, "${page.id}.bin"), page.strokes, page.savedOnDisk)
-            page.savedOnDisk = page.strokes.size
+            // The vanishing pen's strokes live only in memory: leave the note and they are gone.
+            val kept = page.strokes.filterNot { Tool.isVanishing(it.brush.family) }
+            appendOrWriteStrokes(File(dir, "${page.id}.bin"), kept, page.savedOnDisk)
+            page.savedOnDisk = kept.size
             writeStrokes(File(dir, "${page.id}.mask"), page.masks.map { it.stroke })
             page.dirty = false
             if (index == 0) firstPageChanged = true

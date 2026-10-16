@@ -62,6 +62,7 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.hypot
+import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
@@ -401,7 +402,13 @@ enum class Tool {
     /** The fountain pen whose line thins as it moves faster. */
     SPEED_FOUNTAIN,
     /** A soft, grainy lead whose darkness follows pressure. See [PencilBrushes.soft]. */
-    SOFT_PENCIL;
+    SOFT_PENCIL,
+    /**
+     * The pressure pen, for writing that is not meant to stay: its strokes are
+     * never written to disk, so they are gone once the note is left. See
+     * [NoteStore.save].
+     */
+    VANISHING_PEN;
 
     fun brushFamily(): BrushFamily = when (this) {
         HIGHLIGHTER -> highlighter
@@ -420,6 +427,7 @@ enum class Tool {
         SPRAY -> PencilBrushes.spray
         SPEED_FOUNTAIN -> speedFountain
         SOFT_PENCIL -> PencilBrushes.soft
+        VANISHING_PEN -> vanishing
         else -> pen
     }
 
@@ -439,6 +447,11 @@ enum class Tool {
         private val pen by lazy { merged(roundTip(StockBrushes.marker())).copy(clientBrushFamilyId = "notesis.pen") }
         @OptIn(ExperimentalInkCustomBrushApi::class)
         private val pressurePen by lazy { merged(roundTip(StockBrushes.pressurePen())).copy(clientBrushFamilyId = "notesis.pressure-pen") }
+        @OptIn(ExperimentalInkCustomBrushApi::class)
+        private val vanishing by lazy { merged(roundTip(StockBrushes.pressurePen())).copy(clientBrushFamilyId = "notesis.vanishing") }
+
+        /** Whether a stroke is the vanishing pen's, which is kept only while the note is open. */
+        fun isVanishing(family: BrushFamily): Boolean = family == vanishing
 
         // Screen-only twins: same tip, so Stroke.copy keeps the mesh, but a
         // self-overlap the mesh renderer accepts. Its shader antialiases in
@@ -598,6 +611,7 @@ enum class Tool {
             PencilBrushes.spray -> SPRAY
             speedFountain -> SPEED_FOUNTAIN
             PencilBrushes.soft -> SOFT_PENCIL
+            vanishing -> VANISHING_PEN
             else -> PEN
         }
     }
@@ -606,7 +620,7 @@ enum class Tool {
 private fun Tool.isFreehandPen(): Boolean =
     this == Tool.PEN || this == Tool.PRESSURE_PEN || this == Tool.PENCIL || this == Tool.FOUNTAIN ||
         this == Tool.CALLIGRAPHY || this == Tool.WATERCOLOR || this == Tool.OIL || this == Tool.SPEED_FOUNTAIN ||
-        isDabbed()
+        this == Tool.VANISHING_PEN || isDabbed()
 
 /**
  * Drawn as scattered particles rather than one line. A line pattern would
@@ -1009,6 +1023,12 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** What holding the pen's barrel button while writing does: one of PEN_BUTTON_*. */
     var penButton: Int = PEN_BUTTON_ERASE
+
+    /** The eraser grows with pressure: a light touch takes a fraction of [eraserWidth], a firm one all of it. */
+    var pressureEraser: Boolean = false
+
+    /** See [pressureCurve]. */
+    var pressureResponse: Int = PRESSURE_RESPONSE_DEFAULT
     /** An eraser gesture with the eraser tool has ended. */
     var onEraseFinished: (() -> Unit)? = null
 
@@ -1583,6 +1603,13 @@ class InkCanvasView @JvmOverloads constructor(
     private val lassoBounds = RectF()
     /** Pictures and text boxes the loop caught, alongside [lassoStrokes]. */
     private val lassoImages = ArrayList<PageImage>()
+    /**
+     * What the loop would take if the pen lifted now, refreshed while it is
+     * drawn so the catch shows before it is made. Never the selection itself.
+     */
+    private val lassoPreviewStrokes: MutableSet<Stroke> = Collections.newSetFromMap(IdentityHashMap())
+    private val lassoPreviewImages = ArrayList<PageImage>()
+    private var lassoPreviewAt = 0L
     private var movingLasso = false
     private var liftedLassoStrokes: Set<Stroke>? = null
     private val lassoGrab = floatArrayOf(0f, 0f)
@@ -1755,7 +1782,7 @@ class InkCanvasView @JvmOverloads constructor(
                 // Clamping the *result* rather than the factor, so a pinch that
                 // would overshoot the limit still zooms up to it.
                 val minimum = if (minimumScaleIsFitWidth && fitScale > 0f) fitScale else MIN_SCALE
-                val factor = (current * detector.scaleFactor)
+                val factor = pinchedScale(current, detector.scaleFactor)
                     .coerceIn(minimum, maxScale()) / current
                 // Scale around the old centroid; MOVE translates it to the
                 // new centroid once. Scaling around the new point first adds
@@ -2020,6 +2047,38 @@ class InkCanvasView @JvmOverloads constructor(
 
     private var pendingZoom = 0f
     private var pendingFit = false
+
+    /**
+     * Where a pinch takes the scale. Up to [LINEAR_ZOOM_FROM] times the fit it
+     * multiplies, as pinches do, so the page stays under the fingers. Past it
+     * the same spread of the fingers adds the same amount of zoom wherever it
+     * starts: multiplying all the way made each pinch worth more than the last,
+     * so the percentage shot up and 1000% came after barely any movement.
+     * Measured in the log of the spread so that pinching in undoes exactly
+     * what spreading out did.
+     */
+    private fun pinchedScale(current: Float, scaleFactor: Float): Float {
+        if (fitScale <= 0f || scaleFactor <= 0f) return current * scaleFactor
+        val knee = fitScale * LINEAR_ZOOM_FROM
+        val natural = current * scaleFactor
+        return when {
+            current < knee && natural <= knee -> natural
+            // Crossing upward: only the part past the knee goes linear.
+            current < knee -> knee + knee * ln(natural / knee)
+            else -> {
+                val next = current + knee * ln(scaleFactor)
+                // Crossing downward: what is left below the knee multiplies again.
+                if (next >= knee) next else knee * exp((next - knee) / knee)
+            }
+        }
+    }
+
+    /** Zooms to [zoom] times fit-to-width, about the middle of the view. */
+    fun zoomTo(zoom: Float) {
+        if (fitScale <= 0f || width == 0 || zoom <= 0f) return
+        zoomBy(fitScale * zoom / currentScale(), width / 2f, height / 2f)
+        reportZoom(force = true)
+    }
 
     /** Zooms about the top-left corner by default, which is the corner a resize keeps. */
     private fun zoomBy(factor: Float, pivotX: Float = 0f, pivotY: Float = 0f) {
@@ -2769,6 +2828,66 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun onStylus(event: MotionEvent): Boolean {
+        if (pressureResponse == PRESSURE_RESPONSE_DEFAULT ||
+            event.getToolType(event.actionIndex) != MotionEvent.TOOL_TYPE_STYLUS
+        ) return onStylusEvent(event)
+        // Every sample through the curve once, here, so the wet ink, the
+        // stabilizer, the predictor and the saved stroke all see one pressure.
+        val curved = withPressureCurve(event)
+        return try { onStylusEvent(curved) } finally { curved.recycle() }
+    }
+
+    private var curvePointerProperties = emptyArray<MotionEvent.PointerProperties>()
+    private var curvePointerCoordinates = emptyArray<MotionEvent.PointerCoords>()
+
+    /** A copy of [event], history included, with each pressure passed through [pressureCurve]. */
+    private fun withPressureCurve(event: MotionEvent): MotionEvent {
+        val count = event.pointerCount
+        if (curvePointerProperties.size < count) {
+            curvePointerProperties = Array(count) { MotionEvent.PointerProperties() }
+            curvePointerCoordinates = Array(count) { MotionEvent.PointerCoords() }
+        }
+        // Longer arrays are fine: obtain and addBatch read only the first [count].
+        val properties = curvePointerProperties
+        val coordinates = curvePointerCoordinates
+        for (i in 0 until count) event.getPointerProperties(i, properties[i])
+        fun fill(history: Int) {
+            for (i in 0 until count) {
+                if (history < 0) event.getPointerCoords(i, coordinates[i])
+                else event.getHistoricalPointerCoords(i, history, coordinates[i])
+                coordinates[i].pressure = pressureCurve(coordinates[i].pressure, pressureResponse)
+            }
+        }
+        val samples = event.historySize
+        fill(if (samples > 0) 0 else -1)
+        val result = MotionEvent.obtain(
+            event.downTime,
+            if (samples > 0) event.getHistoricalEventTime(0) else event.eventTime,
+            event.action,
+            count,
+            properties,
+            coordinates,
+            event.metaState,
+            event.buttonState,
+            event.xPrecision,
+            event.yPrecision,
+            event.deviceId,
+            event.edgeFlags,
+            event.source,
+            event.flags,
+        )
+        if (samples > 0) {
+            for (history in 1 until samples) {
+                fill(history)
+                result.addBatch(event.getHistoricalEventTime(history), coordinates, event.metaState)
+            }
+            fill(-1)
+            result.addBatch(event.eventTime, coordinates, event.metaState)
+        }
+        return result
+    }
+
+    private fun onStylusEvent(event: MotionEvent): Boolean {
         if (laserMode || laserPointer != null) return onLaser(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
@@ -3524,7 +3643,7 @@ class InkCanvasView @JvmOverloads constructor(
             predictionHead.clear()
             return
         }
-        val pressureScale = if (tool == Tool.PRESSURE_PEN) {
+        val pressureScale = if (tool == Tool.PRESSURE_PEN || tool == Tool.VANISHING_PEN) {
             0.35f + real.getPressure(realIndex).coerceIn(0f, 1f) * 0.65f
         } else 1f
         predictionHead.show(
@@ -4966,7 +5085,27 @@ class InkCanvasView @JvmOverloads constructor(
         changed = lassoPath.addIfFarEnough(
             shapeEnd[0], shapeEnd[1], minimumDistance,
         ) || changed
+        if (changed && invalidate && drawingLasso) refreshLassoPreview(event.eventTime)
         if (changed && invalidate) dry.postInvalidateOnAnimation()
+    }
+
+    /** Re-collects [lassoPreviewStrokes] at most every [LASSO_PREVIEW_MS], or at once when [force]. */
+    private fun refreshLassoPreview(time: Long, force: Boolean = false) {
+        if (!force && time - lassoPreviewAt < LASSO_PREVIEW_MS) return
+        lassoPreviewAt = time
+        val page = document.pages.getOrNull(lassoPage) ?: return
+        if (lassoPath.size < LASSO_MIN_POINTS) {
+            lassoPreviewStrokes.clear()
+            lassoPreviewImages.clear()
+            return
+        }
+        collectInsideLasso(page, lassoPreviewStrokes, lassoPreviewImages)
+    }
+
+    private fun clearLassoPreview() {
+        lassoPreviewStrokes.clear()
+        lassoPreviewImages.clear()
+        lassoPreviewAt = 0L
     }
 
     /** Keeps the pen's path for circle to lasso; never redraws, the wet ink is the picture. */
@@ -5027,6 +5166,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     private fun finishLasso() {
         drawingLasso = false
+        clearLassoPreview()
         val index = lassoPage
         if (index < 0 || index >= document.pages.size || lassoPath.size < LASSO_MIN_POINTS) {
             lassoPath.clear()
@@ -5042,8 +5182,17 @@ class InkCanvasView @JvmOverloads constructor(
     /** Selects what [lassoPath] goes round on [lassoPage], leaving the path. True when that is anything. */
     private fun selectInsideLasso(): Boolean {
         val page = document.pages[lassoPage]
-        lassoStrokes.clear()
         lassoBounds.setEmpty()
+        collectInsideLasso(page, lassoStrokes, lassoImages)
+        for (container in lassoImages.filter { it.box != PageImage.BOX_NONE }) addContainedBy(page, container)
+        recomputeLassoBounds()
+        return hasLassoSelection()
+    }
+
+    /** Puts what [lassoPath] goes round on [page] into [strokes] and [images], whole groups included. */
+    private fun collectInsideLasso(page: Page, strokes: MutableSet<Stroke>, images: MutableList<PageImage>) {
+        strokes.clear()
+        images.clear()
         var left = Float.POSITIVE_INFINITY
         var top = Float.POSITIVE_INFINITY
         var right = Float.NEGATIVE_INFINITY
@@ -5054,7 +5203,6 @@ class InkCanvasView @JvmOverloads constructor(
             top = minOf(top, lassoPath[point + 1])
             bottom = maxOf(bottom, lassoPath[point + 1])
         }
-        lassoImages.clear()
         val sample = StrokeInput()
         val groups = HashSet<Int>()
         for (stroke in dry.strokesIn(page, left, top, right, bottom)) {
@@ -5066,7 +5214,7 @@ class InkCanvasView @JvmOverloads constructor(
                     (box.yMin + box.yMax) / 2f)
             ) continue
             if (lassoWholeOnly && !wholeInsideLasso(stroke, sample)) continue
-            lassoStrokes += stroke
+            strokes += stroke
             StrokeTags.group(stroke).let { if (it != 0) groups += it }
         }
         for (image in page.images) {
@@ -5077,21 +5225,18 @@ class InkCanvasView @JvmOverloads constructor(
                     lassoPath.contains(image.x + image.width, image.y + image.height)
             } else lassoPath.contains(image.x + image.width / 2f, image.y + image.height / 2f)
             if (!inside) continue
-            lassoImages += image
+            images += image
             if (image.group != 0) groups += image.group
         }
         // A group comes whole, wherever the loop happened to cut it.
         if (groups.isNotEmpty()) {
             for (stroke in page.strokes) {
-                if (StrokeTags.group(stroke) in groups && stroke !in lassoStrokes) lassoStrokes += stroke
+                if (StrokeTags.group(stroke) in groups && stroke !in strokes) strokes += stroke
             }
             for (image in page.images) {
-                if (image.group in groups && lassoImages.none { it === image }) lassoImages += image
+                if (image.group in groups && images.none { it === image }) images += image
             }
         }
-        for (container in lassoImages.filter { it.box != PageImage.BOX_NONE }) addContainedBy(page, container)
-        recomputeLassoBounds()
-        return hasLassoSelection()
     }
 
     private fun selectable(stroke: Stroke): Boolean {
@@ -5670,6 +5815,7 @@ class InkCanvasView @JvmOverloads constructor(
         liftedLassoStrokes = null
         lassoStrokes.clear()
         lassoImages.clear()
+        clearLassoPreview()
         lassoBounds.setEmpty()
         lassoDx = 0f
         lassoDy = 0f
@@ -6090,8 +6236,12 @@ class InkCanvasView @JvmOverloads constructor(
         if (index < 0) return
         val screenX = event.getX(pointerIndex)
         val screenY = event.getY(pointerIndex)
-        compatWet.showCursor(screenX, screenY, eraserScreenRadius())
-        val eraserSize = eraserPageWidth()
+        // A finger reports no real pressure, so only the pen's grows and shrinks.
+        val squeeze = if (pressureEraser && event.getToolType(pointerIndex) == MotionEvent.TOOL_TYPE_STYLUS) {
+            PRESSURE_ERASER_MIN + (1f - PRESSURE_ERASER_MIN) * event.getPressure(pointerIndex).coerceIn(0f, 1f)
+        } else 1f
+        compatWet.showCursor(screenX, screenY, eraserScreenRadius() * squeeze)
+        val eraserSize = eraserPageWidth() * squeeze
         pageLocalInto(screenX, screenY, index, erasePagePoint)
         val x = erasePagePoint[0]
         val y = erasePagePoint[1]
@@ -6981,6 +7131,7 @@ class InkCanvasView @JvmOverloads constructor(
         }
 
         private val linkWash = Paint().apply { color = 0x332196F3 }
+        private val lassoPreviewWash = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x403B7DDD }
         /** The orange corner handles of a shape being edited. */
         private val vertexPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFF9800.toInt() }
 
@@ -6998,6 +7149,19 @@ class InkCanvasView @JvmOverloads constructor(
         private fun drawLasso(canvas: Canvas) {
             val scale = currentScale()
             if (drawingLasso && lassoPath.size >= 4) {
+                // What lifting the pen now would take, washed in the loop's blue.
+                if (lassoPreviewStrokes.isNotEmpty() || lassoPreviewImages.isNotEmpty()) {
+                    val pad = LASSO_PREVIEW_PAD_PX / scale
+                    for (stroke in lassoPreviewStrokes) {
+                        val box = stroke.shape.computeBoundingBox() ?: continue
+                        selectionBox.set(box.xMin - pad, box.yMin - pad, box.xMax + pad, box.yMax + pad)
+                        canvas.drawRoundRect(selectionBox, pad, pad, lassoPreviewWash)
+                    }
+                    for (image in lassoPreviewImages) {
+                        selectionBox.set(image.x - pad, image.y - pad, image.x + image.width + pad, image.y + image.height + pad)
+                        canvas.drawRoundRect(selectionBox, pad, pad, lassoPreviewWash)
+                    }
+                }
                 overlay.color = 0xFF3B7DDD.toInt()
                 overlay.strokeWidth = 2f / scale
                 overlay.pathEffect = lassoDashes(scale)
@@ -7325,6 +7489,8 @@ class InkCanvasView @JvmOverloads constructor(
 
         /** How far past fit-to-width the zoom goes: 10x, which reads as 1000%. */
         const val MAX_ZOOM = 10f
+        /** The zoom, as a multiple of the fit, past which a pinch adds rather than multiplies. See [pinchedScale]. */
+        private const val LINEAR_ZOOM_FROM = 2.5f
         // 페이지 폭과 태블릿의 실제 콘텐츠 폭을 1:1로 맞춥니다.
         const val FIT_MARGIN = 1f
         const val HIGHLIGHT_ALPHA = 0x66000000
@@ -7385,6 +7551,12 @@ class InkCanvasView @JvmOverloads constructor(
         const val WHOLE_CHECK_SAMPLES = 32
         const val KEY_ZOOM_STEP = 1.25f
         /** The reading-mode trail and tap ring: the selection's blue. */
+        /** The pressure eraser's size at the lightest touch, as a share of the full width. */
+        private const val PRESSURE_ERASER_MIN = 0.2f
+        /** How often the lasso's live catch is re-collected while it is drawn. */
+        private const val LASSO_PREVIEW_MS = 50L
+        /** The wash's margin round each caught stroke, in screen pixels. */
+        private const val LASSO_PREVIEW_PAD_PX = 3f
         const val GESTURE_TRAIL_COLOR = 0xFF3B7DDD.toInt()
         const val MEASURED_LATENCY_REFRESH_MS = 500L
         /** How far outside a checkbox, in screen pixels, a tap still ticks it. */

@@ -175,6 +175,7 @@ internal fun PenDialog(
     var autoShapes by remember(pen) { mutableStateOf(pen.autoShapes) }
     var straightLine by remember(pen) { mutableStateOf(pen.straightLine) }
     var details by remember { mutableStateOf(false) }
+    var pressureResponse by remember { mutableIntStateOf(gestures.pressureResponse) }
     var joined by remember { mutableStateOf(store.colorPickerJoined) }
     val opacity = allowsOpacity(mode)
     val range = PenStore.widthRange(mode, pen.copy(maxWidth = maxWidth))
@@ -194,7 +195,10 @@ internal fun PenDialog(
         autoShapes = autoShapes,
         straightLine = straightLine,
     )
-    fun keep() = onConfirm(current())
+    fun keep() {
+        if (pressureResponse != gestures.pressureResponse) onGestures(gestures.copy(pressureResponse = pressureResponse))
+        onConfirm(current())
+    }
 
     Dialog(onDismissRequest = ::keep, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         // A light dim: the page should still show through the glass.
@@ -363,6 +367,20 @@ internal fun PenDialog(
 
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     Text("모든 도구 공통", style = MaterialTheme.typography.labelLarge)
+                    if (freehand || mode == EditMode.ERASE) {
+                        Text("필압 반영 정도 $pressureResponse", style = MaterialTheme.typography.bodyMedium)
+                        SkinSlider(
+                            value = pressureResponse.toFloat(),
+                            onValueChange = { pressureResponse = it.roundToInt().coerceIn(0, 100) },
+                            valueRange = 0f..100f,
+                            step = 1f,
+                        )
+                        Text(
+                            "기본 10. 0이면 필압을 무시하고, 높일수록 살짝 누를 때 더 가늘어져 세게 눌러야 굵게 나옵니다",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.outline,
+                        )
+                    }
                     if (freehand) {
                         SwitchRow("끝에서 멈추면 도형으로", gestures.holdToDraw) {
                             onGestures(gestures.copy(holdToDraw = it))
@@ -480,6 +498,11 @@ private fun EraserSection(
             })
         }
     }
+    SwitchRow(
+        "필압 지우개",
+        gestures.pressureEraser,
+        hint = "펜을 누르는 힘에 따라 지우개 크기가 바뀝니다. 세게 누를수록 설정한 크기에 가까워집니다",
+    ) { onGestures(gestures.copy(pressureEraser = it)) }
 }
 
 // ---- colour ----------------------------------------------------------------

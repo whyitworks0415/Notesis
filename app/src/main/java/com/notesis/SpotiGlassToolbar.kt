@@ -18,6 +18,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -50,6 +51,8 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.window.PopupPositionProvider
 import kotlin.math.PI
+import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
 import kotlin.math.sin
 import com.kyant.backdrop.drawBackdrop
 
@@ -142,6 +145,84 @@ internal fun ToolbarEditDialog(onDismiss: () -> Unit) {
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("닫기") } },
     )
+}
+
+/**
+ * How the bar moves between its four sizes: how long it takes and the curve
+ * it takes it on. Kept on the device and read as state, so a change in the
+ * menu shows on the very next switch.
+ */
+internal object ToolbarMotion {
+    private var prefs: android.content.SharedPreferences? = null
+
+    /** The curves offered, in the order the menu shows them. */
+    val EASINGS = listOf("가감속", "감속", "일정", "탄성")
+    const val DEFAULT_MS = 360
+    const val MAX_MS = 1000
+
+    var durationMs by mutableIntStateOf(DEFAULT_MS)
+        private set
+    var easing by mutableIntStateOf(0)
+        private set
+
+    fun init(context: android.content.Context) {
+        if (prefs != null) return
+        val p = context.getSharedPreferences("pens", android.content.Context.MODE_PRIVATE)
+        prefs = p
+        durationMs = p.getInt("toolbarMotionMs", DEFAULT_MS).coerceIn(0, MAX_MS)
+        easing = p.getInt("toolbarMotionEasing", 0).coerceIn(0, EASINGS.lastIndex)
+    }
+
+    fun update(durationMs: Int = this.durationMs, easing: Int = this.easing) {
+        this.durationMs = durationMs.coerceIn(0, MAX_MS)
+        this.easing = easing.coerceIn(0, EASINGS.lastIndex)
+        prefs?.edit()?.putInt("toolbarMotionMs", this.durationMs)?.putInt("toolbarMotionEasing", this.easing)?.apply()
+    }
+
+    fun <T> spec(): androidx.compose.animation.core.AnimationSpec<T> {
+        if (durationMs <= 0) return tween(0)
+        return when (easing) {
+            // A spring has no length, only a stiffness; this one settles in
+            // about the chosen time (4 / (damping x natural frequency)).
+            3 -> {
+                val omega = 4f / (SPRING_DAMPING * durationMs / 1000f)
+                spring(dampingRatio = SPRING_DAMPING, stiffness = omega * omega)
+            }
+            1 -> tween(durationMs, easing = EASE_OUT)
+            2 -> tween(durationMs, easing = androidx.compose.animation.core.LinearEasing)
+            else -> tween(durationMs, easing = EASE_IN_OUT)
+        }
+    }
+
+    private const val SPRING_DAMPING = 0.78f
+    // Cubic in-out: starts gently, gathers, and settles as gently as it began.
+    private val EASE_IN_OUT = androidx.compose.animation.core.CubicBezierEasing(0.65f, 0f, 0.35f, 1f)
+    // Quintic out: quick off the mark, long soft landing.
+    private val EASE_OUT = androidx.compose.animation.core.CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
+}
+
+/**
+ * Height that follows its content on [ToolbarMotion]'s curve. Not
+ * animateContentSize: that clips, and took the corner shadows with it.
+ */
+@Composable
+private fun Modifier.toolbarAnimatedHeight(enabled: Boolean): Modifier {
+    if (!enabled) return this
+    val scope = rememberCoroutineScope()
+    val height = remember { Animatable(0f) }
+    val started = remember { booleanArrayOf(false) }
+    return layout { measurable, constraints ->
+        val child = measurable.measure(constraints.copy(minHeight = 0))
+        val target = child.height.toFloat()
+        if (!started[0]) {
+            started[0] = true
+            scope.launch { height.snapTo(target) }
+        } else if (height.targetValue != target) {
+            scope.launch { height.animateTo(target, ToolbarMotion.spec()) }
+        }
+        val shown = if (height.value <= 0f) child.height else height.value.roundToInt()
+        layout(child.width, shown.coerceIn(constraints.minHeight, constraints.maxHeight)) { child.placeRelative(0, 0) }
+    }
 }
 
 internal fun spotiToolbarWidth(level: Int) = when (level) {
@@ -337,10 +418,23 @@ internal fun SpotiGlassToolbar(
     val popupBackdrop = LocalSpotiPopupBackdrop.current ?: LocalLiquidGlassBackdrop.current
     // animateContentSize clips its layer, including stable corner shadows.
     // Width already has one animation clock in the host; do not animate twice.
+    // The new size's contents come up out of a fade while the frame moves,
+    // instead of being swapped in whole on the first frame.
+    val fade = remember { Animatable(1f) }
+    val firstLevel = remember { intArrayOf(sizeLevel) }
+    LaunchedEffect(sizeLevel) {
+        if (firstLevel[0] == sizeLevel) return@LaunchedEffect
+        firstLevel[0] = -1
+        if (!effects || ToolbarMotion.durationMs <= 0) return@LaunchedEffect
+        fade.snapTo(0.25f)
+        fade.animateTo(1f, ToolbarMotion.spec())
+    }
     ThemedToolbarFrame(skin, modifier) {
         if (sizeLevel == 0 && skin == Skin.SPOTIGLASS) Box(Modifier.matchParentSize().spotiToolbarGlass())
         CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides androidx.compose.ui.unit.Dp.Unspecified) {
-            Column(Modifier.then(if (docked && sizeLevel == 0) Modifier.windowInsetsPadding(
+            Column(Modifier.toolbarAnimatedHeight(effects && ToolbarMotion.durationMs > 0)
+                .graphicsLayer { alpha = fade.value }
+                .then(if (docked && sizeLevel == 0) Modifier.windowInsetsPadding(
                 WindowInsets.systemBars.union(WindowInsets.displayCutout)
                     .only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)) else Modifier)
                 .padding(horizontal = 8.dp, vertical = 2.dp)) {
@@ -424,6 +518,11 @@ internal fun SpotiGlassToolbar(
                                                         selected = sizeLevel == level, onClick = { open = false; onSizeLevel(level) })
                                                 }
                                             }
+                                            var motion by remember { mutableStateOf(page == ToolbarMenu.SIZES) }
+                                            TextButton(onClick = { motion = !motion }) {
+                                                Text(if (motion) "전환 애니메이션 접기" else "전환 애니메이션 · ${ToolbarMotion.durationMs}ms")
+                                            }
+                                            if (motion) ToolbarMotionSettings()
                                         }
                                         if (page == ToolbarMenu.FUNCTIONS) {
                                             if (sizeLevel >= 2) {
@@ -462,6 +561,32 @@ internal fun SpotiGlassToolbar(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/** The bar's switch between sizes: its length, and the curve it moves on. */
+@Composable
+private fun ToolbarMotionSettings() {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            if (ToolbarMotion.durationMs == 0) "바로 바꾸기" else "전환 시간 ${ToolbarMotion.durationMs}ms",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        SkinSlider(
+            value = ToolbarMotion.durationMs.toFloat(),
+            onValueChange = { ToolbarMotion.update(durationMs = it.roundToInt()) },
+            valueRange = 0f..ToolbarMotion.MAX_MS.toFloat(),
+            step = 20f,
+        )
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            ToolbarMotion.EASINGS.forEachIndexed { index, label ->
+                SettingsChoiceChip(
+                    selected = ToolbarMotion.easing == index,
+                    onClick = { ToolbarMotion.update(easing = index) },
+                    label = label,
+                )
             }
         }
     }
