@@ -3331,8 +3331,6 @@ private fun NoteScreen(
     var recorder by remember { mutableStateOf<android.media.MediaRecorder?>(null) }
     var recordingFile by remember { mutableStateOf<java.io.File?>(null) }
     var voicePlayer by remember { mutableStateOf<android.media.MediaPlayer?>(null) }
-    var playbackSpeed by remember { mutableFloatStateOf(penStore.playbackSpeed) }
-    var playMode by remember { mutableIntStateOf(penStore.playMode) }
     var playingFile by remember { mutableStateOf<String?>(null) }
     // When each stroke landed while recording, saved beside the audio.
     var recordingStartedAt by remember { mutableStateOf(0L) }
@@ -3391,6 +3389,8 @@ private fun NoteScreen(
         }
     }
     val penStore = remember { PenStore(context) }
+    var playbackSpeed by remember { mutableFloatStateOf(penStore.playbackSpeed) }
+    var playMode by remember { mutableIntStateOf(penStore.playMode) }
     val indexer = remember { InkIndexer(context) }
     DisposableEffect(Unit) { onDispose { indexer.close() } }
     var settings by remember { mutableStateOf(penStore.load()) }
