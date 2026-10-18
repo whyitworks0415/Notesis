@@ -3874,6 +3874,8 @@ private fun NoteScreen(
             onZoomLabel = { zoomMenu = true },
             zoomLabel = "${(zoom * 100).roundToInt()}%",
             onToggleLatency = { showLatency = !showLatency },
+            minimapOn = showMinimap,
+            onToggleMinimap = { showMinimap = !showMinimap; penStore.minimap = showMinimap },
             laser = laser,
             onToggleLaser = {
                 when {
@@ -4316,10 +4318,12 @@ private fun NoteScreen(
                 view = minimapView,
                 page = currentPage,
                 tick = { viewportTick },
+                // Top right, clear of the toolbar above and the page scrubber's column.
                 modifier = Modifier
-                    .align(Alignment.BottomEnd)
+                    .align(Alignment.TopEnd)
                     .windowInsetsPadding(ChromeInsets)
-                    .padding(end = 16.dp, bottom = 16.dp),
+                    .padding(top = MINIMAP_TOP_PADDING, end = 64.dp),
+                onClose = { showMinimap = false; penStore.minimap = false },
             )
         }
 
@@ -6186,9 +6190,11 @@ private fun ReferencePanel(
                                 // A popup always shares the screen with the note
                                 // under it; see InkCanvasView.softPredictionHead.
                                 softPredictionHead = false
-                                // 작은 팝업에서는 같은 손가락 이동으로 더 많은 페이지를
-                                // 넘길 수 있게 하고, 관성 속도에도 같은 배율을 적용합니다.
-                                viewportPanMultiplier = REFERENCE_SCROLL_MULTIPLIER
+                                // The page moves exactly with the finger; a faster page
+                                // felt like it was slipping away under it.
+                                viewportPanMultiplier = 1f
+                                // And it cannot be slid off sideways past its edges.
+                                keepPageAcross = true
                                 pageLoader = { p, epsilon -> store.loadPage(noteId, p, epsilon) }
                                 maskLoader = { p, epsilon -> store.loadMasks(noteId, p, epsilon) }
                                 imageLoader = { imageId ->
@@ -6524,8 +6530,10 @@ private fun PageScrubber(
 }
 
 private val SCRUBBER_PREVIEW_WIDTH = 120.dp
+/** Below the toolbar's two rows, so the minimap never sits under it. */
+private val MINIMAP_TOP_PADDING = 150.dp
 private const val SCRUBBER_THUMBNAIL_PX = 240
-private const val THUMBNAIL_ATTEMPTS = 12
+private const val THUMBNAIL_ATTEMPTS = 40
 private const val THUMBNAIL_RETRY_MS = 80L
 
 /** Within this many degrees of a quarter turn, a turned note settles onto it. */
@@ -7310,6 +7318,8 @@ private fun Toolbar(
     /** The zoom as a percentage of fit-to-width. */
     zoomLabel: String,
     onToggleLatency: () -> Unit,
+    minimapOn: Boolean = false,
+    onToggleMinimap: () -> Unit = {},
     recording: Boolean,
     onVoice: () -> Unit,
     noteRotation: Int,
@@ -7484,6 +7494,8 @@ private fun Toolbar(
                 add(SpotiToolbarAction("UI · 화면 설정", Reicons.AutoAwesomeMosaic, slot = 6, onClick = onScreenSettings))
                 add(SpotiToolbarAction("확대 · $zoomLabel", Reicons.ZoomOutMap, onClick = onZoomLabel))
                 add(SpotiToolbarAction("인터넷", Reicons.Language, onClick = { onWeb(SEARCH_HOME) }))
+                add(SpotiToolbarAction(if (minimapOn) "미니맵 끄기" else "미니맵 켜기", Reicons.PictureInPictureAlt,
+                    selected = minimapOn, onClick = onToggleMinimap))
                 add(SpotiToolbarAction("지연 측정", Reicons.Speed, selected = showLatency, onClick = onToggleLatency))
                 if (canResetBar) add(SpotiToolbarAction("도구막대 제자리로", Reicons.FilterCenterFocus, onClick = onResetBar))
             },
@@ -7665,8 +7677,6 @@ private val WEB_PANEL_MAX = 1100.dp
 /** Below this the reference panel is too small to hold a readable page. */
 private val REFERENCE_MIN_SIZE = 220.dp
 
-/** 작은 팝업 안의 페이지 이동 거리와 관성 속도를 키우는 배율입니다. */
-private const val REFERENCE_SCROLL_MULTIPLIER = 1.65f
 
 private const val SEARCH_HOME = "https://www.google.com/"
 

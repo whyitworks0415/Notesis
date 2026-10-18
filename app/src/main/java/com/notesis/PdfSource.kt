@@ -153,7 +153,13 @@ class PdfSource private constructor(
         if (bitmap.isRecycled || !bitmap.isMutable) return
         synchronized(tilePool) {
             tilePool.addLast(android.os.SystemClock.uptimeMillis() to bitmap)
-            while (tilePool.size > TILE_POOL_SIZE) tilePool.removeFirst()
+            // Spares are memory on top of the tile cache: a few, and never more
+            // than a sixth of what the cache itself may hold.
+            val limit = tileCache.maxSize().toLong() / 6
+            while (tilePool.size > TILE_POOL_SIZE ||
+                (tilePool.size > 1 && tilePool.sumOf { it.second.byteCount.toLong() } > limit)) {
+                tilePool.removeFirst()
+            }
         }
     }
 
@@ -809,7 +815,7 @@ class PdfSource private constructor(
 
         private const val PREVIEW_WIDTH = 384
         /** Spare tiles kept for reuse; see [tilePool]. */
-        private const val TILE_POOL_SIZE = 6
+        private const val TILE_POOL_SIZE = 3
         /** How long a tile rests after leaving the cache before it is painted over. */
         private const val POOL_REST_MS = 1000L
         private const val PREVIEW_MAX_HEIGHT = 1024

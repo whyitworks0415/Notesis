@@ -1292,8 +1292,15 @@ class InkCanvasView @JvmOverloads constructor(
     /** 팝업 노트는 아무리 축소해도 페이지 폭이 패널 폭보다 작아지지 않습니다. */
     var minimumScaleIsFitWidth: Boolean = false
 
-    /** 손가락 페이지 이동량과 fling 속도 배율입니다. 일반 화면은 1, 작은 팝업만 높입니다. */
+    /** 손가락 페이지 이동량과 fling 속도 배율입니다. */
     var viewportPanMultiplier: Float = 1f
+
+    /**
+     * The page's sides stay at or past the view's sides: no sliding the page
+     * off to one side. For the popup, where the slack meant to bring a page
+     * edge to the middle of the screen only lost the page in a small window.
+     */
+    var keepPageAcross: Boolean = false
 
     /**
      * The ceiling on zoom, in page units: ten times fit-to-width, which is what
@@ -1506,11 +1513,10 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** Runs [handle] on [event] turned into the layout frame. */
     private inline fun inLayoutFrame(event: MotionEvent, handle: (MotionEvent) -> Boolean): Boolean {
-        // Upright with the view at the screen's origin, raw and view coordinates
-        // agree and the event can go as it is. Otherwise every event is rebuilt
-        // with its coordinates baked in, so the predictor never sees two frames.
-        if (viewRotation == 0f && event.rawX == event.x && event.rawY == event.y) return handle(event)
-        val turned = mappedEvent(event, if (viewRotation == 0f) IDENTITY_MATRIX else screenToLayout)
+        // Upright, every event goes through untouched: rebuilding each one cost
+        // an allocation per 240Hz sample for nothing.
+        if (viewRotation == 0f) return handle(event)
+        val turned = mappedEvent(event, screenToLayout)
         val outer = screenEvent
         screenEvent = event
         try {
@@ -2220,6 +2226,7 @@ class InkCanvasView @JvmOverloads constructor(
         refiningPages = emptyList()
         refiner.shutdownNow()
         selectionWorker.shutdownNow()
+        thumbnailWorker.shutdownNow()
         predictionHead.clear()
         pdf?.diagnostics = null
         pdf?.let(releasePdf)
@@ -2382,36 +2389,56 @@ class InkCanvasView @JvmOverloads constructor(
     private val thumbnailCache = android.util.LruCache<String, Bitmap>(THUMBNAIL_CACHE_COUNT)
     private val thumbnailPaint = Paint(Paint.FILTER_BITMAP_FLAG)
 
+    /** Draws thumbnails off the UI thread: a dense page's ink took long enough to stall a pinch. */
+    private val thumbnailWorker = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "notesis-thumbnails").apply { priority = Thread.MIN_PRIORITY }
+    }
+    private val thumbnailsPending = HashSet<String>()
+
     /**
      * A small picture of page [index] - its paper or PDF and its ink - [widthPx]
-     * wide, for the page scrubber and the minimap. Null while the PDF preview
-     * is still being rendered; ask again shortly. Kept per page, stroke count
-     * and size, so a page drawn on is pictured afresh.
+     * wide, for the page scrubber and the minimap. Null until it has been
+     * drawn, which happens on a worker; ask again shortly. Kept per page,
+     * stroke count and size, so a page drawn on is pictured afresh.
      */
     fun pageThumbnail(index: Int, widthPx: Int): Bitmap? {
         val page = document.pages.getOrNull(index) ?: return null
         if (page.width <= 0f || page.height <= 0f || widthPx <= 0) return null
-        val key = "${page.id}:${page.strokes.size}:${page.masks.size}:${page.loaded}:$widthPx"
+        val key = "${page.id}:${page.strokes.size}:${page.loaded}:$widthPx"
         thumbnailCache.get(key)?.let { return it }
+        if (key in thumbnailsPending) return null
         val pdfPicture = if (page.background == PageBackground.PDF) {
             pdf?.bitmap(page.pdfPageIndex, widthPx, request = true) ?: return null
         } else null
-        val height = (widthPx * page.height / page.width).toInt().coerceAtLeast(1)
-        val bitmap = runCatching { Bitmap.createBitmap(widthPx, height, Bitmap.Config.ARGB_8888) }
-            .getOrNull() ?: return null
-        val canvas = Canvas(bitmap)
-        canvas.drawColor(Color.WHITE)
-        val scale = widthPx / page.width
-        pdfPicture?.let { canvas.drawBitmap(it, null, RectF(0f, 0f, widthPx.toFloat(), height.toFloat()), thumbnailPaint) }
-        if (page.loaded) {
-            val transform = Matrix().apply { setScale(scale, scale) }
-            canvas.save()
-            canvas.scale(scale, scale)
-            for (stroke in page.strokes) runCatching { thumbnailRenderer.draw(canvas, stroke, transform) }
-            canvas.restore()
-        }
-        thumbnailCache.put(key, bitmap)
-        return bitmap
+        // Snapshot on the UI thread; the drawing happens on the worker.
+        val strokes = if (page.loaded) page.strokes.toList() else emptyList()
+        val pageWidth = page.width
+        val pageHeight = page.height
+        thumbnailsPending += key
+        val accepted = runCatching {
+            thumbnailWorker.execute {
+                val bitmap = runCatching {
+                    val height = (widthPx * pageHeight / pageWidth).toInt().coerceAtLeast(1)
+                    val picture = Bitmap.createBitmap(widthPx, height, Bitmap.Config.ARGB_8888)
+                    val canvas = Canvas(picture)
+                    canvas.drawColor(Color.WHITE)
+                    pdfPicture?.takeIf { !it.isRecycled }?.let {
+                        canvas.drawBitmap(it, null, RectF(0f, 0f, widthPx.toFloat(), height.toFloat()), thumbnailPaint)
+                    }
+                    val scale = widthPx / pageWidth
+                    val transform = Matrix().apply { setScale(scale, scale) }
+                    canvas.scale(scale, scale)
+                    for (stroke in strokes) runCatching { thumbnailRenderer.draw(canvas, stroke, transform) }
+                    picture
+                }.getOrNull()
+                post {
+                    thumbnailsPending -= key
+                    if (bitmap != null) thumbnailCache.put(key, bitmap)
+                }
+            }
+        }.isSuccess
+        if (!accepted) thumbnailsPending -= key
+        return null
     }
 
     /** The part of page [index] on screen, in page units clamped to the page, or null if none of it is. */
@@ -2973,7 +3000,7 @@ class InkCanvasView @JvmOverloads constructor(
 
         // 0.8 of a note's width of slack past either side, so the edge of the
         // page can be brought to the middle of the screen to write on.
-        val slack = document.fitWidth() * scale * 0.8f
+        val slack = if (keepPageAcross) 0f else document.fitWidth() * scale * 0.8f
         val centred = (width - docWidth) / 2f
         x = x.coerceIn(minOf(width - docWidth, centred) - slack, maxOf(0f, centred) + slack)
         y = if (docHeight <= height) {
@@ -3536,7 +3563,10 @@ class InkCanvasView @JvmOverloads constructor(
                     leadMs = stabilizedLeadMs(leadMs, stabilizer)
                 }
                 if (predictionEnabled) predictor.record(inkEvent)
-                val rawPrediction = if (predictionEnabled && leadMs > 0) predictor.predict() else null
+                // Turned, no prediction: the predictor's guess came back in a
+                // frame the turn had not been applied to, and its head shot
+                // off from the pen in a direction that followed the angle.
+                val rawPrediction = if (predictionEnabled && leadMs > 0 && viewRotation == 0f) predictor.predict() else null
                 val predicted = rawPrediction?.let { predictionAtLead(inkEvent, it, leadMs.toLong()) }
                 try {
                     if (latencyMonitoringEnabled && predicted != null) {
@@ -8045,7 +8075,6 @@ class InkCanvasView @JvmOverloads constructor(
         private const val LASSO_PREVIEW_MS = 50L
         /** The wash's margin round each caught stroke, in screen pixels. */
         private const val LASSO_PREVIEW_PAD_PX = 3f
-        private val IDENTITY_MATRIX = Matrix()
         /** Degrees three fingers must turn before the note follows. */
         private const val ROTATE_START_DEGREES = 12f
         private const val MAX_TURN_POINTERS = 10

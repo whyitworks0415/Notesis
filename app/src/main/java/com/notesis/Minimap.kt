@@ -2,6 +2,12 @@ package com.notesis
 
 import android.graphics.Bitmap
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Icon
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -39,7 +45,14 @@ import kotlin.math.roundToInt
  * the box in step without recomposing the editor around it.
  */
 @Composable
-internal fun Minimap(view: InkCanvasView, page: Int, tick: () -> Int, modifier: Modifier = Modifier) {
+internal fun Minimap(
+    view: InkCanvasView,
+    page: Int,
+    tick: () -> Int,
+    modifier: Modifier = Modifier,
+    /** Turns the minimap off; shown as a small x in its corner. */
+    onClose: (() -> Unit)? = null,
+) {
     // Read here, not by the caller, so following the view recomposes only this.
     val moved = tick()
     var picture by remember(page) { mutableStateOf<Bitmap?>(null) }
@@ -104,6 +117,20 @@ internal fun Minimap(view: InkCanvasView, page: Int, tick: () -> Int, modifier: 
                 drawRect(accent, Offset(left, top), Size(w, h), style = Stroke(1.5.dp.toPx()))
             }
         }
+        if (onClose != null) {
+            Box(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(3.dp)
+                    .size(22.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.45f))
+                    .clickable(onClick = onClose),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Reicons.Close, contentDescription = "미니맵 끄기", tint = Color.White, modifier = Modifier.size(14.dp))
+            }
+        }
     }
 }
 
@@ -111,7 +138,7 @@ internal fun Minimap(view: InkCanvasView, page: Int, tick: () -> Int, modifier: 
 internal const val MINIMAP_MIN_ZOOM = 1.5f
 private val MINIMAP_WIDTH = 120.dp
 private const val MINIMAP_PX = 240
-private const val MINIMAP_ATTEMPTS = 12
+private const val MINIMAP_ATTEMPTS = 40
 private const val MINIMAP_RETRY_MS = 80L
 /** Movement ticks between re-pictures of the page; the box itself follows every tick. */
 private const val MINIMAP_REFRESH_TICKS = 240
