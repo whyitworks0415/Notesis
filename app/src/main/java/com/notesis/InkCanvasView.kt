@@ -1397,7 +1397,69 @@ class InkCanvasView @JvmOverloads constructor(
     /** [event], in the layout frame, back in the screen's frame for the wet layer. Recycle it when not the same. */
     private fun wetEvent(event: MotionEvent): MotionEvent {
         if (viewRotation == 0f) return event
-        return MotionEvent.obtain(event).also { it.transform(layoutToScreen) }
+        return mappedEvent(event, layoutToScreen)
+    }
+
+    private var mappedProperties = emptyArray<MotionEvent.PointerProperties>()
+    private var mappedCoordinates = emptyArray<MotionEvent.PointerCoords>()
+
+    /**
+     * A new event with every sample of [event] passed through [matrix], baked
+     * into its coordinates rather than kept as the event's own transform.
+     *
+     * MotionEvent.transform only records a transform beside the untouched raw
+     * samples, and the platform's motion predictor works on those raw samples
+     * and applies the newest event's transform to its guess. Fed a mix of
+     * transformed copies (raw = screen) and events rebuilt from coordinates
+     * (raw = turned), it extrapolated across the jump between the two frames:
+     * the long straight line that shot off the pen on a turned note.
+     */
+    private fun mappedEvent(event: MotionEvent, matrix: Matrix): MotionEvent {
+        val turned = MotionEvent.obtain(event)
+        turned.transform(matrix)
+        try {
+            val count = turned.pointerCount
+            if (mappedProperties.size < count) {
+                mappedProperties = Array(count) { MotionEvent.PointerProperties() }
+                mappedCoordinates = Array(count) { MotionEvent.PointerCoords() }
+            }
+            for (i in 0 until count) turned.getPointerProperties(i, mappedProperties[i])
+            val samples = turned.historySize
+            fun fill(history: Int) {
+                for (i in 0 until count) {
+                    if (history < 0) turned.getPointerCoords(i, mappedCoordinates[i])
+                    else turned.getHistoricalPointerCoords(i, history, mappedCoordinates[i])
+                }
+            }
+            fill(if (samples > 0) 0 else -1)
+            val result = MotionEvent.obtain(
+                turned.downTime,
+                if (samples > 0) turned.getHistoricalEventTime(0) else turned.eventTime,
+                turned.action,
+                count,
+                mappedProperties,
+                mappedCoordinates,
+                turned.metaState,
+                turned.buttonState,
+                turned.xPrecision,
+                turned.yPrecision,
+                turned.deviceId,
+                turned.edgeFlags,
+                turned.source,
+                turned.flags,
+            )
+            if (samples > 0) {
+                for (history in 1 until samples) {
+                    fill(history)
+                    result.addBatch(turned.getHistoricalEventTime(history), mappedCoordinates, turned.metaState)
+                }
+                fill(-1)
+                result.addBatch(turned.eventTime, mappedCoordinates, turned.metaState)
+            }
+            return result
+        } finally {
+            turned.recycle()
+        }
     }
 
     private inline fun <T> withWetEvent(event: MotionEvent, block: (MotionEvent) -> T): T {
@@ -1422,9 +1484,11 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** Runs [handle] on [event] turned into the layout frame. */
     private inline fun inLayoutFrame(event: MotionEvent, handle: (MotionEvent) -> Boolean): Boolean {
-        if (viewRotation == 0f) return handle(event)
-        val turned = MotionEvent.obtain(event)
-        turned.transform(screenToLayout)
+        // Upright with the view at the screen's origin, raw and view coordinates
+        // agree and the event can go as it is. Otherwise every event is rebuilt
+        // with its coordinates baked in, so the predictor never sees two frames.
+        if (viewRotation == 0f && event.rawX == event.x && event.rawY == event.y) return handle(event)
+        val turned = mappedEvent(event, if (viewRotation == 0f) IDENTITY_MATRIX else screenToLayout)
         val outer = screenEvent
         screenEvent = event
         try {
@@ -4414,7 +4478,9 @@ class InkCanvasView @JvmOverloads constructor(
         onRotateNoteEnd?.invoke()
     }
 
-    private fun rawFingerFocus(event: MotionEvent): FloatArray {
+    private fun rawFingerFocus(turned: MotionEvent): FloatArray {
+        // Raw from the touch as it came: the turned copy's raw is in the layout frame.
+        val event = screenEvent ?: turned
         var x = 0f
         var y = 0f
         for (i in 0 until event.pointerCount) {
@@ -4426,7 +4492,8 @@ class InkCanvasView @JvmOverloads constructor(
         return rawFocus
     }
 
-    private fun rawFingerSpread(event: MotionEvent, x: Float, y: Float): Float {
+    private fun rawFingerSpread(turned: MotionEvent, x: Float, y: Float): Float {
+        val event = screenEvent ?: turned
         var total = 0f
         for (i in 0 until event.pointerCount) {
             total += hypot(event.getRawX(i) - x, event.getRawY(i) - y)
@@ -7804,6 +7871,7 @@ class InkCanvasView @JvmOverloads constructor(
         private const val LASSO_PREVIEW_MS = 50L
         /** The wash's margin round each caught stroke, in screen pixels. */
         private const val LASSO_PREVIEW_PAD_PX = 3f
+        private val IDENTITY_MATRIX = Matrix()
         /** Degrees three fingers must turn before the note follows. */
         private const val ROTATE_START_DEGREES = 12f
         private const val MAX_TURN_POINTERS = 10

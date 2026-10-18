@@ -97,32 +97,59 @@ internal fun withoutContactSpurs(stroke: Stroke): Stroke {
 
 internal const val STATIONARY_START_MS = 100L
 
-/** Movement, in page units, that counts as the tip actually leaving the contact point. */
-internal fun stationaryStartThreshold(width: Float): Float = (width * 0.15f).coerceIn(0.04f, 0.3f)
+/**
+ * Movement, in page units, that counts as the tip actually leaving the
+ * contact point: a quarter of the pen's width. Anything the tip does inside
+ * that is hidden under the nib anyway, and it was set at a fixed 0.3 before,
+ * which a contact sample landing a third of a unit ahead of the samples
+ * after it already passed - the cluster was kept and the start came out
+ * folded into a corner.
+ */
+internal fun stationaryStartThreshold(width: Float): Float = (width * 0.25f).coerceAtLeast(0.3f)
 
 /**
- * A fixed-width pen can receive dozens of nearly stationary digitizer samples
- * before the tip actually moves. Their tiny reversals make Ink's start outline
- * fold over itself, leaving a corner even with a circular brush tip. Keep the
- * contact point and the first real movement, but omit that stationary cluster.
+ * The index of the first sample to leave the contact point by [threshold]
+ * within [STATIONARY_START_MS], or -1 when the pen never did. Samples before
+ * it, after the first, are the stationary cluster.
+ */
+internal fun firstMovementIndex(
+    count: Int,
+    threshold: Float,
+    x: (Int) -> Float,
+    y: (Int) -> Float,
+    timeMillis: (Int) -> Long,
+): Int {
+    if (count < 2) return -1
+    val x0 = x(0)
+    val y0 = y(0)
+    val t0 = timeMillis(0)
+    for (index in 1 until count) {
+        if (timeMillis(index) - t0 > STATIONARY_START_MS) return -1
+        if (hypot(x(index) - x0, y(index) - y0) >= threshold) return index
+    }
+    return -1
+}
+
+/**
+ * A fixed-width pen can receive a cluster of nearly stationary digitizer
+ * samples before the tip actually moves, sometimes with the contact sample
+ * itself a little ahead of them. Their tiny reversals make Ink's start
+ * outline fold over itself, leaving a corner even with a circular brush tip.
+ * Keep the contact point and the first real movement, but omit the cluster.
  */
 internal fun withoutStationaryStart(stroke: Stroke): Stroke {
     val inputs = stroke.inputs
-    if (inputs.size < 5) return stroke
-    val first = StrokeInput()
+    if (inputs.size < 3) return stroke
     val sample = StrokeInput()
-    inputs.populate(0, first)
-    val threshold = stationaryStartThreshold(stroke.brush.size)
-    var firstMovement = -1
-    for (index in 1 until inputs.size) {
-        inputs.populate(index, sample)
-        if (sample.elapsedTimeMillis - first.elapsedTimeMillis > STATIONARY_START_MS) break
-        if (hypot(sample.x - first.x, sample.y - first.y) >= threshold) {
-            firstMovement = index
-            break
-        }
-    }
-    if (firstMovement < 4) return stroke
+    val firstMovement = firstMovementIndex(
+        inputs.size,
+        stationaryStartThreshold(stroke.brush.size),
+        x = { inputs.populate(it, sample); sample.x },
+        y = { inputs.populate(it, sample); sample.y },
+        timeMillis = { inputs.populate(it, sample); sample.elapsedTimeMillis },
+    )
+    // Nothing between the contact and the first movement: nothing to drop.
+    if (firstMovement < 2) return stroke
 
     val clean = MutableStrokeInputBatch()
     for (index in 0 until inputs.size) {
