@@ -2153,8 +2153,10 @@ internal object StrokeBuilder {
 
     private fun build(record: StoredStroke): Stroke? = runCatching {
         val inputs = StrokeInputBatchSerialization.decode(ByteArrayInputStream(record.inputs))
-        val stroke = Stroke(record.brush, inputs)
-        val loaded = if (record.tool == Tool.PEN) withoutStationaryStart(stroke) else stroke
+        // Tidied on the way in too, so notes written before a fix draw clean -
+        // on the inputs, so the stroke is still built only once.
+        val loaded = Stroke(record.brush,
+            if (record.tool == Tool.PEN) tidiedPenInputs(inputs, record.brush.size) else inputs)
         StrokeTags.set(loaded, StrokeTags.tagOf(record.rawTool))
         loaded
     }.getOrNull()

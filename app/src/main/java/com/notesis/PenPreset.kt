@@ -138,6 +138,13 @@ data class CanvasGestures(
 
 const val PRESSURE_RESPONSE_DEFAULT = 10
 
+/** How far the pressure eraser grows past its set size at full pressure. */
+const val PRESSURE_ERASER_MAX_SCALE = 2.5f
+
+/** The pressure eraser's size as a multiple of the set size: 1 at the lightest touch, [PRESSURE_ERASER_MAX_SCALE] pressed hard. */
+fun pressureEraserScale(pressure: Float): Float =
+    1f + (PRESSURE_ERASER_MAX_SCALE - 1f) * pressure.coerceIn(0f, 1f)
+
 /**
  * Pressure through the response curve: [PRESSURE_RESPONSE_DEFAULT] leaves it
  * alone, 0 ignores it (always full), and higher values thin out a light touch

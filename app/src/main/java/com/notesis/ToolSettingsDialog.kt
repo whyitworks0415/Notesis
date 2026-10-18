@@ -524,7 +524,7 @@ private fun EraserSection(
     SwitchRow(
         "필압 지우개",
         gestures.pressureEraser,
-        hint = "펜을 누르는 힘에 따라 지우개 크기가 바뀝니다. 세게 누를수록 설정한 크기에 가까워집니다",
+        hint = "설정한 크기가 가장 약하게 눌렀을 때의 크기이고, 세게 누를수록 최대 2.5배까지 커집니다",
     ) { onGestures(gestures.copy(pressureEraser = it)) }
 }
 

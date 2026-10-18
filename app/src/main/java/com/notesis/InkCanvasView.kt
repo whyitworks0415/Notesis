@@ -2407,8 +2407,11 @@ class InkCanvasView @JvmOverloads constructor(
         val key = "${page.id}:${page.strokes.size}:${page.loaded}:$widthPx"
         thumbnailCache.get(key)?.let { return it }
         if (key in thumbnailsPending) return null
+        // Only a page already in memory: a thumbnail that asked for renders put
+        // them in the queue ahead of the pages actually on screen, and every page
+        // the scrubber passed over slowed the PDF that came after.
         val pdfPicture = if (page.background == PageBackground.PDF) {
-            pdf?.bitmap(page.pdfPageIndex, widthPx, request = true) ?: return null
+            pdf?.cachedPage(page.pdfPageIndex) ?: return null
         } else null
         // Snapshot on the UI thread; the drawing happens on the worker.
         val strokes = if (page.loaded) page.strokes.toList() else emptyList()
@@ -3514,7 +3517,7 @@ class InkCanvasView @JvmOverloads constructor(
                 if (holdingStationaryStart) {
                     val x = event.getX(index)
                     val y = event.getY(index)
-                    val threshold = stationaryStartThreshold(strokeWidth) * currentScale()
+                    val threshold = wetStartHoldThreshold(strokeWidth) * currentScale()
                     if (event.eventTime - stationaryStartTime > STATIONARY_START_MS) {
                         holdingStationaryStart = false
                     } else if (hypot(x - stationaryStartX, y - stationaryStartY) < threshold) {
@@ -6711,9 +6714,12 @@ class InkCanvasView @JvmOverloads constructor(
         if (index < 0) return
         val screenX = event.getX(pointerIndex)
         val screenY = event.getY(pointerIndex)
-        // A finger reports no real pressure, so only the pen's grows and shrinks.
+        // A finger reports no real pressure, so only the pen's grows. The set
+        // size is the lightest touch: pressing only ever makes it bigger, so a
+        // pen landing on a stroke - at next to no pressure - already erases at
+        // full size instead of starting as a pinprick.
         val squeeze = if (pressureEraser && event.getToolType(pointerIndex) == MotionEvent.TOOL_TYPE_STYLUS) {
-            PRESSURE_ERASER_MIN + (1f - PRESSURE_ERASER_MIN) * event.getPressure(pointerIndex).coerceIn(0f, 1f)
+            pressureEraserScale(event.getPressure(pointerIndex))
         } else 1f
         compatWet.showCursor(screenX, screenY, eraserScreenRadius() * squeeze)
         val eraserSize = eraserPageWidth() * squeeze
@@ -6964,13 +6970,15 @@ class InkCanvasView @JvmOverloads constructor(
                     else wetStroke.copy(wetStroke.brush.copy(family = storedFamily))
                 val finishedTool = Tool.ofBrushFamily(finishedStroke.brush.family)
                 val stroke = when {
-                    finishedTool == Tool.PEN ->
-                        withoutStationaryStart(withoutContactSpurs(finishedStroke))
+                    finishedTool == Tool.PEN -> withoutContactSpurs(finishedStroke).let { spurless ->
+                        val tidied = tidiedPenInputs(spurless.inputs, spurless.brush.size)
+                        if (tidied === spurless.inputs) spurless else Stroke(spurless.brush, tidied)
+                    }
                     // Dabs are laid by distance from the first input; dropping
                     // one would move every dab after it, and a cap spur cannot
                     // be seen under a scatter anyway.
                     finishedTool.isDabbed() -> finishedStroke
-                    finishedTool.isFreehandPen() -> withoutContactSpurs(finishedStroke)
+                    finishedTool.isFreehandPen() -> withoutDwells(withoutContactSpurs(finishedStroke))
                     else -> finishedStroke
                 }
 
@@ -8069,8 +8077,6 @@ class InkCanvasView @JvmOverloads constructor(
         const val WHOLE_CHECK_SAMPLES = 32
         const val KEY_ZOOM_STEP = 1.25f
         /** The reading-mode trail and tap ring: the selection's blue. */
-        /** The pressure eraser's size at the lightest touch, as a share of the full width. */
-        private const val PRESSURE_ERASER_MIN = 0.2f
         /** How often the lasso's live catch is re-collected while it is drawn. */
         private const val LASSO_PREVIEW_MS = 50L
         /** The wash's margin round each caught stroke, in screen pixels. */

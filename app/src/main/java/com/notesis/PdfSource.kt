@@ -682,6 +682,19 @@ class PdfSource private constructor(
         page in 0 until pageCount &&
             shouldPublishRender(generation, viewportGeneration, closed)
 
+    /**
+     * Whatever whole-page picture of [index] is already in memory - the low
+     * preview first - without asking for anything to be rendered. For
+     * thumbnails, which must never queue renders ahead of the pages on screen.
+     */
+    fun cachedPage(index: Int): Bitmap? {
+        if (closed || index !in 0 until pageCount) return null
+        previewCache.get(index)?.let { return it }
+        return cache.snapshot().entries
+            .filter { (it.key shr 32).toInt() == index }
+            .minByOrNull { it.value.width }?.value
+    }
+
     /** Blocking render, for callers off the UI thread that need the page now. */
     fun renderNow(index: Int, widthPx: Int): Bitmap? = withMemoryRetry { renderWholePage(index, widthPx) }
 

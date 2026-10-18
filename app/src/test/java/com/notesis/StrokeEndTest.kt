@@ -50,4 +50,30 @@ class StrokeEndTest {
         assertEquals(0.3f, stationaryStartThreshold(0.5f), 0f)
         assertEquals(2.75f, stationaryStartThreshold(11f), 1e-6f)
     }
+
+    // The apex of a hairpin turn in a reported 1.4-wide stroke: the pen slows,
+    // wobbles a hundredth of a unit back and forth, and comes back down.
+    private val hairpinX = floatArrayOf(999.22f, 999.34f, 999.46f, 999.56f, 999.62f, 999.7f, 999.76f, 999.8f,
+        999.84f, 999.85f, 999.87f, 999.87f, 999.86f, 999.83f, 999.77f, 999.67f, 999.56f, 999.42f, 999.26f,
+        999.1f, 998.92f, 998.72f, 998.53f, 998.31f, 998.1f, 997.87f)
+    private val hairpinY = floatArrayOf(26.5f, 26.34f, 26.19f, 26.07f, 25.98f, 25.89f, 25.82f, 25.77f,
+        25.72f, 25.7f, 25.68f, 25.67f, 25.69f, 25.75f, 25.82f, 25.94f, 26.08f, 26.24f, 26.43f, 26.64f,
+        26.88f, 27.15f, 27.43f, 27.73f, 28.04f, 28.36f)
+
+    @Test
+    fun `a wobbling hairpin apex folds to its furthest sample`() {
+        val keep = dwellKeepMask(hairpinX.size, stationaryStartThreshold(1.4f), { hairpinX[it] }, { hairpinY[it] })!!
+        assertEquals(listOf(5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16), keep.indices.filter { !keep[it] })
+        // The kept apex is the one furthest up the incoming line.
+        assertTrue(keep[11])
+    }
+
+    @Test
+    fun `a smooth turn without doubling back is left alone`() {
+        // A quarter circle of radius 3 sampled every 0.2: no step points back.
+        val count = 24
+        val xs = FloatArray(count) { 3f * kotlin.math.cos(it * 0.0683f) }
+        val ys = FloatArray(count) { 3f * kotlin.math.sin(it * 0.0683f) }
+        assertEquals(null, dwellKeepMask(count, stationaryStartThreshold(1.4f), { xs[it] }, { ys[it] }))
+    }
 }

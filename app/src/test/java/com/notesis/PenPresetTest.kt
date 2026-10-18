@@ -90,4 +90,11 @@ class PenPresetTest {
         assertEquals(3, pencil.leadMs)
         assertTrue(MAX_LEAD_MS == 12)
     }
+
+    @Test
+    fun `pressure eraser starts at the set size and only grows`() {
+        org.junit.Assert.assertEquals(1f, pressureEraserScale(0f), 0f)
+        org.junit.Assert.assertEquals(PRESSURE_ERASER_MAX_SCALE, pressureEraserScale(1f), 0f)
+        org.junit.Assert.assertEquals(1.75f, pressureEraserScale(0.5f), 1e-6f)
+    }
 }
