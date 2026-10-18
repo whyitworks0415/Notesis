@@ -1029,6 +1029,28 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** See [pressureCurve]. */
     var pressureResponse: Int = PRESSURE_RESPONSE_DEFAULT
+
+    /** See [AdaptiveStrokeStabilizer.slidingWindow]. */
+    var windowedStabilizer: Boolean = false
+
+    /** The lasso is a rectangle from where the pen landed to where it is. */
+    var lassoRect: Boolean = false
+    private val lassoCorner = FloatArray(2)
+
+    /**
+     * How the page is coloured on screen: [PAGE_TONE_NORMAL], [PAGE_TONE_SEPIA]
+     * or [PAGE_TONE_NIGHT]. Only the display: the note, its export and its
+     * PDF keep their colours. Applied to the whole recorded page, ink
+     * included, so black writing stays readable on a darkened page.
+     */
+    var pageTone: Int = PAGE_TONE_NORMAL
+        set(value) {
+            if (field == value) return
+            field = value
+            pageTonePaint.colorFilter = pageToneFilter(value)
+            dry.invalidate()
+        }
+    private val pageTonePaint = Paint()
     /** An eraser gesture with the eraser tool has ended. */
     var onEraseFinished: (() -> Unit)? = null
 
@@ -2356,6 +2378,66 @@ class InkCanvasView @JvmOverloads constructor(
         return true
     }
 
+    private val thumbnailRenderer by lazy { CanvasStrokeRenderer.create(PencilTextureStore) }
+    private val thumbnailCache = android.util.LruCache<String, Bitmap>(THUMBNAIL_CACHE_COUNT)
+    private val thumbnailPaint = Paint(Paint.FILTER_BITMAP_FLAG)
+
+    /**
+     * A small picture of page [index] - its paper or PDF and its ink - [widthPx]
+     * wide, for the page scrubber and the minimap. Null while the PDF preview
+     * is still being rendered; ask again shortly. Kept per page, stroke count
+     * and size, so a page drawn on is pictured afresh.
+     */
+    fun pageThumbnail(index: Int, widthPx: Int): Bitmap? {
+        val page = document.pages.getOrNull(index) ?: return null
+        if (page.width <= 0f || page.height <= 0f || widthPx <= 0) return null
+        val key = "${page.id}:${page.strokes.size}:${page.masks.size}:${page.loaded}:$widthPx"
+        thumbnailCache.get(key)?.let { return it }
+        val pdfPicture = if (page.background == PageBackground.PDF) {
+            pdf?.bitmap(page.pdfPageIndex, widthPx, request = true) ?: return null
+        } else null
+        val height = (widthPx * page.height / page.width).toInt().coerceAtLeast(1)
+        val bitmap = runCatching { Bitmap.createBitmap(widthPx, height, Bitmap.Config.ARGB_8888) }
+            .getOrNull() ?: return null
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.WHITE)
+        val scale = widthPx / page.width
+        pdfPicture?.let { canvas.drawBitmap(it, null, RectF(0f, 0f, widthPx.toFloat(), height.toFloat()), thumbnailPaint) }
+        if (page.loaded) {
+            val transform = Matrix().apply { setScale(scale, scale) }
+            canvas.save()
+            canvas.scale(scale, scale)
+            for (stroke in page.strokes) runCatching { thumbnailRenderer.draw(canvas, stroke, transform) }
+            canvas.restore()
+        }
+        thumbnailCache.put(key, bitmap)
+        return bitmap
+    }
+
+    /** The part of page [index] on screen, in page units clamped to the page, or null if none of it is. */
+    fun visiblePartOf(index: Int): RectF? {
+        val page = document.pages.getOrNull(index) ?: return null
+        val bounds = FloatArray(4)
+        layoutViewport(bounds)
+        screenToDocument.mapPoints(bounds)
+        val left = document.leftOf(index)
+        val top = document.topOf(index)
+        val rect = RectF(
+            minOf(bounds[0], bounds[2]) - left, minOf(bounds[1], bounds[3]) - top,
+            maxOf(bounds[0], bounds[2]) - left, maxOf(bounds[1], bounds[3]) - top,
+        )
+        return if (rect.intersect(0f, 0f, page.width, page.height)) rect else null
+    }
+
+    /** Moves the view so page [index]'s point ([x], [y]), in page units, is in the middle of it. */
+    fun centerOn(index: Int, x: Float, y: Float) {
+        if (index !in document.pages.indices) return
+        val point = floatArrayOf(document.leftOf(index) + x, document.topOf(index) + y)
+        documentToScreen.mapPoints(point)
+        documentToScreen.postTranslate(width / 2f - point[0], height / 2f - point[1])
+        onTransformChanged()
+    }
+
     fun scrollToPage(index: Int) {
         if (index !in document.pages.indices) return
         val scale = currentScale()
@@ -2834,7 +2916,11 @@ class InkCanvasView @JvmOverloads constructor(
         return matrixValues[Matrix.MSCALE_X]
     }
 
+    /** Fired whenever the page moves under the view: what a minimap needs to follow. */
+    var onViewportChanged: (() -> Unit)? = null
+
     private fun onTransformChanged() {
+        onViewportChanged?.invoke()
         viewportRenderGeneration++
         clampTransform()
         documentToScreen.invert(screenToDocument)
@@ -3243,6 +3329,7 @@ class InkCanvasView @JvmOverloads constructor(
                     lastStylusDx = 0f
                     lastStylusDy = 0f
                     stabilizingStroke = tool.isFreehandPen() && stabilizer > 0
+                    streamingStabilizer.slidingWindow = windowedStabilizer
                     streamingStabilizer.reset(stabilizer, event.getX(event.actionIndex),
                         event.getY(event.actionIndex), event.eventTime)
                     pressureStabilizer.reset(
@@ -5374,6 +5461,8 @@ class InkCanvasView @JvmOverloads constructor(
         drawingLasso = true
         lassoPath.clear()
         lassoPath.add(shapeStart[0], shapeStart[1])
+        lassoCorner[0] = shapeStart[0]
+        lassoCorner[1] = shapeStart[1]
         dry.invalidate()
     }
 
@@ -5383,6 +5472,25 @@ class InkCanvasView @JvmOverloads constructor(
      * while dropping samples closer than two screen pixels.
      */
     private fun appendLassoSamples(event: MotionEvent, pointerIndex: Int, invalidate: Boolean = true) {
+        if (lassoRect && drawingLasso) {
+            // Corner to corner: the loop is the rectangle's four sides.
+            pageLocalInto(event.getX(pointerIndex), event.getY(pointerIndex), lassoPage, shapeEnd)
+            val x0 = lassoCorner[0]
+            val y0 = lassoCorner[1]
+            val x1 = shapeEnd[0]
+            val y1 = shapeEnd[1]
+            lassoPath.clear()
+            lassoPath.add(x0, y0)
+            lassoPath.add(x1, y0)
+            lassoPath.add(x1, y1)
+            lassoPath.add(x0, y1)
+            lassoPath.add(x0, y0)
+            if (invalidate) {
+                refreshLassoPreview(event.eventTime)
+                dry.postInvalidateOnAnimation()
+            }
+            return
+        }
         val minimumDistance = LASSO_SAMPLE_DISTANCE_PX / currentScale().coerceAtLeast(0.01f)
         var changed = false
         for (historyIndex in 0 until event.historySize) {
@@ -6479,8 +6587,28 @@ class InkCanvasView @JvmOverloads constructor(
         dry.postInvalidateOnAnimation()
     }
 
+    /** The page the last capture was taken from, for linking a pasted copy back to it. */
+    var lastCapturePage = -1
+        private set
+
+    /**
+     * Puts a picture on the current page, grouped with a link to [link] - the
+     * same "page:" and "note:" targets the link dialog makes - so tapping it
+     * goes where it came from.
+     */
+    fun insertLinkedImage(imageId: String, aspect: Float, link: String) {
+        insertImage(imageId, aspect)
+        val image = selectedImage ?: return
+        val page = document.pages.firstOrNull { p -> p.images.any { it === image } } ?: return
+        val group = StrokeTags.newGroup()
+        image.group = group
+        page.links[group] = link
+        afterEdit(page)
+    }
+
     private fun finishCapture() {
         capturing = false
+        lastCapturePage = capturePage
         val page = document.pages.getOrNull(capturePage)
         val rect = RectF(captureRect)
         captureRect.setEmpty()
@@ -6510,8 +6638,10 @@ class InkCanvasView @JvmOverloads constructor(
         strokes: List<Stroke>,
         images: List<Pair<PageImage, Bitmap?>>,
     ): Bitmap? = runCatching {
-        val scale = (CAPTURE_TARGET_PX / max(rect.width(), rect.height()))
+        val wanted = (CAPTURE_TARGET_PX / max(rect.width(), rect.height()))
             .coerceIn(1f, CAPTURE_MAX_SCALE)
+        val scale = wanted * BitmapBudget.scaleFor(
+            (rect.width() * wanted).toInt(), (rect.height() * wanted).toInt())
         val width = (rect.width() * scale).toInt().coerceAtLeast(1)
         val height = (rect.height() * scale).toInt().coerceAtLeast(1)
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
@@ -6723,8 +6853,46 @@ class InkCanvasView @JvmOverloads constructor(
             ys[i] = sample.y
         }
         val runs = keptRuns(xs, ys, count, ax, ay, bx, by, reach) ?: return null
+        val other = StrokeInput()
         return runs.map { run ->
             val batch = MutableStrokeInputBatch()
+            // Each piece runs on to where the eraser's edge crossed it, an
+            // input made between the last kept sample and the first cut one.
+            fun addBetween(kept: Int, cut: Int) {
+                val t = firstReachFraction(xs[kept], ys[kept], xs[cut], ys[cut], ax, ay, bx, by, reach)
+                if (t <= 0.001f) return
+                inputs.populate(kept, sample)
+                inputs.populate(cut, other)
+                batch.add(
+                    type = sample.toolType,
+                    x = sample.x + (other.x - sample.x) * t,
+                    y = sample.y + (other.y - sample.y) * t,
+                    elapsedTimeMillis = sample.elapsedTimeMillis +
+                        ((other.elapsedTimeMillis - sample.elapsedTimeMillis) * t).toLong(),
+                    pressure = lerpInput(sample.pressure, other.pressure, t),
+                    tiltRadians = lerpInput(sample.tiltRadians, other.tiltRadians, t),
+                    orientationRadians = lerpInput(sample.orientationRadians, other.orientationRadians, t),
+                )
+            }
+            // Before the first kept sample, the boundary has to carry an earlier time.
+            if (run.first > 0) {
+                val t = firstReachFraction(xs[run.first], ys[run.first], xs[run.first - 1], ys[run.first - 1],
+                    ax, ay, bx, by, reach)
+                if (t > 0.001f) {
+                    inputs.populate(run.first, sample)
+                    inputs.populate(run.first - 1, other)
+                    batch.add(
+                        type = sample.toolType,
+                        x = sample.x + (other.x - sample.x) * t,
+                        y = sample.y + (other.y - sample.y) * t,
+                        elapsedTimeMillis = sample.elapsedTimeMillis -
+                            ((sample.elapsedTimeMillis - other.elapsedTimeMillis) * t).toLong(),
+                        pressure = lerpInput(sample.pressure, other.pressure, t),
+                        tiltRadians = lerpInput(sample.tiltRadians, other.tiltRadians, t),
+                        orientationRadians = lerpInput(sample.orientationRadians, other.orientationRadians, t),
+                    )
+                }
+            }
             for (i in run) {
                 inputs.populate(i, sample)
                 batch.add(
@@ -6737,9 +6905,14 @@ class InkCanvasView @JvmOverloads constructor(
                     orientationRadians = sample.orientationRadians,
                 )
             }
+            if (run.last < count - 1) addBetween(run.last, run.last + 1)
             Stroke(stroke.brush, batch)
         }
     }
+
+    /** Pressure, tilt and orientation are absent as -1; between absent and present stays absent. */
+    private fun lerpInput(a: Float, b: Float, t: Float): Float =
+        if (a < 0f || b < 0f) a else a + (b - a) * t
 
     private fun finishEraseGesture() {
         if (!eraseChanged) return
@@ -7198,6 +7371,7 @@ class InkCanvasView @JvmOverloads constructor(
             pageNode.setPosition(0, 0, width, height)
             // Turned, the page reaches past the view's edges into the screen's corners.
             pageNode.setClipToBounds(viewRotation == 0f)
+            pageNode.setUseCompositingLayer(pageTone != PAGE_TONE_NORMAL, pageTonePaint)
             val recording = pageNode.beginRecording(width, height)
             try {
                 super.draw(recording)
@@ -7876,6 +8050,7 @@ class InkCanvasView @JvmOverloads constructor(
         private const val ROTATE_START_DEGREES = 12f
         private const val MAX_TURN_POINTERS = 10
         private const val PI_F = Math.PI.toFloat()
+        private const val THUMBNAIL_CACHE_COUNT = 12
         const val GESTURE_TRAIL_COLOR = 0xFF3B7DDD.toInt()
         const val MEASURED_LATENCY_REFRESH_MS = 500L
         /** How far outside a checkbox, in screen pixels, a tap still ticks it. */

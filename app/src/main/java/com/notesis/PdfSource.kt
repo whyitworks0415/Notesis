@@ -133,6 +133,53 @@ class PdfSource private constructor(
         override fun sizeOf(key: TileKey, value: Bitmap) = value.byteCount
         override fun entryRemoved(evicted: Boolean, key: TileKey, oldValue: Bitmap, newValue: Bitmap?) {
             tilesHeld.remove(key, oldValue)
+            if (evicted) offerToPool(oldValue)
+        }
+    }
+
+    /**
+     * Tiles pushed out of [tileCache], kept to be painted over by the next
+     * tile of the same size instead of allocating a fresh one. Panning at one
+     * zoom renders tile after tile of identical size, and each used to be a
+     * new multi-megabyte bitmap for the collector to chase.
+     *
+     * A bitmap only comes back after [POOL_REST_MS]: a tile that has just
+     * left the cache may still sit in a display list recorded a moment ago,
+     * and repainting it while that list is drawn would flash the wrong text.
+     */
+    private val tilePool = ArrayDeque<Pair<Long, Bitmap>>()
+
+    private fun offerToPool(bitmap: Bitmap) {
+        if (bitmap.isRecycled || !bitmap.isMutable) return
+        synchronized(tilePool) {
+            tilePool.addLast(android.os.SystemClock.uptimeMillis() to bitmap)
+            while (tilePool.size > TILE_POOL_SIZE) tilePool.removeFirst()
+        }
+    }
+
+    /** A rested pooled tile of exactly this size, cleared to paper, or a new one. */
+    private fun tileBitmap(width: Int, height: Int): Bitmap {
+        val now = android.os.SystemClock.uptimeMillis()
+        val reused = synchronized(tilePool) {
+            val at = tilePool.indexOfFirst { (since, bitmap) ->
+                now - since >= POOL_REST_MS && bitmap.width == width && bitmap.height == height && !bitmap.isRecycled
+            }
+            if (at >= 0) tilePool.removeAt(at).second else null
+        }
+        return reused?.apply { eraseColor(Color.WHITE) } ?: newBitmap(width, height)
+    }
+
+    /**
+     * Runs [render] and, when it fails for want of memory, gives back what the
+     * caches hold and tries once more. The second failure is returned as null:
+     * a page left blurred is better than one retried in a loop.
+     */
+    private inline fun <T> withMemoryRetry(render: () -> T): T? {
+        return try {
+            render()
+        } catch (_: OutOfMemoryError) {
+            trimMemory(severe = false)
+            runCatching { render() }.getOrNull()
         }
     }
 
@@ -202,6 +249,8 @@ class PdfSource private constructor(
     fun trimMemory(severe: Boolean) {
         if (closed) return
         tileCache.evictAll()
+        // Evicting fills the pool; giving memory back means emptying it too.
+        synchronized(tilePool) { tilePool.clear() }
         if (severe) cache.evictAll() else cache.trimToSize(cache.maxSize() / 2)
     }
 
@@ -408,7 +457,7 @@ class PdfSource private constructor(
                                     -source.top / POINTS_TO_WORLD,
                                 )
                             }
-                            val bitmap = newBitmap(widthPx, heightPx)
+                            val bitmap = withMemoryRetry { tileBitmap(widthPx, heightPx) } ?: continue
                             measuredRender(widthPx.toLong() * heightPx) {
                                 page.render(
                                     bitmap,
@@ -426,7 +475,7 @@ class PdfSource private constructor(
                                     true
                                 } else false
                             }
-                            if (!keep) bitmap.recycle()
+                            if (!keep) offerToPool(bitmap)
                         }
                     }
                 }
@@ -599,7 +648,7 @@ class PdfSource private constructor(
             val page = (key shr 32).toInt()
             val alreadyCached = if (key.toInt() == PREVIEW_WIDTH) previewCache.get(page) != null else cache.get(key) != null
             val bitmap = if (!alreadyCached && isRelevant(page, generation)) {
-                runCatching { render() }.getOrNull()
+                runCatching { withMemoryRetry(render) }.getOrNull()
             } else null
             synchronized(stateLock) {
                 if (pending[key] == generation) pending.remove(key)
@@ -628,7 +677,7 @@ class PdfSource private constructor(
             shouldPublishRender(generation, viewportGeneration, closed)
 
     /** Blocking render, for callers off the UI thread that need the page now. */
-    fun renderNow(index: Int, widthPx: Int): Bitmap? = renderWholePage(index, widthPx)
+    fun renderNow(index: Int, widthPx: Int): Bitmap? = withMemoryRetry { renderWholePage(index, widthPx) }
 
     /** Preview the printed glyphs, independent of a PDF font's Unicode mapping. */
     fun renderSelection(selection: PdfSelection): Bitmap? = synchronized(renderLock) {
@@ -657,7 +706,7 @@ class PdfSource private constructor(
 
     private fun renderWholePage(index: Int, widthPx: Int): Bitmap? = synchronized(renderLock) {
         if (closed) return null
-        runCatching {
+        try {
             renderer.openPage(index).use { page ->
                 val renderWidth = if (widthPx == PREVIEW_WIDTH) minOf(widthPx,
                     (PREVIEW_MAX_HEIGHT * page.width.toFloat() / page.height).toInt().coerceAtLeast(1)) else widthPx
@@ -669,7 +718,12 @@ class PdfSource private constructor(
                     }
                 }
             }
-        }.getOrNull()
+        } catch (oom: OutOfMemoryError) {
+            // Left to the caller's retry; anything else is a page that cannot render.
+            throw oom
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     /** [source] is in page-local world units. */
@@ -754,6 +808,10 @@ class PdfSource private constructor(
         const val POINTS_TO_WORLD = 150f / 72f
 
         private const val PREVIEW_WIDTH = 384
+        /** Spare tiles kept for reuse; see [tilePool]. */
+        private const val TILE_POOL_SIZE = 6
+        /** How long a tile rests after leaving the cache before it is painted over. */
+        private const val POOL_REST_MS = 1000L
         private const val PREVIEW_MAX_HEIGHT = 1024
         private const val MIN_PAGE_WIDTH = 1024
         /** 2048 x ~2900 x 4B is about 24MB - past this, crops are cheaper. */

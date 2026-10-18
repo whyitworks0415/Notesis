@@ -34,6 +34,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -2783,6 +2784,7 @@ internal fun sendSelectedText(context: android.content.Context, text: String, ac
 private fun CaptureDialog(
     bitmap: Bitmap,
     onPaste: () -> Unit,
+    onCarryLinked: (() -> Unit)? = null,
     onAttach: () -> Unit,
     onSave: () -> Unit,
     onShare: () -> Unit,
@@ -2803,7 +2805,8 @@ private fun CaptureDialog(
         },
         confirmButton = { TextButton(onClick = onPaste) { Text("이 페이지에 붙이기") } },
         dismissButton = {
-            Row {
+            Row(Modifier.horizontalScroll(rememberScrollState())) {
+                if (onCarryLinked != null) TextButton(onClick = onCarryLinked) { Text("링크로 가져가기") }
                 TextButton(onClick = onAttach) { Text("AI에 첨부") }
                 TextButton(onClick = onSave) { Text("PNG 저장") }
                 TextButton(onClick = onShare) { Text("공유") }
@@ -3328,6 +3331,8 @@ private fun NoteScreen(
     var recorder by remember { mutableStateOf<android.media.MediaRecorder?>(null) }
     var recordingFile by remember { mutableStateOf<java.io.File?>(null) }
     var voicePlayer by remember { mutableStateOf<android.media.MediaPlayer?>(null) }
+    var playbackSpeed by remember { mutableFloatStateOf(penStore.playbackSpeed) }
+    var playMode by remember { mutableIntStateOf(penStore.playMode) }
     var playingFile by remember { mutableStateOf<String?>(null) }
     // When each stroke landed while recording, saved beside the audio.
     var recordingStartedAt by remember { mutableStateOf(0L) }
@@ -3608,6 +3613,7 @@ private fun NoteScreen(
     var showSkinSettings by remember { mutableStateOf(false) }
     var pageLayout by remember { mutableStateOf(penStore.pageLayoutOf(note.id)) }
     var noteMenu by remember { mutableStateOf(false) }
+    var pageTone by remember { mutableIntStateOf(penStore.pageTone) }
     var edits by remember { mutableIntStateOf(0) }
     val indexedRevisions = remember(note.id) { mutableMapOf<String, Long>() }
     val resumePage = remember(note.id, note.pageCount) {
@@ -3628,6 +3634,8 @@ private fun NoteScreen(
     }
     // A multiple of fit-to-width, which is the 100% anybody means.
     var zoom by remember { mutableFloatStateOf(1f) }
+    var viewportTick by remember { mutableIntStateOf(0) }
+    var showMinimap by remember { mutableStateOf(penStore.minimap) }
     var zoomMenu by remember { mutableStateOf(false) }
     var canvas by remember { mutableStateOf<InkCanvasView?>(null) }
     /** Puts [text] on the page as a text box in the middle of the screen. */
@@ -4115,6 +4123,8 @@ private fun NoteScreen(
                         penStore.noteRotation = noteRotation.roundToInt()
                     }
                     view.softPredictionHead = !sharedScreen && webUrl == null && !referenceOpen
+                    view.pageTone = pageTone
+                    view.onViewportChanged = if (showMinimap) ({ viewportTick++ }) else null
                     view.partialEraser = partialEraser
                     view.applyGestures(gestures)
                     view.laserMode = laser
@@ -4300,6 +4310,19 @@ private fun NoteScreen(
             )
         }
 
+        val minimapView = canvas
+        if (showMinimap && minimapView != null && zoom >= MINIMAP_MIN_ZOOM && !showPages) {
+            Minimap(
+                view = minimapView,
+                page = currentPage,
+                tick = { viewportTick },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .windowInsetsPadding(ChromeInsets)
+                    .padding(end = 16.dp, bottom = 16.dp),
+            )
+        }
+
         androidx.compose.animation.AnimatedVisibility(
             visible = pageScrubberVisible && !showPages,
             enter = fadeIn(tween(120)),
@@ -4318,6 +4341,7 @@ private fun NoteScreen(
                     canvas?.scrollToPage(page)
                 },
                 modifier = Modifier.fillMaxHeight(),
+                thumbnail = { index -> canvas?.pageThumbnail(index, SCRUBBER_THUMBNAIL_PX) },
             )
         }
 
@@ -4372,27 +4396,39 @@ private fun NoteScreen(
             }
         }
 
-        // A finished recording asked for the next: start it the way the play button would.
-        LaunchedEffect(playNextRecording) {
-            val path = playNextRecording ?: return@LaunchedEffect
-            playNextRecording = null
+        /**
+         * Plays the recording at [path] at the chosen speed, and at its end
+         * stops, starts the next or begins it again, as [PenStore.playMode] says.
+         */
+        fun playRecording(path: String) {
+            voicePlayer?.release()
+            voicePlayer = null
             val player = android.media.MediaPlayer()
             val started = runCatching {
                 player.setDataSource(path)
                 player.prepare()
+                player.isLooping = penStore.playMode == PLAY_LOOP_ONE
                 player.setOnCompletionListener {
                     it.release(); voicePlayer = null; playingFile = null
-                    if (penStore.autoPlayNext) {
+                    if (penStore.playMode == PLAY_NEXT) {
                         val all = store.recordings(note.id)
                         all.getOrNull(all.indexOfFirst { f -> f.path == path } + 1)?.let { next -> playNextRecording = next.path }
                     }
                 }
                 player.start()
+                setPlaybackSpeed(player, playbackSpeed)
             }.isSuccess
             if (started) {
                 voicePlayer = player; playingFile = path
                 playingTimeline = RecordingTimeline.load(java.io.File(path))
-            } else player.release()
+            } else { player.release(); playingFile = null }
+        }
+
+        // A finished recording asked for the next: start it the way the play button would.
+        LaunchedEffect(playNextRecording) {
+            val path = playNextRecording ?: return@LaunchedEffect
+            playNextRecording = null
+            playRecording(path)
         }
         if (showVoice) {
             val recordings = remember(note.id, voiceRevision) { store.recordings(note.id) }
@@ -4416,11 +4452,15 @@ private fun NoteScreen(
                                 ) == android.content.pm.PackageManager.PERMISSION_GRANTED) dictating = true
                             else requestAudioPermission.launch(android.Manifest.permission.RECORD_AUDIO)
                         }) { Text("음성 받아쓰기") }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            var autoNext by remember { mutableStateOf(penStore.autoPlayNext) }
-                            SkinSwitch(checked = autoNext, onCheckedChange = { autoNext = it; penStore.autoPlayNext = it })
-                            Spacer(Modifier.width(8.dp))
-                            Text("다음 녹음 이어서 재생", style = MaterialTheme.typography.bodySmall)
+                        Text("끝나면", style = MaterialTheme.typography.bodySmall)
+                        Row(Modifier.horizontalScroll(rememberScrollState())) {
+                            listOf(PLAY_STOP to "멈춤", PLAY_NEXT to "다음 녹음", PLAY_LOOP_ONE to "한 곡 반복").forEach { (mode, label) ->
+                                SettingsChoiceChip(selected = playMode == mode, onClick = {
+                                    playMode = mode
+                                    penStore.playMode = mode
+                                    voicePlayer?.isLooping = mode == PLAY_LOOP_ONE
+                                }, label = label, modifier = Modifier.padding(end = 6.dp))
+                            }
                         }
                         for (file in recordings) Row(verticalAlignment = Alignment.CenterVertically) {
                             val label = runCatching {
@@ -4430,28 +4470,7 @@ private fun NoteScreen(
                             TextButton(onClick = {
                                 if (playingFile == file.path) {
                                     voicePlayer?.release(); voicePlayer = null; playingFile = null
-                                } else {
-                                    voicePlayer?.release()
-                                    val player = android.media.MediaPlayer()
-                                    val started = runCatching {
-                                        player.setDataSource(file.path)
-                                        player.prepare()
-                                        player.setOnCompletionListener {
-                                            it.release(); voicePlayer = null; playingFile = null
-                                            // The one after this, if asked to carry on.
-                                            if (penStore.autoPlayNext) {
-                                                recordings.getOrNull(recordings.indexOf(file) + 1)?.let { next ->
-                                                    playNextRecording = next.path
-                                                }
-                                            }
-                                        }
-                                        player.start()
-                                    }.isSuccess
-                                    if (started) {
-                                        voicePlayer = player; playingFile = file.path
-                                        playingTimeline = RecordingTimeline.load(file)
-                                    } else { player.release(); playingFile = null }
-                                }
+                                } else playRecording(file.path)
                             }) { Text(if (playingFile == file.path) "정지" else "재생") }
                             TextButton(onClick = { shareFile(context, file, "audio/*") }) { Text("내보내기") }
                             TextButton(onClick = {
@@ -4541,6 +4560,16 @@ private fun NoteScreen(
                     }
                     captured = null
                 },
+                onCarryLinked = {
+                    val view = canvas
+                    val source = view?.lastCapturePage ?: -1
+                    val pageId = view?.pageIdAt(source)
+                    if (pageId != null) {
+                        SnipLink.pending = SnipLink.Snip(bitmap, note.id, note.title, pageId, source)
+                        Toast.makeText(context, "붙일 노트·쪽으로 가서 \"여기에 붙이기\"를 누르세요", Toast.LENGTH_LONG).show()
+                    }
+                    captured = null
+                },
                 onAttach = {
                     val uri = captureUri(context, bitmap)
                     if (uri == null) {
@@ -4576,6 +4605,41 @@ private fun NoteScreen(
             )
         }
 
+        SnipLink.pending?.let { snip ->
+            SkinSurface(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .windowInsetsPadding(ChromeInsets)
+                    .padding(top = 150.dp),
+                corner = 16.dp,
+            ) {
+                Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Image(
+                        snip.bitmap.asImageBitmap(), contentDescription = null,
+                        modifier = Modifier.padding(vertical = 6.dp).size(40.dp).clip(RoundedCornerShape(6.dp)),
+                        contentScale = ContentScale.Crop,
+                    )
+                    Text(
+                        if (snip.noteId == note.id) " ${snip.pageIndex + 1}쪽 캡처" else " ${snip.noteTitle} ${snip.pageIndex + 1}쪽 캡처",
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.widthIn(max = 220.dp),
+                    )
+                    TextButton(onClick = {
+                        val added = store.addImage(note.id, snip.bitmap)
+                        if (added != null) {
+                            canvas?.insertLinkedImage(added.first, added.second, SnipLink.linkFor(snip, note.id))
+                            mode = EditMode.IMAGE
+                            edits++
+                        }
+                        SnipLink.pending = null
+                    }) { Text("여기에 붙이기") }
+                    TextButton(onClick = { SnipLink.pending = null }) { Text("취소") }
+                }
+            }
+        }
+
         if (lassoCount > 0) {
             LassoActions(
                 count = lassoCount,
@@ -4598,6 +4662,11 @@ private fun NoteScreen(
                 },
                 onRecolor = {
                     canvas?.recolorLassoSelection(settings.getValue(EditMode.PEN).colorArgb)
+                    edits++
+                },
+                recolorChoices = listOf(settings.getValue(EditMode.PEN).colorArgb) + penStore.quickColors,
+                onRecolorTo = { argb ->
+                    canvas?.recolorLassoSelection(argb)
                     edits++
                 },
                 onDuplicate = {
@@ -4753,6 +4822,18 @@ private fun NoteScreen(
                     else "녹음 재생 중 · 읽기 모드에서 필기를 누르면 그 시점으로",
                     style = MaterialTheme.typography.bodySmall,
                 )
+                TextButton(onClick = { voicePlayer?.let { seekBy(it, -SKIP_MS) } }) { Text("-15초") }
+                TextButton(onClick = { voicePlayer?.let { seekBy(it, SKIP_MS) } }) { Text("+15초") }
+                TextButton(onClick = {
+                    playbackSpeed = nextPlaybackSpeed(playbackSpeed)
+                    penStore.playbackSpeed = playbackSpeed
+                    voicePlayer?.let { setPlaybackSpeed(it, playbackSpeed) }
+                }) { Text("${formatSpeed(playbackSpeed)}배") }
+                TextButton(onClick = {
+                    playMode = (playMode + 1) % 3
+                    penStore.playMode = playMode
+                    voicePlayer?.isLooping = playMode == PLAY_LOOP_ONE
+                }) { Text(when (playMode) { PLAY_NEXT -> "다음 녹음"; PLAY_LOOP_ONE -> "한 곡 반복"; else -> "끝나면 멈춤" }) }
                 TextButton(onClick = {
                     voicePlayer?.release(); voicePlayer = null; playingFile = null
                 }) { Text("정지") }
@@ -4961,7 +5042,8 @@ private fun NoteScreen(
                         Text("보기 방식", style = MaterialTheme.typography.bodyMedium)
                         Row(Modifier.horizontalScroll(rememberScrollState())) {
                             listOf(PageLayoutMode.VERTICAL to "세로 스크롤", PageLayoutMode.HORIZONTAL to "가로 스크롤",
-                                PageLayoutMode.SPREAD_2X1 to "두 쪽", PageLayoutMode.GRID_2X2 to "네 쪽").forEach { (layout, label) ->
+                                PageLayoutMode.SPREAD_2X1 to "두 쪽", PageLayoutMode.SPREAD_COVER to "두 쪽 · 표지 따로",
+                                PageLayoutMode.GRID_2X2 to "네 쪽").forEach { (layout, label) ->
                                 SettingsChoiceChip(selected = pageLayout == layout, onClick = {
                                     pageLayout = layout
                                     penStore.setPageLayoutOf(note.id, layout)
@@ -4969,6 +5051,27 @@ private fun NoteScreen(
                                 }, label = label, modifier = Modifier.padding(end = 6.dp))
                             }
                         }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("확대했을 때 미니맵", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                            SkinSwitch(checked = showMinimap, onCheckedChange = {
+                                showMinimap = it
+                                penStore.minimap = it
+                            })
+                        }
+                        Text("화면 색", style = MaterialTheme.typography.bodyMedium)
+                        Row(Modifier.horizontalScroll(rememberScrollState())) {
+                            listOf(PAGE_TONE_NORMAL to "기본", PAGE_TONE_SEPIA to "세피아", PAGE_TONE_NIGHT to "야간").forEach { (tone, label) ->
+                                SettingsChoiceChip(selected = pageTone == tone, onClick = {
+                                    pageTone = tone
+                                    penStore.pageTone = tone
+                                }, label = label, modifier = Modifier.padding(end = 6.dp))
+                            }
+                        }
+                        Text(
+                            "화면에 보이는 색만 바꿉니다. 노트와 내보내기는 원래 색 그대로이고, 야간에서는 쓰는 중인 획만 잠깐 원래 색으로 보입니다",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.outline,
+                        )
                         HorizontalDivider(Modifier.padding(vertical = 8.dp))
                         TextButton(onClick = { store.setFavorite(note.id, !meta.favorite); edits++ }) {
                             Text(if (meta.favorite) "즐겨찾기 해제" else "즐겨찾기")
@@ -5438,6 +5541,9 @@ private fun LassoActions(
     onOcr: (() -> Unit)? = null,
     onTransform: ((scale: Float, degrees: Float) -> Unit)? = null,
     onRecolor: (() -> Unit)? = null,
+    /** Colours offered for the selection besides the pen's; picking one recolours it. */
+    recolorChoices: List<Int> = emptyList(),
+    onRecolorTo: ((Int) -> Unit)? = null,
     onDuplicate: (() -> Unit)? = null,
     onCopy: (() -> Unit)? = null,
     onCut: (() -> Unit)? = null,
@@ -5475,7 +5581,30 @@ private fun LassoActions(
                     Icon(Reicons.Refresh, contentDescription = "15° 회전")
                 }
             }
-            if (onRecolor != null) IconButton(onClick = onRecolor) {
+            if (onRecolorTo != null && recolorChoices.isNotEmpty()) {
+                // Change colour: a row of swatches, the pen's colour first.
+                var picking by remember { mutableStateOf(false) }
+                Box {
+                    IconButton(onClick = { picking = true }) {
+                        Icon(Reicons.Palette, contentDescription = "색 바꾸기")
+                    }
+                    DropdownMenu(picking, onDismissRequest = { picking = false }) {
+                        Row(Modifier.padding(horizontal = 10.dp, vertical = 4.dp)) {
+                            recolorChoices.distinct().forEach { argb ->
+                                Box(
+                                    Modifier
+                                        .padding(4.dp)
+                                        .size(30.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(argb or 0xFF000000.toInt()))
+                                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                                        .clickable { picking = false; onRecolorTo(argb) },
+                                )
+                            }
+                        }
+                    }
+                }
+            } else if (onRecolor != null) IconButton(onClick = onRecolor) {
                 Icon(Reicons.Palette, contentDescription = "현재 펜 색으로")
             }
             if (onDuplicate != null) IconButton(onClick = onDuplicate) {
@@ -5532,6 +5661,12 @@ private fun PasteBar(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             TextButton(onClick = onLibrary) { Text("라이브러리") }
+            SettingsChoiceChip(selected = !gestures.lassoRect,
+                onClick = { onGestures(gestures.copy(lassoRect = false)) },
+                label = "자유형", modifier = Modifier.padding(end = 6.dp))
+            SettingsChoiceChip(selected = gestures.lassoRect,
+                onClick = { onGestures(gestures.copy(lassoRect = true)) },
+                label = "사각형", modifier = Modifier.padding(end = 6.dp))
             SettingsChoiceChip(selected = wholeOnly, onClick = { onWholeOnly(!wholeOnly) },
                 label = "완전히 포함된 것만")
             SettingsChoiceChip(selected = gestures.snapToAlign,
@@ -6235,6 +6370,8 @@ private fun PageScrubber(
     pageCount: Int,
     onJump: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    /** A small picture of a page, shown beside the handle while it is dragged; null while it renders. */
+    thumbnail: ((Int) -> android.graphics.Bitmap?)? = null,
 ) {
     if (pageCount <= 1) return
     val page = restoredPage(currentPage, pageCount)
@@ -6324,6 +6461,52 @@ private fun PageScrubber(
             .align(Alignment.TopCenter)
             .offset { IntOffset(0, thumbY) }
             .size(thumbWidth, thumbHeight)
+        // Dragged, the page under the finger is pictured beside the handle,
+        // so a long jump can be aimed without waiting for the page to land.
+        if (dragging && thumbnail != null) {
+            var picture by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+            LaunchedEffect(page) {
+                // The PDF preview may still be rendering: ask a few times.
+                repeat(THUMBNAIL_ATTEMPTS) {
+                    val ready = thumbnail(page)
+                    if (ready != null) {
+                        picture = ready
+                        return@LaunchedEffect
+                    }
+                    delay(THUMBNAIL_RETRY_MS)
+                }
+            }
+            picture?.let { bitmap ->
+                val previewWidth = SCRUBBER_PREVIEW_WIDTH
+                val previewHeight = previewWidth * bitmap.height / bitmap.width.coerceAtLeast(1)
+                val previewHeightPx = with(density) { previewHeight.toPx() }
+                val previewY = (thumbY + thumbHeightPx / 2f - previewHeightPx / 2f)
+                    .coerceIn(0f, (trackHeight - previewHeightPx).coerceAtLeast(0f)).roundToInt()
+                Box(
+                    Modifier
+                        .align(Alignment.TopEnd)
+                        .offset { IntOffset(-(52.dp + 8.dp).roundToPx(), previewY) }
+                        .requiredSize(previewWidth, previewHeight)
+                        .shadow(6.dp, RoundedCornerShape(8.dp))
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color.White)
+                        .border(0.5.dp, scheme.outlineVariant, RoundedCornerShape(8.dp)),
+                ) {
+                    Image(bitmap.asImageBitmap(), contentDescription = "${page + 1}쪽 미리보기",
+                        modifier = Modifier.fillMaxSize())
+                    Text(
+                        "${page + 1}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(4.dp)
+                            .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 6.dp, vertical = 1.dp),
+                    )
+                }
+            }
+        }
         // Spoti glass: a plain solid handle at rest, turning to liquid glass
         // only while it is held - glass where the finger is, quiet otherwise.
         if (LocalSkin.current == Skin.SPOTIGLASS && !dragging && !pressed) {
@@ -6339,6 +6522,11 @@ private fun PageScrubber(
         }
     }
 }
+
+private val SCRUBBER_PREVIEW_WIDTH = 120.dp
+private const val SCRUBBER_THUMBNAIL_PX = 240
+private const val THUMBNAIL_ATTEMPTS = 12
+private const val THUMBNAIL_RETRY_MS = 80L
 
 /** Within this many degrees of a quarter turn, a turned note settles onto it. */
 private const val ROTATION_SNAP_DEGREES = 4f
@@ -7215,7 +7403,9 @@ private fun Toolbar(
             // The reading is the button: tapping it offers the zoom steps.
             Text(
                 zoomLabel,
-                style = MaterialTheme.typography.labelMedium,
+                // Tabular figures: 97% and 100% take the same width, so the
+                // buttons beside the reading do not shuffle as the zoom changes.
+                style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum"),
                 textAlign = TextAlign.Center,
                 modifier = Modifier
                     .clip(RoundedCornerShape(12.dp))

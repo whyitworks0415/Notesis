@@ -147,7 +147,12 @@ data class PageExportOptions(
     val invert: Boolean = false,
 )
 
-enum class PageLayoutMode { VERTICAL, HORIZONTAL, SPREAD_2X1, GRID_2X2 }
+enum class PageLayoutMode {
+    VERTICAL, HORIZONTAL, SPREAD_2X1, GRID_2X2,
+
+    /** Two by two like [SPREAD_2X1], but the first page alone on the right, as a book's cover is. */
+    SPREAD_COVER,
+}
 
 /**
  * One page of a note. Strokes are kept in page-local coordinates, so a page can
@@ -313,6 +318,13 @@ class Document(val pages: MutableList<Page>) {
                 lefts[i] = (i % 2) * (cellWidth + PAGE_GAP)
                 tops[i] = (i / 2) * (cellHeight + PAGE_GAP)
             }
+            PageLayoutMode.SPREAD_COVER -> {
+                // One place ahead: the cover takes the right half of the first spread.
+                val place = i + 1
+                lefts[i] = (place / 2) * (cellWidth * 2f + PAGE_GAP * 2f) +
+                    (place % 2) * (cellWidth + PAGE_GAP)
+                tops[i] = 0f
+            }
         }
         widest = pages.indices.maxOfOrNull { lefts[it] + pages[it].width } ?: Page.A4_WIDTH
         total = pages.indices.maxOfOrNull { tops[it] + pages[it].height } ?: Page.A4_HEIGHT
@@ -335,7 +347,7 @@ class Document(val pages: MutableList<Page>) {
         val cell = pages.maxOfOrNull { it.width } ?: Page.A4_WIDTH
         return when (layoutMode) {
             PageLayoutMode.HORIZONTAL -> cell
-            PageLayoutMode.SPREAD_2X1 -> cell * 2f + PAGE_GAP
+            PageLayoutMode.SPREAD_2X1, PageLayoutMode.SPREAD_COVER -> cell * 2f + PAGE_GAP
             else -> widestPage()
         }
     }
@@ -1688,9 +1700,11 @@ class NoteStore(context: Context) {
             ExportPageSize.A4 -> 1240 to 1754
             ExportPageSize.LETTER -> 1275 to 1650
             ExportPageSize.ORIGINAL -> {
-                val fit = (4096f / maxOf(page.width, page.height)).coerceAtMost(1f)
-                (page.width * fit).toInt().coerceAtLeast(1) to
-                    (page.height * fit).toInt().coerceAtLeast(1)
+                val fit = (BitmapBudget.MAX_SIDE / maxOf(page.width, page.height)).coerceAtMost(1f)
+                val w = (page.width * fit).toInt().coerceAtLeast(1)
+                val h = (page.height * fit).toInt().coerceAtLeast(1)
+                val budget = BitmapBudget.scaleFor(w, h)
+                (w * budget).toInt().coerceAtLeast(1) to (h * budget).toInt().coerceAtLeast(1)
             }
         }
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)

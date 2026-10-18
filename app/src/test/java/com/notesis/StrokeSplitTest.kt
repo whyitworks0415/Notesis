@@ -2,6 +2,7 @@ package com.notesis
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class StrokeSplitTest {
@@ -47,5 +48,24 @@ class StrokeSplitTest {
         assertEquals(0f, segmentSegmentDistance(0f, 0f, 10f, 0f, 5f, -5f, 5f, 5f), 1e-4f)
         assertEquals(3f, segmentSegmentDistance(0f, 0f, 10f, 0f, 5f, 3f, 5f, 8f), 1e-4f)
         assertEquals(5f, pointSegmentDistance(0f, 5f, -10f, 0f, 10f, 0f), 1e-4f)
+    }
+
+    @Test
+    fun `a kept piece runs on to the eraser's edge`() {
+        // From x=0 toward x=10 along y=0; a vertical sweep at x=8 reaching 2 is met at x=6.
+        val t = firstReachFraction(0f, 0f, 10f, 0f, 8f, -5f, 8f, 5f, 2f)
+        assertEquals(0.6f, t, 1e-3f)
+        assertTrue(t <= 0.6f)
+    }
+
+    @Test
+    fun `the edge is found in the middle when both ends are outside`() {
+        // The sweep at x=5 reaching 1 touches only the middle of 0..10.
+        assertEquals(0.4f, firstReachFraction(0f, 0f, 10f, 0f, 5f, -5f, 5f, 5f, 1f), 1e-3f)
+    }
+
+    @Test
+    fun `never reached is the whole way`() {
+        assertEquals(1f, firstReachFraction(0f, 0f, 10f, 0f, 5f, 3f, 5f, 8f, 1f), 0f)
     }
 }

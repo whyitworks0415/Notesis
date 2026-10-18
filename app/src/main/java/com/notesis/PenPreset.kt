@@ -130,6 +130,10 @@ data class CanvasGestures(
     val pressureEraser: Boolean = false,
     /** How strongly pressure reaches the ink, 0-100; [PRESSURE_RESPONSE_DEFAULT] is the stylus as it reports. */
     val pressureResponse: Int = PRESSURE_RESPONSE_DEFAULT,
+    /** Stroke smoothing as a sliding-window average instead of the adaptive filter. */
+    val windowedStabilizer: Boolean = false,
+    /** The lasso drawn as a rectangle from corner to corner rather than freehand. */
+    val lassoRect: Boolean = false,
 )
 
 const val PRESSURE_RESPONSE_DEFAULT = 10
@@ -173,6 +177,8 @@ fun InkCanvasView.applyGestures(gestures: CanvasGestures) {
     penButton = gestures.penButton
     pressureEraser = gestures.pressureEraser
     pressureResponse = gestures.pressureResponse.coerceIn(0, 100)
+    windowedStabilizer = gestures.windowedStabilizer
+    lassoRect = gestures.lassoRect
 }
 
 /**
@@ -325,16 +331,35 @@ class PenStore(context: Context) {
             ?: listOf(0xFF000000.toInt(), 0xFF1E88E5.toInt(), 0xFFE53935.toInt(), 0xFF43A047.toInt())
         set(value) = prefs.edit().putString("quickColors", value.distinct().take(MAX_QUICK_COLORS).joinToString(",")).apply()
 
+    /** Whether the minimap shows while zoomed in. */
+    var minimap: Boolean
+        get() = prefs.getBoolean("minimap", true)
+        set(value) = prefs.edit().putBoolean("minimap", value).apply()
+
+    /** How pages are coloured on screen; see [InkCanvasView.pageTone]. */
+    var pageTone: Int
+        get() = prefs.getInt("pageTone", PAGE_TONE_NORMAL).coerceIn(PAGE_TONE_NORMAL, PAGE_TONE_NIGHT)
+        set(value) = prefs.edit().putInt("pageTone", value).apply()
+
     /** Zooms, in percent, saved beside the fixed ones in the zoom menu. */
     var zoomPresets: List<Int>
         get() = prefs.getString("zoomPresets", null)?.split(',')?.mapNotNull { it.toIntOrNull() }
             ?.filter { it in ZOOM_PERCENT_RANGE }?.distinct()?.sorted() ?: emptyList()
         set(value) = prefs.edit().putString("zoomPresets", value.distinct().sorted().joinToString(",")).apply()
 
-    /** A recording that finishes starts the next one in the note's list. */
+    /** A recording that finishes starts the next one in the note's list. Kept for [playMode]'s default. */
     var autoPlayNext: Boolean
         get() = prefs.getBoolean("autoPlayNext", false)
         set(value) = prefs.edit().putBoolean("autoPlayNext", value).apply()
+
+    /** What a recording does at its end: [PLAY_STOP], [PLAY_NEXT] or [PLAY_LOOP_ONE]. */
+    var playMode: Int
+        get() = prefs.getInt("playMode", if (autoPlayNext) PLAY_NEXT else PLAY_STOP).coerceIn(PLAY_STOP, PLAY_LOOP_ONE)
+        set(value) = prefs.edit().putInt("playMode", value).apply()
+
+    var playbackSpeed: Float
+        get() = prefs.getFloat("playbackSpeed", 1f).takeIf { it in PLAYBACK_SPEEDS } ?: 1f
+        set(value) = prefs.edit().putFloat("playbackSpeed", value).apply()
 
     var gestures: CanvasGestures
         get() = CanvasGestures(
@@ -367,6 +392,8 @@ class PenStore(context: Context) {
             penButton = prefs.getInt("penButton", PEN_BUTTON_ERASE),
             pressureEraser = prefs.getBoolean("pressureEraser", false),
             pressureResponse = prefs.getInt("pressureResponse", PRESSURE_RESPONSE_DEFAULT).coerceIn(0, 100),
+            windowedStabilizer = prefs.getBoolean("windowedStabilizer", false),
+            lassoRect = prefs.getBoolean("lassoRect", false),
         )
         set(value) = prefs.edit()
             .putBoolean("eraseInk", value.eraseInk)
@@ -398,6 +425,8 @@ class PenStore(context: Context) {
             .putInt("penButton", value.penButton)
             .putBoolean("pressureEraser", value.pressureEraser)
             .putInt("pressureResponse", value.pressureResponse.coerceIn(0, 100))
+            .putBoolean("windowedStabilizer", value.windowedStabilizer)
+            .putBoolean("lassoRect", value.lassoRect)
             .apply()
 
     /** See [InkCanvasView.compatWetInk]; on by default where the front buffer is known to fail. */

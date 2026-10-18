@@ -97,3 +97,41 @@ private fun segmentsIntersect(
     // Collinear touching is covered by the endpoint distances.
     return false
 }
+
+/**
+ * How far along p→q, from 0 at p, the line first comes within [reach] of the
+ * eraser's sweep a→b, or 1 if it never does. p itself is expected to be
+ * outside. A kept piece is extended to there, so it ends where the eraser's
+ * edge actually crossed it rather than at the last whole sample before it:
+ * on a fast stroke that sample can be a pen-width short of the cut.
+ */
+internal fun firstReachFraction(
+    px: Float, py: Float,
+    qx: Float, qy: Float,
+    ax: Float, ay: Float,
+    bx: Float, by: Float,
+    reach: Float,
+): Float {
+    fun inside(t: Float) =
+        pointSegmentDistance(px + (qx - px) * t, py + (qy - py) * t, ax, ay, bx, by) <= reach
+    if (inside(0f)) return 0f
+    // Coarse steps find an inside point even when q is outside too and only the
+    // middle of p→q is reached; halving then narrows to the edge.
+    var outside = 0f
+    var hit = -1f
+    for (step in 1..REACH_STEPS) {
+        val t = step / REACH_STEPS.toFloat()
+        if (inside(t)) { hit = t; break }
+        outside = t
+    }
+    if (hit < 0f) return 1f
+    repeat(REACH_REFINEMENTS) {
+        val middle = (outside + hit) / 2f
+        if (inside(middle)) hit = middle else outside = middle
+    }
+    // The outer side of the edge: the piece stops just short of the eraser.
+    return outside
+}
+
+private const val REACH_STEPS = 16
+private const val REACH_REFINEMENTS = 12

@@ -223,4 +223,25 @@ class StrokeStabilizerTest {
         assertTrue(next.isFinite())
         assertTrue(next > invalid)
     }
+
+    @Test
+    fun `sliding window maps strength like a two-part dial`() {
+        assertEquals(0L, slidingWindowMillis(0))
+        assertEquals(20L, slidingWindowMillis(50))
+        assertEquals(100L, slidingWindowMillis(100))
+        assertEquals(10L, slidingWindowMillis(24))
+    }
+
+    @Test
+    fun `sliding window averages the recent samples and lifts on the pen`() {
+        val stabilizer = AdaptiveStrokeStabilizer()
+        stabilizer.slidingWindow = true
+        stabilizer.reset(50, 0f, 0f, 0L) // a 20ms window
+        stabilizer.add(10f, 0f, 10L)
+        assertEquals(5f, stabilizer.x, 1e-4f)
+        stabilizer.add(20f, 0f, 30L) // the sample at 0ms has left the window
+        assertEquals(15f, stabilizer.x, 1e-4f)
+        stabilizer.add(30f, 0f, 40L, finalSample = true)
+        assertEquals(30f, stabilizer.x, 1e-4f)
+    }
 }

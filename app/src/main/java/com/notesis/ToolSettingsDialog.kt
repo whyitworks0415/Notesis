@@ -331,12 +331,35 @@ internal fun PenDialog(
                         PredictionSetting(leadMs) { leadMs = it }
                     }
                     if (freehand) {
-                        Text("획 보정 $stabilizer%", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "획 보정 $stabilizer%" + if (gestures.windowedStabilizer && stabilizer > 0)
+                                " · 최근 ${slidingWindowMillis(stabilizer)}ms 평균" else "",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
                         SkinSlider(
                             value = stabilizer.toFloat(),
                             onValueChange = { stabilizer = it.roundToInt() },
                             valueRange = 0f..100f,
                             step = 1f,
+                        )
+                        Row {
+                            SettingsChoiceChip(
+                                selected = !gestures.windowedStabilizer,
+                                onClick = { onGestures(gestures.copy(windowedStabilizer = false)) },
+                                label = "적응형",
+                                modifier = Modifier.padding(end = 6.dp),
+                            )
+                            SettingsChoiceChip(
+                                selected = gestures.windowedStabilizer,
+                                onClick = { onGestures(gestures.copy(windowedStabilizer = true)) },
+                                label = "구간 평균",
+                            )
+                        }
+                        Text(
+                            if (gestures.windowedStabilizer) "최근 몇 ms 동안의 펜 위치를 평균합니다. 느리게 그은 떨리는 선이 더 곧아지고, 대신 그만큼 뒤따라옵니다"
+                            else "빠르게 쓸 때는 바로 따라오고, 느리고 작은 떨림만 줄입니다",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.outline,
                         )
                         SwitchRow("자동 도형 인식", autoShapes) { autoShapes = it }
                     }

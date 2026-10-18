@@ -19,6 +19,19 @@ internal fun stabilizationAmount(strength: Int): Float {
 }
 
 /**
+ * The averaging window, in milliseconds, for the sliding-window stabilizer at
+ * a 0-100 [strength]: 1-20ms over the lower half, 20-100ms over the upper,
+ * so the first half of the slider is fine control over light smoothing and
+ * the second reaches the heavy, lagging kind. Zero is off.
+ */
+internal fun slidingWindowMillis(strength: Int): Long {
+    val s = strength.coerceIn(0, 100) / 100f
+    if (s == 0f) return 0L
+    val window = if (s <= 0.5f) 1f + 19f * (s / 0.5f) else 20f + 80f * ((s - 0.5f) / 0.5f)
+    return window.toLong().coerceIn(1L, 100L)
+}
+
+/**
  * Allocation-free streaming stabilizer for screen-space stylus samples.
  *
  * Screen space is intentional: digitizer jitter is a physical-pixel effect.
@@ -45,8 +58,50 @@ internal class AdaptiveStrokeStabilizer {
     private var samples = 0
     private var stableDirections = 0
 
+    /**
+     * The other way of smoothing: each output is the average of the raw
+     * samples of the last [slidingWindowMillis]. Steadier on slow, shaky
+     * lines than the adaptive filter, at a lag of half the window.
+     */
+    var slidingWindow: Boolean = false
+    private var windowMillis = 0L
+    private val windowX = FloatArray(WINDOW_CAPACITY)
+    private val windowY = FloatArray(WINDOW_CAPACITY)
+    private val windowT = LongArray(WINDOW_CAPACITY)
+    private var windowStart = 0
+    private var windowCount = 0
+
+    private fun pushWindow(rawX: Float, rawY: Float, timeMillis: Long) {
+        if (windowCount == WINDOW_CAPACITY) {
+            windowStart = (windowStart + 1) % WINDOW_CAPACITY
+            windowCount--
+        }
+        val at = (windowStart + windowCount) % WINDOW_CAPACITY
+        windowX[at] = rawX
+        windowY[at] = rawY
+        windowT[at] = timeMillis
+        windowCount++
+        while (windowCount > 1 && timeMillis - windowT[windowStart] > windowMillis) {
+            windowStart = (windowStart + 1) % WINDOW_CAPACITY
+            windowCount--
+        }
+        var sumX = 0f
+        var sumY = 0f
+        for (i in 0 until windowCount) {
+            val index = (windowStart + i) % WINDOW_CAPACITY
+            sumX += windowX[index]
+            sumY += windowY[index]
+        }
+        x = sumX / windowCount
+        y = sumY / windowCount
+    }
+
     fun reset(strength: Int, rawX: Float, rawY: Float, timeMillis: Long) {
         amount = stabilizationAmount(strength)
+        windowMillis = slidingWindowMillis(strength)
+        windowStart = 0
+        windowCount = 0
+        if (slidingWindow && windowMillis > 0L) pushWindow(rawX, rawY, timeMillis)
         x = rawX
         y = rawY
         lastRawX = rawX
@@ -98,6 +153,13 @@ internal class AdaptiveStrokeStabilizer {
         if (amount == 0f) {
             x = rawX
             y = rawY
+        } else if (slidingWindow) {
+            pushWindow(rawX, rawY, timeMillis)
+            // The pen lifts where it is, not half a window behind.
+            if (finalSample) {
+                x = rawX
+                y = rawY
+            }
         } else {
             val dt = (timeMillis - lastTimeMillis).coerceIn(1L, MAX_SAMPLE_DT_MS).toFloat()
             val speed = distance / dt
@@ -166,6 +228,7 @@ internal class AdaptiveStrokeStabilizer {
         unstableLift(rawX - lastRawX, rawY - lastRawY, lastDx, lastDy)
 
     private companion object {
+        const val WINDOW_CAPACITY = 64
         const val MAX_SMOOTHING = 0.72f
         const val MIN_ALPHA = 0.20f
         const val CORNER_ALPHA = 0.92f
