@@ -186,7 +186,11 @@ internal object StudyClock {
     fun tick() {
         val wall = System.currentTimeMillis()
         val mono = SystemClock.elapsedRealtime()
-        now = wall
+        // Every screen of the clock shows whole seconds at most, and each write
+        // of this recomposes whatever reads it - the pill floats over the page
+        // and its glass. Moving it once a second instead of four times is the
+        // same picture for a quarter of the redraws.
+        if (wall / 1000L != now / 1000L) now = wall
         // A long gap between ticks is a sleeping device or a stopped app,
         // not time spent; automatic counting never bridges one.
         val dt = if (lastTickMono == 0L) 0L else (mono - lastTickMono).let { if (it in 0..MAX_TICK_GAP_MS) it else 0L }
@@ -387,7 +391,30 @@ internal object StudyClock {
         saveStudy()
     }
 
+    /** Study time gathered between publishes; see [addStudy]. */
+    private var pendingFrom = 0L
+    private var pendingTo = 0L
+
+    /**
+     * Counts [from]..[to] as studied. The tick comes four times a second; the
+     * day map is copied and published at most once a second, since it is what
+     * the pill reads and copying it each tick was garbage on every quarter.
+     */
     private fun addStudy(from: Long, to: Long) {
+        if (pendingTo == 0L || from != pendingTo) {
+            flushStudy()
+            pendingFrom = from
+        }
+        pendingTo = to
+        if (to - pendingFrom >= 1000L || to / 1000L != pendingFrom / 1000L) flushStudy()
+    }
+
+    private fun flushStudy() {
+        if (pendingTo <= pendingFrom) { pendingFrom = 0L; pendingTo = 0L; return }
+        val from = pendingFrom
+        val to = pendingTo
+        pendingFrom = 0L
+        pendingTo = 0L
         val split = splitByDay(from, to)
         if (split.isEmpty()) return
         val next = days.toMutableMap()
@@ -476,6 +503,7 @@ internal object StudyClock {
     }
 
     private fun saveStudy() {
+        flushStudy()
         val p = prefs ?: return
         unsavedMs = 0L
         // Two months of days is plenty to look back on; older ones go.
