@@ -7192,15 +7192,14 @@ class InkCanvasView @JvmOverloads constructor(
                     else wetStroke.copy(wetStroke.brush.copy(family = storedFamily))
                 val finishedTool = Tool.ofBrushFamily(finishedStroke.brush.family)
                 val stroke = when {
-                    finishedTool == Tool.PEN -> withoutContactSpurs(finishedStroke).let { spurless ->
-                        val tidied = tidiedPenInputs(spurless.inputs, spurless.brush.size)
-                        if (tidied === spurless.inputs) spurless else Stroke(spurless.brush, tidied)
-                    }
+                    // One pass, one rebuild at most: the spur and the dwell tidying
+                    // used to build a stroke each, so a pen-up tessellated twice.
+                    finishedTool == Tool.PEN -> tidiedPenStroke(finishedStroke)
                     // Dabs are laid by distance from the first input; dropping
                     // one would move every dab after it, and a cap spur cannot
                     // be seen under a scatter anyway.
                     finishedTool.isDabbed() -> finishedStroke
-                    finishedTool.isFreehandPen() -> withoutDwells(withoutContactSpurs(finishedStroke))
+                    finishedTool.isFreehandPen() -> withoutSpursAndDwells(finishedStroke)
                     else -> finishedStroke
                 }
 
