@@ -331,6 +331,24 @@ internal fun PenDialog(
                         PredictionSetting(leadMs) { leadMs = it }
                     }
                     if (freehand) {
+                        Text("480Hz 보정", style = MaterialTheme.typography.bodyMedium)
+                        Row {
+                            listOf(SUBFRAME_OFF to "끄기", SUBFRAME_BLUR to "모션 블러", SUBFRAME_GHOST to "잔상").forEach { (value, label) ->
+                                SettingsChoiceChip(
+                                    selected = gestures.subframe == value,
+                                    onClick = { onGestures(gestures.copy(subframe = value)) },
+                                    label = label,
+                                    modifier = Modifier.padding(end = 6.dp),
+                                )
+                            }
+                        }
+                        Text(
+                            "펜은 화면이 한 번 바뀌는 동안 위치를 네 번쯤 보냅니다. 그 사이 펜이 가는 길을 펜 끝 앞에 흐리게 그려서 끊김 없이 따라오는 것처럼 보이게 합니다. 저장되지 않습니다",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.outline,
+                        )
+                    }
+                    if (freehand) {
                         Text(
                             "획 보정 $stabilizer%" + if (gestures.windowedStabilizer && stabilizer > 0)
                                 " · 최근 ${slidingWindowMillis(stabilizer)}ms 평균" else "",

@@ -276,18 +276,18 @@ private fun Modifier.spotiToolbarGlass(circle: Boolean = false): Modifier {
         shadowElevation = 3.dp, useSpotiStyle = false,
         surfaceOpacity = if (circle) null else look.spotiglassToolbarOpacity)
 }
-private fun SpotiToolbarTool.icon(): ImageVector = when (this) {
-    SpotiToolbarTool.READ -> Reicons.TouchApp
-    SpotiToolbarTool.PEN -> Reicons.Create
-    SpotiToolbarTool.PENCIL -> Reicons.Brush
-    SpotiToolbarTool.HIGHLIGHTER -> Reicons.Highlight
-    SpotiToolbarTool.MASK -> Reicons.VisibilityOff
-    SpotiToolbarTool.ERASE -> Reicons.Eraser
-    SpotiToolbarTool.SHAPE -> Reicons.Category
-    SpotiToolbarTool.TEXT -> Reicons.TextFields
-    SpotiToolbarTool.LASSO -> Reicons.Gesture
-    SpotiToolbarTool.CAPTURE -> Reicons.CropFree
-    SpotiToolbarTool.AI -> Reicons.AutoAwesome
+internal fun SpotiToolbarTool.icon(): ImageVector = when (this) {
+    SpotiToolbarTool.READ -> AppIcons.read
+    SpotiToolbarTool.PEN -> AppIconStyle.pick(Lucide.Pencil, Reicons.Create)
+    SpotiToolbarTool.PENCIL -> AppIcons.pencilTool
+    SpotiToolbarTool.HIGHLIGHTER -> AppIconStyle.pick(Lucide.Highlighter, Reicons.Highlight)
+    SpotiToolbarTool.MASK -> AppIconStyle.pick(Lucide.EyeOff, Reicons.VisibilityOff)
+    SpotiToolbarTool.ERASE -> AppIconStyle.pick(Lucide.Eraser, Reicons.Eraser)
+    SpotiToolbarTool.SHAPE -> AppIconStyle.pick(Lucide.Shapes, Reicons.Category)
+    SpotiToolbarTool.TEXT -> AppIconStyle.pick(Lucide.Type, Reicons.TextFields)
+    SpotiToolbarTool.LASSO -> AppIconStyle.pick(Lucide.CircleDashed, Reicons.Gesture)
+    SpotiToolbarTool.CAPTURE -> AppIconStyle.pick(Lucide.SquareDashed, Reicons.CropFree)
+    SpotiToolbarTool.AI -> AppIconStyle.pick(Lucide.Zap, Reicons.AutoAwesome)
 }
 
 internal data class SpotiToolbarAction(
@@ -328,18 +328,21 @@ private fun SpotiActionButton(
     selected: Boolean = false, enabled: Boolean = true, iconOnly: Boolean = false,
     persistentGlass: Boolean = false, plain: Boolean = false, onClick: () -> Unit,
 ) {
+    // Each tap plays the icon once, where the icon set has motion.
+    var taps by remember { mutableIntStateOf(0) }
+    val tapped = { taps++; onClick() }
     if (plain || LocalSkin.current != Skin.SPOTIGLASS) {
         val scheme = MaterialTheme.colorScheme
         val shape = androidx.compose.foundation.shape.RoundedCornerShape(22.dp)
         Box(modifier.sizeIn(minWidth = 44.dp, minHeight = 44.dp)
             .background(if (selected) scheme.primaryContainer else scheme.surfaceContainerHigh, shape)
             .semantics { contentDescription = label }
-            .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
+            .clickable(enabled = enabled, role = Role.Button, onClick = tapped),
             contentAlignment = Alignment.Center) {
             Column(Modifier.padding(horizontal = 8.dp, vertical = 5.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 val color = (if (selected) scheme.onPrimaryContainer else scheme.onSurface)
                     .copy(alpha = if (enabled) 1f else 0.38f)
-                icon?.let { Icon(it, null, Modifier.size(20.dp), tint = color) }
+                icon?.let { AppIcon(it, null, Modifier.size(20.dp), tint = color, play = taps) }
                 if (!iconOnly) Text(label, color = color, style = MaterialTheme.typography.labelSmall,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
@@ -359,7 +362,7 @@ private fun SpotiActionButton(
         if (effects) spring(0.78f, 430f) else tween(0), label = "기능 버튼 들림")
     Box(modifier.sizeIn(minWidth = 44.dp, minHeight = 44.dp)
         .semantics { contentDescription = label }
-        .clickable(enabled = enabled, role = Role.Button, interactionSource = interaction, indication = null, onClick = onClick),
+        .clickable(enabled = enabled, role = Role.Button, interactionSource = interaction, indication = null, onClick = tapped),
         contentAlignment = Alignment.Center) {
         val body = Modifier.matchParentSize().graphicsLayer { scaleX = grow; scaleY = grow }
         Box(if (persistentGlass) body.spotiToolbarGlass(circle = true)
@@ -367,7 +370,7 @@ private fun SpotiActionButton(
         Column(Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
             horizontalAlignment = Alignment.CenterHorizontally) {
             val color = (if (selected) scheme.primary else scheme.onSurface).copy(alpha = if (enabled) 1f else 0.38f)
-            icon?.let { Icon(it, null, Modifier.size(20.dp), tint = color) }
+            icon?.let { AppIcon(it, null, Modifier.size(20.dp), tint = color, play = taps) }
             if (!iconOnly) Text(label, color = color, style = MaterialTheme.typography.labelSmall,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
@@ -444,7 +447,7 @@ internal fun SpotiGlassToolbar(
                 }
                 Box {
                     if (sizeLevel == 3) {
-                        SpotiActionButton("도구·기능 메뉴", Reicons.Menu,
+                        SpotiActionButton("도구·기능 메뉴", AppIconStyle.pick(Lucide.SlidersHorizontal, Reicons.Menu),
                             Modifier.size(52.dp).pointerInput(Unit) {
                                 detectDragGestures { change, delta -> change.consume(); onDrag(delta) }
                             }, iconOnly = true, persistentGlass = true, onClick = { menu(ToolbarMenu.FUNCTIONS) })
@@ -470,7 +473,7 @@ internal fun SpotiGlassToolbar(
                               }
                             }
                             if (sizeLevel == 0) Box(Modifier.width(360.dp)) { penOptions(360.dp) }
-                            SpotiActionButton("기능", Reicons.Tune, selected = open,
+                            SpotiActionButton("기능", AppIconStyle.pick(Lucide.SlidersHorizontal, Reicons.Tune), selected = open,
                                 modifier = Modifier.size(if (sizeLevel == 0) 44.dp else 52.dp), iconOnly = true,
                                 persistentGlass = sizeLevel != 0, plain = sizeLevel == 0,
                                 onClick = { menu(ToolbarMenu.FUNCTIONS) })
@@ -508,7 +511,7 @@ internal fun SpotiGlassToolbar(
                                                 ToolbarMenu.MORE -> "더보기"
                                             }, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                                             IconButton(onClick = { open = false }, Modifier.size(32.dp)) {
-                                                Icon(Reicons.Close, "기능 메뉴 닫기")
+                                                AppIcon(AppIconStyle.pick(Lucide.X, Reicons.Close), "기능 메뉴 닫기")
                                             }
                                         }
                                         if (page == ToolbarMenu.FUNCTIONS || page == ToolbarMenu.SIZES) {
@@ -533,8 +536,8 @@ internal fun SpotiGlassToolbar(
                                                 TextButton(onClick = { page = ToolbarMenu.TOOLS }) { Text("모든 도구") }
                                             }
                                             SpotiMenuGrid((actions.filter { it.slot != null } + listOf(
-                                                SpotiToolbarAction("노트 바꾸기", Reicons.Description, slot = 3) { page = ToolbarMenu.NOTES },
-                                                SpotiToolbarAction("AI", Reicons.AutoAwesome, slot = 9) { page = ToolbarMenu.AI },
+                                                SpotiToolbarAction("노트 바꾸기", AppIconStyle.pick(Lucide.FileText, Reicons.Description), slot = 3) { page = ToolbarMenu.NOTES },
+                                                SpotiToolbarAction("AI", AppIconStyle.pick(Lucide.Zap, Reicons.AutoAwesome), slot = 9) { page = ToolbarMenu.AI },
                                             )).sortedBy { it.slot }, onAction = { action ->
                                                 if (action.label != "노트 바꾸기" && action.label != "AI") open = false
                                                 action.onClick()
@@ -614,7 +617,7 @@ private fun ThemedToolbarTools(tools: List<SpotiToolbarTool>, mode: EditMode,
                     androidx.compose.foundation.shape.RoundedCornerShape(22.dp))
                 .clickable(role = Role.Tab, onClick = { onTool(tool) })
                 .semantics { contentDescription = tool.label }, contentAlignment = Alignment.Center) {
-                Icon(tool.icon(), null, Modifier.size(20.dp),
+                AppIcon(tool.icon(), null, Modifier.size(20.dp), play = tool.mode == mode,
                     tint = colors[tool.mode] ?: if (tool.mode == mode) scheme.onPrimaryContainer else scheme.onSurface)
             }
         }

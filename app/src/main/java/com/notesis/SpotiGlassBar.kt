@@ -205,7 +205,7 @@ fun SpotiGlassBar(
                             .clickable(role = Role.Tab, interactionSource = remember { MutableInteractionSource() }, indication = null) { choose(index) }
                         Column(hit, horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically)) {
-                            item.icon?.let { Icon(it, null, tint = color, modifier = Modifier.size(if (compact) 20.dp else 25.dp)) }
+                            item.icon?.let { AppIcon(it, null, tint = color, modifier = Modifier.size(if (compact) 20.dp else 25.dp), play = selected == index) }
                             if (showLabels || item.icon == null) Text(item.label, color = color,
                                 style = if (withIcons) MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp) else MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)

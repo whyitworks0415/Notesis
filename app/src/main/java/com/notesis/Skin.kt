@@ -25,6 +25,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asAndroidPath
 import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.inset
@@ -147,7 +148,7 @@ fun Skin.tokens(): SkinTokens = when (this) {
     // Frosted glass, and the numbers the settings screen owns. No lens: one
     // even rim, one soft shadow, and a body that is mostly what is behind it.
     Skin.GLASSMORPHISM -> LocalSkinSettings.current.let { look ->
-        val body = Color(look.tint)
+        val body = darkAwareTint(Color(look.tint), look.themeMode == AppThemeMode.DARK)
         SkinTokens(
             corner = look.corner.dp,
             fillAlpha = 1f,
@@ -187,7 +188,11 @@ fun Skin.tokens(): SkinTokens = when (this) {
     // catches the light, the far side gets a quiet bevel, and the shadow grows
     // enough to keep the control legible when the background gets busy.
     Skin.LIQUID_GLASS -> LocalSkinSettings.current.let { look ->
-        val tint = Color(look.tint)
+        val dark = look.themeMode == AppThemeMode.DARK
+        val tint = darkAwareTint(Color(look.tint), dark)
+        // On a dark theme a near-white rim and glow read as a lit outline round
+        // every panel; they keep their shape at a fraction of the light.
+        val light = if (dark) 0.4f else 1f
         val border = Color(look.border)
         val ink = if (look.themeMode == AppThemeMode.DARK) {
             MaterialTheme.colorScheme.onSurface
@@ -206,25 +211,25 @@ fun Skin.tokens(): SkinTokens = when (this) {
             },
             rim = Brush.linearGradient(
                 listOf(
-                    Color.White.copy(alpha = if (look.highContrast) 1f else 0.96f),
-                    border.copy(alpha = maxOf(border.alpha, 0.74f)),
-                    Color.White.copy(alpha = 0.24f),
+                    Color.White.copy(alpha = (if (look.highContrast) 1f else 0.96f) * light),
+                    border.copy(alpha = maxOf(border.alpha, 0.74f) * light),
+                    Color.White.copy(alpha = 0.24f * light),
                     ink.copy(alpha = if (look.highContrast) 0.70f else 0.22f),
                 ),
             ),
             rimWidth = if (look.highContrast) 2.dp else 1.dp,
             bevel = Brush.linearGradient(
                 listOf(
-                    Color.White.copy(alpha = 0.12f),
+                    Color.White.copy(alpha = 0.12f * light),
                     accent.copy(alpha = 0.16f),
                     ink.copy(alpha = if (look.highContrast) 0.34f else 0.16f),
                 ),
             ),
             glows = if (look.highContrast) {
-                listOf(4.dp to Color.White.copy(alpha = 0.16f))
+                listOf(4.dp to Color.White.copy(alpha = 0.16f * light))
             } else {
                 listOf(
-                    12.dp to Color.White.copy(alpha = 0.12f),
+                    12.dp to Color.White.copy(alpha = 0.12f * light),
                     5.dp to accent.copy(alpha = 0.08f),
                 )
             },
@@ -1076,8 +1081,9 @@ fun skinColors(base: ColorScheme, skin: Skin, look: SkinSettings): ColorScheme {
         skin.isRefractive -> LIQUID_POPUP_ALPHA
         else -> POPUP_ALPHA
     }
+    val tint = darkAwareTint(Color(look.tint), look.themeMode == AppThemeMode.DARK)
     fun glassy(container: Color): Color =
-        Color(look.tint).compositeOver(container).copy(alpha = alpha)
+        tint.compositeOver(container).copy(alpha = alpha)
     return inked.copy(
         surfaceContainer = glassy(base.surfaceContainer),
         surfaceContainerHigh = glassy(base.surfaceContainerHigh),
@@ -1085,6 +1091,14 @@ fun skinColors(base: ColorScheme, skin: Skin, look: SkinSettings): ColorScheme {
         surfaceContainerLow = glassy(base.surfaceContainerLow),
     )
 }
+
+/**
+ * The glass tint as a theme should show it. A white frost is right over light
+ * panels; over dark ones it turns them grey and pales the light text on them,
+ * so a dark theme keeps only a trace of a light tint. A dark tint stays as chosen.
+ */
+internal fun darkAwareTint(tint: Color, dark: Boolean): Color =
+    if (dark && tint.luminance() > 0.5f) tint.copy(alpha = (tint.alpha * 0.25f).coerceAtMost(0.08f)) else tint
 
 /** Clearer than frost, still solid enough for a popup window with no backdrop capture. */
 private const val LIQUID_POPUP_ALPHA = 0.80f

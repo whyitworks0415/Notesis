@@ -134,6 +134,8 @@ data class CanvasGestures(
     val windowedStabilizer: Boolean = false,
     /** The lasso drawn as a rectangle from corner to corner rather than freehand. */
     val lassoRect: Boolean = false,
+    /** The pen's 480 Hz in-between travel shown ahead of the tip: [SUBFRAME_OFF], [SUBFRAME_BLUR] or [SUBFRAME_GHOST]. */
+    val subframe: Int = SUBFRAME_OFF,
 )
 
 const val PRESSURE_RESPONSE_DEFAULT = 10
@@ -186,6 +188,7 @@ fun InkCanvasView.applyGestures(gestures: CanvasGestures) {
     pressureResponse = gestures.pressureResponse.coerceIn(0, 100)
     windowedStabilizer = gestures.windowedStabilizer
     lassoRect = gestures.lassoRect
+    subframeMode = gestures.subframe
 }
 
 /**
@@ -401,6 +404,7 @@ class PenStore(context: Context) {
             pressureResponse = prefs.getInt("pressureResponse", PRESSURE_RESPONSE_DEFAULT).coerceIn(0, 100),
             windowedStabilizer = prefs.getBoolean("windowedStabilizer", false),
             lassoRect = prefs.getBoolean("lassoRect", false),
+            subframe = prefs.getInt("subframe", SUBFRAME_OFF).coerceIn(SUBFRAME_OFF, SUBFRAME_GHOST),
         )
         set(value) = prefs.edit()
             .putBoolean("eraseInk", value.eraseInk)
@@ -434,6 +438,7 @@ class PenStore(context: Context) {
             .putInt("pressureResponse", value.pressureResponse.coerceIn(0, 100))
             .putBoolean("windowedStabilizer", value.windowedStabilizer)
             .putBoolean("lassoRect", value.lassoRect)
+            .putInt("subframe", value.subframe)
             .apply()
 
     /** See [InkCanvasView.compatWetInk]; on by default where the front buffer is known to fail. */

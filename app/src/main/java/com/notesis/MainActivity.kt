@@ -229,6 +229,7 @@ class MainActivity : ComponentActivity() {
         noteStore = store
         val prefs = PenStore(this)
         ToolbarLayout.load(this)
+        AppIconStyle.load(this)
         val lookStore = SkinSettingsStore(this)
         acceptDocumentIntent(intent)
         setContent {
@@ -1013,40 +1014,25 @@ private fun NoteListScreen(
                     onSaveSettings = { saveSettings.launch("Notesis-설정.json") },
                     onLoadSettings = { openSettings.launch(arrayOf("*/*")) },
                 )
-                GlassFab(
-                    onClick = { pickPdf.launch(arrayOf("application/pdf")) },
-                    icon = Reicons.Description,
-                    contentDescription = "PDF 가져오기",
-                    modifier = Modifier.padding(top = 12.dp, bottom = 12.dp),
-                )
-                GlassFab(
-                    onClick = { openDocument.launch(SUPPORTED_DOCUMENT_MIME_TYPES) },
-                    icon = Reicons.FolderOpen,
-                    contentDescription = "기기·Google Drive·OneDrive 문서 열기",
-                    modifier = Modifier.padding(bottom = 12.dp),
-                )
-                GlassFab(
-                    onClick = { importMarkdown.launch(arrayOf("text/markdown", "text/plain", "application/octet-stream")) },
-                    icon = Reicons.Description,
-                    contentDescription = "Markdown 가져오기",
-                    modifier = Modifier.padding(bottom = 12.dp),
-                )
-                GlassFab(
-                    onClick = { pickImages.launch(arrayOf("image/*")) },
-                    icon = Reicons.AddPhotoAlternate,
-                    contentDescription = "이미지로 새 노트",
-                    modifier = Modifier.padding(bottom = 12.dp),
-                )
-                GlassFab(
-                    onClick = { askingUrl = true },
-                    icon = Reicons.Language,
-                    contentDescription = "웹페이지로 새 노트",
-                    modifier = Modifier.padding(bottom = 12.dp),
-                )
-                GlassFab(
-                    onClick = { naming = true },
-                    icon = Reicons.Add,
-                    contentDescription = "새 노트",
+                Spacer(Modifier.height(12.dp))
+                // Everything that makes a note, folded into the one button.
+                NewNoteDial(
+                    listOf(
+                        DialOption("웹페이지로 새 노트", AppIconStyle.pick(Lucide.Globe, Reicons.Language)) { askingUrl = true },
+                        DialOption("이미지로 새 노트", AppIconStyle.pick(Lucide.Image, Reicons.AddPhotoAlternate)) {
+                            pickImages.launch(arrayOf("image/*"))
+                        },
+                        DialOption("Markdown 가져오기", AppIconStyle.pick(Lucide.FileText, Reicons.Description)) {
+                            importMarkdown.launch(arrayOf("text/markdown", "text/plain", "application/octet-stream"))
+                        },
+                        DialOption("문서 열기 · Drive · OneDrive", AppIconStyle.pick(Lucide.FolderOpen, Reicons.FolderOpen)) {
+                            openDocument.launch(SUPPORTED_DOCUMENT_MIME_TYPES)
+                        },
+                        DialOption("PDF 가져오기", AppIconStyle.pick(Lucide.File, Reicons.PictureAsPdf)) {
+                            pickPdf.launch(arrayOf("application/pdf"))
+                        },
+                        DialOption("새 노트", AppIconStyle.pick(Lucide.NotebookPen, Reicons.Edit)) { naming = true },
+                    ),
                 )
             }
         },
@@ -1970,7 +1956,7 @@ private fun NoteCard(
                 Modifier
                     .fillMaxWidth()
                     .aspectRatio(0.75f)
-                    .background(Color(0xFFFDFCF8)),
+                    .background(if (isDarkTheme()) MaterialTheme.colorScheme.surfaceContainerHigh else Color(0xFFFDFCF8)),
                 contentAlignment = Alignment.Center,
             ) {
                 if (preview != null && !note.locked) {
@@ -2168,9 +2154,7 @@ private fun NoteCard(
 private fun SkinButton(skin: Skin, onSkin: (Skin) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
-        IconButton(onClick = { open = true }) {
-            Icon(Reicons.AutoAwesomeMosaic, contentDescription = "테마")
-        }
+        AppIconButton(onClick = { open = true }, icon = AppIcons.skin, contentDescription = "테마")
         DropdownMenu(open, onDismissRequest = { open = false }) {
             for (option in Skin.entries) {
                 DropdownMenuItem(
@@ -2314,16 +2298,18 @@ private fun GlassFab(
     contentDescription: String,
     modifier: Modifier = Modifier,
     small: Boolean = false,
+    iconRotation: Float = 0f,
 ) {
     val side = if (small) 40.dp else 56.dp
+    val iconModifier = Modifier.graphicsLayer { rotationZ = iconRotation }
     if (LocalSkin.current == Skin.MATERIAL) {
         if (small) {
             SmallFloatingActionButton(onClick = onClick, modifier = modifier) {
-                Icon(icon, contentDescription = contentDescription)
+                AppIcon(icon, contentDescription = contentDescription, modifier = iconModifier, play = iconRotation > 0f)
             }
         } else {
             FloatingActionButton(onClick = onClick, modifier = modifier) {
-                Icon(icon, contentDescription = contentDescription)
+                AppIcon(icon, contentDescription = contentDescription, modifier = iconModifier, play = iconRotation > 0f)
             }
         }
         return
@@ -2338,7 +2324,7 @@ private fun GlassFab(
             drawBorder = false,
             glassShadowElevation = 3.dp,
         ) {
-            Icon(icon, contentDescription = contentDescription)
+            AppIcon(icon, contentDescription = contentDescription, modifier = iconModifier, play = iconRotation > 0f)
         }
     } else {
         SkinSurface(modifier = modifier.size(side), corner = 16.dp) {
@@ -2347,9 +2333,55 @@ private fun GlassFab(
                 Modifier.fillMaxSize().clickable(onClick = onClick),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(icon, contentDescription = contentDescription)
+                AppIcon(icon, contentDescription = contentDescription, modifier = iconModifier, play = iconRotation > 0f)
             }
         }
+    }
+}
+
+internal class DialOption(val label: String, val icon: ImageVector, val onClick: () -> Unit)
+
+/**
+ * One button for every way to start a note. Tapped, the choices rise out of
+ * it one after another, each with its name beside it; the plus turns into a
+ * cross that folds them away again.
+ */
+@Composable
+private fun NewNoteDial(options: List<DialOption>) {
+    var open by remember { mutableStateOf(false) }
+    androidx.activity.compose.BackHandler(enabled = open) { open = false }
+    val turn by androidx.compose.animation.core.animateFloatAsState(if (open) 45f else 0f,
+        androidx.compose.animation.core.spring(dampingRatio = 0.6f, stiffness = 500f), label = "dialTurn")
+    Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        options.forEachIndexed { index, option ->
+            // The nearest choice comes first and leaves last.
+            val fromButton = options.lastIndex - index
+            androidx.compose.animation.AnimatedVisibility(
+                visible = open,
+                enter = androidx.compose.animation.fadeIn(tween(160, delayMillis = fromButton * 35)) +
+                    androidx.compose.animation.slideInVertically(tween(240, delayMillis = fromButton * 35)) { it / 2 } +
+                    androidx.compose.animation.scaleIn(tween(240, delayMillis = fromButton * 35), initialScale = 0.7f),
+                exit = androidx.compose.animation.fadeOut(tween(120, delayMillis = index * 20)) +
+                    androidx.compose.animation.slideOutVertically(tween(160, delayMillis = index * 20)) { it / 2 } +
+                    androidx.compose.animation.scaleOut(tween(160, delayMillis = index * 20), targetScale = 0.7f),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SkinSurface(corner = 12.dp) {
+                        Text(option.label, style = MaterialTheme.typography.labelLarge,
+                            modifier = Modifier.clickable { open = false; option.onClick() }
+                                .padding(horizontal = 12.dp, vertical = 8.dp))
+                    }
+                    GlassFab(onClick = { open = false; option.onClick() }, icon = option.icon,
+                        contentDescription = option.label, small = true, modifier = Modifier.padding(end = 8.dp))
+                }
+            }
+        }
+        GlassFab(
+            onClick = { open = !open },
+            icon = AppIconStyle.pick(Lucide.Plus, Reicons.Add),
+            contentDescription = if (open) "닫기" else "새 노트 · 가져오기",
+            iconRotation = turn,
+        )
     }
 }
 
@@ -3274,7 +3306,7 @@ private fun LatencyHud(report: () -> String, modifier: Modifier = Modifier) {
             delay(500)
         }
     }
-    Text(text, fontSize = 12.sp, color = Color(0xFF555555), modifier = modifier)
+    Text(text, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = modifier)
 }
 
 @Composable
@@ -3299,6 +3331,7 @@ private fun NoteScreen(
     var beforeEraser by remember { mutableStateOf(EditMode.PEN) }
     var showLibrary by remember { mutableStateOf(false) }
     var editingTools by remember { mutableStateOf(false) }
+    var showLayers by remember { mutableStateOf(false) }
     var exportingPages by remember { mutableStateOf<List<Page>?>(null) }
     /** Pages picked to go to another note, and whether they leave this one. */
     var sendingPages by remember { mutableStateOf<Pair<List<Int>, Boolean>?>(null) }
@@ -3547,7 +3580,29 @@ private fun NoteScreen(
      * reference panel aimed at this note.
      */
     var zoomBox by remember { mutableStateOf(false) }
+    // The screen split in two: the reference panel pinned to one part, this
+    // note in the rest. The ratio is this note's share.
+    var split by remember { mutableStateOf(SplitMode.NONE) }
+    var splitRatio by remember { mutableFloatStateOf(0.5f) }
+    var choosingSplit by remember { mutableStateOf(false) }
+    LaunchedEffect(split, splitRatio, containerSize) {
+        if (split == SplitMode.NONE) return@LaunchedEffect
+        val w = containerSize.width.toFloat()
+        val h = containerSize.height.toFloat()
+        if (w <= 0f || h <= 0f) return@LaunchedEffect
+        zoomBox = false
+        referenceStretch = 1f
+        if (split == SplitMode.STACKED) {
+            referenceOffset = Offset(0f, h * splitRatio)
+            referenceSize = Size(w, h * (1f - splitRatio))
+        } else {
+            referenceOffset = Offset(w * splitRatio, 0f)
+            referenceSize = Size(w * (1f - splitRatio), h)
+        }
+        referenceOpen = true
+    }
     fun openZoomBox(page: Int) {
+        split = SplitMode.NONE
         zoomBox = true
         referenceNoteId = note.id
         referencePage = page
@@ -3725,10 +3780,7 @@ private fun NoteScreen(
         webChooser.value = null
     }
 
-    val pickImage = rememberLauncherForActivityResult(
-        ActivityResultContracts.GetContent(),
-    ) { uri: Uri? ->
-        if (uri == null) return@rememberLauncherForActivityResult
+    fun addImageFrom(uri: Uri) {
         scope.launch {
             // Decoding and copying a camera-sized photo is not main-thread work.
             val added = withContext(Dispatchers.IO) {
@@ -3746,6 +3798,11 @@ private fun NoteScreen(
             mode = EditMode.IMAGE
             edits++
         }
+    }
+    val pickImage = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent(),
+    ) { uri: Uri? ->
+        if (uri != null) addImageFrom(uri)
     }
 
     // Back clears a selection first, the way dismissing anything else works -
@@ -3896,6 +3953,8 @@ private fun NoteScreen(
             },
             onClock = { StudyClock.openPanel() },
             onEditTools = { editingTools = true },
+            onLayers = { showLayers = true },
+            onSplit = { choosingSplit = true },
             onZoomBox = { if (zoomBox && referenceOpen) { referenceOpen = false; zoomBox = false } else openZoomBox(canvas?.currentPageIndex() ?: 0) },
             onNoteMenu = { noteMenu = true },
             onCamera = {
@@ -3977,7 +4036,8 @@ private fun NoteScreen(
     // with the glass tinting nothing but that white. Painting the paper colour
     // the whole way up closes both gaps and gives the glass something of the
     // page's own to sit on.
-    Box(Modifier.weight(1f).fillMaxHeight().background(Color(0xFFE9E7E2))) {
+    val desk = deskColor()
+    Box(Modifier.weight(1f).fillMaxHeight().background(desk)) {
     Box(
         Modifier
             .fillMaxSize()
@@ -3999,7 +4059,7 @@ private fun NoteScreen(
         // draws that recording - the ink then showed beside the pen until it
         // lifted. Turned with the note, as the view is below.
         val pageBackdrop: DrawScope.() -> Unit = {
-            drawRect(Color(0xFFE9E7E2))
+            drawRect(desk)
             val view = canvas
             if (view != null) {
                 // The canvas turns its own page about its middle; the glass sees it the same way.
@@ -4026,7 +4086,7 @@ private fun NoteScreen(
                         Modifier
                     },
                 )
-                .background(Color(0xFFE9E7E2)),
+                .background(desk),
         ) {
         if (ready == null) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -4036,6 +4096,8 @@ private fun NoteScreen(
             AndroidView(
                 modifier = Modifier
                     .fillMaxSize()
+                    .then(splitPadding(split, splitRatio, containerSize, density))
+                    .dropImages(::addImageFrom)
                     // AndroidView를 Backdrop 레이어에 안정적으로 합성합니다.
                     .graphicsLayer {
                         alpha = 1f
@@ -5021,6 +5083,14 @@ private fun NoteScreen(
             )
         }
         if (editingTools) ToolbarEditDialog(onDismiss = { editingTools = false })
+        if (showLayers) canvas?.let { view ->
+            LayersDialog(
+                view.layers,
+                onChanged = { view.layersChanged(); edits++ },
+                onDelete = { view.deleteLayer(it.id); edits++ },
+                onDismiss = { showLayers = false },
+            )
+        }
         if (pullingForPage) Box(
             Modifier
                 .align(if (pageLayout == PageLayoutMode.HORIZONTAL) Alignment.CenterEnd else Alignment.BottomCenter)
@@ -5429,10 +5499,19 @@ private fun NoteScreen(
                     // 일반 화면과 팝업 화면이 같은 마지막 페이지 값을 공유합니다.
                     penStore.setLastPage(activeReferenceNoteId, it)
                 },
-                onDrag = ::moveReference,
-                onClose = { referenceStretch = 1f; referenceOpen = false },
+                // Pinned in a split, the panel stays where the seam puts it.
+                onDrag = { x, y, spread -> if (split == SplitMode.NONE) moveReference(x, y, spread) },
+                onClose = { referenceStretch = 1f; referenceOpen = false; split = SplitMode.NONE },
             ) }
         }
+        if (referenceOpen) SplitSeam(split, splitRatio, containerSize.width.toFloat(), containerSize.height.toFloat()) {
+            splitRatio = it
+        }
+        if (choosingSplit) SplitDialog(split, onPick = { picked ->
+            choosingSplit = false
+            if (picked == SplitMode.NONE && split != SplitMode.NONE) referenceOpen = false
+            split = picked
+        }, onDismiss = { choosingSplit = false })
     }
         if (docked && !collapsed) {
             toolbar(Modifier.align(Alignment.TopCenter).then(
@@ -6011,12 +6090,13 @@ private fun ReferencePanel(
 
     val pageCount = opened?.first?.pages?.size ?: 0
     val panelShape = RoundedCornerShape(16.dp)
+    val rimLight = if (isDarkTheme()) 0.35f else 1f
     val panelBorder = Brush.linearGradient(
         listOf(
-            Color.White.copy(alpha = 0.94f),
+            Color.White.copy(alpha = 0.94f * rimLight),
             MaterialTheme.colorScheme.outline.copy(alpha = 0.76f),
             MaterialTheme.colorScheme.primary.copy(alpha = 0.34f),
-            Color.White.copy(alpha = 0.78f),
+            Color.White.copy(alpha = 0.78f * rimLight),
         ),
     )
 
@@ -6842,8 +6922,21 @@ private fun PageSidebar(
 private fun chipFill(selected: Boolean): Color = when {
     selected -> MaterialTheme.colorScheme.primaryContainer
     LocalSkin.current == Skin.MATERIAL -> MaterialTheme.colorScheme.surfaceContainerLowest
+    // A white wash on a dark panel greys it and pales the light text in it.
+    isDarkTheme() -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f)
     else -> Color.White.copy(alpha = 0.34f)
 }
+
+/** Whether the app is in its dark theme. */
+@Composable
+internal fun isDarkTheme(): Boolean = LocalSkinSettings.current.themeMode == AppThemeMode.DARK
+
+/**
+ * The desk the pages lie on. Paper stays paper in the dark theme, but the
+ * ground round it goes dark, so the screen is not a light frame around a note.
+ */
+@Composable
+internal fun deskColor(): Color = if (isDarkTheme()) Color(0xFF1C1D20) else Color(0xFFE9E7E2)
 
 /**
  * Paper sizes as other apps count them - pixels at 300 dpi - so a size typed
@@ -7352,6 +7445,8 @@ private fun Toolbar(
     onZoomBox: () -> Unit = {},
     onNoteMenu: () -> Unit = {},
     onCamera: () -> Unit = {},
+    onLayers: () -> Unit = {},
+    onSplit: () -> Unit = {},
 ) {
     val topRow: @Composable () -> Unit = {
         // ---- top row: the note, and what is done to the whole of it
@@ -7365,17 +7460,8 @@ private fun Toolbar(
             Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onBack) {
-                Icon(Reicons.ArrowBack, contentDescription = "뒤로가기")
-            }
-            IconButton(onClick = onTogglePages) {
-                Icon(Reicons.Search, contentDescription = "페이지 · 검색")
-            }
-            ToolButton(
-                Reicons.CropFree,
-                "영역 캡쳐",
-                mode == EditMode.CAPTURE,
-            ) { onMode(EditMode.CAPTURE) }
+            AppIconButton(onClick = onBack, icon = AppIcons.back, contentDescription = "뒤로가기")
+            AppIconButton(onClick = onTogglePages, icon = AppIcons.search, contentDescription = "페이지 · 검색")
 
             Text(
                 note.title,
@@ -7393,22 +7479,15 @@ private fun Toolbar(
                     .padding(horizontal = 16.dp),
             )
 
-            IconButton(onClick = onUndo, enabled = canUndo) {
-                Icon(Reicons.Undo, contentDescription = "실행취소")
-            }
-            IconButton(onClick = onRedo, enabled = canRedo) {
-                Icon(Reicons.Redo, contentDescription = "다시실행")
-            }
-            IconButton(onClick = onVoice) {
-                Icon(
-                    Reicons.Mic,
-                    contentDescription = if (recording) "녹음 중 · 녹음 패널 열기" else "녹음 패널 열기",
-                    tint = if (recording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-                )
-            }
-            IconButton(onClick = onRotate) {
-                Icon(Reicons.ScreenRotation, contentDescription = "노트 회전 ${noteRotation}도")
-            }
+            AppIconButton(onClick = onUndo, icon = AppIcons.undo, contentDescription = "실행취소", enabled = canUndo)
+            AppIconButton(onClick = onRedo, icon = AppIcons.redo, contentDescription = "다시실행", enabled = canRedo)
+            AppIconButton(
+                onClick = onVoice,
+                icon = AppIcons.mic,
+                contentDescription = if (recording) "녹음 중 · 녹음 패널 열기" else "녹음 패널 열기",
+                tint = if (recording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+            )
+            AppIconButton(onClick = onRotate, icon = AppIcons.rotate, contentDescription = "노트 회전 ${noteRotation}도")
             // 확대 아이콘과 수치는 분리해 둘을 감싸는 강조 칸은 만들지 않고,
             // 숫자는 행의 정중앙에 놓습니다.
             // The reading is the button: tapping it offers the zoom steps.
@@ -7425,35 +7504,19 @@ private fun Toolbar(
                     .padding(horizontal = 6.dp, vertical = 10.dp),
             )
             SkinButton(skin, onSkin)
-            IconButton(onClick = onToggleDock) {
-                Icon(
-                    if (docked) {
-                        Reicons.PictureInPictureAlt
-                    } else {
-                        Reicons.VerticalAlignTop
-                    },
-                    contentDescription = if (docked) "떼어내기" else "상단 고정",
-                )
-            }
+            // Docking stays in the function menu; the top row has no room to spare.
             // Only once there is somewhere to come back from. A bar that
             // has never been moved does not need a button for moving it
             // back, and a bar dragged to a corner and left there had no way
             // back at all short of docking it and undocking it again.
             if (canResetBar) {
-                IconButton(onClick = onResetBar) {
-                    Icon(
-                        Reicons.FilterCenterFocus,
-                        contentDescription = "도구막대 제자리로",
-                    )
-                }
+                AppIconButton(onClick = onResetBar, icon = AppIcons.resetBar, contentDescription = "도구막대 제자리로")
             }
             // The clock, the calculator, the to-do list and the calendar.
             ToolsMenuButton()
-            IconButton(onClick = onInputSettings) { Icon(Reicons.TouchApp, contentDescription = "손가락·제스처") }
-            IconButton(onClick = onAddPage) {
-                Icon(Reicons.Add, contentDescription = "페이지 추가")
-            }
-            IconButton(onClick = onNoteMenu) { Icon(Reicons.MoreVert, contentDescription = "노트 · 보기 방식") }
+            AppIconButton(onClick = onInputSettings, icon = AppIcons.input, contentDescription = "손가락·제스처")
+            AppIconButton(onClick = onAddPage, icon = AppIcons.addPage, contentDescription = "페이지 추가")
+            AppIconButton(onClick = onNoteMenu, icon = AppIcons.noteMenu, contentDescription = "노트 · 보기 방식")
             OtherNotesButton(otherNotes, onOpenNote)
         }
     }
@@ -7468,40 +7531,42 @@ private fun Toolbar(
                 else -> onMode(tool.mode)
             } },
             actions = buildList {
-                add(SpotiToolbarAction("뒤로가기", Reicons.ArrowBack, onClick = onBack))
-                add(SpotiToolbarAction("검색 · 페이지", Reicons.Search, slot = 8, onClick = onTogglePages))
-                add(SpotiToolbarAction("실행취소", Reicons.Undo, enabled = canUndo, onClick = onUndo))
-                add(SpotiToolbarAction("다시실행", Reicons.Redo, enabled = canRedo, onClick = onRedo))
-                add(SpotiToolbarAction("마이크", Reicons.Mic, selected = recording, slot = 0, onClick = onVoice))
-                add(SpotiToolbarAction(if (docked) "상단 고정 해제" else "상단 고정", Reicons.VerticalAlignTop,
+                add(SpotiToolbarAction("뒤로가기", AppIcons.back, onClick = onBack))
+                add(SpotiToolbarAction("검색 · 페이지", AppIcons.search, slot = 8, onClick = onTogglePages))
+                add(SpotiToolbarAction("실행취소", AppIcons.undo, enabled = canUndo, onClick = onUndo))
+                add(SpotiToolbarAction("다시실행", AppIcons.redo, enabled = canRedo, onClick = onRedo))
+                add(SpotiToolbarAction("마이크", AppIcons.mic, selected = recording, slot = 0, onClick = onVoice))
+                add(SpotiToolbarAction(if (docked) "상단 고정 해제" else "상단 고정", if (docked) AppIcons.undock else AppIcons.dock,
                     selected = docked, slot = 1, onClick = onToggleDock))
-                add(SpotiToolbarAction("노트 회전", Reicons.ScreenRotation, slot = 7, onClick = onRotate))
-                add(SpotiToolbarAction("캡쳐", Reicons.CropFree, slot = 5, onClick = { onMode(EditMode.CAPTURE) }))
-                add(SpotiToolbarAction("페이지 추가", Reicons.Add, onClick = onAddPage))
-                add(SpotiToolbarAction("필기 설정", Reicons.Create, slot = 4, onClick = {
+                add(SpotiToolbarAction("노트 회전", AppIcons.rotate, slot = 7, onClick = onRotate))
+                add(SpotiToolbarAction("캡쳐", AppIcons.capture, slot = 5, onClick = { onMode(EditMode.CAPTURE) }))
+                add(SpotiToolbarAction("페이지 추가", AppIcons.addPage, onClick = onAddPage))
+                add(SpotiToolbarAction("필기 설정", AppIcons.penSettings, slot = 4, onClick = {
                     if (mode !in PenStore.DEFAULTS) onMode(EditMode.PEN)
                     onEditPen()
                 }))
-                add(SpotiToolbarAction("사진", Reicons.AddPhotoAlternate, onClick = onPickImage))
-                add(SpotiToolbarAction("시계", Reicons.Clock, onClick = onClock))
-                add(SpotiToolbarAction("계산기", Reicons.Calculate, onClick = { Planner.show(ToolPanel.CALCULATOR) }))
-                add(SpotiToolbarAction("할 일", Reicons.Checklist, onClick = { Planner.show(ToolPanel.TODO) }))
-                add(SpotiToolbarAction("캘린더", Reicons.CalendarMonth, onClick = { Planner.show(ToolPanel.CALENDAR) }))
-                add(SpotiToolbarAction("손가락·제스처", Reicons.TouchApp, onClick = onInputSettings))
-                add(SpotiToolbarAction("도구 편집", Reicons.Tune, onClick = onEditTools))
-                add(SpotiToolbarAction("확대 필기창", Reicons.ZoomOutMap, onClick = onZoomBox))
-                add(SpotiToolbarAction("노트 · 보기 방식", Reicons.MoreVert, onClick = onNoteMenu))
-                add(SpotiToolbarAction("사진 찍어 넣기", Reicons.Image, onClick = onCamera))
-                add(SpotiToolbarAction("UI · 화면 설정", Reicons.AutoAwesomeMosaic, slot = 6, onClick = onScreenSettings))
-                add(SpotiToolbarAction("확대 · $zoomLabel", Reicons.ZoomOutMap, onClick = onZoomLabel))
-                add(SpotiToolbarAction("인터넷", Reicons.Language, onClick = { onWeb(SEARCH_HOME) }))
-                add(SpotiToolbarAction(if (minimapOn) "미니맵 끄기" else "미니맵 켜기", Reicons.PictureInPictureAlt,
+                add(SpotiToolbarAction("사진", AppIcons.picture, onClick = onPickImage))
+                add(SpotiToolbarAction("시계", AppIcons.clock, onClick = onClock))
+                add(SpotiToolbarAction("계산기", AppIcons.tools, onClick = { Planner.show(ToolPanel.CALCULATOR) }))
+                add(SpotiToolbarAction("할 일", AppIcons.todo, onClick = { Planner.show(ToolPanel.TODO) }))
+                add(SpotiToolbarAction("캘린더", AppIcons.calendar, onClick = { Planner.show(ToolPanel.CALENDAR) }))
+                add(SpotiToolbarAction("손가락·제스처", AppIcons.input, onClick = onInputSettings))
+                add(SpotiToolbarAction("레이어", AppIcons.layers, slot = 2, onClick = onLayers))
+                add(SpotiToolbarAction("화면 나누기", AppIcons.split, slot = 10, onClick = onSplit))
+                add(SpotiToolbarAction("도구 편집", AppIcons.editTools, onClick = onEditTools))
+                add(SpotiToolbarAction("확대 필기창", AppIcons.zoomBox, onClick = onZoomBox))
+                add(SpotiToolbarAction("노트 · 보기 방식", AppIcons.noteMenu, onClick = onNoteMenu))
+                add(SpotiToolbarAction("사진 찍어 넣기", AppIcons.camera, onClick = onCamera))
+                add(SpotiToolbarAction("UI · 화면 설정", AppIcons.skin, slot = 6, onClick = onScreenSettings))
+                add(SpotiToolbarAction("확대 · $zoomLabel", AppIcons.zoom, onClick = onZoomLabel))
+                add(SpotiToolbarAction("인터넷", AppIcons.web, onClick = { onWeb(SEARCH_HOME) }))
+                add(SpotiToolbarAction(if (minimapOn) "미니맵 끄기" else "미니맵 켜기", AppIcons.minimap,
                     selected = minimapOn, onClick = onToggleMinimap))
-                add(SpotiToolbarAction("지연 측정", Reicons.Speed, selected = showLatency, onClick = onToggleLatency))
-                if (canResetBar) add(SpotiToolbarAction("도구막대 제자리로", Reicons.FilterCenterFocus, onClick = onResetBar))
+                add(SpotiToolbarAction("지연 측정", AppIcons.latency, selected = showLatency, onClick = onToggleLatency))
+                if (canResetBar) add(SpotiToolbarAction("도구막대 제자리로", AppIcons.resetBar, onClick = onResetBar))
             },
-            notes = otherNotes.map { other -> SpotiToolbarAction(other.title, Reicons.Description) { onOpenNote(other) } },
-            ai = AI_SITES.map { (name, url) -> SpotiToolbarAction(name, Reicons.AutoAwesome) { onWeb(url) } },
+            notes = otherNotes.map { other -> SpotiToolbarAction(other.title, AppIcons.note) { onOpenNote(other) } },
+            ai = AI_SITES.map { (name, url) -> SpotiToolbarAction(name, AppIcons.ai) { onWeb(url) } },
             topRow = topRow,
             penOptions = { availableWidth ->
               val inkOptions: @Composable RowScope.() -> Unit = {
@@ -7512,8 +7577,9 @@ private fun Toolbar(
                 }
                 if (mode.tints) QuickColors(pen.colorArgb, onQuickColor, onEditPen)
                 if (mode.tints) {
-                    IconButton(onClick = onPalette, modifier = Modifier.size(32.dp)) {
-                        Icon(Reicons.Palette, "색상 템플릿", Modifier.size(20.dp))
+                    var paletteTaps by remember { mutableIntStateOf(0) }
+                    IconButton(onClick = { paletteTaps++; onPalette() }, modifier = Modifier.size(32.dp)) {
+                        AppIcon(AppIcons.palette, "색상 템플릿", Modifier.size(20.dp), play = paletteTaps)
                     }
                 }
                 if (mode in STRAIGHT_LINE_MODES) {
@@ -7548,9 +7614,7 @@ internal fun rulerLabel(kind: RulerKind): String = when (kind) {
 private fun OtherNotesButton(notes: List<NoteMeta>, onOpenNote: (NoteMeta) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
-        IconButton(onClick = { open = true }) {
-            Icon(Reicons.Menu, contentDescription = "다른 노트")
-        }
+        AppIconButton(onClick = { open = true }, icon = AppIcons.otherNotes, contentDescription = "다른 노트")
         DropdownMenu(open, onDismissRequest = { open = false }) {
             if (notes.isEmpty()) {
                 DropdownMenuItem(

@@ -68,7 +68,7 @@ internal fun ToolPanelHost(panel: ToolPanel) {
 internal fun ToolsMenuButton() {
     var open by remember { mutableStateOf(false) }
     Box {
-        IconButton(onClick = { open = true }) { Icon(Reicons.Calculate, contentDescription = "도구") }
+        AppIconButton(onClick = { open = true }, icon = AppIcons.tools, contentDescription = "도구")
         DropdownMenu(open, onDismissRequest = { open = false }) {
             DropdownMenuItem(
                 text = { Text("시계") },

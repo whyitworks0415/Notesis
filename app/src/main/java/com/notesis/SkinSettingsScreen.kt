@@ -167,6 +167,25 @@ fun SkinSettingsScreen(
             }
 
             item {
+                val context = androidx.compose.ui.platform.LocalContext.current
+                SectionLabel("아이콘")
+                LiquidSegmentedControl(
+                    segments = listOf("Reicon", "AnimateIcons"),
+                    selectedIndex = if (AppIconStyle.animated) 1 else 0,
+                    onSelected = { index -> AppIconStyle.setAnimated(context, index == 1) },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                    useLiquidGlass = false,
+                )
+                if (AppIconStyle.animated) {
+                    ToggleRow(
+                        "아이콘 움직임",
+                        "누르거나 고를 때 아이콘이 한 번 움직입니다",
+                        AppIconStyle.animate,
+                    ) { AppIconStyle.setAnimate(context, it) }
+                }
+            }
+
+            item {
                 SectionLabel("읽기 쉽게")
                 ToggleRow(
                     "고대비",

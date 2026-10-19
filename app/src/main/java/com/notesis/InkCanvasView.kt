@@ -1241,7 +1241,7 @@ class InkCanvasView @JvmOverloads constructor(
         set(value) {
             if (field == value) return
             field = value
-            if (!value) predictionHead.clear()
+            if (!value) { predictionHead.clear(); subframe.clear() }
         }
 
     /** Enables diagnostic sampling only while its HUD is actually visible. */
@@ -1569,6 +1569,13 @@ class InkCanvasView @JvmOverloads constructor(
     private fun eraserScreenRadius(): Float =
         (eraserWidth * resources.displayMetrics.density / 2f).coerceAtLeast(0.5f)
     private val predictionHead = PredictionHeadView(context)
+    private val subframe = SubframeBlurView(context)
+    private val subframeTrack = SubframeTrack()
+
+    /** [SUBFRAME_OFF], [SUBFRAME_BLUR] or [SUBFRAME_GHOST]: the pen's in-between travel shown ahead of the tip. */
+    var subframeMode: Int
+        get() = subframe.mode
+        set(value) { subframe.mode = value }
     // The laser pointer is gone; its view draws the ring a button tap leaves in reading mode.
     private val laser = LaserView(context).apply { tint(GESTURE_TRAIL_COLOR) }
     private var gestureTrail = false
@@ -2033,6 +2040,7 @@ class InkCanvasView @JvmOverloads constructor(
         addView(wet, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(compatWet, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(predictionHead, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        addView(subframe, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(laser, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(ruler, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(eyedropper, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
@@ -2223,7 +2231,7 @@ class InkCanvasView @JvmOverloads constructor(
         refiner.shutdownNow()
         selectionWorker.shutdownNow()
         thumbnailWorker.shutdownNow()
-        predictionHead.clear()
+        predictionHead.clear(); subframe.clear(); subframeTrack.reset()
         pdf?.diagnostics = null
         pdf?.let(releasePdf)
         pdf = null
@@ -2626,6 +2634,7 @@ class InkCanvasView @JvmOverloads constructor(
         postDelayed(inkCacheRunnable, INK_CACHE_IDLE_MS)
         document.markEdited()
         for (page in changed) {
+            page.settleLayers(document.layers)
             page.dirty = true
             page.revision++
             page.renderState = RenderState.Dirty
@@ -2674,6 +2683,7 @@ class InkCanvasView @JvmOverloads constructor(
         maskLoader?.let { page.masks.addAll(0, it(page, epsilon)) }
         page.savedOnDisk = if (page.dirty) 0 else page.strokes.size
         page.loaded = true
+        page.settleLayers(document.layers)
         page.tessellatedFor = bucket
         return true
     }
@@ -2695,6 +2705,7 @@ class InkCanvasView @JvmOverloads constructor(
             pdfPageIndex = source.pdfPageIndex,
         )
         copy.strokes += source.strokes
+        copy.hiddenStrokes += source.hiddenStrokes
         copy.masks += source.masks.map { PageMask(it.stroke) }
         copy.images += source.images.map {
             it.copy()
@@ -2718,6 +2729,7 @@ class InkCanvasView @JvmOverloads constructor(
             images = page.images.map { it.copy() }.toMutableList(),
             masks = page.masks.map { PageMask(it.stroke) }.toMutableList(),
             strokes = page.strokes.toMutableList(),
+            hiddenStrokes = page.hiddenStrokes.toMutableList(),
         )
     }
 
@@ -3368,7 +3380,7 @@ class InkCanvasView @JvmOverloads constructor(
                         event.getY(event.actionIndex),
                         event.eventTime,
                     )
-                    predictionHead.clear()
+                    predictionHead.clear(); subframe.clear(); subframeTrack.reset()
                     // MotionEventPredictor is useful only for wet freehand ink.
                     // Recording eraser/lasso/shape gestures ran its filter at
                     // full S Pen rate even though those tools never call predict().
@@ -3593,6 +3605,7 @@ class InkCanvasView @JvmOverloads constructor(
                         compatWet.add(strokeId, inkEvent, pointerId, predicted)
                     } else {
                         updatePredictionHead(inkEvent, predicted, pointerId, leadMs)
+                        updateSubframe(inkEvent, pointerId)
                     }
                 } finally {
                     if (predicted !== rawPrediction) predicted?.recycle()
@@ -3607,7 +3620,7 @@ class InkCanvasView @JvmOverloads constructor(
                 // A palm/finger lifting must not finish the stylus stroke.
                 if (event.getPointerId(event.actionIndex) != pointerId) return true
                 finishGestureTrail(event)
-                predictionHead.clear()
+                predictionHead.clear(); subframe.clear(); subframeTrack.reset()
                 if (readingWithButton) {
                     // Include the lift position even when no final MOVE was delivered.
                     updateReadButtonCapture(event, event.actionIndex)
@@ -3750,7 +3763,7 @@ class InkCanvasView @JvmOverloads constructor(
                     capturing = false
                     captureRect.setEmpty()
                 }
-                predictionHead.clear()
+                predictionHead.clear(); subframe.clear(); subframeTrack.reset()
                 if (predictionEnabled && activeStrokeId != null) predictor.record(event)
                 activeStrokeId?.let { id -> withWetEvent(event) { wet.cancelStroke(id, it) } }
                 cancelCompatWet(activeStrokeId)
@@ -3956,6 +3969,31 @@ class InkCanvasView @JvmOverloads constructor(
         )
     }
 
+    /**
+     * Feeds every sample of the event, history included, to the sub-frame
+     * track and shows how far the pen will have gone by the next frame.
+     */
+    private fun updateSubframe(real: MotionEvent, pointerId: Int) {
+        if (subframe.mode == SUBFRAME_OFF) return
+        if (!softPredictionHead || viewRotation != 0f || !tool.isFreehandPen() || tool.isDabbed() || dottedPattern != 0) {
+            subframe.clear()
+            return
+        }
+        val index = real.findPointerIndex(pointerId)
+        if (index < 0) return
+        for (h in 0 until real.historySize) {
+            subframeTrack.add(real.getHistoricalX(index, h), real.getHistoricalY(index, h), real.getHistoricalEventTime(h))
+        }
+        subframeTrack.add(real.getX(index), real.getY(index), real.eventTime)
+        val frameMs = 1000f / (display?.refreshRate?.takeIf { it > 1f } ?: 60f)
+        val lead = subframeTrack.lead(frameMs) ?: run { subframe.clear(); return }
+        val pressureScale = if (tool == Tool.PRESSURE_PEN || tool == Tool.VANISHING_PEN) {
+            0.35f + real.getPressure(index).coerceIn(0f, 1f) * 0.65f
+        } else 1f
+        subframe.show(real.getX(index), real.getY(index), lead[0], lead[1], colorArgb,
+            strokeWidth * currentScale() * pressureScale)
+    }
+
     private fun updatePredictionHead(
         real: MotionEvent,
         predicted: MotionEvent?,
@@ -4052,7 +4090,7 @@ class InkCanvasView @JvmOverloads constructor(
         }
         selectingText = false
         if (activeStylusPointer != null) onDrawingChanged?.invoke(false)
-        predictionHead.clear()
+        predictionHead.clear(); subframe.clear(); subframeTrack.reset()
         activeStylusPointer = null
         if (Build.VERSION.SDK_INT >= 35) {
             // Let an idle note fall back to the display's normal adaptive rate.
@@ -4842,6 +4880,7 @@ class InkCanvasView @JvmOverloads constructor(
                         page.masks.addAll(0, masks)
                     }
                     page.loaded = true
+                    page.settleLayers(document.layers)
                     page.tessellatedFor = minOf(target, BASE_TESSELLATION_SCALE)
                     page.renderState = RenderState.ViewportCached
                 }
@@ -4909,8 +4948,9 @@ class InkCanvasView @JvmOverloads constructor(
         for ((index, page) in document.pages.withIndex()) {
             if (index in keep || !page.loaded || page.dirty) continue
             if (protected.containsKey(page)) continue
-            page.savedStrokeCount = page.strokes.size
+            page.savedStrokeCount = page.allStrokes.size
             page.strokes.clear()
+            page.hiddenStrokes.clear()
             page.masks.clear()
             dry.dropStrokeIndex(page)
             page.loaded = false
@@ -5024,6 +5064,7 @@ class InkCanvasView @JvmOverloads constructor(
                         page.masks.addAll(0, pageMasks)
                     }
                     page.loaded = true
+                    page.settleLayers(document.layers)
                     page.tessellatedFor = BASE_TESSELLATION_SCALE
                     page.renderState = RenderState.ViewportCached
                     changed = true
@@ -5603,7 +5644,7 @@ class InkCanvasView @JvmOverloads constructor(
         wet.cancelStroke(strokeId)
         cancelCompatWet(strokeId)
         activeStrokeId = null
-        predictionHead.clear()
+        predictionHead.clear(); subframe.clear(); subframeTrack.reset()
         movingLasso = true
         liftedLassoStrokes = Collections.newSetFromMap(IdentityHashMap<Stroke, Boolean>()).apply {
             addAll(lassoStrokes)
@@ -5683,7 +5724,7 @@ class InkCanvasView @JvmOverloads constructor(
         // A group comes whole, wherever the loop happened to cut it.
         if (groups.isNotEmpty()) {
             for (stroke in page.strokes) {
-                if (StrokeTags.group(stroke) in groups && stroke !in strokes) strokes += stroke
+                if (StrokeTags.group(stroke) in groups && onActiveLayer(stroke) && stroke !in strokes) strokes += stroke
             }
             for (image in page.images) {
                 if (image.group in groups && images.none { it === image }) images += image
@@ -5693,6 +5734,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     private fun selectable(stroke: Stroke): Boolean {
         if (!selectLocked && StrokeTags.locked(stroke)) return false
+        if (!onActiveLayer(stroke)) return false
         return if (isHighlighter(stroke)) lassoHighlighter else lassoInk
     }
 
@@ -5867,6 +5909,59 @@ class InkCanvasView @JvmOverloads constructor(
     fun lassoSelectionGrouped(): Boolean =
         lassoStrokes.any { StrokeTags.group(it) != 0 } || lassoImages.any { it.group != 0 }
 
+    /** Whether the pen's layer allows editing [stroke]: always, on every layer at once. */
+    private fun onActiveLayer(stroke: Stroke): Boolean = document.layers.editable(StrokeLayers.of(stroke))
+
+    /** The note's layers, for the layer panel; call [layersChanged] after changing them. */
+    val layers: NoteLayers get() = document.layers
+
+    /**
+     * Applies an edit of the layer list: what is shown, the order, and which
+     * layer edits are held to. Selections that the new layer does not allow are dropped.
+     */
+    fun layersChanged() {
+        clearLassoSelection()
+        for (page in document.pages) if (page.loaded) {
+            if (page.settleLayers(document.layers)) page.renderState = RenderState.Dirty
+        }
+        document.markEdited()
+        dry.invalidate()
+        document.notifyOtherCanvases(sharedInkChanged)
+        onStrokesChanged?.invoke()
+        invalidate()
+    }
+
+    /**
+     * Removes a layer and its ink from every page, reading in pages not yet
+     * loaded so nothing of it is left on disk. History is cleared, since undo
+     * could otherwise bring back ink of a layer that no longer exists.
+     */
+    fun deleteLayer(id: Int) {
+        val layers = document.layers
+        if (layers.list.size <= 1) return
+        clearLassoSelection()
+        val changed = ArrayList<Page>()
+        for (page in document.pages) {
+            if (!ensureLoaded(page)) continue
+            val doomed = page.allStrokes.filter { StrokeLayers.of(it) == id }
+            if (doomed.isEmpty()) continue
+            val gone: MutableSet<Stroke> = Collections.newSetFromMap(IdentityHashMap())
+            gone.addAll(doomed)
+            page.strokes.removeAll(gone::contains)
+            page.hiddenStrokes.removeAll(gone::contains)
+            dry.dropStrokeIndex(page)
+            page.savedOnDisk = 0
+            changed += page
+        }
+        layers.list.removeAll { it.id == id }
+        if (layers.active == id) layers.active = NoteLayers.ALL
+        if (layers.writeTo == id) layers.writeTo = layers.list.first().id
+        undoStack.clear()
+        redoStack.clear()
+        afterEdit(*changed.toTypedArray())
+        layersChanged()
+    }
+
     /** Everything that can be erased on page [index] goes, in one undo step. Locked objects stay unless erasable. */
     fun clearPage(index: Int) {
         val page = document.pages.getOrNull(index) ?: return
@@ -5874,7 +5969,7 @@ class InkCanvasView @JvmOverloads constructor(
         clearLassoSelection()
         clearImageSelection()
         val group = nextEditGroup++
-        val gone = page.strokes.filter { eraseLocked || !StrokeTags.locked(it) }
+        val gone = page.strokes.filter { (eraseLocked || !StrokeTags.locked(it)) && onActiveLayer(it) }
         if (gone.isNotEmpty()) {
             val goneSet: MutableSet<Stroke> = Collections.newSetFromMap(IdentityHashMap())
             goneSet.addAll(gone)
@@ -6523,7 +6618,7 @@ class InkCanvasView @JvmOverloads constructor(
             val b = stroke.shape.computeBoundingBox() ?: continue
             val cx = (b.xMin + b.xMax) / 2f
             val cy = (b.yMin + b.yMax) / 2f
-            if (cx in container.x..right && cy in container.y..bottom && stroke !in lassoStrokes) lassoStrokes += stroke
+            if (cx in container.x..right && cy in container.y..bottom && onActiveLayer(stroke) && stroke !in lassoStrokes) lassoStrokes += stroke
         }
         for (image in page.images) {
             if (image === container || lassoImages.any { it === image }) continue
@@ -6771,6 +6866,7 @@ class InkCanvasView @JvmOverloads constructor(
             for (candidate in candidates) {
                 if (filtered && !erasable(candidate)) continue
                 if (!eraseLocked && StrokeTags.locked(candidate)) continue
+                if (!onActiveLayer(candidate)) continue
                 if ((segment?.intersects(candidate.shape, IDENTITY) == true) ||
                     tip.intersects(candidate.shape, IDENTITY)
                 ) {
@@ -7057,6 +7153,7 @@ class InkCanvasView @JvmOverloads constructor(
         with(Intersection) {
             for (candidate in dry.strokesIn(page, box.xMin, box.yMin, box.xMax, box.yMax)) {
                 if (!eraseLocked && StrokeTags.locked(candidate)) continue
+                if (!onActiveLayer(candidate)) continue
                 val bounds = candidate.shape.computeBoundingBox() ?: continue
                 val cx = (bounds.xMin + bounds.xMax) / 2f
                 val cy = (bounds.yMin + bounds.yMax) / 2f

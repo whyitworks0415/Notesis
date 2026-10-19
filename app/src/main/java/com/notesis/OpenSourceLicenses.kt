@@ -82,6 +82,13 @@ internal val OPEN_SOURCE_COMPONENTS = listOf(
         listOf("spotiglass/upstream/SpotiFLAC.LICENSE"),
     ),
     OpenSourceComponent(
+        "AnimateIcons 0.12.1 아이콘 (Kotlin으로 옮김) · Lucide",
+        "Avijit Dey · Lucide Icons and Contributors · Cole Bemis",
+        "MIT · ISC",
+        "https://animateicons.in",
+        listOf("animateicons/LICENSE", "animateicons/THIRD_PARTY_NOTICES.md"),
+    ),
+    OpenSourceComponent(
         "Reicon 1.2.5 아이콘",
         "REICON",
         "MIT",

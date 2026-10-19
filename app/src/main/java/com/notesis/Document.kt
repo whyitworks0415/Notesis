@@ -99,7 +99,10 @@ internal object StrokeTags {
     fun tagOf(packed: Int): Int = packed ushr 8
 
     /** A stroke rebuilt from another (moved, turned, re-meshed) is still the same object to the user. */
-    fun carry(from: Stroke, to: Stroke) { if (from !== to) of(from).let { if (it != 0) set(to, it) } }
+    fun carry(from: Stroke, to: Stroke) {
+        if (from !== to) of(from).let { if (it != 0) set(to, it) }
+        StrokeLayers.carry(from, to)
+    }
 
     // ponytail: random ids, collisions are one in four million per pair of groups on a page.
     fun newGroup(): Int = 1 + java.util.concurrent.ThreadLocalRandom.current().nextInt(MAX_GROUP)
@@ -183,6 +186,8 @@ class Page(
     /** Masking tape, drawn over everything, because covering is the job. */
     val masks: MutableList<PageMask> = mutableListOf(),
     val strokes: MutableList<Stroke> = mutableListOf(),
+    /** Ink on hidden layers: kept and saved, but neither drawn nor hit. See [settleLayers]. */
+    val hiddenStrokes: MutableList<Stroke> = mutableListOf(),
 ) {
     /**
      * Whether this page's strokes differ from what is on disk. Autosave fires
@@ -249,6 +254,9 @@ class Page(
  * band of it, and [topOf] is the only thing that decides where.
  */
 class Document(val pages: MutableList<Page>) {
+    /** The note's layers; saved in meta.json. */
+    val layers = NoteLayers()
+
     /** Runtime ownership only; simultaneous canvases share edited page objects. */
     var liveCanvasCount: Int = 0
         private set
@@ -905,7 +913,7 @@ class NoteStore(context: Context) {
                     if (file.isFile) file.copyTo(imageFile(targetId, imageId).also { it.parentFile?.mkdirs() })
                     image.copy(id = imageId)
                 }.toMutableList()
-                writeStrokes(File(pagesDir, "$pageId.bin"), old.strokes)
+                writeStrokes(File(pagesDir, "$pageId.bin"), old.allStrokes)
                 if (old.masks.isNotEmpty()) writeStrokes(File(pagesDir, "$pageId.mask"), old.masks.map { it.stroke })
                 target.pages += Page(
                     id = pageId, width = old.width, height = old.height,
@@ -917,8 +925,8 @@ class NoteStore(context: Context) {
                 ).also {
                     it.loaded = false
                     it.dirty = false
-                    it.savedStrokeCount = old.strokes.size
-                    it.savedOnDisk = old.strokes.size
+                    it.savedStrokeCount = old.allStrokes.size
+                    it.savedOnDisk = old.allStrokes.size
                 }
             }
             if (pdfChanged) {
@@ -1178,7 +1186,7 @@ class NoteStore(context: Context) {
             pages += page
         }
         if (pages.isEmpty()) pages += Page()
-        return Document(pages)
+        return Document(pages).also { it.layers.copyFrom(NoteLayers.fromJson(json.optJSONObject("layers"))) }
     }
 
     /**
@@ -1205,7 +1213,7 @@ class NoteStore(context: Context) {
             // A page never loaded cannot have changed, and its file must stay.
             if (!page.loaded || !page.dirty) continue
             // The vanishing pen's strokes live only in memory: leave the note and they are gone.
-            val kept = page.strokes.filterNot { Tool.isVanishing(it.brush.family) }
+            val kept = page.allStrokes.filterNot { Tool.isVanishing(it.brush.family) }
             appendOrWriteStrokes(File(dir, "${page.id}.bin"), kept, page.savedOnDisk)
             page.savedOnDisk = kept.size
             writeStrokes(File(dir, "${page.id}.mask"), page.masks.map { it.stroke })
@@ -1279,19 +1287,21 @@ class NoteStore(context: Context) {
                     PageMask(mask.stroke).also { it.revealed = mask.revealed }
                 }.takeIf { copyInk }?.toMutableList() ?: mutableListOf(),
                 strokes = if (copyInk) live.strokes.toMutableList() else mutableListOf(),
+                hiddenStrokes = if (copyInk) live.hiddenStrokes.toMutableList() else mutableListOf(),
             ).also {
                 it.dirty = live.dirty
                 it.tessellatedFor = live.tessellatedFor
                 // A metadata-only copy behaves like an unloaded page so save()
                 // neither writes its empty lists nor reports an empty count.
                 it.loaded = copyInk
-                it.savedStrokeCount = if (live.loaded) live.strokes.size else live.savedStrokeCount
+                it.savedStrokeCount = if (live.loaded) live.allStrokes.size else live.savedStrokeCount
                 it.savedOnDisk = live.savedOnDisk
                 it.revision = live.revision
             }
             SavePage(live, copy, live.revision)
         }
-        return SaveSnapshot(Document(captured.map { it.copy }.toMutableList()), captured)
+        val copy = Document(captured.map { it.copy }.toMutableList()).also { it.layers.copyFrom(document.layers) }
+        return SaveSnapshot(copy, captured)
     }
 
     /**
@@ -1903,7 +1913,7 @@ class NoteStore(context: Context) {
                     .put("tocLevel", page.tocLevel)
                     .put("bookmark", page.bookmarked)
                     .put("links", JSONObject(page.links.mapKeys { it.key.toString() }))
-                    .put("strokes", if (page.loaded) page.strokes.size else page.savedStrokeCount)
+                    .put("strokes", if (page.loaded) page.allStrokes.size else page.savedStrokeCount)
                     .put("images", imagesToJson(page)),
             )
         }
@@ -1915,9 +1925,10 @@ class NoteStore(context: Context) {
             .put("modified", System.currentTimeMillis())
             .put(
                 "strokeCount",
-                document.pages.sumOf { if (it.loaded) it.strokes.size else it.savedStrokeCount },
+                document.pages.sumOf { if (it.loaded) it.allStrokes.size else it.savedStrokeCount },
             )
             .put("pages", pages)
+            .put("layers", document.layers.toJson())
         File(root, "$id/meta.json").writeText(json.toString())
     }
 
@@ -1998,6 +2009,8 @@ class NoteStore(context: Context) {
         }.toByteArray()
         out.writeInt(inputs.size)
         out.write(inputs)
+        // Version 3: the layer the stroke is on, after everything version 2 had.
+        out.writeByte(StrokeLayers.of(stroke))
     }
 
     private fun writeStrokes(file: File, strokes: List<Stroke>) {
@@ -2042,11 +2055,12 @@ class NoteStore(context: Context) {
                     // app used a coarser mesh gets the current fidelity for free.
                     input.readFloat()
                     val bytes = ByteArray(input.readInt()).also { input.readFully(it) }
+                    val layer = if (storedVersion >= 3) input.readUnsignedByte() else NoteLayers.BASE
                     val brush = brushes.getOrPut(Triple(tool, color, size)) {
                         val family = tool.brushFamily()
                         Brush.createWithColorIntArgb(family, color, size, inkEpsilon(family, size, epsilon))
                     }
-                    records += StoredStroke(tool, rawTool, brush, bytes)
+                    records += StoredStroke(tool, rawTool, brush, bytes, layer)
                 }
             }
         }
@@ -2081,7 +2095,8 @@ class NoteStore(context: Context) {
         /** Finer outlines than the live viewport, where PDF zoom has no fixed limit. */
         private const val PDF_EXPORT_EPSILON = 0.02f
         private const val SAVE_ATTEMPTS = 3
-        const val VERSION = 2
+        /** 3 added a layer byte to each stroke; 1 and 2 still read, as layer 0. */
+        const val VERSION = 3
     }
 }
 
@@ -2105,7 +2120,7 @@ internal fun canAppendStrokes(onDisk: Int, total: Int, fileExists: Boolean): Boo
     fileExists && onDisk > 0 && total > onDisk
 
 /** One stroke as it sits in a page file, before its geometry is rebuilt. */
-internal class StoredStroke(val tool: Tool, val rawTool: Int, val brush: Brush, val inputs: ByteArray)
+internal class StoredStroke(val tool: Tool, val rawTool: Int, val brush: Brush, val inputs: ByteArray, val layer: Int = NoteLayers.BASE)
 
 /**
  * Rebuilds strokes from their saved inputs on every spare core.
@@ -2158,6 +2173,7 @@ internal object StrokeBuilder {
         val loaded = Stroke(record.brush,
             if (record.tool == Tool.PEN) tidiedPenInputs(inputs, record.brush.size) else inputs)
         StrokeTags.set(loaded, StrokeTags.tagOf(record.rawTool))
+        StrokeLayers.set(loaded, record.layer)
         loaded
     }.getOrNull()
 }
