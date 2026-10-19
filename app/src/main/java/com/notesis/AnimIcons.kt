@@ -224,13 +224,19 @@ private fun DrawScope.drawPart(part: IconPart, s: Float, color: Color, alpha: Fl
     }
 }
 
+/**
+ * The first [fraction] of [path]. The measure and the output are reused; icons
+ * are drawn on the main thread only, one path at a time, so one pair suffices.
+ */
+private val trimMeasure by lazy { PathMeasure() }
+private val trimOut by lazy { Path() }
+
 private fun trimmed(path: Path, fraction: Float): Path {
-    val out = Path()
-    if (fraction <= 0f) return out
-    val measure = PathMeasure()
-    measure.setPath(path, false)
-    measure.getSegment(0f, measure.length * fraction, out, true)
-    return out
+    trimOut.reset()
+    if (fraction <= 0f) return trimOut
+    trimMeasure.setPath(path, false)
+    trimMeasure.getSegment(0f, trimMeasure.length * fraction, trimOut, true)
+    return trimOut
 }
 
 /**

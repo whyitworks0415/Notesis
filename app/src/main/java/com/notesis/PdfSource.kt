@@ -103,6 +103,28 @@ class PdfSource private constructor(
     @Volatile private var viewportGeneration = 0
     @Volatile private var wantedPages: Set<Int> = emptySet()
 
+    /** Prefetch renders put aside while the pen writes; guarded by [stateLock]. */
+    private val penDeferral = PenDeferral<Long, Runnable>()
+
+    /**
+     * True while a stylus is on the page; the canvas sets it on pen down and
+     * clears it on lift or cancel.
+     *
+     * A whole-page render holds the one worker for tens of milliseconds and
+     * competes with the ink for the CPU. While the pen writes, renders only
+     * [prioritizePages] asked for - the halo of pages around the one in use -
+     * are put aside when they reach the front of the queue, before opening
+     * PdfRenderer, and go back on the queue in their old order once the pen
+     * lifts. Anything a page being drawn asks for, its preview and tiles
+     * included, renders as before: nothing on screen waits for the pen.
+     */
+    var penActive: Boolean
+        get() = penDeferral.penDown
+        set(value) {
+            val resumed = synchronized(stateLock) { penDeferral.setPen(value) }
+            for (job in resumed) runCatching { worker.execute(job) }
+        }
+
     @Volatile
     private var closed = false
 
@@ -119,7 +141,19 @@ class PdfSource private constructor(
     private val detailBytes = (cacheBytes - previewBytes).coerceAtLeast(2)
     private val cache = object : LruCache<Long, Bitmap>((detailBytes / 2).coerceAtLeast(1)) {
         override fun sizeOf(key: Long, value: Bitmap) = value.byteCount
+        override fun entryRemoved(evicted: Boolean, key: Long, oldValue: Bitmap, newValue: Bitmap?) {
+            pagesHeld.remove(key, oldValue)
+        }
     }
+
+    /**
+     * What [cache] holds, readable without counting as a use - the page-cache
+     * twin of [tilesHeld]. Thumbnails look here: they used to copy the whole
+     * cache with snapshot() and filter it on every call, and reading through
+     * the cache instead would make a minimap's pages its newest entries, ahead
+     * of the pages actually on screen.
+     */
+    private val pagesHeld = java.util.concurrent.ConcurrentHashMap<Long, Bitmap>()
 
     private data class TileKey(
         val pageIndex: Int,
@@ -148,19 +182,40 @@ class PdfSource private constructor(
      * left the cache may still sit in a display list recorded a moment ago,
      * and repainting it while that list is drawn would flash the wrong text.
      */
-    private val tilePool = ArrayDeque<Pair<Long, Bitmap>>()
+    private val tilePool = ArrayDeque<PooledTile>()
+
+    /**
+     * What [tilePool] holds, in bytes; guarded by [tilePool]. Kept as a sum
+     * rather than added up on every offer, and from the size each bitmap had
+     * going in - a recycled bitmap reports nothing.
+     */
+    private var pooledBytes = 0L
+
+    private class PooledTile(val since: Long, val bitmap: Bitmap, val bytes: Long)
 
     private fun offerToPool(bitmap: Bitmap) {
-        if (bitmap.isRecycled || !bitmap.isMutable) return
+        if (closed || bitmap.isRecycled || !bitmap.isMutable) return
+        // Spares are memory the tile cache's own budget does not see: a few,
+        // and all of them together never more than a sixth of what the cache
+        // may hold. Counted in total bytes - one spare used to be let in
+        // whatever its size, so the pool could sit wholly outside the budget.
+        val limit = tileCache.maxSize().toLong() / TILE_POOL_SHARE
+        val bytes = bitmap.byteCount.toLong()
+        if (bytes > limit) return
         synchronized(tilePool) {
-            tilePool.addLast(android.os.SystemClock.uptimeMillis() to bitmap)
-            // Spares are memory on top of the tile cache: a few, and never more
-            // than a sixth of what the cache itself may hold.
-            val limit = tileCache.maxSize().toLong() / 6
-            while (tilePool.size > TILE_POOL_SIZE ||
-                (tilePool.size > 1 && tilePool.sumOf { it.second.byteCount.toLong() } > limit)) {
-                tilePool.removeFirst()
+            tilePool.addLast(PooledTile(android.os.SystemClock.uptimeMillis(), bitmap, bytes))
+            pooledBytes += bytes
+            while (tilePool.size > TILE_POOL_SIZE || pooledBytes > limit) {
+                pooledBytes -= tilePool.removeFirst().bytes
             }
+        }
+    }
+
+    /** Lets go of every spare tile; they are only ever a saving on allocation. */
+    fun trimPool() {
+        synchronized(tilePool) {
+            tilePool.clear()
+            pooledBytes = 0L
         }
     }
 
@@ -168,10 +223,11 @@ class PdfSource private constructor(
     private fun tileBitmap(width: Int, height: Int): Bitmap {
         val now = android.os.SystemClock.uptimeMillis()
         val reused = synchronized(tilePool) {
-            val at = tilePool.indexOfFirst { (since, bitmap) ->
-                now - since >= POOL_REST_MS && bitmap.width == width && bitmap.height == height && !bitmap.isRecycled
+            val at = tilePool.indexOfFirst { spare ->
+                val bitmap = spare.bitmap
+                now - spare.since >= POOL_REST_MS && bitmap.width == width && bitmap.height == height && !bitmap.isRecycled
             }
-            if (at >= 0) tilePool.removeAt(at).second else null
+            if (at >= 0) tilePool.removeAt(at).also { pooledBytes -= it.bytes }.bitmap else null
         }
         return reused?.apply { eraseColor(Color.WHITE) } ?: newBitmap(width, height)
     }
@@ -222,6 +278,8 @@ class PdfSource private constructor(
                 worker.queue.clear()
                 pending.clear()
                 pendingTiles.clear()
+                // What was put aside for the pen belonged to the old viewport.
+                penDeferral.clear()
             }
         }
         // Nearest first, and only as many at full size as the page cache
@@ -235,15 +293,16 @@ class PdfSource private constructor(
             val fullBytes = pageBytes(full, A4_ASPECT)
             val smallBytes = pageBytes(MIN_PAGE_WIDTH, A4_ASPECT)
             when {
+                // Prefetch, not the screen: see [penActive].
                 fullBytes <= budget -> {
                     budget -= fullBytes
-                    bitmap(page, full, request = true)
+                    pageBitmap(page, full, request = true, onScreen = false)
                 }
                 smallBytes <= budget -> {
                     budget -= smallBytes
-                    bitmap(page, MIN_PAGE_WIDTH, request = true)
+                    pageBitmap(page, MIN_PAGE_WIDTH, request = true, onScreen = false)
                 }
-                else -> bitmap(page, MIN_PAGE_WIDTH, request = false)
+                else -> pageBitmap(page, MIN_PAGE_WIDTH, request = false, onScreen = false)
             }
         }
     }
@@ -257,7 +316,7 @@ class PdfSource private constructor(
         if (closed) return
         tileCache.evictAll()
         // Evicting fills the pool; giving memory back means emptying it too.
-        synchronized(tilePool) { tilePool.clear() }
+        trimPool()
         if (severe) cache.evictAll() else cache.trimToSize(cache.maxSize() / 2)
     }
 
@@ -298,6 +357,20 @@ class PdfSource private constructor(
         sharing: Int = 1,
         /** Height over width, for what one page at a size costs. */
         aspect: Float = A4_ASPECT,
+    ): Bitmap? = pageBitmap(index, wantPx, request, sharing, aspect, onScreen = true)
+
+    /**
+     * [bitmap], told whether the page is being drawn. Renders asked for by
+     * [prioritizePages] alone are a prefetch, and wait while the pen writes;
+     * see [penActive].
+     */
+    private fun pageBitmap(
+        index: Int,
+        wantPx: Int,
+        request: Boolean,
+        sharing: Int = 1,
+        aspect: Float = A4_ASPECT,
+        onScreen: Boolean,
     ): Bitmap? {
         val width = fittingWidth(bucketFor(wantPx), sharing, aspect)
         if (closed || index !in 0 until pageCount) return null
@@ -322,12 +395,14 @@ class PdfSource private constructor(
         val room = cache.maxSize().toLong()
         val fits = sharing.coerceAtLeast(1) * pageBytes(width, aspect) <= room &&
             width.toLong() * (width * aspect.coerceAtLeast(0.01f)).toLong() * 4L <= room
-        if (request && fits && wantPx > PREVIEW_WIDTH * 3 / 2) request(key) { renderWholePage(index, width) }
+        if (request && fits && wantPx > PREVIEW_WIDTH * 3 / 2) {
+            request(key, onScreen) { renderWholePage(index, width) }
+        }
         // The preview is the floor under everything else; ask for it only when
         // the previews on screen fit together, or they evict each other too.
         if (preview == null &&
             sharing.coerceAtLeast(1) * pageBytes(PREVIEW_WIDTH, aspect) <= previewCache.maxSize().toLong()
-        ) request(keyOf(index, PREVIEW_WIDTH)) { renderWholePage(index, PREVIEW_WIDTH) }
+        ) request(keyOf(index, PREVIEW_WIDTH), onScreen) { renderWholePage(index, PREVIEW_WIDTH) }
         return fallback ?: preview
     }
 
@@ -660,40 +735,79 @@ class PdfSource private constructor(
         return null
     }
 
-    private fun request(key: Long, render: () -> Bitmap?) {
+    /**
+     * Queues one whole-page render. [onScreen] is a page being drawn: its
+     * render never waits for the pen, and asking again for one already put
+     * aside sends it straight back to the queue - so a page that came on
+     * screen while its prefetch was waiting is not left soft until the pen
+     * lifts.
+     */
+    private fun request(key: Long, onScreen: Boolean = true, render: () -> Bitmap?) {
         val generation: Int
-        synchronized(stateLock) {
+        var resumed: Runnable? = null
+        val enqueue = synchronized(stateLock) {
             if (closed) return
             generation = viewportGeneration
-            if (!shouldEnqueueRender(pending[key], generation)) return
-            pending[key] = generation
+            if (onScreen) resumed = penDeferral.markOnScreen(key)
+            if (shouldEnqueueRender(pending[key], generation)) {
+                pending[key] = generation
+                true
+            } else false
         }
-        val accepted = runCatching { worker.execute {
-            val page = (key shr 32).toInt()
-            val alreadyCached = if (key.toInt() == PREVIEW_WIDTH) previewCache.get(page) != null else cache.get(key) != null
-            val bitmap = if (!alreadyCached && isRelevant(page, generation)) {
-                runCatching { withMemoryRetry(render) }.getOrNull()
-            } else null
-            synchronized(stateLock) {
-                if (pending[key] == generation) pending.remove(key)
-            }
-            if (bitmap != null) {
-                val keep = synchronized(stateLock) {
-                    // Whole-page images are immutable and useful as fallback
-                    // even if zoom/page priority changed during native render.
-                    val page = (key shr 32).toInt()
-                    val preview = key.toInt() == PREVIEW_WIDTH
-                    if (!closed && (preview || generation == viewportGeneration || page in wantedPages)) {
-                        if (preview) previewCache.put(page, bitmap) else cache.put(key, bitmap)
-                        true
-                    } else false
+        resumed?.let { job -> runCatching { worker.execute(job) } }
+        if (!enqueue) return
+        val job = object : Runnable {
+            override fun run() {
+                if (deferForPen(key, generation, this)) return
+                val page = (key shr 32).toInt()
+                val alreadyCached = if (key.toInt() == PREVIEW_WIDTH) previewCache.get(page) != null else cache.get(key) != null
+                val bitmap = if (!alreadyCached && isRelevant(page, generation)) {
+                    runCatching { withMemoryRetry(render) }.getOrNull()
+                } else null
+                synchronized(stateLock) {
+                    if (pending[key] == generation) {
+                        pending.remove(key)
+                        penDeferral.finished(key)
+                    }
                 }
-                if (keep) onReady?.invoke((key shr 32).toInt()) else bitmap.recycle()
+                if (bitmap != null) {
+                    val keep = synchronized(stateLock) {
+                        // Whole-page images are immutable and useful as fallback
+                        // even if zoom/page priority changed during native render.
+                        val preview = key.toInt() == PREVIEW_WIDTH
+                        if (!closed && (preview || generation == viewportGeneration || page in wantedPages)) {
+                            if (preview) previewCache.put(page, bitmap) else {
+                                // Mirrored first: a put that evicts its own entry
+                                // at once takes the mirror with it.
+                                pagesHeld[key] = bitmap
+                                cache.put(key, bitmap)
+                            }
+                            true
+                        } else false
+                    }
+                    if (keep) onReady?.invoke(page) else bitmap.recycle()
+                }
             }
-        } }.isSuccess
-        if (!accepted) synchronized(stateLock) {
-            if (pending[key] == generation) pending.remove(key)
         }
+        val accepted = runCatching { worker.execute(job) }.isSuccess
+        if (!accepted) synchronized(stateLock) {
+            if (pending[key] == generation) {
+                pending.remove(key)
+                penDeferral.finished(key)
+            }
+        }
+    }
+
+    /**
+     * True when [job] has been put aside until the pen lifts: a prefetch,
+     * still current, that no page on screen has asked for. Decided under
+     * [stateLock], the same lock [request] marks a page on screen under and
+     * [penActive] lifts the pen under, so a job can never be put aside just
+     * after the pen lifted, or just after its page was asked for by a draw.
+     */
+    private fun deferForPen(key: Long, generation: Int, job: Runnable): Boolean = synchronized(stateLock) {
+        !closed && generation == viewportGeneration && pending[key] == generation &&
+            penDeferral.deferIfWriting(key, job)
     }
 
     private fun isRelevant(page: Int, generation: Int): Boolean =
@@ -708,9 +822,14 @@ class PdfSource private constructor(
     fun cachedPage(index: Int): Bitmap? {
         if (closed || index !in 0 until pageCount) return null
         previewCache.get(index)?.let { return it }
-        return cache.snapshot().entries
-            .filter { (it.key shr 32).toInt() == index }
-            .minByOrNull { it.value.width }?.value
+        // Whole pages are only ever cached at the power-of-two steps, so the
+        // smallest held one is a probe of each step from the bottom.
+        var width = MIN_PAGE_WIDTH
+        while (width <= MAX_PAGE_WIDTH) {
+            pagesHeld[keyOf(index, width)]?.takeIf { !it.isRecycled }?.let { return it }
+            width *= 2
+        }
+        return null
     }
 
     /** Blocking render, for callers off the UI thread that need the page now. */
@@ -823,6 +942,7 @@ class PdfSource private constructor(
             closed = true
             pending.clear()
             pendingTiles.clear()
+            penDeferral.clear()
         }
         onReady = null
         // PdfRenderer.render() cannot be interrupted. Do not make navigation
@@ -832,6 +952,9 @@ class PdfSource private constructor(
         cache.evictAll()
         previewCache.evictAll()
         tileCache.evictAll()
+        // Nothing is pooled once closed, but a tile evicted on the worker just
+        // before may still have gone in.
+        trimPool()
         closeWorker.execute {
             synchronized(renderLock) {
                 runCatching { renderer.close() }
@@ -848,6 +971,8 @@ class PdfSource private constructor(
         private const val PREVIEWS_KEPT = 16
         /** Spare tiles kept for reuse; see [tilePool]. */
         private const val TILE_POOL_SIZE = 3
+        /** All spares together stay within this fraction (1/n) of the tile cache. */
+        private const val TILE_POOL_SHARE = 6
         /** How long a tile rests after leaving the cache before it is painted over. */
         private const val POOL_REST_MS = 1000L
         private const val PREVIEW_MAX_HEIGHT = 1024
@@ -942,5 +1067,57 @@ internal fun pdfCacheCeilingFor(totalMem: Long): Long {
         totalMem < 3L * gb -> 128L * mb
         totalMem < 7L * gb -> 256L * mb
         else -> 384L * mb
+    }
+}
+
+/**
+ * The bookkeeping behind [PdfSource.penActive]: which queued renders were put
+ * aside for the pen, and which keys a page on screen has asked for and so may
+ * never be. Not thread safe - [PdfSource] only touches it under its state
+ * lock - except [penDown], which may be read anywhere.
+ */
+internal class PenDeferral<K, J> {
+    @Volatile var penDown: Boolean = false
+        private set
+
+    private val onScreen = HashSet<K>()
+    private val deferred = LinkedHashMap<K, J>()
+
+    val deferredCount: Int get() = deferred.size
+
+    /**
+     * A page being drawn asked for [key]: from now until [finished] it never
+     * waits. Returns its job if that was already put aside, to be queued again
+     * now rather than when the pen lifts.
+     */
+    fun markOnScreen(key: K): J? {
+        onScreen += key
+        return deferred.remove(key)
+    }
+
+    /** True, keeping [job], when it should wait for the pen to lift. */
+    fun deferIfWriting(key: K, job: J): Boolean {
+        if (!penDown || key in onScreen) return false
+        deferred[key] = job
+        return true
+    }
+
+    /** The render for [key] ran, or will never run. */
+    fun finished(key: K) {
+        onScreen -= key
+        deferred.remove(key)
+    }
+
+    /** On lifting, everything put aside, in the order it was put aside. */
+    fun setPen(down: Boolean): List<J> {
+        penDown = down
+        if (down || deferred.isEmpty()) return emptyList()
+        return deferred.values.toList().also { deferred.clear() }
+    }
+
+    /** The viewport moved on, or the source closed: none of it is wanted now. */
+    fun clear() {
+        onScreen.clear()
+        deferred.clear()
     }
 }

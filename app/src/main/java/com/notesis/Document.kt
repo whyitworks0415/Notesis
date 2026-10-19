@@ -20,6 +20,7 @@ import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
+import java.lang.ref.WeakReference
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 
@@ -380,10 +381,16 @@ class Document(val pages: MutableList<Page>) {
     fun pagesIntersecting(top: Float, bottom: Float): IntRange {
         if (pages.isEmpty() || bottom < top) return IntRange.EMPTY
         if (layoutMode != PageLayoutMode.VERTICAL) {
-            val hit = pages.indices.filter { i ->
-                topOf(i) <= bottom && topOf(i) + pages[i].height >= top
+            // Asked several times a frame: find the ends without building a list.
+            var first = -1
+            var last = -1
+            for (i in pages.indices) {
+                if (topOf(i) <= bottom && topOf(i) + pages[i].height >= top) {
+                    if (first < 0) first = i
+                    last = i
+                }
             }
-            return if (hit.isEmpty()) IntRange.EMPTY else hit.first()..hit.last()
+            return if (first < 0) IntRange.EMPTY else first..last
         }
         val first = pageIndexAt(top).coerceAtLeast(0)
         var low = first
@@ -398,19 +405,32 @@ class Document(val pages: MutableList<Page>) {
     /** The page under a document-space point, or the nearest one vertically. */
     fun pageAt(documentX: Float, documentY: Float): Int {
         if (pages.isEmpty() || documentY < 0f || documentX < 0f) return -1
-        return pages.indices.firstOrNull { index ->
+        // Only the pages in this band can hold the point; every move of a
+        // pinch on a long note asked all of them.
+        return pagesIntersecting(documentY, documentY).firstOrNull { index ->
             val page = pages[index]
             documentX in leftOf(index)..(leftOf(index) + page.width) &&
                 documentY in topOf(index)..(topOf(index) + page.height)
         } ?: -1
     }
 
-    fun nearestPage(documentX: Float, documentY: Float): Int = pages.indices.minByOrNull { index ->
+    fun nearestPage(documentX: Float, documentY: Float): Int = nearbyCandidates(documentY).minByOrNull { index ->
         val page = pages[index]
         val dx = documentX - (leftOf(index) + page.width / 2f)
         val dy = documentY - (topOf(index) + page.height / 2f)
         dx * dx + dy * dy
     } ?: -1
+
+    /**
+     * Pages worth comparing for the one nearest a point: in a single column the
+     * one at that height and its neighbours, since the nearest centre can only
+     * be one of those; otherwise all of them.
+     */
+    private fun nearbyCandidates(documentY: Float): IntRange {
+        if (layoutMode != PageLayoutMode.VERTICAL || pages.isEmpty()) return pages.indices
+        val at = pageIndexAt(documentY)
+        return (at - 1).coerceAtLeast(0)..(at + 1).coerceAtMost(pages.lastIndex)
+    }
 
     companion object {
         const val PAGE_GAP = 48f
@@ -505,6 +525,48 @@ class NoteStore(context: Context) {
     private val pendingInkSaves = mutableMapOf<String, PendingSave>()
     private val drainingInkSaves = mutableSetOf<String>()
     private val saveLedger = SaveRequestLedger()
+
+    /**
+     * What the last save wrote for each page's tape, by note and then page id.
+     * Only [save] touches it, under that method's lock. The strokes are held
+     * weakly: a mask taken off and collected can no longer compare equal to
+     * anything on the page, so forgetting it costs a rewrite, never a skip.
+     */
+    private val maskWrites = recentNotes<HashMap<String, MaskWrite>>()
+
+    /** The typed-text index last written per page, by note and then page id. Guarded by itself. */
+    private val typedWrites = recentNotes<HashMap<String, TypedWrite>>()
+
+    /** The tape a save wrote, and the file it left. */
+    private class MaskWrite(val strokes: List<WeakReference<Stroke>>, val file: WrittenFile)
+
+    /** The typed index a save wrote, and the file it left. */
+    private class TypedWrite(val text: String, val file: WrittenFile)
+
+    /**
+     * A file as a write left it. Remembering what was written is only safe
+     * while nothing else has replaced the file - a restore, an import, a
+     * deleted note folder - so a cached write is trusted only while the file
+     * still has the size and time it was left with.
+     */
+    private class WrittenFile(val length: Long, val modified: Long) {
+        fun matches(file: File): Boolean =
+            file.isFile && file.length() == length && file.lastModified() == modified
+
+        companion object {
+            fun of(file: File) = WrittenFile(file.length(), file.lastModified())
+        }
+    }
+
+    /**
+     * Only the notes used most recently are remembered: the caches are a
+     * shortcut for the note being written in, not a record of the library.
+     */
+    private fun <V> recentNotes(): MutableMap<String, V> =
+        object : LinkedHashMap<String, V>(REMEMBERED_NOTES * 2, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, V>?): Boolean =
+                size > REMEMBERED_NOTES
+        }
 
     /**
      * Every folder that has a note in it. Folders are not objects with their own
@@ -1216,7 +1278,22 @@ class NoteStore(context: Context) {
             val kept = page.allStrokes.filterNot { Tool.isVanishing(it.brush.family) }
             appendOrWriteStrokes(File(dir, "${page.id}.bin"), kept, page.savedOnDisk)
             page.savedOnDisk = kept.size
-            writeStrokes(File(dir, "${page.id}.mask"), page.masks.map { it.stroke })
+            // A page is dirty for any ink edit, but its tape rarely changes with
+            // it. The canvas edits page.masks in too many places to flag them,
+            // so the tape is compared instead: the same Stroke objects in the
+            // same order as the last write, and that file untouched since, means
+            // the file already holds exactly this. Turning a page replaces each
+            // mask's stroke, so it is caught as a change like any other.
+            val maskFile = File(dir, "${page.id}.mask")
+            val tape = page.masks.map { it.stroke }
+            val written = maskWrites.getOrPut(id) { HashMap() }
+            val last = written[page.id]
+            if (last == null || !sameReferences(last.strokes, tape) || !last.file.matches(maskFile)) {
+                written.remove(page.id)
+                if (writeStrokes(maskFile, tape)) {
+                    written[page.id] = MaskWrite(tape.map { WeakReference(it) }, WrittenFile.of(maskFile))
+                }
+            }
             page.dirty = false
             if (index == 0) firstPageChanged = true
         }
@@ -1283,9 +1360,13 @@ class NoteStore(context: Context) {
                 images = live.images.map { image ->
                     image.copy()
                 }.toMutableList(),
-                masks = live.masks.map { mask ->
-                    PageMask(mask.stroke).also { it.revealed = mask.revealed }
-                }.takeIf { copyInk }?.toMutableList() ?: mutableListOf(),
+                // Built only for pages that are written: mapping first and
+                // discarding afterwards copied every page's tape on every autosave.
+                masks = if (copyInk) {
+                    live.masks.mapTo(ArrayList<PageMask>(live.masks.size)) { mask ->
+                        PageMask(mask.stroke).also { it.revealed = mask.revealed }
+                    }
+                } else mutableListOf(),
                 strokes = if (copyInk) live.strokes.toMutableList() else mutableListOf(),
                 hiddenStrokes = if (copyInk) live.hiddenStrokes.toMutableList() else mutableListOf(),
             ).also {
@@ -1294,7 +1375,7 @@ class NoteStore(context: Context) {
                 // A metadata-only copy behaves like an unloaded page so save()
                 // neither writes its empty lists nor reports an empty count.
                 it.loaded = copyInk
-                it.savedStrokeCount = if (live.loaded) live.allStrokes.size else live.savedStrokeCount
+                it.savedStrokeCount = strokeCountOf(live)
                 it.savedOnDisk = live.savedOnDisk
                 it.revision = live.revision
             }
@@ -1884,15 +1965,31 @@ class NoteStore(context: Context) {
      * What was typed on each page - text boxes, sticky notes - kept beside the
      * page for search, rewritten only when it changes.
      */
-    private fun writeTypedIndex(id: String, document: Document) {
+    private fun writeTypedIndex(id: String, document: Document) = synchronized(typedWrites) {
         val dir = File(root, "$id/pages")
+        val written = typedWrites.getOrPut(id) { HashMap() }
         for (page in document.pages) {
             val typed = page.images.mapNotNull { it.textContent?.text?.takeIf(String::isNotBlank) }.joinToString("\n")
             val file = File(dir, page.id + BOX_INDEX)
-            if (typed.isEmpty()) { if (file.isFile) file.delete(); continue }
-            if (file.isFile && runCatching { file.readText() }.getOrNull() == typed) continue
+            if (typed.isEmpty()) {
+                written.remove(page.id)
+                if (file.isFile) file.delete()
+                continue
+            }
+            // Autosave writes the meta every second or so while writing, and
+            // reading every page's index back only to find it unchanged was
+            // most of what this cost. What was written last is remembered, and
+            // the disk is read only when that memory cannot vouch for the file.
+            val last = written[page.id]
+            if (last != null && last.text == typed && last.file.matches(file)) continue
+            if (file.isFile && runCatching { file.readText() }.getOrNull() == typed) {
+                written[page.id] = TypedWrite(typed, WrittenFile.of(file))
+                continue
+            }
+            written.remove(page.id)
             dir.mkdirs()
             runCatching { file.writeText(typed) }
+                .onSuccess { written[page.id] = TypedWrite(typed, WrittenFile.of(file)) }
         }
     }
 
@@ -1913,7 +2010,7 @@ class NoteStore(context: Context) {
                     .put("tocLevel", page.tocLevel)
                     .put("bookmark", page.bookmarked)
                     .put("links", JSONObject(page.links.mapKeys { it.key.toString() }))
-                    .put("strokes", if (page.loaded) page.allStrokes.size else page.savedStrokeCount)
+                    .put("strokes", strokeCountOf(page))
                     .put("images", imagesToJson(page)),
             )
         }
@@ -1923,14 +2020,15 @@ class NoteStore(context: Context) {
             // and knows nothing about where the note was filed.
             .put("folder", folderOf(id))
             .put("modified", System.currentTimeMillis())
-            .put(
-                "strokeCount",
-                document.pages.sumOf { if (it.loaded) it.allStrokes.size else it.savedStrokeCount },
-            )
+            .put("strokeCount", document.pages.sumOf { strokeCountOf(it) })
             .put("pages", pages)
             .put("layers", document.layers.toJson())
         File(root, "$id/meta.json").writeText(json.toString())
     }
+
+    /** Counted, not concatenated: allStrokes builds hidden + visible just to be measured. */
+    private fun strokeCountOf(page: Page): Int =
+        if (page.loaded) page.hiddenStrokes.size + page.strokes.size else page.savedStrokeCount
 
     private fun readMeta(dir: File): NoteMeta? {
         val file = File(dir, "meta.json")
@@ -2004,16 +2102,22 @@ class NoteStore(context: Context) {
         out.writeInt(brush.colorIntArgb)
         out.writeFloat(brush.size)
         out.writeFloat(brush.epsilon)
-        val inputs = ByteArrayOutputStream().also {
-            StrokeInputBatchSerialization.encode(stroke.inputs, it)
-        }.toByteArray()
-        out.writeInt(inputs.size)
-        out.write(inputs)
+        // One scratch buffer per thread, written straight through: a fresh
+        // buffer and its toByteArray() copy were two allocations per stroke,
+        // thousands per dense page. The bytes on disk are the same.
+        val inputs = strokeScratch.get()?.apply { reset() }
+            ?: ByteArrayOutputStream().also(strokeScratch::set)
+        StrokeInputBatchSerialization.encode(stroke.inputs, inputs)
+        out.writeInt(inputs.size())
+        inputs.writeTo(out)
+        // One very long stroke must not pin its buffer to the thread for good.
+        if (inputs.size() > MAX_SCRATCH_BYTES) strokeScratch.remove()
         // Version 3: the layer the stroke is on, after everything version 2 had.
         out.writeByte(StrokeLayers.of(stroke))
     }
 
-    private fun writeStrokes(file: File, strokes: List<Stroke>) {
+    /** False when the rename failed and [file] still holds what it held before. */
+    private fun writeStrokes(file: File, strokes: List<Stroke>): Boolean {
         // Write beside the real file and rename over it, so a crash mid-write
         // leaves the previous save intact instead of a truncated page.
         val tmp = File(file.parentFile, "${file.name}.tmp")
@@ -2023,7 +2127,7 @@ class NoteStore(context: Context) {
             out.writeInt(strokes.size)
             for (stroke in strokes) writeStroke(out, stroke)
         }
-        tmp.renameTo(file)
+        return tmp.renameTo(file)
     }
 
     private fun readStrokes(file: File, epsilon: Float = STROKE_EPSILON): List<Stroke> {
@@ -2095,6 +2199,11 @@ class NoteStore(context: Context) {
         /** Finer outlines than the live viewport, where PDF zoom has no fixed limit. */
         private const val PDF_EXPORT_EPSILON = 0.02f
         private const val SAVE_ATTEMPTS = 3
+        /** How many notes' last writes are remembered; see [recentNotes]. */
+        private const val REMEMBERED_NOTES = 4
+        /** A per-thread stroke buffer that grew past this is dropped after use. */
+        private const val MAX_SCRATCH_BYTES = 1 shl 20
+        private val strokeScratch = ThreadLocal<ByteArrayOutputStream>()
         /** 3 added a layer byte to each stroke; 1 and 2 still read, as layer 0. */
         const val VERSION = 3
     }
@@ -2119,6 +2228,37 @@ private class FileOutputStreamAt(
 internal fun canAppendStrokes(onDisk: Int, total: Int, fileExists: Boolean): Boolean =
     fileExists && onDisk > 0 && total > onDisk
 
+/**
+ * Whether [current] is exactly the objects [written] remembers, in the same
+ * order. Identity, not equality: a page's tape is skipped on save on the
+ * strength of this, and only the very same immutable strokes are certain to
+ * write the very same bytes. A collected reference never matches.
+ */
+internal fun <T : Any> sameReferences(written: List<WeakReference<T>>, current: List<T>): Boolean {
+    if (written.size != current.size) return false
+    for (i in current.indices) if (written[i].get() !== current[i]) return false
+    return true
+}
+
+/** Below this many strokes, handing work to other threads costs more than it saves. */
+internal const val INK_PARALLEL_FROM = 48
+
+/** Slices, and so threads, one load may use while the pen is down or the device is hot. */
+internal const val INK_THROTTLED_SLICES = 2
+
+/**
+ * How many slices [StrokeBuilder] cuts a load of [records] strokes into, for
+ * a pool of [threads]. One means build on the calling thread. Unthrottled,
+ * twice as many slices as threads lets a fast thread take another while a
+ * slow one finishes; [throttled], one slice per thread is what keeps the load
+ * to its share of the cores.
+ */
+internal fun inkBuildSlices(threads: Int, records: Int, throttled: Boolean): Int {
+    val width = if (throttled) threads.coerceAtMost(INK_THROTTLED_SLICES) else threads
+    if (records < INK_PARALLEL_FROM || width <= 1) return 1
+    return (if (throttled) width else width * 2).coerceAtMost(records)
+}
+
 /** One stroke as it sits in a page file, before its geometry is rebuilt. */
 internal class StoredStroke(val tool: Tool, val rawTool: Int, val brush: Brush, val inputs: ByteArray, val layer: Int = NoteLayers.BASE)
 
@@ -2137,12 +2277,24 @@ internal object StrokeBuilder {
         Thread(runnable, "notesis-ink-build").apply { isDaemon = true }
     }
 
-    /** Below this many, handing work to other threads costs more than it saves. */
-    private const val PARALLEL_FROM = 48
+    /**
+     * Set by the canvas while the pen is down. A page loading in the halo
+     * beside the one being written on used to take every core for its
+     * meshes, and the live stroke's frames waited on them; while this is set
+     * a load is built on at most [INK_THROTTLED_SLICES] threads instead.
+     */
+    @Volatile var penActive: Boolean = false
+
+    /**
+     * Set while the device reports thermal pressure. Building on every core
+     * is exactly the burst that makes a hot tablet clock down further, so
+     * it is capped the same way as [penActive].
+     */
+    @Volatile var thermalThrottle: Boolean = false
 
     fun buildAll(records: List<StoredStroke>): List<Stroke> {
-        if (records.size < PARALLEL_FROM || threads == 1) return records.mapNotNull(::build)
-        val slices = (threads * 2).coerceAtMost(records.size)
+        val slices = inkBuildSlices(threads, records.size, penActive || thermalThrottle)
+        if (slices <= 1) return records.mapNotNull(::build)
         val per = (records.size + slices - 1) / slices
         val futures = records.chunked(per).map { slice ->
             pool.submit(java.util.concurrent.Callable { slice.mapNotNull(::build) })

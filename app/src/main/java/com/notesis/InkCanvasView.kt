@@ -1665,6 +1665,8 @@ class InkCanvasView @JvmOverloads constructor(
     /** The common one-pen prediction path reuses these instead of feeding the GC every sample. */
     private val predictedPointerProperties = arrayOf(MotionEvent.PointerProperties())
     private val predictedPointerCoordinates = arrayOf(MotionEvent.PointerCoords())
+    /** Lets the latency readout's measurement steer automatic prediction; see [measuredInkLatencyMs]. */
+    var latencyTunesPrediction: Boolean = false
     private var measuredLatencyAt = Long.MIN_VALUE
     private var measuredLatency: Double? = null
 
@@ -1674,7 +1676,10 @@ class InkCanvasView @JvmOverloads constructor(
      * since reading it sorts every sample kept.
      */
     private fun measuredInkLatencyMs(now: Long): Double? {
-        if (!latencyMonitoringEnabled) return null
+        // Off unless asked for: with the readout feeding the horizon, turning
+        // the readout on changed how the pen behaved, and a with/without
+        // comparison measured two different prediction policies.
+        if (!latencyMonitoringEnabled || !latencyTunesPrediction) return null
         if (now - measuredLatencyAt >= MEASURED_LATENCY_REFRESH_MS) {
             measuredLatencyAt = now
             measuredLatency = latency.snapshot(PerformanceMetric.WET_INK)?.p50
@@ -2226,6 +2231,27 @@ class InkCanvasView @JvmOverloads constructor(
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         MemoryTrim.register(this)
+        runCatching { context.getSystemService(android.os.PowerManager::class.java)?.addThermalStatusListener(thermalListener) }
+    }
+
+    /**
+     * The pen is down (or has just lifted). Work the pen does not need gives
+     * way while it writes: PDF prefetch is put aside, page loads use fewer cores.
+     */
+    private fun penWorking(active: Boolean) {
+        pdf?.penActive = active
+        StrokeBuilder.penActive = active
+    }
+
+    /**
+     * How hot the device says it is. From moderate on, background work is cut
+     * back - fewer cores for page loads, no prefetch of the pages around - so
+     * the tablet spends its budget on the ink on screen and cools.
+     */
+    @Volatile private var thermalHot = false
+    private val thermalListener = android.os.PowerManager.OnThermalStatusChangedListener { status ->
+        thermalHot = status >= android.os.PowerManager.THERMAL_STATUS_MODERATE
+        StrokeBuilder.thermalThrottle = thermalHot
     }
 
     /** Android wants memory back: everything here that a redraw can rebuild goes. */
@@ -2238,6 +2264,9 @@ class InkCanvasView @JvmOverloads constructor(
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         MemoryTrim.unregister(this)
+        runCatching { context.getSystemService(android.os.PowerManager::class.java)?.removeThermalStatusListener(thermalListener) }
+        // Detached mid-stroke would leave background work waiting for a lift that never comes.
+        penWorking(false)
         registeredDocument?.detachCanvas(sharedInkChanged)
         registeredDocument = null
         stopFling(resumeDetail = false)
@@ -2656,12 +2685,14 @@ class InkCanvasView @JvmOverloads constructor(
         removeCallbacks(inkCacheRunnable)
         postDelayed(inkCacheRunnable, INK_CACHE_IDLE_MS)
         document.markEdited()
+        if (changed.isNotEmpty()) Trace.beginSection(TRACE_LAYER_SETTLE)
         for (page in changed) {
             page.settleLayers(document.layers)
             page.dirty = true
             page.revision++
             page.renderState = RenderState.Dirty
         }
+        if (changed.isNotEmpty()) Trace.endSection()
         dry.invalidate()
         document.notifyOtherCanvases(sharedInkChanged)
         onStrokesChanged?.invoke()
@@ -2969,7 +3000,7 @@ class InkCanvasView @JvmOverloads constructor(
             val collections = Debug.getRuntimeStat("art.gc.gc-count")?.toLongOrNull() ?: -1L
             latency.addRuntimeSample(allocated, collections, System.nanoTime())
         }
-        return latency.render(strokeCount())
+        return latency.render(strokeCount()) + "\n" + WorkStats.render()
     }
 
     fun currentScale(): Float {
@@ -3264,6 +3295,9 @@ class InkCanvasView @JvmOverloads constructor(
                 if (Build.VERSION.SDK_INT >= 35) {
                     requestedFrameRate = REQUESTED_FRAME_RATE_CATEGORY_HIGH
                 }
+                // While the pen is down, background work gives way: PDF
+                // prefetch waits, and page loads use fewer cores.
+                penWorking(true)
                 // Built per gesture: the Kalman filter is tied to one pointer on
                 // one device, and a new stroke is a new pointer.
                 if (latencyMonitoringEnabled && !frameClockRunning) {
@@ -4119,6 +4153,7 @@ class InkCanvasView @JvmOverloads constructor(
             // Let an idle note fall back to the display's normal adaptive rate.
             requestedFrameRate = REQUESTED_FRAME_RATE_CATEGORY_NO_PREFERENCE
         }
+        penWorking(false)
         activeStrokeId = null
         stabilizingStroke = false
         lastStylusX = Float.NaN
@@ -4906,6 +4941,11 @@ class InkCanvasView @JvmOverloads constructor(
                 // from disk are good whatever has happened since.
                 val current = !abandoned && serial == refineRequestSerial &&
                     (loadOnly || tessellationBucket(currentScale()) == target)
+                if (abandoned) WorkStats.loadsAbandoned.incrementAndGet()
+                if (!current && built.isNotEmpty()) WorkStats.refinesStale.incrementAndGet()
+                if (!current && loaded.isNotEmpty()) WorkStats.pagesLoadedStale.addAndGet(loaded.size.toLong())
+                WorkStats.pagesLoaded.addAndGet(loaded.size.toLong())
+                Trace.beginSection(TRACE_REFINE_APPLY)
                 for ((page, strokes) in loaded) {
                     if (page.loaded) continue
                     // A stroke can be drawn on a page while its own strokes are
@@ -4927,6 +4967,7 @@ class InkCanvasView @JvmOverloads constructor(
                 }
                 dry.adoptTwins(twins)
                 if (!current) {
+                    Trace.endSection()
                     if (loaded.isNotEmpty()) dry.postInvalidateOnAnimation()
                     // Nothing newer was asked for (the zoom moved on without a
                     // request, say): this job's pages still need their pass.
@@ -4965,6 +5006,8 @@ class InkCanvasView @JvmOverloads constructor(
                 refiningPages = emptyList()
                 refineFuture = null
                 dry.adoptTwins(builtTwins)
+                if (built.isNotEmpty()) WorkStats.refinesApplied.incrementAndGet()
+                Trace.endSection()
                 dry.postInvalidateOnAnimation()
                 // Read in at the zoom in use, a loaded page needs no second pass
                 // unless the zoom is finer than a page is first read at.
@@ -4988,6 +5031,8 @@ class InkCanvasView @JvmOverloads constructor(
      * and being named by the undo history - putting a stroke back onto a page
      * whose strokes were dropped would duplicate it when the page reloads.
      */
+    private var lastReleaseStamp = LongArray(0)
+
     private fun releaseDistantPages() {
         if (document.liveCanvasCount > 1) return
         if (document.pages.size <= KEEP_PAGES * 2 + 1) return
@@ -4996,6 +5041,13 @@ class InkCanvasView @JvmOverloads constructor(
         val first = document.pages.indexOf(visible.first())
         val last = document.pages.indexOf(visible.last())
         if (first < 0 || last < 0) return
+        // Every refine came through here, building a set of the whole history
+        // and walking every page, even while writing on one page. Nothing new
+        // can be released until the view moves or another page is read in.
+        val stamp = longArrayOf(first.toLong(), last.toLong(), document.pages.size.toLong(),
+            document.pages.count { it.loaded && !it.dirty }.toLong())
+        if (stamp.contentEquals(lastReleaseStamp)) return
+        lastReleaseStamp = stamp
         val keep = (first - KEEP_PAGES)..(last + KEEP_PAGES)
         val protected = IdentityHashMap<Page, Boolean>()
         undoStack.forEach { protected[it.page] = true }
@@ -5008,6 +5060,9 @@ class InkCanvasView @JvmOverloads constructor(
             page.hiddenStrokes.clear()
             page.masks.clear()
             dry.dropStrokeIndex(page)
+            // The tile cache and recorded page held their own list of the
+            // page's strokes, keeping the ink alive after the page let go of it.
+            dry.forgetPage(page)
             page.loaded = false
             page.tessellatedFor = -1f
         }
@@ -5041,10 +5096,16 @@ class InkCanvasView @JvmOverloads constructor(
         screenToDocument.mapPoints(bounds)
         val top = minOf(bounds[1], bounds[3])
         val bottom = maxOf(bounds[1], bounds[3])
+        val left = minOf(bounds[0], bounds[2])
+        val right = maxOf(bounds[0], bounds[2])
         return document.pagesIntersecting(top, bottom).mapNotNull { i ->
             val page = document.pages.getOrNull(i) ?: return@mapNotNull null
             val pageTop = document.topOf(i)
-            page.takeIf { pageTop <= bottom && pageTop + page.height >= top }
+            val pageLeft = document.leftOf(i)
+            // Across too: in a row or spread layout the band of rows holds pages
+            // well off either side, and each was being loaded and drawn.
+            page.takeIf { pageTop <= bottom && pageTop + page.height >= top &&
+                pageLeft <= right && pageLeft + page.width >= left }
         }
     }
 
@@ -5086,7 +5147,7 @@ class InkCanvasView @JvmOverloads constructor(
      * the next short scroll is likely to expose.
      */
     private fun prefetchNearbyPages(radius: Int) {
-        if (disposed) return
+        if (disposed || thermalHot) return
         val visible = Collections.newSetFromMap(IdentityHashMap<Page, Boolean>())
         visible += visiblePages()
         val pages = nearbyPageIndices(radius).map { document.pages[it] }
@@ -5120,6 +5181,7 @@ class InkCanvasView @JvmOverloads constructor(
                 // page scrolled back to would only be read again.
                 if (disposed) return@post
                 dry.adoptTwins(twins)
+                WorkStats.prefetched.addAndGet(loaded.size.toLong())
                 var changed = false
                 for ((page, strokes) in loaded) {
                     if (page.loaded) continue
@@ -7487,6 +7549,13 @@ class InkCanvasView @JvmOverloads constructor(
             strokeIndexes.remove(page)
         }
 
+        /** Everything cached for a page that has been unloaded. It is off screen, so nothing drawn needs it. */
+        fun forgetPage(page: Page) {
+            inkTiles.forgetPage(page)
+            inkNodes.remove(page)?.node?.discardDisplayList()
+            linkBoxes.remove(page)
+        }
+
         fun strokesIn(page: Page, left: Float, top: Float, right: Float, bottom: Float): List<Stroke> =
             strokeIndexes.getOrPut(page) { StrokeGrid() }.visible(page, left, top, right, bottom)
 
@@ -7600,6 +7669,8 @@ class InkCanvasView @JvmOverloads constructor(
                 val page = document.pages.getOrNull(i) ?: continue
                 val top = document.topOf(i)
                 if (top > viewport[3] || top + page.height < viewport[1]) continue
+                val left = document.leftOf(i)
+                if (left > viewport[2] || left + page.width < viewport[0]) continue
                 if (page.background == PageBackground.PDF) visiblePdfPages++
             }
             renderer.drawWithStrokes(canvas) { scoped, scope ->
@@ -7608,13 +7679,9 @@ class InkCanvasView @JvmOverloads constructor(
                     val top = document.topOf(i)
                     if (top > viewport[3] || top + page.height < viewport[1]) continue
                     val left = document.leftOf(i)
-
-                    scoped.save()
-                    scoped.concat(documentToScreen)
-                    scoped.translate(left, top)
-                    drawPaper(scoped, page, i)
-                    drawImages(scoped, page)
-                    if (playbackHighlights.isNotEmpty()) drawPlaybackHighlights(scoped, page)
+                    // A spread or row of pages shares a band: the ones off to
+                    // the side were painted, papered and asked of the PDF too.
+                    if (left > viewport[2] || left + page.width < viewport[0]) continue
 
                     // Page-level culling alone still redraws every stroke on a page
                     // that is only half on screen. A zoomed-in page of dense notes
@@ -7623,6 +7690,14 @@ class InkCanvasView @JvmOverloads constructor(
                     val cullTop = viewport[1] - top
                     val cullRight = viewport[2] - left
                     val cullBottom = viewport[3] - top
+                    pageCull.set(cullLeft, cullTop, cullRight, cullBottom)
+
+                    scoped.save()
+                    scoped.concat(documentToScreen)
+                    scoped.translate(left, top)
+                    drawPaper(scoped, page, i)
+                    drawImages(scoped, page)
+                    if (playbackHighlights.isNotEmpty()) drawPlaybackHighlights(scoped, page)
                     val lifted = i == lassoPage && movingLasso
                     val visibleLeft = cullLeft.coerceAtLeast(0f)
                     val visibleTop = cullTop.coerceAtLeast(0f)
@@ -7749,12 +7824,35 @@ class InkCanvasView @JvmOverloads constructor(
             }
         }
 
+        /** This frame's viewport in the page being drawn, for skipping what is off screen. */
+        private val pageCull = RectF()
+
+        /**
+         * Whether a picture can show on screen: its box grown to the circle it
+         * sweeps when turned, so a rotated corner is never cut off.
+         */
+        private fun onScreenImage(image: PageImage): Boolean {
+            var dx = 0f
+            var dy = 0f
+            if (movingLasso && lassoImages.any { it === image }) { dx = lassoDx; dy = lassoDy }
+            val reach = if (image.rotation != 0f) hypot(image.width, image.height) / 2f else 0f
+            val cx = image.x + image.width / 2f + dx
+            val cy = image.y + image.height / 2f + dy
+            val halfW = maxOf(image.width / 2f, reach) + IMAGE_CULL_MARGIN
+            val halfH = maxOf(image.height / 2f, reach) + IMAGE_CULL_MARGIN
+            return cx + halfW >= pageCull.left && cx - halfW <= pageCull.right &&
+                cy + halfH >= pageCull.top && cy - halfH <= pageCull.bottom
+        }
+
         private fun drawImages(canvas: Canvas, page: Page) {
             if (page.images.isEmpty()) return
             val loader = imageLoader ?: return
             val liftedPage = movingLasso && lassoImages.isNotEmpty() &&
                 document.pages.getOrNull(lassoPage) === page
             for (image in page.images) {
+                // Before anything is decoded: a page of pictures zoomed in on
+                // one corner read and uploaded every one of them.
+                if (!onScreenImage(image)) continue
                 if (image.collapsed) {
                     // Folded: a tab in the note's own colour, with its corner turned down.
                     imageRect.set(image.x, image.y, image.x + image.width, image.y + image.height)
@@ -7783,7 +7881,11 @@ class InkCanvasView @JvmOverloads constructor(
                     if (turned) canvas.restore()
                     continue
                 }
-                val bitmap = loader(image.id) ?: continue
+                // A text box draws its glyphs as vectors; its bitmap only told
+                // the layout its size. Once laid out, it is not decoded again -
+                // nor kept in the picture cache, pushing real pictures out.
+                val laidOut = if (image.textContent != null) textLayouts[image] else null
+                val bitmap = if (laidOut != null) null else loader(image.id) ?: continue
                 imageRect.set(
                     image.x,
                     image.y,
@@ -7798,18 +7900,21 @@ class InkCanvasView @JvmOverloads constructor(
                 }
                 val content = image.textContent
                 if (content == null) {
+                    // Pictures always have one: only a laid-out text box skips the load.
+                    val picture = bitmap!!
                     if (image.opacity < 1f) {
                         bitmapPaint.alpha = (image.opacity * 255).toInt()
-                        canvas.drawBitmap(bitmap, null, imageRect, bitmapPaint)
+                        canvas.drawBitmap(picture, null, imageRect, bitmapPaint)
                         bitmapPaint.alpha = 255
-                    } else canvas.drawBitmap(bitmap, null, imageRect, bitmapPaint)
+                    } else canvas.drawBitmap(picture, null, imageRect, bitmapPaint)
                 } else {
                     // Text boxes keep a bitmap for old files and export, but on
                     // screen their glyphs are laid out as vectors. Scaling a
                     // stored bitmap was the pixelated type seen at zoom levels.
-                    val text = textLayouts.getOrPut(image) {
-                        val logicalWidth = bitmap.width / 2f
-                        val logicalHeight = bitmap.height / 2f
+                    val text = laidOut ?: textLayouts.getOrPut(image) {
+                        val source = bitmap!!
+                        val logicalWidth = source.width / 2f
+                        val logicalHeight = source.height / 2f
                         val width = (logicalWidth - content.padding * 2f).toInt().coerceAtLeast(1)
                         TextRender(textBoxLayout(content, width, 1f), logicalWidth, logicalHeight)
                     }
@@ -7929,6 +8034,10 @@ class InkCanvasView @JvmOverloads constructor(
             if (page.masks.isEmpty()) return
             val scale = currentScale()
             for (mask in page.masks) {
+                // Tape off screen is not drawn; its box is cheap beside its mesh.
+                val box = mask.stroke.shape.computeBoundingBox()
+                if (box != null && (box.xMax < pageCull.left || box.xMin > pageCull.right ||
+                        box.yMax < pageCull.top || box.yMin > pageCull.bottom)) continue
                 if (!mask.revealed) {
                     scope.drawStroke(mask.stroke)
                     continue
@@ -8217,6 +8326,8 @@ class InkCanvasView @JvmOverloads constructor(
         /** The finest zoom a page is first read in at; see refineVisiblePages. */
         const val LOAD_TESSELLATION_SCALE = 2f
         const val MAX_SCREEN_BRUSHES = 256
+        /** Page units round a picture still drawn when just off screen: shadows, handles. */
+        const val IMAGE_CULL_MARGIN = 24f
         const val EPSILON_SLOP = 0.00001f
         const val PREFETCH_SETTLE_MS = 280L
         const val PREFETCH_SLOW_RADIUS = 1
@@ -8291,6 +8402,8 @@ class InkCanvasView @JvmOverloads constructor(
         const val TRACE_STYLUS_UP = "Notesis stylus UP"
         const val TRACE_STYLUS_OTHER = "Notesis stylus other"
         const val TRACE_MESH_REFINE = "Notesis mesh/refine"
+        const val TRACE_LAYER_SETTLE = "Notesis layers/settle"
+        const val TRACE_REFINE_APPLY = "Notesis refine/apply"
 
         /** A tap this fast, moved this little, is a tap and not the start of a pan. */
         const val TAP_MAX_MS = 250L

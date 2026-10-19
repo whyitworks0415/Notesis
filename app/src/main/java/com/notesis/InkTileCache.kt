@@ -41,12 +41,19 @@ internal class InkTileCache(
         var scale = 0f
         var revision = Long.MIN_VALUE
         var meshRevision = Long.MIN_VALUE
-        var strokes: List<Stroke> = emptyList()
+        val strokes = ArrayList<Stroke>()
         val positions = IdentityHashMap<Stroke, Int>()
         var excluded: Set<Stroke>? = null
     }
 
     private val tiles = LinkedHashMap<Key, Tile>(32, 0.75f, true)
+    /** Tiles held per page, so an edit on a page with none costs nothing to look up. */
+    private val tilesPerPage = IdentityHashMap<Page, Int>()
+
+    private fun countRemoved(page: Page) {
+        val left = (tilesPerPage[page] ?: return) - 1
+        if (left <= 0) tilesPerPage.remove(page) else tilesPerPage[page] = left
+    }
     private val pages = LinkedHashMap<Page, PageState>(8, 0.75f, true)
     private val frameTiles = HashSet<Key>()
     private val framePages = HashSet<Page>()
@@ -68,6 +75,7 @@ internal class InkTileCache(
     fun clear() {
         tiles.values.forEach(::discard)
         tiles.clear()
+        tilesPerPage.clear()
         pages.clear()
         frameTiles.clear()
         framePages.clear()
@@ -93,6 +101,7 @@ internal class InkTileCache(
             if (tile.key in frameTiles) continue
             discard(tile)
             oldTiles.remove()
+            countRemoved(tile.key.page)
         }
         // The visible frame wins over the cache budget. Only off-screen entries
         // may be discarded; deleting a queued node makes that ink disappear.
@@ -113,6 +122,12 @@ internal class InkTileCache(
         tile.delta.discardDisplayList()
     }
 
+    /** Drops a page's tiles and its stroke list; it is read in again from scratch if it comes back. */
+    fun forgetPage(page: Page) {
+        discardPage(page)
+        pages.remove(page)
+    }
+
     private fun discardPage(page: Page) {
         val iterator = tiles.entries.iterator()
         while (iterator.hasNext()) {
@@ -122,6 +137,7 @@ internal class InkTileCache(
                 iterator.remove()
             }
         }
+        tilesPerPage.remove(page)
     }
 
     private fun strokeBounds(stroke: Stroke): RectF? {
@@ -139,6 +155,7 @@ internal class InkTileCache(
     }
 
     private fun changedStroke(page: Page, stroke: Stroke, append: Boolean) {
+        if ((tilesPerPage[page] ?: 0) == 0) return
         val box = strokeBounds(stroke) ?: return
         val highlight = stroke.brush.family == highlightFamily
         for (tile in tiles.values) {
@@ -163,7 +180,11 @@ internal class InkTileCache(
         val keepScale = state.scale > 0f && interacting && requestedScale >= state.scale / 2f &&
             visibleTiles(viewport, state.scale) * passes <=
             minOf(MAX_TILES, (byteBudget / TILE_BYTES).coerceAtLeast(1))
-        val scale = if (keepScale) state.scale else requestedScale
+        // A pinch that settles a hair away from where the tiles were drawn is
+        // the same picture: re-recording every tile of the page for a 0.1%
+        // difference was a full redraw after nearly every gesture.
+        val nearlySame = state.scale > 0f && abs(state.scale / requestedScale - 1f) < SETTLED_SCALE_SLACK
+        val scale = if (keepScale || nearlySame) state.scale else requestedScale
         if (state.scale == 0f || abs(state.scale / scale - 1f) >= 0.001f ||
             state.meshRevision != page.meshRevision || state.excluded !== excluded) {
             discardPage(page)
@@ -174,14 +195,22 @@ internal class InkTileCache(
         if (state.revision != page.revision || state.meshRevision != page.meshRevision ||
             state.strokes.size != current.size) {
             val old = state.strokes
-            val appendOnly = current.size >= old.size && old.indices.all { old[it] === current[it] }
+            // An append leaves every old stroke where it was. Checked at the ends
+            // and the middle rather than stroke by stroke: comparing the whole
+            // page and copying it on every pen-up grew with the page. Edits that
+            // keep the size (a move, a recolour) or shift it (an erase) fail the
+            // size or the end check and take the full comparison below.
+            val appendOnly = current.size > old.size && (old.isEmpty() ||
+                (old[0] === current[0] && old[old.size / 2] === current[old.size / 2] &&
+                    old[old.size - 1] === current[old.size - 1]))
             if (appendOnly) {
-                val hasCachedTiles = tiles.keys.any { it.page === page }
+                val hasCachedTiles = (tilesPerPage[page] ?: 0) > 0
                 for (i in old.size until current.size) {
                     if (hasCachedTiles) changedStroke(page, current[i], append = true)
                     state.positions[current[i]] = i
+                    state.strokes += current[i]
                 }
-            } else {
+            } else if (current.size != old.size || current.indices.any { old[it] !== current[it] }) {
                 // Erasing one stroke shifts every subsequent index. Compare
                 // membership and relative order so unrelated tiles survive.
                 val present = IdentityHashMap<Stroke, Boolean>()
@@ -205,8 +234,9 @@ internal class InkTileCache(
                 }
                 state.positions.clear()
                 current.forEachIndexed { i, stroke -> state.positions[stroke] = i }
+                state.strokes.clear()
+                state.strokes.addAll(current)
             }
-            state.strokes = current.toList()
             state.revision = page.revision
             state.meshRevision = page.meshRevision
         }
@@ -214,6 +244,7 @@ internal class InkTileCache(
     }
 
     private fun record(node: RenderNode, tile: Tile, strokes: List<Stroke>): Boolean {
+        WorkStats.tilesRecorded.incrementAndGet()
         node.setPosition(0, 0, EXTENT_PX, EXTENT_PX)
         val canvas = node.beginRecording(EXTENT_PX, EXTENT_PX)
         val dx = GUTTER_PX - tile.key.x * TILE_PX
@@ -237,7 +268,10 @@ internal class InkTileCache(
 
     private fun tileFor(key: Key, state: PageState, consolidate: Boolean): Tile {
         val scale = state.scale
-        val tile = tiles.getOrPut(key) { Tile(key, scale, state.excluded) }
+        val tile = tiles.getOrPut(key) {
+            tilesPerPage[page] = (tilesPerPage[page] ?: 0) + 1
+            Tile(key, scale, state.excluded)
+        }
         // Android can discard a display list when its node leaves the drawing
         // tree. A Java cache entry can therefore outlive the GPU recording.
         if (tile.hasInk && !tile.base.hasDisplayList()) tile.dirty = true
@@ -300,6 +334,8 @@ internal class InkTileCache(
 
     companion object {
         private const val MAX_TILES = 128
+        /** Settled zoom within this of the tiles' own is drawn from them as they are. */
+        private const val SETTLED_SCALE_SLACK = 0.025f
         private const val TILE_PX = 512
         private const val GUTTER_PX = 2
         private const val EXTENT_PX = TILE_PX + 2 * GUTTER_PX

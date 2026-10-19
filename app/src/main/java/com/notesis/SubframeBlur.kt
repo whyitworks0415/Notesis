@@ -27,6 +27,9 @@ internal class SubframeTrack(private val capacity: Int = 16) {
     private var count = 0
     private var head = 0
 
+    /** The answer of [lead], reused: it is asked for on every pen sample. */
+    private val out = FloatArray(2)
+
     fun reset() { count = 0; head = 0 }
 
     fun add(x: Float, y: Float, time: Long) {
@@ -51,7 +54,9 @@ internal class SubframeTrack(private val capacity: Int = 16) {
         if (oldest == newest || dt <= 0f) return null
         val vx = (xs[newest] - xs[oldest]) / dt
         val vy = (ys[newest] - ys[oldest]) / dt
-        return floatArrayOf(vx * leadMs, vy * leadMs)
+        out[0] = vx * leadMs
+        out[1] = vy * leadMs
+        return out
     }
 
     companion object {
@@ -82,6 +87,9 @@ internal class SubframeBlurView(context: Context) : View(context) {
     private var color = Color.BLACK
     private var width = 1f
     private var shown = false
+    private var gradient: LinearGradient? = null
+    private var gradientColor = 0
+    private val gradientMatrix = android.graphics.Matrix()
     private val hide = Runnable { clear() }
 
     init {
@@ -119,8 +127,19 @@ internal class SubframeBlurView(context: Context) : View(context) {
         val rgb = color and 0xFFFFFF
         if (mode == SUBFRAME_BLUR) {
             streak.strokeWidth = width
-            streak.shader = LinearGradient(x, y, x + dx, y + dy,
-                (alpha * BLUR_ALPHA).toInt() shl 24 or rgb, rgb, Shader.TileMode.CLAMP)
+            // One gradient per ink colour, laid along a unit line and moved onto
+            // the streak by its matrix: a new shader on every frame of writing
+            // was garbage for nothing.
+            if (gradient == null || gradientColor != color) {
+                gradient = LinearGradient(0f, 0f, 1f, 0f,
+                    (alpha * BLUR_ALPHA).toInt() shl 24 or rgb, rgb, Shader.TileMode.CLAMP)
+                gradientColor = color
+            }
+            gradientMatrix.setScale(hypot(dx, dy).coerceAtLeast(1e-3f), 1f)
+            gradientMatrix.postRotate(Math.toDegrees(kotlin.math.atan2(dy, dx).toDouble()).toFloat())
+            gradientMatrix.postTranslate(x, y)
+            gradient!!.setLocalMatrix(gradientMatrix)
+            streak.shader = gradient
             canvas.drawLine(x, y, x + dx, y + dy, streak)
         } else {
             for (step in 1..GHOSTS) {

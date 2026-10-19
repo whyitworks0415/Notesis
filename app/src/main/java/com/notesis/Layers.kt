@@ -118,6 +118,86 @@ internal object StrokeLayers {
  * in layer order. True when the stroke list changed.
  */
 internal fun Page.settleLayers(layers: NoteLayers): Boolean {
+    // Pen-up is the common case: one stroke appended to a page already
+    // settled under the same layers. Only that tail needs looking at; every
+    // stroke of a dense page was being checked on every lift.
+    val shape = layers.shape()
+    val mark = settleMarks[this]
+    val from = if (mark != null && mark.shape == shape && mark.hidden == hiddenStrokes.size &&
+        strokes.size >= mark.size && (mark.size == 0 || strokes[mark.size - 1] === mark.last)) mark.size else 0
+    val changed = if (from == 0) {
+        WorkStats.layerSettlesFull.incrementAndGet()
+        settleAll(layers)
+    } else {
+        WorkStats.layerSettlesTail.incrementAndGet()
+        settleTail(layers, from)
+    }
+    settleMarks[this] = SettleMark(strokes.size, strokes.lastOrNull(), hiddenStrokes.size, shape)
+    if (changed) {
+        // The file's order no longer matches what is in memory: the next save rewrites it.
+        savedOnDisk = 0
+        revision++
+    }
+    return changed
+}
+
+/** How far a page is known to be settled, and under which layers. */
+private class SettleMark(val size: Int, val last: Stroke?, val hidden: Int, val shape: Long)
+private val settleMarks = java.util.Collections.synchronizedMap(java.util.WeakHashMap<Page, SettleMark>())
+
+/** The order and visibility of the layers in one number: any change to either changes it. */
+private fun NoteLayers.shape(): Long {
+    var h = 17L
+    for (layer in list) h = h * 31 + layer.id * 2 + (if (layer.visible) 1 else 0)
+    return h * 31 + list.size
+}
+
+/** Drawing rank by layer id, looked up per stroke without a list scan. */
+private fun NoteLayers.rankTable(): IntArray {
+    val table = IntArray(NoteLayers.MAX_ID + 1)
+    list.forEachIndexed { index, layer -> table[layer.id] = index }
+    return table
+}
+
+/** Strokes from [from] on: the ones added since the page was last settled. */
+private fun Page.settleTail(layers: NoteLayers, from: Int): Boolean {
+    var changed = false
+    for (i in from until strokes.size) {
+        val stroke = strokes[i]
+        if (!StrokeLayers.known(stroke)) StrokeLayers.set(stroke, layers.target)
+    }
+    if (layers.hasHidden) {
+        val away = (from until strokes.size).map { strokes[it] }.filter { !layers.isVisible(StrokeLayers.of(it)) }
+        if (away.isNotEmpty()) {
+            val gone = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Stroke, Boolean>()).apply { addAll(away) }
+            strokes.removeAll(gone::contains)
+            hiddenStrokes += away
+            changed = true
+        }
+    }
+    if (layers.list.size > 1) {
+        val rank = layers.rankTable()
+        var last = if (from > 0 && from - 1 < strokes.size) rank[StrokeLayers.of(strokes[from - 1])] else -1
+        for (i in from until strokes.size) {
+            val r = rank[StrokeLayers.of(strokes[i])]
+            if (r < last) {
+                // Written on a lower layer than what is on top: the whole page reorders.
+                sortByLayer(rank)
+                return true
+            }
+            last = r
+        }
+    }
+    return changed
+}
+
+private fun Page.sortByLayer(rank: IntArray) {
+    val ordered = strokes.sortedBy { rank[StrokeLayers.of(it)] }
+    strokes.clear()
+    strokes += ordered
+}
+
+private fun Page.settleAll(layers: NoteLayers): Boolean {
     var changed = false
     for (stroke in strokes) if (!StrokeLayers.known(stroke)) StrokeLayers.set(stroke, layers.target)
     if (hiddenStrokes.isNotEmpty()) {
@@ -139,19 +219,13 @@ internal fun Page.settleLayers(layers: NoteLayers): Boolean {
         }
     }
     if (layers.list.size > 1 || changed) {
+        val rank = layers.rankTable()
         var last = -1
-        val sorted = strokes.all { val r = layers.rank(StrokeLayers.of(it)); (r >= last).also { last = r } }
+        val sorted = strokes.all { val r = rank[StrokeLayers.of(it)]; (r >= last).also { last = r } }
         if (!sorted) {
-            val ordered = strokes.sortedBy { layers.rank(StrokeLayers.of(it)) }
-            strokes.clear()
-            strokes += ordered
+            sortByLayer(rank)
             changed = true
         }
-    }
-    if (changed) {
-        // The file's order no longer matches what is in memory: the next save rewrites it.
-        savedOnDisk = 0
-        revision++
     }
     return changed
 }
