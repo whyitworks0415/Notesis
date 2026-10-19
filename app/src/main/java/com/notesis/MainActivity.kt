@@ -515,6 +515,7 @@ private fun NoteListScreen(
     var tagFilter by remember { mutableStateOf<String?>(null) }
     var showHelp by remember { mutableStateOf(false) }
     if (showHelp) HelpDialog(onDismiss = { showHelp = false })
+    LaunchUpdateCheck()
     val allTags = remember(revision) { store.allTags() }
     var taggingNote by remember { mutableStateOf<NoteMeta?>(null) }
     var labelingNote by remember { mutableStateOf<NoteMeta?>(null) }
@@ -957,7 +958,7 @@ private fun NoteListScreen(
                         Icon(Reicons.Tune, contentDescription = "화면 설정")
                     }
                     IconButton(onClick = { showHelp = true }) {
-                        Icon(Reicons.BugReport, contentDescription = "도움말 · 진단")
+                        Icon(Reicons.BugReport, contentDescription = "앱 정보 · 도움말")
                     }
                 },
                 navigationIcon = {

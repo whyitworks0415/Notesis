@@ -218,7 +218,7 @@ fun SkinSettingsScreen(
                     Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
                         Text("굴절 방향", style = MaterialTheme.typography.bodyLarge)
                         Text(
-                            "볼록은 페이지 위로 솟은 Apple식 렌즈, 오목은 아래로 눌린 렌즈입니다",
+                            "볼록은 페이지 위로 솟은 렌즈, 오목은 아래로 눌린 렌즈입니다",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.outline,
                         )

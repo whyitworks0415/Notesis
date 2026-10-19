@@ -82,12 +82,12 @@ enum class Skin(val label: String, val blurb: String) {
     MATERIAL("머티리얼", "안드로이드 기본. 불투명하고 또렷합니다."),
     GLASSMORPHISM("글래스모피즘", "서리 낀 유리. 뒤가 흐려지고 고르게 반투명합니다."),
     LIQUID_GLASS(
-        "리퀴드 글래스",
+        "굴절 유리",
         "빛을 굴절시키는 얇은 렌즈. 누르고 움직이면 형태와 광택이 살아납니다.",
     ),
     SPOTIGLASS(
-        "Spotiglass",
-        "SpotiFLAC 스타일. 둥근 유리 바에서 선택 렌즈가 손끝을 따라 미끄러집니다.",
+        "유리 바",
+        "둥근 유리 바에서 선택 렌즈가 손끝을 따라 미끄러집니다.",
     ),
 }
 

@@ -53,17 +53,21 @@ internal object Diagnostics {
     private const val MAX_LOG_CHARS = 20_000
 }
 
-/** Diagnostics to share, the id to quote, how to take the system's own report, and a short guide. */
+/** The version and updates, then diagnostics to share, the id to quote, how to take the system's own report, and a short guide. */
 @Composable
 internal fun HelpDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val id = remember { Diagnostics.id(context) }
+    var licenses by remember { mutableStateOf(false) }
+    if (licenses) OpenSourceLicensesDialog(onDismiss = { licenses = false })
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("도움말 · 진단") },
+        title = { Text("앱 정보 · 도움말") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
+                AppVersionSection(onLicenses = { licenses = true })
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
                 Text("진단 ID $id", style = MaterialTheme.typography.titleSmall)
                 Row {
                     TextButton(onClick = { clipboard.setText(AnnotatedString(id)) }) { Text("ID 복사") }
