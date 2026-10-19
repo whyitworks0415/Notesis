@@ -1569,7 +1569,7 @@ class InkCanvasView @JvmOverloads constructor(
     private fun eraserScreenRadius(): Float =
         (eraserWidth * resources.displayMetrics.density / 2f).coerceAtLeast(0.5f)
     private val predictionHead = PredictionHeadView(context)
-    // The laser pointer is gone; its trail shows what the pen did in reading mode.
+    // The laser pointer is gone; its view draws the ring a button tap leaves in reading mode.
     private val laser = LaserView(context).apply { tint(GESTURE_TRAIL_COLOR) }
     private var gestureTrail = false
     private var gestureButton = false
@@ -1577,7 +1577,10 @@ class InkCanvasView @JvmOverloads constructor(
     private var gestureDownX = 0f
     private var gestureDownY = 0f
 
-    /** In reading mode, the pen leaves a fading trail of where it went. */
+    /**
+     * In reading mode the pen is only followed far enough to tell a tap from a
+     * drag; nothing is drawn where it goes.
+     */
     private fun startGestureTrail(event: MotionEvent, button: Boolean) {
         val i = event.actionIndex
         gestureTrail = true
@@ -1585,20 +1588,13 @@ class InkCanvasView @JvmOverloads constructor(
         gestureTrailMoved = false
         gestureDownX = event.getX(i)
         gestureDownY = event.getY(i)
-        laser.add(gestureDownX, gestureDownY, event.eventTime, true)
     }
 
     private fun addGestureTrail(event: MotionEvent, index: Int) {
-        for (h in 0 until event.historySize) {
-            laser.add(event.getHistoricalX(index, h), event.getHistoricalY(index, h), event.getHistoricalEventTime(h), true)
-        }
-        val x = event.getX(index)
-        val y = event.getY(index)
-        if (hypot(x - gestureDownX, y - gestureDownY) > touchSlop) gestureTrailMoved = true
-        laser.add(x, y, event.eventTime, true)
+        if (hypot(event.getX(index) - gestureDownX, event.getY(index) - gestureDownY) > touchSlop) gestureTrailMoved = true
     }
 
-    /** A tap with the button held leaves a ring where it landed; any drag just fades. */
+    /** A tap with the button held leaves a ring where it landed; a drag leaves nothing. */
     private fun finishGestureTrail(event: MotionEvent) {
         if (!gestureTrail) return
         gestureTrail = false
