@@ -269,7 +269,7 @@ internal class InkTileCache(
     private fun tileFor(key: Key, state: PageState, consolidate: Boolean): Tile {
         val scale = state.scale
         val tile = tiles.getOrPut(key) {
-            tilesPerPage[page] = (tilesPerPage[page] ?: 0) + 1
+            tilesPerPage[key.page] = (tilesPerPage[key.page] ?: 0) + 1
             Tile(key, scale, state.excluded)
         }
         // Android can discard a display list when its node leaves the drawing
