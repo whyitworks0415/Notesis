@@ -111,7 +111,8 @@ class PdfSource private constructor(
     // [cacheBytes] remains one total budget. Detail space fits a 2048px A4
     // page at the minimum budget and keeps a screenful of sharp tiles.
     // A separate low-resolution floor survives sharp page/tile cache churn.
-    private val previewBytes = (cacheBytes / 8).coerceAtLeast(1)
+    // At least a zoomed-out screenful of A4 previews, so they never evict each other.
+    private val previewBytes = maxOf(cacheBytes / 8, PREVIEWS_KEPT * 384 * 543 * 4).coerceAtLeast(1)
     private val previewCache = object : LruCache<Int, Bitmap>(previewBytes) {
         override fun sizeOf(key: Int, value: Bitmap): Int = value.byteCount
     }
@@ -301,9 +302,10 @@ class PdfSource private constructor(
         val width = fittingWidth(bucketFor(wantPx), sharing, aspect)
         if (closed || index !in 0 until pageCount) return null
         val preview = previewCache.get(index)
-        if (preview == null) request(keyOf(index, PREVIEW_WIDTH)) {
-            renderWholePage(index, PREVIEW_WIDTH)
-        }
+        // A page drawn no wider than the preview is the preview: rendering it
+        // at 1024px just to shrink it again filled the cache with pages that
+        // were small on screen, and pushed the others out.
+        if (preview != null && wantPx <= PREVIEW_WIDTH * 3 / 2) return preview
         val key = keyOf(index, width)
         cache.get(key)?.let { return it }
         // Reuse a sharper cached page when zooming out. Looking only for a
@@ -313,7 +315,19 @@ class PdfSource private constructor(
         // zoom, and avoids evicting it just to render a smaller duplicate.
         finerThan(index, width)?.let { return it }
         val fallback = coarserThan(index, width)
-        if (request) request(key) { renderWholePage(index, width) }
+        // Only what the cache can hold alongside the other pages on screen.
+        // Past that, each finished render evicted a page still being shown,
+        // which asked again: renders and redraws for as long as the note was
+        // open, with nobody touching it. The coarser or preview image stays.
+        val room = cache.maxSize().toLong()
+        val fits = sharing.coerceAtLeast(1) * pageBytes(width, aspect) <= room &&
+            width.toLong() * (width * aspect.coerceAtLeast(0.01f)).toLong() * 4L <= room
+        if (request && fits && wantPx > PREVIEW_WIDTH * 3 / 2) request(key) { renderWholePage(index, width) }
+        // The preview is the floor under everything else; ask for it only when
+        // the previews on screen fit together, or they evict each other too.
+        if (preview == null &&
+            sharing.coerceAtLeast(1) * pageBytes(PREVIEW_WIDTH, aspect) <= previewCache.maxSize().toLong()
+        ) request(keyOf(index, PREVIEW_WIDTH)) { renderWholePage(index, PREVIEW_WIDTH) }
         return fallback ?: preview
     }
 
@@ -335,9 +349,11 @@ class PdfSource private constructor(
         pixelsPerUnit: Float,
         /** False while the zoom is still moving: show what is cached, render nothing. */
         request: Boolean = true,
+        /** PDF pages on screen together; their tiles share one cache. */
+        sharing: Int = 1,
     ): List<PdfTile> {
         if (closed || index !in 0 until pageCount) return emptyList()
-        val density = densityFor(pixelsPerUnit, visible.width(), visible.height())
+        val density = densityFor(pixelsPerUnit, visible.width(), visible.height(), sharing)
         val tileUnits = TILE_PX / density
         val firstX = floor(visible.left / tileUnits).toInt().coerceAtLeast(0)
         val lastX = floor((visible.right - 1e-3f) / tileUnits).toInt()
@@ -510,10 +526,12 @@ class PdfSource private constructor(
      * long as the page sat still. One density lower is all but as sharp there
      * (the step just crossed was a few percent), and the set fits.
      */
-    private fun densityFor(pixelsPerUnit: Float, visibleWidth: Float, visibleHeight: Float): Float {
+    private fun densityFor(pixelsPerUnit: Float, visibleWidth: Float, visibleHeight: Float, sharing: Int = 1): Float {
         var density = 1f
         while (density < pixelsPerUnit && density < MAX_TILE_DENSITY) density *= 2f
-        val budget = tileCache.maxSize().toLong() * TILE_BUDGET_PERCENT / 100
+        // Two pages at a seam each sized against the whole cache overran it
+        // together, and evicted each other's tiles the same way.
+        val budget = tileCache.maxSize().toLong() * TILE_BUDGET_PERCENT / 100 / sharing.coerceAtLeast(1)
         while (density > 1f && tileBytesAtMost(visibleWidth, visibleHeight, density) > budget) density /= 2f
         return density
     }
@@ -827,6 +845,7 @@ class PdfSource private constructor(
         const val POINTS_TO_WORLD = 150f / 72f
 
         private const val PREVIEW_WIDTH = 384
+        private const val PREVIEWS_KEPT = 16
         /** Spare tiles kept for reuse; see [tilePool]. */
         private const val TILE_POOL_SIZE = 3
         /** How long a tile rests after leaving the cache before it is painted over. */

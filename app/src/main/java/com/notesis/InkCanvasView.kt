@@ -929,17 +929,36 @@ class InkCanvasView @JvmOverloads constructor(
             dry.invalidate()
         }
 
-    /** [stroke] sharing its mesh but with its on-screen brush, or null if that is the same brush. */
+    /**
+     * [stroke] sharing its mesh but with its on-screen brush, or null if that is
+     * the same brush. Built from the stroke's own shape: Stroke.copy re-tessellates
+     * whenever the family differs, which made every pen stroke on a page be
+     * built twice. Only the self-overlap differs between the two families, and
+     * the twin is used for opaque ink alone, where overlap does not show.
+     */
     private fun meshTwinOf(stroke: Stroke): Stroke? {
         val brush = screenBrush(stroke.brush)
-        return if (brush === stroke.brush) null else stroke.copy(brush)
+        if (brush === stroke.brush) return null
+        return runCatching { Stroke(brush, stroke.inputs, stroke.shape) }.getOrElse { stroke.copy(brush) }
     }
+
+    /**
+     * Twin brushes by the brush they stand for. A page of one pen shares one
+     * Brush, so this turns a native copy per stroke into one per pen.
+     */
+    private val screenBrushes = IdentityHashMap<Brush, Brush>()
 
     /** The brush Ink should draw [brush] with on screen; see [meshInk]. */
     private fun screenBrush(brush: Brush): Brush {
         if (!meshInk || Color.alpha(brush.colorIntArgb) != 255) return brush
-        val family = Tool.meshFamilyOf(brush.family) ?: return brush
-        return brush.copy(family = family)
+        synchronized(screenBrushes) { screenBrushes[brush]?.let { return it } }
+        val family = Tool.meshFamilyOf(brush.family)
+        val twin = if (family == null) brush else brush.copy(family = family)
+        synchronized(screenBrushes) {
+            if (screenBrushes.size > MAX_SCREEN_BRUSHES) screenBrushes.clear()
+            screenBrushes[brush] = twin
+        }
+        return twin
     }
 
     /** The pen points instead of writing: a fading red trail that is never saved. */
@@ -2154,7 +2173,11 @@ class InkCanvasView @JvmOverloads constructor(
         pdf?.diagnostics = latency
         // Has to be the layer that draws the pages: invalidating this ViewGroup
         // leaves the child's cached display list alone, so nothing repaints.
-        pdf?.onReady = { dry.postInvalidateOnAnimation() }
+        // Only a page on screen is worth a redraw. Prefetched pages landing
+        // each redrew the whole canvas, and with it every pane of glass over it.
+        pdf?.onReady = { index ->
+            post { if (!disposed && visiblePages().any { it.pdfPageIndex == index }) dry.postInvalidateOnAnimation() }
+        }
         undoStack.clear()
         redoStack.clear()
         fitted = false
@@ -2677,7 +2700,7 @@ class InkCanvasView @JvmOverloads constructor(
     private fun ensureLoaded(page: Page): Boolean {
         if (page.loaded) return true
         val loader = pageLoader ?: return false
-        val bucket = minOf(tessellationBucket(currentScale()), BASE_TESSELLATION_SCALE)
+        val bucket = minOf(tessellationBucket(currentScale()), LOAD_TESSELLATION_SCALE)
         val epsilon = epsilonFor(bucket)
         page.strokes.addAll(0, loader(page, epsilon))
         maskLoader?.let { page.masks.addAll(0, it(page, epsilon)) }
@@ -4809,24 +4832,44 @@ class InkCanvasView @JvmOverloads constructor(
             // Loading a full dense page at maximum zoom creates maximum-detail
             // geometry for ink that may be far off screen. Establish a modest,
             // crisp base mesh first and refine only the visible part below.
-            val loadEpsilon = epsilonFor(minOf(target, BASE_TESSELLATION_SCALE))
+            // Built once at the zoom in use, up to the scale where a whole page
+            // is on screen: loading at 1 and rebuilding at 2 straight after
+            // tessellated a dense page twice and re-recorded all its tiles.
+            val loadEpsilon = epsilonFor(minOf(target, LOAD_TESSELLATION_SCALE))
             val loaded = ArrayList<Pair<Page, List<Stroke>>>(toLoad.size)
             val loadedMasks = ArrayList<Pair<Page, List<PageMask>>>(toLoad.size)
             val built = ArrayList<Triple<Page, List<Stroke>, List<Stroke>>>(work.size)
             val twins = ArrayList<Pair<Stroke, Stroke?>>()
+            val builtTwins = ArrayList<Pair<Stroke, Stroke?>>()
             var refinedCount = 0
+            // A page read in full is kept even when a newer request has come
+            // in: throwing it away and reading it again was the same dense page
+            // decoded and tessellated twice for one fling, on every core.
+            var abandoned = false
             try {
-                for (page in toLoad) {
-                    if (obsolete()) return@submit
+                loading@ for (page in toLoad) {
+                    if (obsolete()) { abandoned = true; break@loading }
                     loader?.let {
                         val strokes = it(page, loadEpsilon)
+                        // Interrupted, the reader hands back what it had: a partial page.
+                        if (Thread.currentThread().isInterrupted || disposed) { abandoned = true; break@loading }
                         loaded += page to strokes
                         refinedCount += strokes.size
                     }
-                    if (obsolete()) return@submit
-                    masksLoader?.let { loadedMasks += page to it(page, loadEpsilon) }
+                    masksLoader?.let {
+                        val pageMasks = it(page, loadEpsilon)
+                        if (Thread.currentThread().isInterrupted || disposed) {
+                            loaded.removeAll { entry -> entry.first === page }
+                            abandoned = true
+                            break@loading
+                        }
+                        loadedMasks += page to pageMasks
+                    }
                 }
-                for ((page, snapshot) in work) {
+                if (meshInk && !disposed) {
+                    for ((_, strokes) in loaded) for (stroke in strokes) twins += stroke to meshTwinOf(stroke)
+                }
+                if (!abandoned) for ((page, snapshot) in work) {
                     if (obsolete()) return@submit
                     val rebuilt = ArrayList<Stroke>(snapshot.size)
                     for (stroke in snapshot) {
@@ -4843,14 +4886,10 @@ class InkCanvasView @JvmOverloads constructor(
                 // rather than on the first frame that draws them: thousands of
                 // Brush and Stroke allocations in one onDraw was a visible hitch
                 // every time a dense page came on screen or was retessellated.
-                if (meshInk) {
-                    for ((_, strokes) in loaded) for (stroke in strokes) {
-                        if (obsolete()) return@submit
-                        twins += stroke to meshTwinOf(stroke)
-                    }
+                if (meshInk && !abandoned) {
                     for ((_, _, rebuilt) in built) for (stroke in rebuilt) {
                         if (obsolete()) return@submit
-                        twins += stroke to meshTwinOf(stroke)
+                        builtTwins += stroke to meshTwinOf(stroke)
                     }
                 }
             } finally {
@@ -4860,11 +4899,13 @@ class InkCanvasView @JvmOverloads constructor(
                     latency.addRefine(elapsed, refinedCount)
                 }
             }
-            if (obsolete()) return@submit
+            if (disposed || (loaded.isEmpty() && obsolete())) return@submit
             post {
-                if (disposed || serial != refineRequestSerial ||
-                    (!loadOnly && tessellationBucket(currentScale()) != target)
-                ) return@post
+                if (disposed) return@post
+                // Rebuilt meshes are for one zoom and one request; pages read
+                // from disk are good whatever has happened since.
+                val current = !abandoned && serial == refineRequestSerial &&
+                    (loadOnly || tessellationBucket(currentScale()) == target)
                 for ((page, strokes) in loaded) {
                     if (page.loaded) continue
                     // A stroke can be drawn on a page while its own strokes are
@@ -4881,8 +4922,20 @@ class InkCanvasView @JvmOverloads constructor(
                     }
                     page.loaded = true
                     page.settleLayers(document.layers)
-                    page.tessellatedFor = minOf(target, BASE_TESSELLATION_SCALE)
+                    page.tessellatedFor = minOf(target, LOAD_TESSELLATION_SCALE)
                     page.renderState = RenderState.ViewportCached
+                }
+                dry.adoptTwins(twins)
+                if (!current) {
+                    if (loaded.isNotEmpty()) dry.postInvalidateOnAnimation()
+                    // Nothing newer was asked for (the zoom moved on without a
+                    // request, say): this job's pages still need their pass.
+                    if (serial == refineRequestSerial) {
+                        refiningPages = emptyList()
+                        refineFuture = null
+                        scheduleRefine()
+                    }
+                    return@post
                 }
                 for ((page, snapshot, rebuilt) in built) {
                     val replacements = IdentityHashMap<Stroke, Stroke>()
@@ -4911,9 +4964,11 @@ class InkCanvasView @JvmOverloads constructor(
                 }
                 refiningPages = emptyList()
                 refineFuture = null
-                dry.adoptTwins(twins)
+                dry.adoptTwins(builtTwins)
                 dry.postInvalidateOnAnimation()
-                if (loaded.isNotEmpty()) scheduleRefine()
+                // Read in at the zoom in use, a loaded page needs no second pass
+                // unless the zoom is finer than a page is first read at.
+                if (loaded.isNotEmpty() && target > LOAD_TESSELLATION_SCALE) scheduleRefine()
             }
         } }.getOrNull()
         if (future == null) {
@@ -5032,7 +5087,6 @@ class InkCanvasView @JvmOverloads constructor(
      */
     private fun prefetchNearbyPages(radius: Int) {
         if (disposed) return
-        val anchor = currentPage
         val visible = Collections.newSetFromMap(IdentityHashMap<Page, Boolean>())
         visible += visiblePages()
         val pages = nearbyPageIndices(radius).map { document.pages[it] }
@@ -5040,21 +5094,32 @@ class InkCanvasView @JvmOverloads constructor(
         if (pages.isEmpty()) return
         val loader = pageLoader ?: return
         val masksLoader = maskLoader
-        val epsilon = epsilonFor(BASE_TESSELLATION_SCALE)
+        val scale = minOf(tessellationBucket(currentScale()), LOAD_TESSELLATION_SCALE)
+        val epsilon = epsilonFor(scale)
         val serial = refineRequestSerial
+        val withTwins = meshInk
         runCatching { refiner.execute {
             val loaded = ArrayList<Pair<Page, List<Stroke>>>(pages.size)
             val masks = ArrayList<Pair<Page, List<PageMask>>>(pages.size)
+            val twins = ArrayList<Pair<Stroke, Stroke?>>()
             for (page in pages) {
                 // A new viewport has a zero-delay visible-page job waiting on
                 // this same executor. Yield after at most one disk page instead
                 // of making it wait for the old six-page halo.
                 if (disposed || serial != refineRequestSerial) break
-                loaded += page to loader(page, epsilon)
+                val strokes = loader(page, epsilon)
+                loaded += page to strokes
                 masksLoader?.let { masks += page to it(page, epsilon) }
+                // Twins here too: made by the first frame that showed the page,
+                // they were thousands of allocations inside one onDraw.
+                if (withTwins) for (stroke in strokes) twins += stroke to meshTwinOf(stroke)
             }
+            if (loaded.isEmpty()) return@execute
             post {
-                if (disposed || currentPage != anchor || serial != refineRequestSerial) return@post
+                // Kept even if the view has moved on: the pages are read, and a
+                // page scrolled back to would only be read again.
+                if (disposed) return@post
+                dry.adoptTwins(twins)
                 var changed = false
                 for ((page, strokes) in loaded) {
                     if (page.loaded) continue
@@ -5065,7 +5130,7 @@ class InkCanvasView @JvmOverloads constructor(
                     }
                     page.loaded = true
                     page.settleLayers(document.layers)
-                    page.tessellatedFor = BASE_TESSELLATION_SCALE
+                    page.tessellatedFor = scale
                     page.renderState = RenderState.ViewportCached
                     changed = true
                 }
@@ -5086,7 +5151,10 @@ class InkCanvasView @JvmOverloads constructor(
         removeCallbacks(refineRunnable)
         refineRunnablePosted = false
         refineRequestSerial++
-        refineFuture?.cancel(true)
+        // Not interrupted: a job reading a page finishes that page and hands it
+        // over (see refineVisiblePages), and a job rebuilding meshes stops at
+        // its next stroke when it sees the serial has moved on.
+        refineFuture?.cancel(false)
         refineFuture = null
         for (page in refiningPages) {
             if (page.renderState == RenderState.Rendering) page.renderState = RenderState.Dirty
@@ -7560,19 +7628,23 @@ class InkCanvasView @JvmOverloads constructor(
                     val visibleTop = cullTop.coerceAtLeast(0f)
                     val visibleRight = cullRight.coerceAtMost(page.width)
                     val visibleBottom = cullBottom.coerceAtMost(page.height)
-                    val indexedStrokes = strokeIndexes.getOrPut(page) { StrokeGrid() }.visible(
-                        page, visibleLeft, visibleTop, visibleRight, visibleBottom,
-                    )
-                    val visibleStrokes = if (i == playbackPage && playbackStrokeCount != null) {
-                        val allowed = playbackStrokes(page, playbackStrokeCount!!)
-                        indexedStrokes.filter { it in allowed }
-                    } else indexedStrokes
-                    visibleCount += visibleStrokes.size
-                    val hasHighlighter = pageHasHighlighter(page) && visibleStrokes.any {
-                        it.brush.family == Tool.HIGHLIGHTER.brushFamily()
-                    }
                     val tiledInk = scoped.isHardwareAccelerated && meshInk &&
                         page.strokes.size >= 256 && playbackStrokeCount == null
+                    // The tiles query the index themselves; a culled list here
+                    // was built every frame and only ever counted.
+                    val visibleStrokes = if (tiledInk) emptyList() else {
+                        val indexedStrokes = strokeIndexes.getOrPut(page) { StrokeGrid() }.visible(
+                            page, visibleLeft, visibleTop, visibleRight, visibleBottom,
+                        )
+                        if (i == playbackPage && playbackStrokeCount != null) {
+                            val allowed = playbackStrokes(page, playbackStrokeCount!!)
+                            indexedStrokes.filter { it in allowed }
+                        } else indexedStrokes
+                    }
+                    visibleCount += if (tiledInk) page.strokes.size else visibleStrokes.size
+                    val hasHighlighter = pageHasHighlighter(page) && (tiledInk || visibleStrokes.any {
+                        it.brush.family == Tool.HIGHLIGHTER.brushFamily()
+                    })
                     val inkNode = if (!tiledInk && scoped.isHardwareAccelerated && !lifted && playbackStrokeCount == null)
                         inkNodeFor(page, currentScale()) else null
                     val inkBitmap = if (!tiledInk && inkNode == null && !hasHighlighter && !lifted &&
@@ -7757,11 +7829,24 @@ class InkCanvasView @JvmOverloads constructor(
         /** The orange corner handles of a shape being edited. */
         private val vertexPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFF9800.toInt() }
 
+        /**
+         * Each link group's box, kept until the page changes. Worked out per
+         * frame it was a walk of every stroke on the page for every link.
+         */
+        private inner class LinkBoxes(val stamp: List<Long>, val boxes: List<RectF>)
+        private val linkBoxes = java.util.WeakHashMap<Page, LinkBoxes>()
+
         private fun drawLinks(canvas: Canvas, page: Page) {
-            for (group in page.links.keys) {
-                groupBounds(page, group, linkBox)
-                if (linkBox.isEmpty) continue
-                val pad = 4f / currentScale()
+            val stamp = listOf(page.revision, page.meshRevision, page.strokes.size.toLong(),
+                page.images.size.toLong(), page.links.size.toLong())
+            val cached = linkBoxes[page]?.takeIf { it.stamp == stamp } ?: LinkBoxes(stamp,
+                page.links.keys.mapNotNull { group ->
+                    groupBounds(page, group, linkBox)
+                    if (linkBox.isEmpty) null else RectF(linkBox)
+                }).also { linkBoxes[page] = it }
+            val pad = 4f / currentScale()
+            for (box in cached.boxes) {
+                linkBox.set(box)
                 linkBox.inset(-pad, -pad)
                 canvas.drawRoundRect(linkBox, pad, pad, linkWash)
             }
@@ -8064,6 +8149,7 @@ class InkCanvasView @JvmOverloads constructor(
                         page.height,
                         scale,
                         render,
+                        sharing = visiblePdfPages,
                     )) {
                         canvas.drawBitmap(tile.bitmap, null, tile.source, bitmapPaint)
                     }
@@ -8128,6 +8214,9 @@ class InkCanvasView @JvmOverloads constructor(
         /** Strokes drawn live on top of a recording before it is re-recorded anyway. */
         const val MAX_NODE_APPENDED = 48
         const val BASE_TESSELLATION_SCALE = 1f
+        /** The finest zoom a page is first read in at; see refineVisiblePages. */
+        const val LOAD_TESSELLATION_SCALE = 2f
+        const val MAX_SCREEN_BRUSHES = 256
         const val EPSILON_SLOP = 0.00001f
         const val PREFETCH_SETTLE_MS = 280L
         const val PREFETCH_SLOW_RADIUS = 1

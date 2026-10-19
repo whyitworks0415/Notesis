@@ -1,5 +1,7 @@
 package com.notesis
 
+import androidx.compose.ui.graphics.graphicsLayer
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.RepeatMode
@@ -241,7 +243,10 @@ private fun Modifier.alertGlow(color: Color): Modifier {
         animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
         label = "clock alert glow",
     )
-    return drawBehind {
+    // In a layer of its own, the pulse redraws this ring and nothing else.
+    // Drawn on the window's root list it re-recorded the page backdrop and
+    // every glass pane, every frame, for as long as the alert went unseen.
+    return graphicsLayer().drawBehind {
         val grow = 3.dp.toPx()
         drawRoundRect(
             color = color.copy(alpha = pulse.value * 0.6f),
@@ -448,7 +453,9 @@ private fun StopwatchTab() {
     // while this is open and running.
     var frameNow by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(running) {
-        while (running) withFrameMillis { frameNow = System.currentTimeMillis() }
+        // About 30 a second reads as running hundredths; every display frame
+        // redrew the glass card under it at 120Hz.
+        while (running) { frameNow = System.currentTimeMillis(); kotlinx.coroutines.delay(33) }
     }
     val elapsed = clock.stopwatchElapsed(if (running) frameNow else clock.now)
     Box(Modifier.fillMaxWidth().height(140.dp), contentAlignment = Alignment.Center) {

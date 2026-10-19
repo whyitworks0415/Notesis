@@ -1045,6 +1045,7 @@ private fun NoteListScreen(
         Box(
             Modifier
                 .fillMaxSize()
+                .graphicsLayer()
                 .recordBackdrop(backdrop)
                 .then(
                     if (currentSkin.isRefractive) {
@@ -3483,8 +3484,13 @@ private fun NoteScreen(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_STOP -> browser.value?.onPause()
-                Lifecycle.Event.ON_START -> if (browserVisible) browser.value?.onResume()
+                // onPause leaves a page's scripts and timers running; out of
+                // sight, an AI chat page kept the CPU busy all the same.
+                Lifecycle.Event.ON_STOP -> browser.value?.let { it.onPause(); it.pauseTimers() }
+                Lifecycle.Event.ON_START -> browser.value?.let {
+                    it.resumeTimers()
+                    if (browserVisible) it.onResume()
+                }
                 else -> Unit
             }
         }
@@ -4073,6 +4079,10 @@ private fun NoteScreen(
         Box(
             Modifier
                 .fillMaxSize()
+                // A layer of its own: on the window's root list, any small
+                // redraw anywhere (a clock tick, a spinner) re-ran both page
+                // recordings and every pane of glass sampling them.
+                .graphicsLayer()
                 .recordBackdrop(backdrop, pageBackdrop)
                 .onGloballyPositioned { pageLayerOrigin = it.positionOnScreen() }
                 .then(
@@ -4140,16 +4150,23 @@ private fun NoteScreen(
                             replacingText = null; textPosition = Triple(page, x, y); showTextBox = true
                         }
                         onLassoSelected = { lassoCount = it }
+                        // A file that cannot be read is remembered as such: it was
+                        // read and failed again on every frame that drew its page.
+                        val unreadable = HashSet<String>()
                         imageLoader = { imageId ->
-                            imageCache.get(imageId) ?: runCatching {
+                            imageCache.get(imageId) ?: if (imageId in unreadable) null else runCatching {
                                 android.graphics.BitmapFactory
                                     .decodeFile(store.imageFile(note.id, imageId).path)
-                            }.getOrNull()?.also { imageCache.put(imageId, it) }
+                            }.getOrNull().also { if (it != null) imageCache.put(imageId, it) else unreadable += imageId }
                         }
                         imageAdder = { bitmap -> store.addImage(note.id, bitmap)?.first }
+                        // Cached like the pictures: a custom paper was decoded
+                        // from disk on every frame, and uploaded as a new texture.
                         templateLoader = { templateId ->
-                            runCatching { android.graphics.BitmapFactory.decodeFile(
-                                store.templateFile(templateId).path) }.getOrNull()
+                            val key = "t:$templateId"
+                            imageCache.get(key) ?: if (key in unreadable) null else runCatching {
+                                android.graphics.BitmapFactory.decodeFile(store.templateFile(templateId).path)
+                            }.getOrNull().also { if (it != null) imageCache.put(key, it) else unreadable += key }
                         }
                         // Rendered on a worker; the dialog is a UI thing.
                         onCaptured = { bitmap -> post { captured = bitmap } }
