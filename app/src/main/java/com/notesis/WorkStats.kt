@@ -25,4 +25,9 @@ internal object WorkStats {
             " · refine ${refinesApplied.get()}/stale ${refinesStale.get()} · prefetch ${prefetched.get()}\n" +
             "pdf ${pdfRenders.get()} (deferred ${pdfDeferred.get()}) · tiles recorded ${tilesRecorded.get()}" +
             " · layer settle full ${layerSettlesFull.get()}/tail ${layerSettlesTail.get()}"
+
+    /** Ink tiles left for a later frame because this one's recording budget was spent. */
+    val tilesDeferred = AtomicLong()
+    /** Clean pages whose previous autosave copy was handed over again instead of rebuilt. */
+    val savePagesReused = AtomicLong()
 }

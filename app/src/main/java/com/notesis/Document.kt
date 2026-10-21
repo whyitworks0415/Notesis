@@ -66,6 +66,15 @@ class PageImage(
         const val FOLDED_SIZE = 56f
     }
 
+    /** Whether [other] holds exactly what [copy] would carry over: every field, by value. */
+    internal fun sameState(other: PageImage): Boolean =
+        id == other.id && x == other.x && y == other.y && width == other.width && height == other.height &&
+            textContent == other.textContent && locked == other.locked && group == other.group &&
+            opacity == other.opacity && rotation == other.rotation && box == other.box &&
+            collapsed == other.collapsed && expandedWidth == other.expandedWidth &&
+            expandedHeight == other.expandedHeight && rows == other.rows && cols == other.cols &&
+            checked == other.checked && color == other.color
+
     /** Everything carried over, with whatever is named changed. */
     fun copy(
         id: String = this.id,
@@ -282,6 +291,9 @@ class Document(val pages: MutableList<Page>) {
     internal fun markEdited() {
         editRevision++
     }
+
+    /** The open canvas's diagnostics, for the autosave snapshot's timing; runtime only. */
+    @Volatile internal var latency: LatencyStats? = null
 
     // Page offsets used to be summed on every call, and every frame asks for
     // them once per visible page - quadratic in page count, which a 200-page
@@ -1340,11 +1352,23 @@ class NoteStore(context: Context) {
      * ConcurrentModificationException recorded in crash.log.
      */
     private fun snapshotForSave(document: Document): SaveSnapshot {
+        val started = System.nanoTime()
         val captured = document.pages.map { live ->
             // Clean pages need only their metadata in this generation. Copying
             // every immutable Stroke reference on every autosave doubled the
             // largest live list, and queued saves multiplied that peak again.
             val copyInk = live.loaded && live.dirty
+            // A clean page whose metadata is as it was last time hands over
+            // that same copy: nothing touches a copy once it is made, so two
+            // queued saves can share it. A long PDF note otherwise built a
+            // new page, its lists and its pictures for every page on every
+            // autosave, to write out the one being written on.
+            if (!copyInk) synchronized(cleanCopies) { cleanCopies[live] }?.let { cached ->
+                if (sameCleanCopy(live, cached)) {
+                    WorkStats.savePagesReused.incrementAndGet()
+                    return@map SavePage(live, cached, live.revision)
+                }
+            }
             val copy = Page(
                 id = live.id,
                 width = live.width,
@@ -1379,10 +1403,39 @@ class NoteStore(context: Context) {
                 it.savedOnDisk = live.savedOnDisk
                 it.revision = live.revision
             }
+            if (!copyInk) synchronized(cleanCopies) { cleanCopies[live] = copy }
             SavePage(live, copy, live.revision)
         }
         val copy = Document(captured.map { it.copy }.toMutableList()).also { it.layers.copyFrom(document.layers) }
+        document.latency?.record(PerformanceMetric.SAVE_SNAPSHOT, System.nanoTime() - started)
         return SaveSnapshot(copy, captured)
+    }
+
+    /**
+     * The metadata-only copy last made of each clean page, keyed weakly by the
+     * live page. Read and written on the UI thread that snapshots; the lock is
+     * for a flush arriving from elsewhere.
+     */
+    private val cleanCopies = java.util.WeakHashMap<Page, Page>()
+
+    /**
+     * Whether [copy] still says everything a save writes for [live], which
+     * has no ink to copy. Every field the copy was built from is compared,
+     * the pictures field by field, since pictures move in place without an
+     * edit being recorded.
+     */
+    private fun sameCleanCopy(live: Page, copy: Page): Boolean {
+        if (copy.loaded || copy.dirty != live.dirty || copy.revision != live.revision ||
+            copy.width != live.width || copy.height != live.height || copy.background != live.background ||
+            copy.templateId != live.templateId || copy.pdfPageIndex != live.pdfPageIndex ||
+            copy.tocTitle != live.tocTitle || copy.tocHighlighted != live.tocHighlighted ||
+            copy.tocLevel != live.tocLevel || copy.bookmarked != live.bookmarked ||
+            copy.tessellatedFor != live.tessellatedFor || copy.savedOnDisk != live.savedOnDisk ||
+            copy.savedStrokeCount != strokeCountOf(live) || copy.links != live.links ||
+            copy.images.size != live.images.size
+        ) return false
+        for (i in live.images.indices) if (!copy.images[i].sameState(live.images[i])) return false
+        return true
     }
 
     /**
@@ -2304,8 +2357,30 @@ internal object StrokeBuilder {
      */
     @Volatile var thermalThrottle: Boolean = false
 
+    /** Set around a read of a page the screen is waiting on; see [forScreen]. */
+    private val onScreen = ThreadLocal<Boolean>()
+
+    /**
+     * Runs [read] as the load of a page that is on screen: it keeps a couple
+     * of threads for its meshes even while the page moves or a pen writes,
+     * where a prefetch gets only what [InteractionGovernor.budget] allows.
+     */
+    fun <T> forScreen(read: () -> T): T {
+        val was = onScreen.get()
+        onScreen.set(true)
+        try {
+            return read()
+        } finally {
+            if (was == null) onScreen.remove() else onScreen.set(was)
+        }
+    }
+
     fun buildAll(records: List<StoredStroke>): List<Stroke> {
-        val slices = inkBuildSlices(threads, records.size, penActive || thermalThrottle)
+        // The governor knows what the person is doing and whether the device
+        // is saving power or hot; one core while a pen writes or a page moves,
+        // two in battery saver, the lot when nothing is going on.
+        val width = inkBuildWidth(threads, InteractionGovernor.budget(threads), onScreen.get() == true, INK_THROTTLED_SLICES)
+        val slices = inkBuildSlices(width, records.size, penActive || thermalThrottle || width < threads)
         if (slices <= 1) return records.mapNotNull(::build)
         val per = (records.size + slices - 1) / slices
         val futures = records.chunked(per).map { slice ->
