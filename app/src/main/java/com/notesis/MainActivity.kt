@@ -16,6 +16,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -111,6 +112,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -223,6 +225,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         hideSystemBars()
         StudyClock.init(applicationContext)
+        // Before any screen: the glass reads battery saver from it from the first frame.
+        InteractionGovernor.init(applicationContext)
         Planner.init(applicationContext)
         ToolbarMotion.init(applicationContext)
         val store = NoteStore(this)
@@ -2953,9 +2957,19 @@ private fun WebPanel(
         uaFor(android.webkit.WebSettings.getDefaultUserAgent(context), desktop)
     }
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    // Out of sight the page stops: onPause alone left its JavaScript timers
+    // running, so a chat page kept waking the CPU beside the writing. The
+    // timers are process-wide, which is why the note screen starts them again
+    // when it goes away (see the browser's DisposableEffect there).
     DisposableEffect(web) {
+        web?.resumeTimers()
         web?.onResume()
-        onDispose { if (holder.value === web) web?.onPause() }
+        onDispose {
+            if (holder.value === web) {
+                web?.onPause()
+                web?.pauseTimers()
+            }
+        }
     }
 
     SkinSurface(modifier = modifier, corner = 0.dp) {
@@ -3372,14 +3386,34 @@ internal val EditMode.tints: Boolean
     get() = this == EditMode.PEN || this == EditMode.PENCIL || this == EditMode.HIGHLIGHTER ||
         this == EditMode.MASK || this == EditMode.SHAPE
 
+/**
+ * A recomposition scope of its own. Box, Column and the like are inline, so
+ * state read inside them recomposes the whole function they sit in - for the
+ * note screen, the page host, the toolbar and every panel at once. State read
+ * in [content] recomposes [content] only.
+ */
+@Composable
+private fun Isolated(content: @Composable () -> Unit) = content()
+
+/**
+ * The overlay's text. The numbers are collected all along by the canvas; this
+ * only reads them, at most a couple of times a second and half that while a
+ * pen writes, so the readout itself is not part of what it measures. Composed
+ * only while shown, so a hidden overlay builds nothing.
+ */
 @Composable
 private fun LatencyHud(report: () -> String, modifier: Modifier = Modifier) {
     val latestReport by rememberUpdatedState(report)
     var text by remember { mutableStateOf("") }
     LaunchedEffect(Unit) {
+        var last = Long.MIN_VALUE / 2
         while (true) {
-            text = latestReport()
-            delay(500)
+            val now = android.os.SystemClock.uptimeMillis()
+            if (UiScheduling.hudRefreshDue(now - last, InteractionGovernor.writing)) {
+                last = now
+                text = latestReport()
+            }
+            delay(UiScheduling.HUD_REFRESH_MS)
         }
     }
     Text(text, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = modifier)
@@ -3557,7 +3591,15 @@ private fun NoteScreen(
     val pendingAttachment = remember { mutableStateOf<Uri?>(null) }
     val webChooser = remember { mutableStateOf<android.webkit.ValueCallback<Array<Uri>>?>(null) }
     DisposableEffect(Unit) {
-        onDispose { browser.value?.destroy() }
+        onDispose {
+            browser.value?.let {
+                // Timers are paused for every WebView in the process, and the
+                // document viewer has one of its own; leave them running.
+                it.resumeTimers()
+                it.destroy()
+            }
+            browser.value = null
+        }
     }
     val browserVisible by rememberUpdatedState(webUrl != null)
     DisposableEffect(lifecycleOwner) {
@@ -3566,9 +3608,10 @@ private fun NoteScreen(
                 // onPause leaves a page's scripts and timers running; out of
                 // sight, an AI chat page kept the CPU busy all the same.
                 Lifecycle.Event.ON_STOP -> browser.value?.let { it.onPause(); it.pauseTimers() }
-                Lifecycle.Event.ON_START -> browser.value?.let {
+                // A hidden panel stays paused; showing it starts it (WebPanel).
+                Lifecycle.Event.ON_START -> browser.value?.takeIf { browserVisible }?.let {
                     it.resumeTimers()
-                    if (browserVisible) it.onResume()
+                    it.onResume()
                 }
                 else -> Unit
             }
@@ -3732,6 +3775,10 @@ private fun NoteScreen(
     var ruler by remember { mutableStateOf<RulerKind?>(null) }
     var rulerAngle by remember { mutableStateOf(false) }
     var showPages by remember { mutableStateOf(false) }
+    // Whether the pen put the panel away. It then goes in one frame, without
+    // the slide: a panel of glass and thumbnails animating out is GPU and UI
+    // thread work landing on the very first frames of the stroke.
+    var pagesClosedByPen by remember { mutableStateOf(false) }
     // The page panel's body search. Held here, not in the panel, so the query
     // and the place in its results outlive the panel closing under the pen.
     val noteSearch = remember(note.id) {
@@ -3755,15 +3802,15 @@ private fun NoteScreen(
     // 지나 긴 노트 탐색이 필요해진 순간부터 나타납니다.
     var pagesTraversed by remember(note.id) { mutableIntStateOf(0) }
     var pageScrubberVisible by remember(note.id) { mutableStateOf(false) }
-    var pageScrubberActivity by remember(note.id) { mutableIntStateOf(0) }
     // 마지막 페이지 이동마다 이전 타이머가 취소됩니다. 이동이 멈춘 뒤에만 사라집니다.
-    LaunchedEffect(pageScrubberActivity) {
-        if (!pageScrubberVisible) return@LaunchedEffect
-        delay(PAGE_SCRUBBER_IDLE_MS)
-        pageScrubberVisible = false
-    }
+    // The timer lives with the scrubber below, in a scope of its own.
+    var pageScrubberActivity by remember(note.id) { mutableIntStateOf(0) }
     // A multiple of fit-to-width, which is the 100% anybody means.
     var zoom by remember { mutableFloatStateOf(1f) }
+    // The zoom as the canvas last reported it. During a pinch or a fling only
+    // this moves; [zoom], which the toolbar label reads, catches up when the
+    // hand lifts, so the bar is not recomposed thirty times a second meanwhile.
+    val liveZoom = remember { floatArrayOf(1f) }
     var zoomMenu by remember { mutableStateOf(false) }
     var canvas by remember { mutableStateOf<InkCanvasView?>(null) }
     /** Puts [text] on the page as a text box in the middle of the screen. */
@@ -4054,9 +4101,13 @@ private fun NoteScreen(
     // The chrome looks through whatever is drawn under it, so the page records
     // itself once a frame - but only while something actually bends or blurs it.
     val look = LocalSkinSettings.current
+    // Not in battery saver: the frost is decoration, and it is the page drawn a
+    // second time. The panes go solid instead (see SkinSurface); the setting
+    // itself is left as chosen and the frost is back when saving ends.
     val backdrop = rememberBackdrop(
         active = skin == Skin.GLASSMORPHISM &&
-            (look.blur > 0.1f || look.vibrancy > 0.01f),
+            (look.blur > 0.1f || look.vibrancy > 0.01f) &&
+            !InteractionGovernor.observedPowerSave,
     )
     val liquidBackdrop = if (skin.isRefractive) rememberLiquidGlassBackdrop() else null
     var drawingPage by remember { mutableStateOf(false) }
@@ -4133,7 +4184,10 @@ private fun NoteScreen(
                     if (skin.isRefractive) {
                         Modifier.captureLiquidGlassBackdrop(
                             requireNotNull(liquidBackdrop),
-                            paused = { drawingPage || movingPage },
+                            // Any canvas busy - this one, or the reference panel's -
+                            // and through the short settle after: the panes keep the
+                            // last recording until the screen is idle again.
+                            paused = { drawingPage || movingPage || InteractionGovernor.observed != Interaction.IDLE },
                             source = pageBackdrop,
                         )
                     } else {
@@ -4186,7 +4240,10 @@ private fun NoteScreen(
                             // survives process death and makes reopening exact.
                             penStore.setLastPage(note.id, it)
                         }
-                        onZoomChanged = { zoom = it }
+                        onZoomChanged = {
+                            liveZoom[0] = it
+                            if (!movingPage) zoom = it
+                        }
                         onSelectionChanged = { selectedText = it?.text; selectedPdf = it }
                         onImageSelected = { imageSelected = it; edits++ }
                         onTextRequested = { page, x, y ->
@@ -4225,6 +4282,7 @@ private fun NoteScreen(
                     view.onViewportInteractionChanged = { moving ->
                         movingPage = moving
                         backdrop.paused = moving || drawingPage
+                        if (!moving) zoom = liveZoom[0]
                     }
                     view.predictionEnabled = prediction
                     view.predictionLeadMs = predictionLeadMs
@@ -4257,7 +4315,14 @@ private fun NoteScreen(
                     // Writing puts the page panel away; using it, scrolling and
                     // zooming do not. Read when it fires, not here, so this
                     // update block does not rerun every time the panel toggles.
-                    view.onWritingStarted = { if (showPages) showPages = false }
+                    // Only the panel's own scope reads these (see Isolated
+                    // below), so the flip recomposes the panel, not the screen.
+                    view.onWritingStarted = {
+                        if (showPages) {
+                            pagesClosedByPen = true
+                            showPages = false
+                        }
+                    }
                     view.shapeCornerRadius = shapeCorner
                     if (mode != EditMode.ERASE && mode in PenStore.DEFAULTS) beforeEraser = mode
                     view.onEraseFinished = if (gestures.eraserReturns && mode == EditMode.ERASE) {
@@ -4362,42 +4427,59 @@ private fun NoteScreen(
         }
         }
 
-        // Autosave: each change restarts a short timer, so a burst of strokes
-        // writes the note once instead of once per stroke.
+        // Autosave: a burst of strokes writes the note once, in a pause, rather
+        // than once per stroke; see autosaveLoop for when.
         //
-        // Both timers watch edits from a coroutine instead of using it as a
+        // Both loops watch edits from a coroutine instead of using it as a
         // LaunchedEffect key. A key is read during composition, so every pen-up
         // recomposed this whole screen - page host, toolbar and panels - on the
         // UI thread right when the next stroke was starting.
         val latestNote by rememberUpdatedState(note)
+        // When the last autosave was taken, so recognition keeps clear of it.
+        val lastSaveAt = remember { longArrayOf(0L) }
         LaunchedEffect(Unit) {
-            snapshotFlow { edits }.collectLatest { count ->
-                if (count == 0) return@collectLatest
-                delay(AUTOSAVE_DELAY_MS)
-                val view = canvas ?: return@collectLatest
+            autosaveLoop(edits = { edits }) {
+                val view = canvas ?: return@autosaveLoop
+                lastSaveAt[0] = android.os.SystemClock.uptimeMillis()
                 // Snapshot on the UI thread before the serial worker writes it.
                 // Passing the live document to Dispatchers.IO raced pen commits and
                 // mesh rebuilds, which is the repeated CME found in crash.log.
+                val started = System.nanoTime()
                 store.saveLater(latestNote.id, latestNote.title, view.document)
+                view.latency.record(PerformanceMetric.SAVE_SNAPSHOT, System.nanoTime() - started)
             }
         }
 
         // Handwriting recognition is useful search metadata, not part of
-        // saving. Give it a longer quiet period and do not rerun it for toolbar
-        // or image state that left the ink revision unchanged.
+        // saving. It is optional work: it waits for an idle screen whose hands
+        // have been off it a while, keeps clear of the save, and does not rerun
+        // for toolbar or image state that left the ink revision unchanged.
         LaunchedEffect(Unit) {
             snapshotFlow { edits }.collectLatest { count ->
                 if (count == 0) return@collectLatest
-                delay(INK_INDEX_IDLE_MS)
+                delay(UiScheduling.INK_INDEX_IDLE_MS)
+                while (true) {
+                    val sinceSave = lastSaveAt[0].let {
+                        if (it == 0L) Long.MAX_VALUE / 2 else android.os.SystemClock.uptimeMillis() - it
+                    }
+                    val wait = UiScheduling.inkIndexWaitMs(
+                        InteractionGovernor.state, InteractionGovernor.quietForMs(), sinceSave)
+                    if (wait <= 0L && InteractionGovernor.mayRunOptional(UiScheduling.INK_INDEX_IDLE_MS)) break
+                    delay(wait.coerceAtLeast(INK_INDEX_RECHECK_MS))
+                }
                 val view = canvas ?: return@collectLatest
                 val page = view.document.pages.getOrNull(view.currentPageIndex()) ?: return@collectLatest
                 if (!page.loaded) return@collectLatest
                 val revision = page.revision
                 if (indexedRevisions[page.id] == revision) return@collectLatest
+                // A copy of the list of references, nothing deeper: strokes are immutable.
                 val strokes = page.strokes.toList()
-                withContext(Dispatchers.IO) {
-                    indexer.textOf(strokes)?.let { store.writeInkIndex(latestNote.id, page.id, it) }
-                }
+                val text = withContext(Dispatchers.IO) {
+                    // A pen or finger back on the page stops it between lines;
+                    // the page is read again at the next quiet spell.
+                    indexer.textOf(strokes, keepGoing = { InteractionGovernor.state == Interaction.IDLE })
+                } ?: return@collectLatest
+                withContext(Dispatchers.IO) { store.writeInkIndex(latestNote.id, page.id, text) }
                 indexedRevisions[page.id] = revision
             }
         }
@@ -4429,9 +4511,7 @@ private fun NoteScreen(
         if (showLatency) {
             LatencyHud(
                 report = {
-                    canvas?.let {
-                        it.debugPerformanceReport() + "\nzoom ${"%.0f".format(zoom * 100)}%"
-                    }.orEmpty()
+                    canvas?.let { Measurements.overlay(it, (liveZoom[0] * 100).roundToInt()) }.orEmpty()
                 },
                 modifier = Modifier
                     .align(Alignment.TopStart)
@@ -4440,6 +4520,14 @@ private fun NoteScreen(
             )
         }
 
+        // Its own scope: the scrubber's timer key moves with every page passed
+        // in a fling, and read out here it recomposed the whole screen each time.
+        Isolated {
+        LaunchedEffect(pageScrubberActivity) {
+            if (!pageScrubberVisible) return@LaunchedEffect
+            delay(PAGE_SCRUBBER_IDLE_MS)
+            pageScrubberVisible = false
+        }
         androidx.compose.animation.AnimatedVisibility(
             visible = pageScrubberVisible && !showPages,
             enter = fadeIn(tween(120)),
@@ -4460,6 +4548,7 @@ private fun NoteScreen(
                 modifier = Modifier.fillMaxHeight(),
                 thumbnail = { index -> canvas?.pageThumbnail(index, SCRUBBER_THUMBNAIL_PX) },
             )
+        }
         }
 
         if (!docked && !collapsed) {
@@ -4508,6 +4597,10 @@ private fun NoteScreen(
 
         // Settings live in a sidebar along the edge, over the page and the
         // bar, with its own screens inside it rather than dialogs on dialogs.
+        // Isolated: opening it, moving between its screens and what its quick
+        // actions read (zoom, rotation, the page panel) recompose the sidebar,
+        // not the note behind it.
+        Isolated {
         settingsNav?.let { nav ->
             NoteSettingsSidebar(
                 nav = nav,
@@ -4664,6 +4757,7 @@ private fun NoteScreen(
                     )
                 },
             )
+        }
         }
 
         /**
@@ -5446,10 +5540,16 @@ private fun NoteScreen(
 
         // Qualified: the enclosing Row puts RowScope.AnimatedVisibility in scope
         // too, and it wins the overload without a receiver to call it on.
+        // In a scope of its own, so opening and closing it - writing closes
+        // it - recomposes the panel and nothing else: not the page host, not
+        // the toolbar, not the AndroidView's update.
+        Isolated {
+        // Opened by hand, it closes the usual way again.
+        LaunchedEffect(showPages) { if (showPages) pagesClosedByPen = false }
         androidx.compose.animation.AnimatedVisibility(
             visible = showPages,
             enter = slideInHorizontally { it },
-            exit = slideOutHorizontally { it },
+            exit = if (pagesClosedByPen) ExitTransition.None else slideOutHorizontally { it },
             modifier = Modifier.align(Alignment.CenterEnd),
         ) {
             PageSidebar(
@@ -5591,6 +5691,7 @@ private fun NoteScreen(
                 },
             )
         }
+        }
 
         // Scale from nothing rather than sliding in from an edge: it opens
         // from wherever the gesture was, not from a side of the screen.
@@ -5641,12 +5742,13 @@ private fun NoteScreen(
                 autoShapes = autoShapes,
                 axisSnap = axisSnap,
                 dottedPattern = dottedPattern,
-                offset = referenceOffset,
+                offset = { referenceOffset },
                 size = referenceSize,
-                stretch = referenceStretch,
-                dismissProgress = (referenceOvershoot / with(density) { REFERENCE_DISMISS_DRAG.toPx() })
-                    .coerceIn(0f, 1f),
-                draft = referenceDraft,
+                stretch = { referenceStretch },
+                dismissProgress = {
+                    (referenceOvershoot / with(density) { REFERENCE_DISMISS_DRAG.toPx() }).coerceIn(0f, 1f)
+                },
+                draft = { referenceDraft },
                 onResize = { dx, dy -> resizeReference(dx, dy) },
                 onResizeEnd = { view ->
                     val draft = referenceDraft
@@ -6191,10 +6293,13 @@ private fun ReferencePanel(
     autoShapes: Boolean,
     axisSnap: Boolean,
     dottedPattern: Int,
-    offset: Offset,
+    // Read where they are used - placement, the layer, the draw - and not in
+    // composition: a drag moves them every frame, and passed as values each
+    // frame recomposed the whole panel around a page that had not changed.
+    offset: () -> Offset,
     size: Size,
     /** What the whole panel is scaled by while a spread is in progress. */
-    stretch: Float,
+    stretch: () -> Float,
     /**
      * The three-finger drag has ended: fold [stretch] into the size, given this
      * panel's view. True means the panel was let go past the bottom edge, and
@@ -6202,9 +6307,9 @@ private fun ReferencePanel(
      */
     onStretchEnd: (InkCanvasView?) -> Boolean,
     /** 0 to 1: how close the panel, dragged past the bottom edge, is to being put down on release. */
-    dismissProgress: Float = 0f,
+    dismissProgress: () -> Float = { 0f },
     /** The size a resize handle is being dragged to, drawn as an outline; null when none is held. */
-    draft: Size? = null,
+    draft: () -> Size? = { null },
     /** A resize handle moved by this much (pixels, each axis free). */
     onResize: (Float, Float) -> Unit = { _, _ -> },
     /** The resize handle was let go: take the [draft] size, given this panel's view. */
@@ -6313,13 +6418,18 @@ private fun ReferencePanel(
         }
     }
 
-    // Match the main note's quiet-period save. Closing or backgrounding bypasses
-    // this delay through flushSave above, so debounce does not risk data loss.
-    LaunchedEffect(popupEdits) {
-        if (popupEdits == 0) return@LaunchedEffect
-        delay(AUTOSAVE_DELAY_MS)
-        val v = view ?: return@LaunchedEffect
-        store.saveLater(noteId, title, v.document)
+    // The main note's save timing. Closing or backgrounding bypasses it through
+    // flushSave above, so waiting for a pause does not risk data loss. Watched
+    // from a coroutine rather than keyed on popupEdits, so a stroke in the
+    // panel does not recompose the panel.
+    val latestTitle by rememberUpdatedState(title)
+    LaunchedEffect(noteId) {
+        autosaveLoop(edits = { popupEdits }) {
+            val v = view ?: return@autosaveLoop
+            val started = System.nanoTime()
+            store.saveLater(noteId, latestTitle, v.document)
+            v.latency.record(PerformanceMetric.SAVE_SNAPSHOT, System.nanoTime() - started)
+        }
     }
 
     val pageCount = opened?.first?.pages?.size ?: 0
@@ -6336,28 +6446,31 @@ private fun ReferencePanel(
 
     Box(
         Modifier
-            .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
+            .offset { offset().let { IntOffset(it.x.roundToInt(), it.y.roundToInt()) } }
             .size(with(density) { size.width.toDp() }, with(density) { size.height.toDp() })
             // Carried past the bottom edge, the panel gives a little and fades:
             // let go now and it is put down; bring it back and it is not.
             .graphicsLayer {
-                translationY = dismissProgress * REFERENCE_DISMISS_SAG.toPx()
-                alpha = 1f - 0.45f * dismissProgress
+                val dismiss = dismissProgress()
+                translationY = dismiss * REFERENCE_DISMISS_SAG.toPx()
+                alpha = 1f - 0.45f * dismiss
             }
             .drawWithContent {
                 drawContent()
-                if (abs(stretch - 1f) > 0.001f) {
+                val scale = stretch()
+                if (abs(scale - 1f) > 0.001f) {
                     drawRect(
                         color = Color(0xFF3B7DDD),
-                        size = Size(this.size.width * stretch, this.size.height * stretch),
+                        size = Size(this.size.width * scale, this.size.height * scale),
                         style = Stroke(width = 2.dp.toPx()),
                     )
                 }
                 // A free resize in progress: the size it will be, outlined.
-                if (draft != null) {
+                val outline = draft()
+                if (outline != null) {
                     drawRect(
                         color = Color(0xFF3B7DDD),
-                        size = draft,
+                        size = outline,
                         style = Stroke(width = 2.dp.toPx()),
                     )
                 }
@@ -6366,7 +6479,8 @@ private fun ReferencePanel(
     SkinSurface(
         modifier = Modifier.fillMaxSize()
             .graphicsLayer {
-                scaleX = stretch; scaleY = stretch
+                val scale = stretch()
+                scaleX = scale; scaleY = scale
                 transformOrigin = TransformOrigin(0f, 0f)
             }
             // 유리 표면이 밝은 페이지와 겹쳐도 팝업 외곽을 잃지 않도록 밝은 림과
@@ -6610,8 +6724,11 @@ private fun ReferencePanel(
     }
     // Free resize: the right edge, the bottom edge and the corner between
     // them, each axis on its own, so the panel takes whatever shape the hand
-    // drags it to. Hidden while a three-finger spread is scaling the panel.
-    if (abs(stretch - 1f) <= 0.001f) {
+    // drags it to. Hidden while a three-finger spread is scaling the panel;
+    // derived, so a spread recomposes this once as it starts and once as it ends.
+    val latestStretch by rememberUpdatedState(stretch)
+    val unstretched by remember { derivedStateOf { abs(latestStretch() - 1f) <= 0.001f } }
+    if (unstretched) {
         val resize: (Float, Float) -> Unit = { dx, dy -> latestResize(dx, dy) }
         val resizeEnd: () -> Unit = { latestResizeEnd(view) }
         ReferenceResizeGrip(horizontal = true, vertical = false, onDrag = resize, onEnd = resizeEnd,
@@ -8045,8 +8162,48 @@ private fun ToolbarDivider() {
     )
 }
 
-private const val AUTOSAVE_DELAY_MS = 1200L
-private const val INK_INDEX_IDLE_MS = 8000L
+/**
+ * Saves a note's pending edits for as long as the screen is up: in a pause
+ * after them, at the latest [UiScheduling.AUTOSAVE_MAX_DELAY_MS] after the
+ * first unsaved one, and not in the middle of a stroke while that can be
+ * helped - see [UiScheduling.autosaveWaitMs]. [edits] is a change counter read
+ * as snapshot state; [save] takes the snapshot on the UI thread. Closing and
+ * backgrounding still flush on their own, without waiting for any of this.
+ */
+private suspend fun autosaveLoop(edits: () -> Int, save: () -> Unit) {
+    var seen = edits()
+    var pending = false
+    var firstAt = 0L
+    var lastAt = 0L
+    // The interaction state is watched as well, so a save held back by a
+    // stroke is taken in the gap the moment that stroke lifts.
+    snapshotFlow { edits() to InteractionGovernor.observed }.collectLatest { (count, _) ->
+        val now = android.os.SystemClock.uptimeMillis()
+        if (count != seen) {
+            seen = count
+            lastAt = now
+            if (!pending) {
+                pending = true
+                firstAt = now
+            }
+        }
+        if (!pending) return@collectLatest
+        while (true) {
+            val at = android.os.SystemClock.uptimeMillis()
+            val wait = UiScheduling.autosaveWaitMs(
+                at - firstAt, at - lastAt, InteractionGovernor.state, InteractionGovernor.quietForMs())
+            if (wait <= 0L) break
+            delay(wait)
+        }
+        // Nothing suspends from here on, so a newer emission cannot cut in
+        // between clearing the flag and taking the snapshot.
+        pending = false
+        save()
+    }
+}
+
+/** How often a held-back handwriting index looks again at the screen. */
+private const val INK_INDEX_RECHECK_MS = 250L
 private const val SEARCH_DEBOUNCE_MS = 220L
 
 private const val PEN_SAVE_DELAY_MS = 400L

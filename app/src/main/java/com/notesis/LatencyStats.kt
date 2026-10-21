@@ -1,5 +1,7 @@
 package com.notesis
 
+import java.util.Locale
+
 /** Metrics collected only while the on-screen diagnostics panel is enabled. */
 internal enum class PerformanceMetric {
     WET_INK,
@@ -53,6 +55,18 @@ class LatencyStats(private val capacity: Int = 512) {
     private var inkCacheBytes = 0
     private var inkCacheRecorded = 0L
     private var inkCacheFrameRecorded = 0L
+
+    /**
+     * The display's refresh period, set by whoever shows the numbers. A frame
+     * interval longer than [MISSED_FRAME_FACTOR] of it is a deadline the UI
+     * thread missed.
+     */
+    @Volatile
+    var refreshPeriodNanos: Long = DEFAULT_PERIOD_NANOS
+        set(value) { if (value > 0L) field = value }
+
+    private var framesCounted = 0L
+    private var framesMissed = 0L
 
     private var previousAllocatedBytes = -1L
     private var previousGcCount = -1L
@@ -125,7 +139,21 @@ class LatencyStats(private val capacity: Int = 512) {
 
     @Synchronized
     fun addFrame(deltaNanos: Long) {
-        if (enabled && deltaNanos > 0L) frames.add(deltaNanos)
+        if (!enabled || deltaNanos <= 0L) return
+        frames.add(deltaNanos)
+        framesCounted++
+        if (isMissedFrame(deltaNanos, refreshPeriodNanos)) framesMissed++
+    }
+
+    /** Every number back to nothing, as when the readout is switched on. */
+    @Synchronized
+    fun reset() {
+        inputSamples = 0
+        inputSamplesSince = System.nanoTime()
+        previousAllocatedBytes = -1L
+        previousGcCount = -1L
+        previousRuntimeSampleNanos = 0L
+        resetLocked()
     }
 
     /** The measured display period used to choose the prediction horizon. */
@@ -172,23 +200,24 @@ class LatencyStats(private val capacity: Int = 512) {
         inkCacheMiB = inkCacheBytes / BYTES_PER_MIB,
         inkCacheFrameRecorded = inkCacheFrameRecorded,
         visibleStrokes = lastVisibleStrokes,
+        framesCounted = framesCounted,
+        framesMissed = framesMissed,
+        refreshPeriodMs = refreshPeriodNanos / NANOS_PER_MS,
     )
 
+    /**
+     * The overlay's timings. Wet and first ink are timed to the frame being
+     * handed to the display, not to light leaving it, and are labelled so.
+     */
     @Synchronized
     fun render(strokeCount: Int): String {
-        val wet = metricLine("wet ink", PerformanceMetric.WET_INK)
-        val finalize = metricLine("pen-up finalize", PerformanceMetric.PEN_FINALIZE)
-        val refine = metricLine("mesh/refine", PerformanceMetric.MESH_REFINE,
-            if (lastRefinedStrokes > 0) "last ${lastRefinedStrokes} strokes" else null)
-        val pdf = metricLine("PDF render", PerformanceMetric.PDF_RENDER,
-            if (lastPdfPixels > 0L) "last %.1fMP".format(lastPdfPixels / 1_000_000.0) else null)
-        val draw = metricLine("page draw", PerformanceMetric.CANVAS_DRAW,
-            "visible ${lastVisibleStrokes} strokes")
-        val dense = metricLine("dense draw(≥$DENSE_PAGE_STROKES)", PerformanceMetric.DENSE_DRAW)
-
         val frame = frames.snapshot()?.let {
-            "frame p50 %.1fms p95 %.1fms p99 %.1fms".format(it.p50, it.p95, it.p99)
-        } ?: "frame -"
+            "frames p50 %.1fms p95 %.1fms p99 %.1fms".format(it.p50, it.p95, it.p99)
+        } ?: "frames -"
+        val missed = "missed %d/%d (%s) over %.1fms".format(
+            framesMissed, framesCounted, missedPercentText(framesMissed, framesCounted),
+            refreshPeriodNanos * MISSED_FRAME_FACTOR / NANOS_PER_MS,
+        )
         val lead = predictionLeads.snapshot()?.let {
             "prediction p50 %.1fms p95 %.1fms p99 %.1fms".format(it.p50, it.p95, it.p99)
         } ?: "prediction -"
@@ -202,16 +231,22 @@ class LatencyStats(private val capacity: Int = 512) {
         } ?: "allocation/GC -"
 
         return listOf(
-            wet,
-            finalize,
-            refine,
-            pdf,
-            draw,
-            dense,
+            metricLine("first ink (submitted)", PerformanceMetric.FIRST_INK),
+            metricLine("input handled", PerformanceMetric.INPUT_HANDLED),
+            metricLine("wet ink (submitted)", PerformanceMetric.WET_INK),
+            metricLine("pen-up finalize", PerformanceMetric.PEN_FINALIZE),
+            "$frame   $missed",
+            metricLine("page apply", PerformanceMetric.PAGE_APPLY),
+            metricLine("save snapshot", PerformanceMetric.SAVE_SNAPSHOT),
+            metricLine("mesh/refine", PerformanceMetric.MESH_REFINE,
+                if (lastRefinedStrokes > 0) "last ${lastRefinedStrokes} strokes" else null),
+            metricLine("PDF render", PerformanceMetric.PDF_RENDER,
+                if (lastPdfPixels > 0L) "last %.1fMP".format(lastPdfPixels / 1_000_000.0) else null),
+            metricLine("page draw", PerformanceMetric.CANVAS_DRAW, "visible ${lastVisibleStrokes} strokes"),
+            metricLine("dense draw(≥$DENSE_PAGE_STROKES)", PerformanceMetric.DENSE_DRAW),
             "mesh cache %d tiles %.1fMB   re-recorded this frame %d strokes".format(
                 inkCacheTiles, inkCacheBytes / BYTES_PER_MIB, inkCacheFrameRecorded),
-            "input %.0fHz   total %d strokes".format(lastInputRateHz, strokeCount),
-            "$frame   $lead",
+            "input %.0fHz   total %d strokes   %s".format(lastInputRateHz, strokeCount, lead),
             allocation,
         ).joinToString("\n")
     }
@@ -257,10 +292,15 @@ class LatencyStats(private val capacity: Int = 512) {
         inkCacheRecorded = 0L
         inkCacheFrameRecorded = 0L
         gcEvents = 0L
+        framesCounted = 0L
+        framesMissed = 0L
     }
 
     companion object {
         const val DENSE_PAGE_STROKES = 500
+        /** A frame interval this many refresh periods long missed its deadline. */
+        const val MISSED_FRAME_FACTOR = 1.5
+        private const val DEFAULT_PERIOD_NANOS = 16_666_667L
         private const val RATE_WINDOW_NANOS = 500_000_000L
         private const val NANOS_PER_MS = 1_000_000.0
         private const val BYTES_PER_MIB = 1024.0 * 1024.0
@@ -277,7 +317,23 @@ internal data class LatencyExtras(
     val inkCacheMiB: Double,
     val inkCacheFrameRecorded: Long,
     val visibleStrokes: Int,
+    /** Frame intervals seen since the numbers were reset, and how many of them ran long. */
+    val framesCounted: Long = 0L,
+    val framesMissed: Long = 0L,
+    val refreshPeriodMs: Double = 0.0,
 )
+
+/**
+ * Whether one frame interval missed its deadline: longer than
+ * [LatencyStats.MISSED_FRAME_FACTOR] refresh periods, so at least one vsync
+ * went by without a frame. One period, or a little jitter over it, is on time.
+ */
+internal fun isMissedFrame(intervalNanos: Long, periodNanos: Long): Boolean =
+    periodNanos > 0L && intervalNanos * 2 > periodNanos * 3
+
+/** "0.4%", or "-" before there is anything to divide by. */
+internal fun missedPercentText(missed: Long, counted: Long): String =
+    if (counted <= 0L) "-" else String.format(Locale.US, "%.1f%%", missed * 100.0 / counted)
 
 /** Fixed storage: recording a sample never allocates. */
 private class LongRing(private val capacity: Int) {

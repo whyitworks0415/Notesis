@@ -3,6 +3,7 @@ package com.notesis
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.Debug
 import android.os.PowerManager
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -107,6 +108,76 @@ private val HELP_TEXT = """
 """.trim()
 
 
+/**
+ * The measurements as text: the conditions they were taken in, then every
+ * timing and counter. Built only when it is read - by the overlay a couple
+ * of times a second, or once for the clipboard - never per input event.
+ */
+internal object Measurements {
+    /**
+     * Brings the numbers that are sampled rather than pushed up to date: the
+     * process's allocation and GC counters, and the refresh period frames are
+     * judged against. Called at readout cadence, so it never touches the
+     * 120-240 Hz input path.
+     */
+    fun sample(view: InkCanvasView) {
+        val stats = view.latency
+        InteractionGovernor.noteRefreshRate(view.display?.refreshRate)
+        stats.refreshPeriodNanos = (1_000_000_000.0 / InteractionGovernor.refreshHz).toLong()
+        if (!stats.enabled) return
+        val allocated = Debug.getRuntimeStat("art.gc.bytes-allocated")?.toLongOrNull() ?: -1L
+        val collections = Debug.getRuntimeStat("art.gc.gc-count")?.toLongOrNull() ?: -1L
+        stats.addRuntimeSample(allocated, collections, System.nanoTime())
+    }
+
+    /** One line of what the numbers depend on, for telling one run from another. */
+    fun conditions(view: InkCanvasView?): String {
+        val hz = InteractionGovernor.refreshHz
+        return String.format(
+            Locale.US, "%s · %.0f Hz (%.1f ms) · battery saver %s · thermal %s · ink %s",
+            InteractionGovernor.state.name.lowercase(Locale.US), hz, 1000f / hz,
+            if (InteractionGovernor.powerSave) "on" else "off",
+            thermalName(InteractionGovernor.thermalStatus),
+            view?.wetInkPathLabel ?: "-",
+        )
+    }
+
+    /** What the overlay shows. */
+    fun overlay(view: InkCanvasView, zoomPercent: Int): String {
+        sample(view)
+        return conditions(view) + "\n" + view.latency.render(view.strokeCount()) + "\n" +
+            WorkStats.render() + "\nzoom $zoomPercent%"
+    }
+
+    /**
+     * Everything above plus the device, for pasting next to another run:
+     * 60 Hz with battery saver off and on, after a long stretch in battery
+     * saver, and at the panel's highest refresh rate.
+     */
+    fun report(context: Context, view: InkCanvasView?, zoomPercent: Int): String {
+        val info = runCatching { context.packageManager.getPackageInfo(context.packageName, 0) }.getOrNull()
+        val runtime = Runtime.getRuntime()
+        val mib = 1024L * 1024L
+        return buildString {
+            appendLine("Notesis measurements · ${java.text.DateFormat.getDateTimeInstance().format(java.util.Date())}")
+            appendLine("App ${info?.versionName} (${info?.longVersionCode}) · " +
+                "${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
+            if (view != null) sample(view)
+            appendLine(conditions(view))
+            appendLine("Thermal throttle on background work: ${if (StrokeBuilder.thermalThrottle) "yes" else "no"}")
+            appendLine("Times marked submitted end when the frame is handed to the display, not when it lights up.")
+            if (view == null || !view.latency.enabled) {
+                appendLine("Timings: not collected (turn on the latency overlay first)")
+            } else {
+                appendLine(view.latency.render(view.strokeCount()))
+            }
+            appendLine(WorkStats.render())
+            appendLine("memory ${(runtime.totalMemory() - runtime.freeMemory()) / mib} of ${runtime.maxMemory() / mib} MB" +
+                " · zoom $zoomPercent%")
+        }.trimEnd()
+    }
+}
+
 /** One look at the numbers, taken once a second while the diagnostics screen is open. */
 private class DiagnosticSnapshot(
     val measuring: Boolean,
@@ -118,16 +189,33 @@ private class DiagnosticSnapshot(
     val memoryUsedMiB: Long,
     val memoryMaxMiB: Long,
     val strokes: Int?,
+    val interaction: Interaction,
+    val powerSave: Boolean,
+    val refreshHz: Float,
+    val inkPath: String?,
 )
 
 private val METRIC_LABELS = listOf(
-    PerformanceMetric.WET_INK to "Wet ink (pen to screen)",
+    PerformanceMetric.FIRST_INK to "First ink (pen down to frame submitted)",
+    PerformanceMetric.INPUT_HANDLED to "Input handled (event to end of handling)",
+    PerformanceMetric.WET_INK to "Wet ink (event to frame submitted)",
     PerformanceMetric.PEN_FINALIZE to "Pen-up finish",
+    PerformanceMetric.PAGE_APPLY to "Page apply (UI thread)",
+    PerformanceMetric.SAVE_SNAPSHOT to "Save snapshot (UI thread)",
     PerformanceMetric.MESH_REFINE to "Mesh refine",
     PerformanceMetric.PDF_RENDER to "PDF render",
     PerformanceMetric.CANVAS_DRAW to "Page draw",
     PerformanceMetric.DENSE_DRAW to "Dense page draw (${LatencyStats.DENSE_PAGE_STROKES}+ strokes)",
 )
+
+/** The background-work counters the Reset button sets back to zero. */
+private val WORK_COUNTERS
+    get() = listOf(
+        WorkStats.pagesLoaded, WorkStats.pagesLoadedStale, WorkStats.loadsAbandoned,
+        WorkStats.refinesApplied, WorkStats.refinesStale, WorkStats.prefetched,
+        WorkStats.pdfRenders, WorkStats.pdfDeferred, WorkStats.tilesRecorded,
+        WorkStats.layerSettlesFull, WorkStats.layerSettlesTail,
+    )
 
 private fun thermalName(status: Int): String = when (status) {
     PowerManager.THERMAL_STATUS_NONE -> "Normal"
@@ -142,6 +230,7 @@ private fun thermalName(status: Int): String = when (status) {
 
 private fun takeSnapshot(context: Context, view: InkCanvasView?): DiagnosticSnapshot {
     val measuring = view?.latencyMonitoringEnabled == true
+    view?.let(Measurements::sample)
     val runtime = Runtime.getRuntime()
     val mib = 1024L * 1024L
     val thermal = runCatching {
@@ -174,6 +263,10 @@ private fun takeSnapshot(context: Context, view: InkCanvasView?): DiagnosticSnap
         memoryMaxMiB = runtime.maxMemory() / mib,
         // A sum over the pages' lists, once a second: cheap next to a frame.
         strokes = view?.strokeCount(),
+        interaction = InteractionGovernor.state,
+        powerSave = InteractionGovernor.powerSave,
+        refreshHz = InteractionGovernor.refreshHz,
+        inkPath = view?.wetInkPathLabel,
     )
 }
 
@@ -204,7 +297,7 @@ internal fun DiagnosticsSettings(
         }
     }
     val snapshot = remember(tick, view, overlay) { takeSnapshot(context, view) }
-    val refresh = LocalView.current.display?.refreshRate
+    val refresh = LocalView.current.display?.refreshRate ?: snapshot.refreshHz
     val id = remember { Diagnostics.id(context) }
     val version = remember {
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0) }.getOrNull()
@@ -224,6 +317,8 @@ internal fun DiagnosticsSettings(
         if (!snapshot.measuring) {
             SettingsNote("Turn on the latency overlay to collect timings.")
         } else {
+            SettingsNote("Submitted means the frame was handed to the display. The time until it lights up " +
+                "is not measured here, so these are not motion-to-photon times.")
             DiagnosticRow("", "p50 · p95 · p99", header = true)
             snapshot.metrics.forEach { (label, stats) ->
                 DiagnosticRow(label, stats?.let { "${it.summary()}  (${it.count})" } ?: "No samples yet")
@@ -236,7 +331,10 @@ internal fun DiagnosticsSettings(
         if (extras == null) {
             SettingsNote("Turn on the latency overlay to collect frame and input numbers.")
         } else {
-            DiagnosticRow("Frame time", extras.frame?.summary() ?: "No samples yet")
+            DiagnosticRow("Frame interval", extras.frame?.summary() ?: "No samples yet")
+            DiagnosticRow("Missed frames",
+                "${extras.framesMissed} of ${extras.framesCounted} (${missedPercentText(extras.framesMissed, extras.framesCounted)})" +
+                    String.format(Locale.US, " · over %.1f ms", extras.refreshPeriodMs * LatencyStats.MISSED_FRAME_FACTOR))
             DiagnosticRow("Prediction lead", extras.prediction?.summary() ?: "No samples yet")
             DiagnosticRow("Pen input rate", String.format(Locale.US, "%.0f Hz", extras.inputRateHz))
             DiagnosticRow("Allocation", extras.allocationMiBPerSecond?.summary("MB/s") ?: "No samples yet")
@@ -249,24 +347,34 @@ internal fun DiagnosticsSettings(
     }
     SettingsCard {
         SettingsSectionHeader("Background work")
-        SettingsNote("Counted since the app started. A count that keeps climbing on a page nobody " +
+        SettingsNote("Counted since the app started or the last reset. A count that keeps climbing on a page nobody " +
             "is touching is work worth reporting.")
         snapshot.work.forEach { (label, count) -> DiagnosticRow(label, count.toString()) }
         TextButton(onClick = {
-            listOf(
-                WorkStats.pagesLoaded, WorkStats.pagesLoadedStale, WorkStats.loadsAbandoned,
-                WorkStats.refinesApplied, WorkStats.refinesStale, WorkStats.prefetched,
-                WorkStats.pdfRenders, WorkStats.pdfDeferred, WorkStats.tilesRecorded,
-                WorkStats.layerSettlesFull, WorkStats.layerSettlesTail,
-            ).forEach { it.set(0L) }
+            // The timings too, so a comparison run starts from nothing.
+            WORK_COUNTERS.forEach { it.set(0L) }
+            view?.latency?.reset()
             tick++
         }, modifier = Modifier.heightIn(min = 44.dp)) { Text("Reset counters") }
+    }
+    SettingsCard {
+        SettingsSectionHeader("Compare conditions")
+        SettingsNote("Reset the counters, write and scroll for a few minutes, then copy. Do it at 60 Hz with " +
+            "battery saver off, again with it on, once more after 15–30 minutes with it on, and at the " +
+            "highest refresh rate, then paste the four side by side.")
+        TextButton(onClick = {
+            clipboard.setText(AnnotatedString(Measurements.report(context, view, zoomPercent)))
+        }, modifier = Modifier.heightIn(min = 44.dp)) { Text("Copy measurements") }
     }
     SettingsCard {
         SettingsSectionHeader("Device")
         DiagnosticRow("Temperature", snapshot.thermal)
         DiagnosticRow("Background work cut back", if (snapshot.throttled) "Yes, the device is warm" else "No")
-        DiagnosticRow("Display refresh", refresh?.let { String.format(Locale.US, "%.0f Hz", it) } ?: "Unknown")
+        DiagnosticRow("Battery saver", if (snapshot.powerSave) "On" else "Off")
+        DiagnosticRow("Display refresh", String.format(Locale.US, "%.0f Hz", refresh))
+        DiagnosticRow("Interaction", snapshot.interaction.name.lowercase(Locale.US)
+            .replaceFirstChar { it.titlecase(Locale.US) })
+        DiagnosticRow("Wet ink path", snapshot.inkPath ?: "Not open")
         DiagnosticRow("App memory", "${snapshot.memoryUsedMiB} of ${snapshot.memoryMaxMiB} MB")
         DiagnosticRow("Strokes in this note", snapshot.strokes?.toString() ?: "Not open")
         DiagnosticRow("Zoom", "$zoomPercent%")

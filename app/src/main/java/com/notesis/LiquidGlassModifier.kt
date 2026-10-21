@@ -1,14 +1,10 @@
 package com.notesis
 
-import android.content.BroadcastReceiver
 import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
 import android.database.ContentObserver
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.os.PowerManager
 import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -242,21 +238,25 @@ internal fun rememberLiquidGlassEffectsAllowed(): Boolean {
     return LocalLiquidGlassEffectsAllowed.current ?: rememberSystemLiquidGlassEffectsAllowed()
 }
 
-/** ContentObserver와 BroadcastReceiver는 상위 제공자당 하나만 등록합니다. */
+/**
+ * 애니메이션 배율은 상위 제공자당 ContentObserver 하나로 관찰합니다. 절전 모드는
+ * 따로 수신기를 두지 않고 [InteractionGovernor]의 상태를 읽습니다. 앱 전체에서
+ * 절전 여부를 아는 곳은 그 하나뿐입니다.
+ */
 @Composable
 internal fun rememberSystemLiquidGlassEffectsAllowed(): Boolean {
     val context = LocalContext.current
-    val allowed = remember(context) {
-        mutableStateOf(readLiquidGlassEffectsAllowed(context))
+    val animations = remember(context) {
+        // Idempotent; MainActivity has normally done it already.
+        InteractionGovernor.init(context)
+        mutableStateOf(readLiquidGlassAnimationsEnabled(context))
     }
 
     DisposableEffect(context) {
-        fun refresh() {
-            allowed.value = readLiquidGlassEffectsAllowed(context)
-        }
-
         val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
-            override fun onChange(selfChange: Boolean) = refresh()
+            override fun onChange(selfChange: Boolean) {
+                animations.value = readLiquidGlassAnimationsEnabled(context)
+            }
         }
         val resolver = context.contentResolver
         val uris = listOf(
@@ -265,41 +265,22 @@ internal fun rememberSystemLiquidGlassEffectsAllowed(): Boolean {
             Settings.Global.getUriFor(Settings.Global.WINDOW_ANIMATION_SCALE),
         )
         uris.forEach { resolver.registerContentObserver(it, false, observer) }
-
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context?, intent: Intent?) = refresh()
-        }
-        val registered = runCatching {
-            val filter = IntentFilter(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED)
-            if (Build.VERSION.SDK_INT >= 33) {
-                context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
-            } else {
-                @Suppress("DEPRECATION")
-                context.registerReceiver(receiver, filter)
-            }
-            true
-        }.getOrDefault(false)
-
         onDispose {
             uris.forEach { resolver.unregisterContentObserver(observer) }
-            if (registered) runCatching { context.unregisterReceiver(receiver) }
         }
     }
-    return allowed.value
+    return animations.value && !InteractionGovernor.observedPowerSave
 }
 
-private fun readLiquidGlassEffectsAllowed(context: Context): Boolean {
+private fun readLiquidGlassAnimationsEnabled(context: Context): Boolean {
     if (Build.VERSION.SDK_INT < 33) return false
     val resolver = context.contentResolver
     fun scale(name: String): Float = runCatching {
         Settings.Global.getFloat(resolver, name, 1f)
     }.getOrDefault(1f)
-    val animationsEnabled =
-        scale(Settings.Global.ANIMATOR_DURATION_SCALE) > 0f &&
-            scale(Settings.Global.TRANSITION_ANIMATION_SCALE) > 0f &&
-            scale(Settings.Global.WINDOW_ANIMATION_SCALE) > 0f
-    val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
-    return animationsEnabled && powerManager?.isPowerSaveMode != true
+    return scale(Settings.Global.ANIMATOR_DURATION_SCALE) > 0f &&
+        scale(Settings.Global.TRANSITION_ANIMATION_SCALE) > 0f &&
+        scale(Settings.Global.WINDOW_ANIMATION_SCALE) > 0f
 }
 
 /** 미리보기에서 배경 레이어와 전경 컨트롤을 순환 참조 없이 분리합니다. */

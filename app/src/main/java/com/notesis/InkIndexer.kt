@@ -113,8 +113,14 @@ class InkIndexer(private val context: Context) {
      * Blocking; call it off the main thread. Null means nothing was read.
      * [firstReading] keeps only the first language that reads each line, for
      * showing to a person; the search index keeps every reading.
+     * [keepGoing] is asked before each line; false stops there and returns
+     * null, so background indexing gives way when the page is touched again.
      */
-    fun textOf(strokes: List<Stroke>, firstReading: Boolean = false): String? {
+    fun textOf(
+        strokes: List<Stroke>,
+        firstReading: Boolean = false,
+        keepGoing: () -> Boolean = { true },
+    ): String? {
         if (strokes.isEmpty()) return ""
         if (!prepare()) return null
         val boxes = strokes.map { stroke ->
@@ -126,6 +132,7 @@ class InkIndexer(private val context: Context) {
         val lines = groupIntoLines(usable.map { it.value!! })
         val out = StringBuilder()
         for (line in lines) {
+            if (!keepGoing()) return null
             val ink = inkOf(line.map { strokes[usable[it].index] }) ?: continue
             for (recognizer in recognizers.values) {
                 val text = runCatching {

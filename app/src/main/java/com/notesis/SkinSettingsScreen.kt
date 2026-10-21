@@ -42,7 +42,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -72,6 +75,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -101,6 +105,9 @@ internal enum class PreviewBackground(val label: String) {
     /** A photo the person picked; kept as a small copy in the app's files. */
     PHOTO("Your photo"),
 }
+
+/** How long a slider must rest before its value becomes the app's look. */
+private const val APPEARANCE_COMMIT_MS = 250L
 
 private const val PREVIEW_PHOTO = "appearance_preview.jpg"
 private const val PREVIEW_PHOTO_MAX_PX = 1600
@@ -318,6 +325,29 @@ internal fun AppearanceSettings(
     /** The note's own bar at 2/4, when there is a note to lend it. */
     preview: (@Composable () -> Unit)? = null,
 ) {
+    // A slider reports every frame of a drag. Handed straight up, each frame
+    // replaced the app's look: every screen under the sidebar recomposed - the
+    // whole note, its page host and toolbar - and the look was written to
+    // preferences, sixty times a second. Here the drag moves a draft that
+    // only this screen and its preview see, and the draft is handed up once
+    // the hand rests (or the screen goes away).
+    var draft by remember { mutableStateOf<SkinSettings?>(null) }
+    val latestOnChange by rememberUpdatedState(onChange)
+    LaunchedEffect(draft) {
+        val pending = draft ?: return@LaunchedEffect
+        delay(APPEARANCE_COMMIT_MS)
+        latestOnChange(pending)
+        draft = null
+    }
+    DisposableEffect(Unit) {
+        onDispose { draft?.let { latestOnChange(it) } }
+    }
+    val committed = settings
+    @Suppress("NAME_SHADOWING")
+    val settings = draft ?: committed
+    val edit: (SkinSettings) -> Unit = { draft = it }
+    @Suppress("NAME_SHADOWING")
+    val onChange = edit
     val context = LocalContext.current
     val store = remember { PenStore(context) }
     val scope = rememberCoroutineScope()
@@ -347,8 +377,12 @@ internal fun AppearanceSettings(
     val upper: @Composable () -> Unit = {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             ToolbarPreviewStage(background, photo, Modifier.fillMaxWidth().height(140.dp)) {
-                Box(Modifier.padding(10.dp).previewFit(spotiToolbarWidth(1))) {
-                    if (preview != null) preview() else StandaloneToolbarPreview()
+                // The preview shows the draft while the note behind keeps the
+                // committed look until the hand rests.
+                CompositionLocalProvider(LocalSkinSettings provides settings) {
+                    Box(Modifier.padding(10.dp).previewFit(spotiToolbarWidth(1))) {
+                        if (preview != null) preview() else StandaloneToolbarPreview()
+                    }
                 }
             }
             Row(

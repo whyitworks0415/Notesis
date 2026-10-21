@@ -314,8 +314,11 @@ fun Modifier.recordBackdrop(backdrop: Backdrop, source: (DrawScope.() -> Unit)? 
         .onGloballyPositioned { backdrop.origin = it.positionInRoot() }
         .drawWithContent {
             // Read here rather than in composition, so putting the pen down
-            // invalidates one draw instead of recomposing the screen.
-            if (backdrop.paused) {
+            // invalidates one draw instead of recomposing the screen. The
+            // governor covers every canvas, the reference panel's too, and
+            // the settle after a stroke, so strokes in quick succession do not
+            // re-record the page in each gap between them.
+            if (backdrop.paused || InteractionGovernor.observed != Interaction.IDLE) {
                 drawContent()
                 return@drawWithContent
             }
@@ -384,11 +387,14 @@ fun SkinSurface(
             )
             .then(if (flush) Modifier.flushEdge(tokens) else Modifier)
     } else {
+        val fill = tokens.fill ?: MaterialTheme.colorScheme.surface.copy(alpha = tokens.fillAlpha)
         modifier
             .shadow(tokens.shadow, shape, clip = false)
             .clip(shape)
             .frost()
-            .background(tokens.fill ?: MaterialTheme.colorScheme.surface.copy(alpha = tokens.fillAlpha))
+            // Battery saver stops the frost; a pane that stays see-through
+            // without it puts its labels straight over the ink.
+            .background(if (InteractionGovernor.observedPowerSave) fill.copy(alpha = maxOf(fill.alpha, 0.92f)) else fill)
             .then(if (flush) Modifier.flushEdge(tokens) else Modifier.glassEdge(tokens, shape))
     }
     Box(surfaceModifier) {

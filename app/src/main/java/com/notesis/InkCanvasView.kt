@@ -1410,6 +1410,16 @@ class InkCanvasView @JvmOverloads constructor(
         get() = compatWet.surfaceAllowed
         set(value) { compatWet.surfaceAllowed = value }
 
+    /** Read-only, for the diagnostics readout: which path the stroke being written takes to the screen. */
+    val wetInkPathLabel: String
+        get() = when {
+            viewRotation != 0f && compatWetInk -> "rotation fallback (compat ink in window)"
+            viewRotation != 0f -> "rotation fallback (front buffer, turned)"
+            compatWetInk && compatWet.surfaceAllowed -> "front buffer + compat surface"
+            compatWetInk -> "front buffer + compat in window"
+            else -> "front buffer"
+        }
+
     /**
      * Degrees the note is turned on screen, about the middle of this view.
      *

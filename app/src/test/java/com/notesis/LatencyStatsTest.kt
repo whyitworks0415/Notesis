@@ -1,6 +1,7 @@
 package com.notesis
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -52,6 +53,64 @@ class LatencyStatsTest {
 
         assertNull(stats.snapshot(PerformanceMetric.PEN_FINALIZE))
         assertTrue(stats.render(0).contains("p99").not())
+    }
+
+    @Test
+    fun `a frame is missed only past one and a half refresh periods`() {
+        val period = 16_666_667L
+        assertFalse(isMissedFrame(period, period))
+        assertFalse(isMissedFrame(period * 3 / 2, period))
+        assertTrue(isMissedFrame(period * 3 / 2 + 2, period))
+        assertTrue(isMissedFrame(period * 2, period))
+        // At 120 Hz a 60 Hz-length frame is a miss.
+        assertTrue(isMissedFrame(period, 8_333_333L))
+        assertFalse(isMissedFrame(period, 0L))
+    }
+
+    @Test
+    fun `missed frames are counted against the refresh period and reset`() {
+        val stats = LatencyStats()
+        stats.setEnabled(true)
+        stats.refreshPeriodNanos = 16_666_667L
+        repeat(97) { stats.addFrame(16_666_667L) }
+        repeat(3) { stats.addFrame(33_333_333L) }
+
+        val extras = stats.extras()
+        assertEquals(100L, extras.framesCounted)
+        assertEquals(3L, extras.framesMissed)
+        assertTrue(stats.render(0).contains("missed 3/100 (3.0%)"))
+
+        stats.reset()
+        assertEquals(0L, stats.extras().framesCounted)
+        assertEquals(0L, stats.extras().framesMissed)
+        assertNull(stats.extras().frame)
+    }
+
+    @Test
+    fun `hidden diagnostics count no frames`() {
+        val stats = LatencyStats()
+        stats.addFrame(50_000_000L)
+        assertEquals(0L, stats.extras().framesCounted)
+    }
+
+    @Test
+    fun `submission timings are labelled as submitted, never as photons`() {
+        val stats = LatencyStats()
+        stats.setEnabled(true)
+        val report = stats.render(0)
+        assertTrue(report.contains("first ink (submitted)"))
+        assertTrue(report.contains("wet ink (submitted)"))
+        assertTrue(report.contains("input handled"))
+        assertTrue(report.contains("page apply"))
+        assertTrue(report.contains("save snapshot"))
+        assertFalse(report.contains("photon"))
+    }
+
+    @Test
+    fun `missed percentage text`() {
+        assertEquals("-", missedPercentText(0L, 0L))
+        assertEquals("0.0%", missedPercentText(0L, 10L))
+        assertEquals("12.5%", missedPercentText(1L, 8L))
     }
 
     @Test
