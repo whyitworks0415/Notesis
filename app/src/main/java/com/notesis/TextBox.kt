@@ -60,8 +60,8 @@ data class TextBoxContent(
 
 /** The fonts offered; each is a family Android ships with, so nothing is downloaded. */
 internal val TEXT_FONTS = listOf(
-    "" to "기본", "serif" to "명조", "monospace" to "고정폭", "sans-serif-condensed" to "좁은",
-    "sans-serif-light" to "가는", "casual" to "손글씨풍", "cursive" to "필기체",
+    "" to "Default", "serif" to "Serif", "monospace" to "Monospace", "sans-serif-condensed" to "Condensed",
+    "sans-serif-light" to "Light", "casual" to "Casual", "cursive" to "Cursive",
 )
 
 internal fun TextBoxContent.styledText(): CharSequence =
@@ -106,7 +106,7 @@ internal fun renderTextBox(content: TextBoxContent): Bitmap {
     val maxWidth = 1600
     val desired = Layout.getDesiredWidth(content.styledText(), textPaint(content, scale)).toInt().coerceIn(1, maxWidth)
     val layout = textBoxLayout(content, desired, scale)
-    require(layout.height <= 8192) { "텍스트가 너무 깁니다. 상자를 나눠 주세요." }
+    require(layout.height <= 8192) { "The text is too long. Split it into more boxes." }
     val width = maxOf(desired + pad * 2, (content.minSize * scale).toInt())
     val height = maxOf(layout.height + pad * 2, (content.minSize * scale).toInt())
     return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also {
@@ -182,14 +182,14 @@ internal fun TextBoxDialog(initial: TextBoxContent?, onDismiss: () -> Unit, onSa
     fun mark(m: Mark) { editor?.toggle(m) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (initial == null) "텍스트 상자 추가" else "텍스트 편집") },
+        title = { Text(if (initial == null) "Add text box" else "Edit text") },
         text = { Column(Modifier.verticalScroll(rememberScrollState())) {
             Row(Modifier.horizontalScroll(rememberScrollState())) {
                 TextButton(onClick = { mark(Mark.BOLD) }) { Text("B", fontWeight = FontWeight.Bold) }
                 TextButton(onClick = { mark(Mark.ITALIC) }) { Text("I", fontStyle = FontStyle.Italic) }
                 TextButton(onClick = { mark(Mark.UNDERLINE) }) { Text("U", textDecoration = TextDecoration.Underline) }
                 TextButton(onClick = { mark(Mark.STRIKE) }) { Text("S", textDecoration = TextDecoration.LineThrough) }
-                TextButton(onClick = { rangeColor = !rangeColor }) { Text("선택 영역 색") }
+                TextButton(onClick = { rangeColor = !rangeColor }) { Text("Selection color") }
             }
             if (rangeColor) ColorInput(color) { picked -> editor?.colorRange(picked) }
             AndroidView(
@@ -226,32 +226,32 @@ internal fun TextBoxDialog(initial: TextBoxContent?, onDismiss: () -> Unit, onSa
                 },
                 modifier = Modifier.fillMaxWidth(),
             )
-            OutlinedTextField(size, { size = it }, label = { Text("글자 크기 (12–96)") },
+            OutlinedTextField(size, { size = it }, label = { Text("Font size (12–96)") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true, isError = parsedSize == null, modifier = Modifier.fillMaxWidth())
-            Text("글꼴", style = MaterialTheme.typography.bodyMedium)
+            Text("Font", style = MaterialTheme.typography.bodyMedium)
             Row(Modifier.horizontalScroll(rememberScrollState())) {
                 TEXT_FONTS.forEach { (family, label) ->
                     SettingsChoiceChip(selected = font == family, onClick = { font = family }, label = label,
                         modifier = Modifier.padding(end = 6.dp))
                 }
             }
-            Text("기본 글자 색", style = MaterialTheme.typography.bodyMedium)
+            Text("Text color", style = MaterialTheme.typography.bodyMedium)
             ColorInput(color) { color = it }
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 SkinSwitch(checked = background != 0,
                     onCheckedChange = { background = if (it) 0xFFFFF59D.toInt() else 0 })
                 Spacer(Modifier.width(10.dp))
-                Text("배경")
+                Text("Background")
             }
             if (background != 0) {
                 ColorInput(background) { background = it }
-                Text("모서리 ${corner.toInt()}", style = MaterialTheme.typography.bodySmall)
+                Text("Corners ${corner.toInt()}", style = MaterialTheme.typography.bodySmall)
                 SkinSlider(corner, { corner = it }, 0f..40f, step = 1f)
             }
-            Text("여백 ${padding.toInt()}", style = MaterialTheme.typography.bodySmall)
+            Text("Padding ${padding.toInt()}", style = MaterialTheme.typography.bodySmall)
             SkinSlider(padding, { padding = it }, 0f..40f, step = 1f)
-            Text("글자를 선택하고 B·I·U·S를 누르면 그 부분에만, 선택하지 않으면 전체에 적용됩니다.",
+            Text("Select text and tap B·I·U·S to style just that part; with nothing selected, it applies to all.",
                 style = MaterialTheme.typography.bodySmall)
         } },
         confirmButton = { TextButton(enabled = !empty && parsedSize != null,
@@ -260,7 +260,7 @@ internal fun TextBoxDialog(initial: TextBoxContent?, onDismiss: () -> Unit, onSa
                 val html = if (typed.hasStyle()) Html.toHtml(typed, Html.TO_HTML_PARAGRAPH_LINES_CONSECUTIVE) else null
                 onSave(TextBoxContent(typed.toString(), parsedSize ?: 32f, color, html, font, background, corner, padding,
                     initial?.minSize ?: 0f))
-            }) { Text("저장") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+            }) { Text("Save") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }

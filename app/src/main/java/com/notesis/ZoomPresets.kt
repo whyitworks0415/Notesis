@@ -52,7 +52,7 @@ internal fun ZoomPresetDialog(current: Float, onPick: (Int) -> Unit, onDismiss: 
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("확대 · 지금 $currentPercent%") },
+        title = { Text("Zoom · now $currentPercent%") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(GAP)) {
                 Row(Modifier.horizontalScroll(rememberScrollState())) {
@@ -66,7 +66,7 @@ internal fun ZoomPresetDialog(current: Float, onPick: (Int) -> Unit, onDismiss: 
                     }
                 }
                 if (saved.isNotEmpty()) {
-                    Text("저장한 값", style = MaterialTheme.typography.labelLarge)
+                    Text("Saved", style = MaterialTheme.typography.labelLarge)
                     Row(Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
                         saved.forEach { percent ->
                             SettingsChoiceChip(
@@ -77,7 +77,7 @@ internal fun ZoomPresetDialog(current: Float, onPick: (Int) -> Unit, onDismiss: 
                             IconButton(
                                 onClick = { saved = saved - percent; store.zoomPresets = saved },
                                 modifier = Modifier.size(32.dp),
-                            ) { Icon(Reicons.Close, contentDescription = "$percent% 지우기", Modifier.size(16.dp)) }
+                            ) { Icon(Reicons.Close, contentDescription = "Remove $percent%", Modifier.size(16.dp)) }
                             Spacer(Modifier.width(4.dp))
                         }
                     }
@@ -85,14 +85,14 @@ internal fun ZoomPresetDialog(current: Float, onPick: (Int) -> Unit, onDismiss: 
                 OutlinedTextField(
                     value = typed,
                     onValueChange = { text -> typed = text.filter { it.isDigit() }.take(4) },
-                    label = { Text("직접 입력 (${ZOOM_PERCENT_RANGE.first}~${ZOOM_PERCENT_RANGE.last}%)") },
+                    label = { Text("Custom (${ZOOM_PERCENT_RANGE.first}–${ZOOM_PERCENT_RANGE.last}%)") },
                     singleLine = true,
                     isError = typed.isNotEmpty() && value == null,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
                     keyboardActions = KeyboardActions(onDone = { value?.let(onPick) }),
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(enabled = value != null, onClick = { value?.let(onPick) }) { Text("적용") }
+                    TextButton(enabled = value != null, onClick = { value?.let(onPick) }) { Text("Apply") }
                     TextButton(
                         enabled = value != null && value !in ZOOM_PRESETS && value !in saved,
                         onClick = {
@@ -101,10 +101,10 @@ internal fun ZoomPresetDialog(current: Float, onPick: (Int) -> Unit, onDismiss: 
                             store.zoomPresets = saved
                             typed = ""
                         },
-                    ) { Text("값 저장") }
+                    ) { Text("Save value") }
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("닫기") } },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
     )
 }

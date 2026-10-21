@@ -35,7 +35,7 @@ fun LiquidGlassControlsExample() {
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             LiquidSegmentedControl(
-                segments = listOf("추천", "보관함", "최근"),
+                segments = listOf("For you", "Library", "Recent"),
                 selectedIndex = section,
                 onSelected = { section = it },
                 modifier = Modifier.fillMaxWidth(),
@@ -43,11 +43,11 @@ fun LiquidGlassControlsExample() {
             LiquidGlassSlider(
                 value = volume,
                 onValueChange = { volume = it },
-                label = "볼륨",
+                label = "Volume",
                 modifier = Modifier.fillMaxWidth(),
             )
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                LiquidGlassButton(onClick = {}) { Text("완료") }
+                LiquidGlassButton(onClick = {}) { Text("Done") }
             }
         }
     }

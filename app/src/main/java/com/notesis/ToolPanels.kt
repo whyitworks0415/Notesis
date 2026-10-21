@@ -57,9 +57,9 @@ import java.util.Locale
 internal fun ToolPanelHost(panel: ToolPanel) {
     val close = { Planner.open = null }
     when (panel) {
-        ToolPanel.CALCULATOR -> GlassSheet(title = "계산기", onClose = close, maxWidth = 460.dp) { CalculatorPanel() }
-        ToolPanel.TODO -> GlassSheet(title = "할 일", onClose = close) { TodoPanel() }
-        ToolPanel.CALENDAR -> GlassSheet(title = "캘린더", onClose = close, maxWidth = 480.dp) { CalendarPanel() }
+        ToolPanel.CALCULATOR -> GlassSheet(title = "Calculator", onClose = close, maxWidth = 460.dp) { CalculatorPanel() }
+        ToolPanel.TODO -> GlassSheet(title = "To-do", onClose = close) { TodoPanel() }
+        ToolPanel.CALENDAR -> GlassSheet(title = "Calendar", onClose = close, maxWidth = 480.dp) { CalendarPanel() }
     }
 }
 
@@ -68,25 +68,25 @@ internal fun ToolPanelHost(panel: ToolPanel) {
 internal fun ToolsMenuButton() {
     var open by remember { mutableStateOf(false) }
     Box {
-        AppIconButton(onClick = { open = true }, icon = AppIcons.tools, contentDescription = "도구")
+        AppIconButton(onClick = { open = true }, icon = AppIcons.tools, contentDescription = "Tools")
         DropdownMenu(open, onDismissRequest = { open = false }) {
             DropdownMenuItem(
-                text = { Text("시계") },
+                text = { Text("Clock") },
                 leadingIcon = { Icon(Reicons.Clock, contentDescription = null) },
                 onClick = { open = false; StudyClock.openPanel() },
             )
             DropdownMenuItem(
-                text = { Text("계산기") },
+                text = { Text("Calculator") },
                 leadingIcon = { Icon(Reicons.Calculate, contentDescription = null) },
                 onClick = { open = false; Planner.show(ToolPanel.CALCULATOR) },
             )
             DropdownMenuItem(
-                text = { Text("할 일") },
+                text = { Text("To-do") },
                 leadingIcon = { Icon(Reicons.Checklist, contentDescription = null) },
                 onClick = { open = false; Planner.show(ToolPanel.TODO) },
             )
             DropdownMenuItem(
-                text = { Text("캘린더") },
+                text = { Text("Calendar") },
                 leadingIcon = { Icon(Reicons.CalendarMonth, contentDescription = null) },
                 onClick = { open = false; Planner.show(ToolPanel.CALENDAR) },
             )
@@ -96,7 +96,7 @@ internal fun ToolsMenuButton() {
 
 // ---- calculator ----------------------------------------------------------------------
 
-private enum class CalcMode(val label: String) { CALC("계산"), DERIVE("미분"), INTEGRATE("적분") }
+private enum class CalcMode(val label: String) { CALC("Calculate"), DERIVE("Derivative"), INTEGRATE("Integral") }
 
 /** The calculator's fields, kept across opening and closing it. */
 private object CalcState {
@@ -160,7 +160,7 @@ private fun CalcDisplay() {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         ClockChip(if (s.degrees) "DEG" else "RAD", selected = false) { s.degrees = !s.degrees }
         Text(
-            if (s.degrees) "각도: 도(°)" else "각도: 라디안",
+            if (s.degrees) "Angles: degrees (°)" else "Angles: radians",
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.outline,
         )
@@ -188,10 +188,10 @@ private fun DeriveDisplay() {
     val s = CalcState
     val result = remember(s.function, s.point) { deriveText(s.function, s.point) }
     Field("f(x) =", s.function, focused = s.field == 0) { s.field = 0 }
-    Field("x =", s.point, focused = s.field == 1, hint = "기울기를 볼 점 (비워 두면 도함수만)") { s.field = 1 }
+    Field("x =", s.point, focused = s.field == 1, hint = "Point for the slope (blank for the derivative only)") { s.field = 1 }
     ResultBox(result)
     Text(
-        "미분과 적분은 라디안 기준입니다.",
+        "Derivatives and integrals use radians.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.outline,
     )
@@ -203,48 +203,48 @@ private fun IntegrateDisplay() {
     val result = remember(s.function, s.lower, s.upper) { integrateText(s.function, s.lower, s.upper) }
     Field("f(x) =", s.function, focused = s.field == 0) { s.field = 0 }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Box(Modifier.weight(1f)) { Field("아래끝 a", s.lower, focused = s.field == 1) { s.field = 1 } }
-        Box(Modifier.weight(1f)) { Field("위끝 b", s.upper, focused = s.field == 2) { s.field = 2 } }
+        Box(Modifier.weight(1f)) { Field("Lower a", s.lower, focused = s.field == 1) { s.field = 1 } }
+        Box(Modifier.weight(1f)) { Field("Upper b", s.upper, focused = s.field == 2) { s.field = 2 } }
     }
     ResultBox(result)
     Text(
-        "∫ₐᵇ f(x) dx를 적응형 심프슨 공식으로 계산합니다. 라디안 기준입니다.",
+        "Computes ∫ₐᵇ f(x) dx with adaptive Simpson's rule, in radians.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.outline,
     )
 }
 
 private fun deriveText(function: String, point: String): List<String> {
-    if (function.isBlank()) return listOf("f(x)를 입력하세요")
-    val f = runCatching { MathExpr.parse(function) }.getOrElse { return listOf(it.message ?: "식을 읽을 수 없습니다") }
+    if (function.isBlank()) return listOf("Enter f(x)")
+    val f = runCatching { MathExpr.parse(function) }.getOrElse { return listOf(it.message ?: "Can't read the expression") }
     val lines = ArrayList<String>()
     val derived = MathExpr.derivative(f)
     if (derived != null) lines += "f′(x) = " + MathExpr.format(derived)
     if (point.isNotBlank()) {
         val a = runCatching { MathExpr.eval(MathExpr.parse(point), degrees = false, ans = CalcState.ans) }
-            .getOrElse { return lines + (it.message ?: "x 값을 읽을 수 없습니다") }
+            .getOrElse { return lines + (it.message ?: "Can't read the x value") }
         val value = derived?.let { runCatching { MathExpr.eval(it, degrees = false, x = a, ans = CalcState.ans) }.getOrNull() }
             ?.takeIf { it.isFinite() }
             ?: runCatching { MathExpr.numericDerivative(f, a, CalcState.ans) }.getOrNull()
-        lines += "f′(${formatNumber(a)}) = " + (value?.let(::formatNumber) ?: "정의되지 않음")
+        lines += "f′(${formatNumber(a)}) = " + (value?.let(::formatNumber) ?: "Undefined")
         runCatching { MathExpr.eval(f, degrees = false, x = a, ans = CalcState.ans) }.getOrNull()?.let {
             lines += "f(${formatNumber(a)}) = " + formatNumber(it)
         }
     } else if (derived == null) {
-        lines += "이 식은 도함수 식을 만들 수 없습니다. x 값을 넣으면 그 점의 기울기를 구합니다"
+        lines += "Can't build a derivative formula for this. Enter an x value to get the slope at that point"
     }
     return lines
 }
 
 private fun integrateText(function: String, lower: String, upper: String): List<String> {
-    if (function.isBlank()) return listOf("f(x)를 입력하세요")
-    if (lower.isBlank() || upper.isBlank()) return listOf("아래끝과 위끝을 입력하세요")
+    if (function.isBlank()) return listOf("Enter f(x)")
+    if (lower.isBlank() || upper.isBlank()) return listOf("Enter the lower and upper bounds")
     return runCatching {
         val f = MathExpr.parse(function)
         val a = MathExpr.eval(MathExpr.parse(lower), degrees = false, ans = CalcState.ans)
         val b = MathExpr.eval(MathExpr.parse(upper), degrees = false, ans = CalcState.ans)
         listOf("∫ = " + formatNumber(MathExpr.integrate(f, a, b, CalcState.ans)))
-    }.getOrElse { listOf(it.message ?: "계산할 수 없습니다") }
+    }.getOrElse { listOf(it.message ?: "Can't calculate") }
 }
 
 @Composable
@@ -364,7 +364,7 @@ private fun KeyButton(key: Key, modifier: Modifier, onClick: () -> Unit) {
         contentAlignment = Alignment.Center,
     ) {
         if (key.label == "⌫") {
-            Icon(Reicons.Backspace, contentDescription = "지우기", tint = content, modifier = Modifier.size(20.dp))
+            Icon(Reicons.Backspace, contentDescription = "Backspace", tint = content, modifier = Modifier.size(20.dp))
         } else {
             Text(
                 key.label,
@@ -448,7 +448,7 @@ private fun commit() {
             s.expression = shown
         }
     }.onFailure { error ->
-        s.history += s.expression to (error.message ?: "오류")
+        s.history += s.expression to (error.message ?: "Error")
         while (s.history.size > HISTORY) s.history.removeAt(0)
     }
 }
@@ -462,11 +462,11 @@ private fun TodoPanel() {
     val items = Planner.todo
     val left = items.count { !it.done }
     Text(
-        if (items.isEmpty()) "할 일을 적어 두세요" else "남은 일 ${left}개 · 완료 ${items.size - left}개",
+        if (items.isEmpty()) "Write down your to-dos" else "${left} left · ${items.size - left} done",
         style = MaterialTheme.typography.labelLarge,
         color = MaterialTheme.colorScheme.outline,
     )
-    AddRow(placeholder = "할 일 추가") { Planner.addTodo(it) }
+    AddRow(placeholder = "Add a to-do") { Planner.addTodo(it) }
     Checklist(
         items = items,
         onToggle = Planner::toggleTodo,
@@ -474,7 +474,7 @@ private fun TodoPanel() {
         onRemove = Planner::removeTodo,
     )
     if (items.any { it.done }) {
-        ClockButton("완료한 항목 지우기", primary = false, modifier = Modifier.fillMaxWidth()) { Planner.clearDoneTodo() }
+        ClockButton("Clear completed", primary = false, modifier = Modifier.fillMaxWidth()) { Planner.clearDoneTodo() }
     }
 }
 
@@ -511,7 +511,7 @@ private fun AddRow(placeholder: String, onAdd: (String) -> Unit) {
             )
         }
         IconButton(onClick = add, enabled = text.isNotBlank()) {
-            Icon(Reicons.Add, contentDescription = "추가", tint = if (text.isNotBlank()) scheme.primary else scheme.outline)
+            Icon(Reicons.Add, contentDescription = "Add", tint = if (text.isNotBlank()) scheme.primary else scheme.outline)
         }
     }
 }
@@ -577,7 +577,7 @@ private fun CheckRow(
                 keyboardActions = KeyboardActions(onDone = { onRename(text) }),
                 modifier = Modifier.weight(1f).focusRequester(focus),
             )
-            IconButton(onClick = { onRename(text) }) { Icon(Reicons.Check, contentDescription = "저장") }
+            IconButton(onClick = { onRename(text) }) { Icon(Reicons.Check, contentDescription = "Save") }
         } else {
             Text(
                 item.text,
@@ -591,7 +591,7 @@ private fun CheckRow(
                     .padding(vertical = 10.dp),
             )
             IconButton(onClick = onRemove) {
-                Icon(Reicons.Close, contentDescription = "삭제", tint = scheme.outline, modifier = Modifier.size(18.dp))
+                Icon(Reicons.Close, contentDescription = "Delete", tint = scheme.outline, modifier = Modifier.size(18.dp))
             }
         }
     }
@@ -610,7 +610,7 @@ private fun CheckMark(done: Boolean, onToggle: () -> Unit) {
             .clickable(onClick = onToggle),
         contentAlignment = Alignment.Center,
     ) {
-        if (done) Icon(Reicons.Check, contentDescription = "완료", tint = scheme.onPrimary, modifier = Modifier.size(18.dp))
+        if (done) Icon(Reicons.Check, contentDescription = "Done", tint = scheme.onPrimary, modifier = Modifier.size(18.dp))
     }
 }
 
@@ -627,21 +627,21 @@ private fun CalendarPanel() {
     val today = java.time.Instant.ofEpochMilli(StudyClock.now).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
     val days = Planner.days
     Row(verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = { c.month = c.month.minusMonths(1) }) { Icon(Reicons.ChevronLeft, contentDescription = "이전 달") }
+        IconButton(onClick = { c.month = c.month.minusMonths(1) }) { Icon(Reicons.ChevronLeft, contentDescription = "Previous month") }
         Text(
-            "${c.month.year}년 ${c.month.monthValue}월",
+            "${c.month.month.getDisplayName(DateTextStyle.FULL, Locale.ENGLISH)} ${c.month.year}",
             style = MaterialTheme.typography.titleMedium,
             textAlign = TextAlign.Center,
             modifier = Modifier.weight(1f),
         )
-        IconButton(onClick = { c.month = c.month.plusMonths(1) }) { Icon(Reicons.ChevronRight, contentDescription = "다음 달") }
-        ClockChip("오늘", selected = false) {
+        IconButton(onClick = { c.month = c.month.plusMonths(1) }) { Icon(Reicons.ChevronRight, contentDescription = "Next month") }
+        ClockChip("Today", selected = false) {
             c.month = today.withDayOfMonth(1)
             c.selected = today
         }
     }
     Row(Modifier.fillMaxWidth()) {
-        listOf("일", "월", "화", "수", "목", "금", "토").forEachIndexed { i, name ->
+        listOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat").forEachIndexed { i, name ->
             Text(
                 name,
                 style = MaterialTheme.typography.labelMedium,
@@ -679,17 +679,17 @@ private fun CalendarPanel() {
     val key = c.selected.toString()
     val items = days[key].orEmpty()
     Text(
-        "${c.selected.monthValue}월 ${c.selected.dayOfMonth}일 " +
-            c.selected.dayOfWeek.getDisplayName(DateTextStyle.FULL, Locale.KOREAN) +
+        c.selected.dayOfWeek.getDisplayName(DateTextStyle.FULL, Locale.ENGLISH) + ", " +
+            c.selected.month.getDisplayName(DateTextStyle.SHORT, Locale.ENGLISH) + " ${c.selected.dayOfMonth}" +
             if (items.isNotEmpty()) " · ${items.count { it.done }}/${items.size}" else "",
         style = MaterialTheme.typography.titleMedium,
     )
     // Keyed by day, so a half-typed line stays with the day it was typed for.
     androidx.compose.runtime.key(key) {
-        AddRow(placeholder = "이 날의 할 일 추가") { Planner.addToDay(key, it) }
+        AddRow(placeholder = "Add a to-do for this day") { Planner.addToDay(key, it) }
     }
     if (items.isEmpty()) {
-        Text("이 날에 적어 둔 것이 없습니다", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
+        Text("Nothing written down for this day", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
     }
     Checklist(
         items = items,

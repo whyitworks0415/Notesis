@@ -53,7 +53,7 @@ class NoteLock(context: Context) {
         runCatching {
             val prompt = android.hardware.biometrics.BiometricPrompt.Builder(activity)
                 .setTitle(title)
-                .setNegativeButton("암호 입력", activity.mainExecutor) { _, _ -> onResult(false) }
+                .setNegativeButton("Use password", activity.mainExecutor) { _, _ -> onResult(false) }
                 .build()
             prompt.authenticate(CancellationSignal(), activity.mainExecutor,
                 object : android.hardware.biometrics.BiometricPrompt.AuthenticationCallback() {

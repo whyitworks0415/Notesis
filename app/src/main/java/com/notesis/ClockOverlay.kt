@@ -191,20 +191,20 @@ private fun PillContent(kind: PillKind) {
     val label by remember(kind) {
         derivedStateOf {
             when (kind) {
-                PillKind.STUDY -> "순공 " + formatStudyShort(clock.studyShown(clock.now))
+                PillKind.STUDY -> "Study " + formatStudyShort(clock.studyShown(clock.now))
                 PillKind.STOPWATCH -> formatElapsed(clock.stopwatchElapsed(clock.now))
                 PillKind.TIMER -> formatClock(clock.timerRemaining(clock.now))
-                PillKind.TIMER_DONE -> "타이머 끝"
+                PillKind.TIMER_DONE -> "Timer done"
                 PillKind.ALARM -> clock.ringing.firstOrNull()?.let { first ->
-                    "알람 %02d:%02d".format(first.hour, first.minute) +
-                        if (clock.ringing.size > 1) " 외 ${clock.ringing.size - 1}" else ""
-                } ?: "알람"
+                    "Alarm %02d:%02d".format(first.hour, first.minute) +
+                        if (clock.ringing.size > 1) " +${clock.ringing.size - 1}" else ""
+                } ?: "Alarm"
                 PillKind.IDLE -> ""
             }
         }
     }
     when (kind) {
-        PillKind.IDLE -> Icon(Reicons.Clock, contentDescription = "시계", modifier = Modifier.size(22.dp))
+        PillKind.IDLE -> Icon(Reicons.Clock, contentDescription = "Clock", modifier = Modifier.size(22.dp))
         PillKind.STUDY -> {
             Box(Modifier.size(8.dp).clip(CircleShape).background(StudyGreen))
             Text(label, style = style)
@@ -278,7 +278,7 @@ private fun ConfirmChip(onClick: () -> Unit) {
             .padding(horizontal = 14.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text("확인", style = MaterialTheme.typography.labelLarge, color = scheme.onPrimary)
+        Text("OK", style = MaterialTheme.typography.labelLarge, color = scheme.onPrimary)
     }
 }
 
@@ -287,7 +287,7 @@ private fun ConfirmChip(onClick: () -> Unit) {
 @Composable
 private fun ClockPanel() {
     val clock = StudyClock
-    GlassSheet(title = "시계", onClose = { clock.panelOpen = false }) {
+    GlassSheet(title = "Clock", onClose = { clock.panelOpen = false }) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ClockTab.entries.forEach { option ->
                 ClockChip(option.label, clock.tab == option, Modifier.weight(1f)) { clock.tab = option }
@@ -301,8 +301,8 @@ private fun ClockPanel() {
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         SettingRow(
-            "화면에 시계 버튼",
-            "꺼도 타이머와 알람은 화면에 표시됩니다",
+            "Clock button on screen",
+            "Timers and alarms still show on screen when this is off",
             clock.buttonShown,
         ) { clock.updateButtonShown(it) }
     }
@@ -355,7 +355,7 @@ internal fun GlassSheet(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
                 headerExtra()
-                IconButton(onClick = onClose) { Icon(Reicons.Close, contentDescription = "닫기") }
+                IconButton(onClick = onClose) { Icon(Reicons.Close, contentDescription = "Close") }
             }
             content()
         }
@@ -387,9 +387,9 @@ private fun TimerTab() {
             )
             Text(
                 when {
-                    clock.timerDone -> "끝"
-                    clock.timerPaused -> "일시정지"
-                    clock.timerRunning -> "${clockTime(clock.timerEndAt)}에 끝"
+                    clock.timerDone -> "Done"
+                    clock.timerPaused -> "Paused"
+                    clock.timerRunning -> "Ends at ${clockTime(clock.timerEndAt)}"
                     else -> " "
                 },
                 style = MaterialTheme.typography.labelMedium,
@@ -400,13 +400,13 @@ private fun TimerTab() {
     if (idle) {
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf(1, 3, 5, 10, 15, 25, 30, 45, 60).forEach { minutes ->
-                ClockChip("${minutes}분", duration == minutes * StudyClock.MINUTE) {
+                ClockChip("${minutes} min", duration == minutes * StudyClock.MINUTE) {
                     clock.setTimerDuration(minutes * StudyClock.MINUTE)
                 }
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(-5 to "−5분", -1 to "−1분", 1 to "+1분", 5 to "+5분").forEach { (minutes, label) ->
+            listOf(-5 to "−5 min", -1 to "−1 min", 1 to "+1 min", 5 to "+5 min").forEach { (minutes, label) ->
                 ClockChip(label, false, Modifier.weight(1f)) {
                     clock.setTimerDuration(duration + minutes * StudyClock.MINUTE)
                 }
@@ -414,11 +414,11 @@ private fun TimerTab() {
         }
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        ClockButton("초기화", primary = false, enabled = !idle, modifier = Modifier.weight(1f)) { clock.resetTimer() }
+        ClockButton("Reset", primary = false, enabled = !idle, modifier = Modifier.weight(1f)) { clock.resetTimer() }
         when {
-            clock.timerDone -> ClockButton("확인", primary = true, modifier = Modifier.weight(1f)) { clock.resetTimer() }
-            clock.timerRunning -> ClockButton("일시정지", primary = true, modifier = Modifier.weight(1f)) { clock.pauseTimer() }
-            else -> ClockButton(if (clock.timerPaused) "계속" else "시작", primary = true, modifier = Modifier.weight(1f)) {
+            clock.timerDone -> ClockButton("OK", primary = true, modifier = Modifier.weight(1f)) { clock.resetTimer() }
+            clock.timerRunning -> ClockButton("Pause", primary = true, modifier = Modifier.weight(1f)) { clock.pauseTimer() }
+            else -> ClockButton(if (clock.timerPaused) "Resume" else "Start", primary = true, modifier = Modifier.weight(1f)) {
                 clock.startTimer()
             }
         }
@@ -463,11 +463,11 @@ private fun StopwatchTab() {
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         if (running) {
-            ClockButton("랩", primary = false, modifier = Modifier.weight(1f)) { clock.lap() }
-            ClockButton("정지", primary = true, modifier = Modifier.weight(1f)) { clock.pauseStopwatch() }
+            ClockButton("Lap", primary = false, modifier = Modifier.weight(1f)) { clock.lap() }
+            ClockButton("Stop", primary = true, modifier = Modifier.weight(1f)) { clock.pauseStopwatch() }
         } else {
-            ClockButton("초기화", primary = false, enabled = elapsed > 0, modifier = Modifier.weight(1f)) { clock.resetStopwatch() }
-            ClockButton(if (elapsed > 0) "계속" else "시작", primary = true, modifier = Modifier.weight(1f)) { clock.startStopwatch() }
+            ClockButton("Reset", primary = false, enabled = elapsed > 0, modifier = Modifier.weight(1f)) { clock.resetStopwatch() }
+            ClockButton(if (elapsed > 0) "Resume" else "Start", primary = true, modifier = Modifier.weight(1f)) { clock.startStopwatch() }
         }
     }
     if (clock.laps.isNotEmpty()) {
@@ -476,7 +476,7 @@ private fun StopwatchTab() {
             for (index in laps.indices.reversed()) {
                 val split = laps[index] - (laps.getOrNull(index - 1) ?: 0L)
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("랩 ${index + 1}", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    Text("Lap ${index + 1}", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                     Text(formatStopwatch(split), style = MaterialTheme.typography.bodyMedium.merge(TabularDigits),
                         color = MaterialTheme.colorScheme.outline)
                     Spacer(Modifier.width(16.dp))
@@ -494,12 +494,12 @@ private fun AlarmTab() {
     val clock = StudyClock
     var adding by remember { mutableStateOf(false) }
     Text(
-        "소리는 나지 않습니다. 시각이 되면 화면에 표시되고, 확인을 누를 때까지 남아 있습니다.",
+        "Alarms make no sound. At the set time they show on screen and stay until you tap OK.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.outline,
     )
     if (clock.alarms.isEmpty() && !adding) {
-        Text("알람이 없습니다", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
+        Text("No alarms", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
     }
     clock.alarms.forEach { alarm -> AlarmRow(alarm, clock.now) }
     if (adding) {
@@ -508,7 +508,7 @@ private fun AlarmTab() {
             onCancel = { adding = false },
         )
     } else {
-        ClockButton("+ 알람 추가", primary = false, modifier = Modifier.fillMaxWidth()) { adding = true }
+        ClockButton("+ Add alarm", primary = false, modifier = Modifier.fillMaxWidth()) { adding = true }
     }
 }
 
@@ -519,16 +519,16 @@ private fun AlarmRow(alarm: ClockAlarm, now: Long) {
         Column(Modifier.weight(1f).alpha(if (alarm.enabled) 1f else 0.45f)) {
             Text("%02d:%02d".format(alarm.hour, alarm.minute), style = MaterialTheme.typography.headlineMedium.merge(TabularDigits))
             Text(
-                (if (alarm.daily) "매일" else "한 번") +
+                (if (alarm.daily) "Daily" else "Once") +
                     if (alarm.enabled) " · " + untilText(alarm.nextAt - now) else "",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.outline,
             )
         }
-        ClockChip("매일", alarm.daily) { clock.setAlarmDaily(alarm.id, !alarm.daily) }
+        ClockChip("Daily", alarm.daily) { clock.setAlarmDaily(alarm.id, !alarm.daily) }
         SkinSwitch(checked = alarm.enabled, onCheckedChange = { clock.setAlarmEnabled(alarm.id, it) })
         IconButton(onClick = { clock.removeAlarm(alarm.id) }) {
-            Icon(Reicons.Delete, contentDescription = "알람 삭제", modifier = Modifier.size(20.dp))
+            Icon(Reicons.Delete, contentDescription = "Delete alarm", modifier = Modifier.size(20.dp))
         }
     }
 }
@@ -550,12 +550,12 @@ private fun AlarmEditor(onAdd: (Int, Int, Boolean) -> Unit, onCancel: () -> Unit
     ) {
         TimeInput(state = state)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ClockChip("한 번", !daily) { daily = false }
-            ClockChip("매일", daily) { daily = true }
+            ClockChip("Once", !daily) { daily = false }
+            ClockChip("Daily", daily) { daily = true }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            ClockButton("취소", primary = false, modifier = Modifier.weight(1f), onClick = onCancel)
-            ClockButton("추가", primary = true, modifier = Modifier.weight(1f)) { onAdd(state.hour, state.minute, daily) }
+            ClockButton("Cancel", primary = false, modifier = Modifier.weight(1f), onClick = onCancel)
+            ClockButton("Add", primary = true, modifier = Modifier.weight(1f)) { onAdd(state.hour, state.minute, daily) }
         }
     }
 }
@@ -563,7 +563,7 @@ private fun AlarmEditor(onAdd: (Int, Int, Boolean) -> Unit, onCancel: () -> Unit
 /** 3시간 12분 후, or 5분 후. */
 private fun untilText(ms: Long): String {
     val minutes = ((ms.coerceAtLeast(0L) + 59_999L) / 60_000L)
-    return if (minutes >= 60) "${minutes / 60}시간 ${minutes % 60}분 후" else "${minutes}분 후"
+    return if (minutes >= 60) "in ${minutes / 60} h ${minutes % 60} min" else "in ${minutes} min"
 }
 
 // ---- study time ------------------------------------------------------------------------
@@ -575,7 +575,7 @@ private fun StudyTab() {
     var confirmReset by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
-            if (clock.dailyReset) "오늘 순공 시간" else "누적 순공 시간",
+            if (clock.dailyReset) "Study time today" else "Total study time",
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.outline,
         )
@@ -590,11 +590,11 @@ private fun StudyTab() {
             Spacer(Modifier.width(6.dp))
             Text(
                 when {
-                    clock.manualRunning -> "측정 중"
-                    clock.measuring -> "측정 중 · 노트에 쓰는 동안 자동으로 잽니다"
-                    clock.autoStudy && clock.noteOpen -> "쉬는 중 · ${clock.idleMinutes}분 넘게 입력이 없습니다"
-                    clock.autoStudy -> "노트를 열면 자동으로 잽니다"
-                    else -> "멈춤"
+                    clock.manualRunning -> "Measuring"
+                    clock.measuring -> "Measuring · counts automatically while you write in a note"
+                    clock.autoStudy && clock.noteOpen -> "Resting · no input for over ${clock.idleMinutes} min"
+                    clock.autoStudy -> "Starts automatically when you open a note"
+                    else -> "Stopped"
                 },
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.outline,
@@ -603,7 +603,7 @@ private fun StudyTab() {
     }
     if (!clock.autoStudy) {
         ClockButton(
-            if (clock.manualRunning) "정지" else "시작",
+            if (clock.manualRunning) "Stop" else "Start",
             primary = true,
             modifier = Modifier.fillMaxWidth(),
         ) { if (clock.manualRunning) clock.stopManual() else clock.startManual() }
@@ -611,29 +611,29 @@ private fun StudyTab() {
     WeekBars(clock.days, now)
 
     SettingRow(
-        "자동 측정",
-        "노트가 열려 있고 펜이나 손가락 입력이 있는 동안만 셉니다. 끄면 시작·정지로 직접 잽니다",
+        "Measure automatically",
+        "Counts only while a note is open and you use the pen or a finger. Turn off to start and stop by hand",
         clock.autoStudy,
     ) { clock.updateAutoStudy(it) }
     if (clock.autoStudy) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("입력 없이 멈추기까지", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            Text("Pause after no input for", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
             listOf(1, 3, 5, 10).forEach { minutes ->
                 Spacer(Modifier.width(6.dp))
-                ClockChip("${minutes}분", clock.idleMinutes == minutes) { clock.updateIdleMinutes(minutes) }
+                ClockChip("${minutes} min", clock.idleMinutes == minutes) { clock.updateIdleMinutes(minutes) }
             }
         }
     }
     SettingRow(
-        "하루마다 초기화",
-        "자정에 0부터 다시 셉니다. 끄면 직접 초기화할 때까지 계속 쌓입니다",
+        "Reset every day",
+        "Starts again from 0 at midnight. Turn off to keep adding up until you reset it",
         clock.dailyReset,
     ) { clock.updateDailyReset(it) }
     ClockButton(
         when {
-            confirmReset -> "한 번 더 누르면 초기화"
-            clock.dailyReset -> "오늘 기록 초기화"
-            else -> "누적 기록 초기화"
+            confirmReset -> "Tap again to reset"
+            clock.dailyReset -> "Reset today's time"
+            else -> "Reset total time"
         },
         primary = false,
         modifier = Modifier.fillMaxWidth(),
@@ -677,7 +677,7 @@ private fun WeekBars(days: Map<String, Long>, now: Long) {
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    day.dayOfWeek.getDisplayName(DateTextStyle.NARROW, Locale.KOREAN),
+                    day.dayOfWeek.getDisplayName(DateTextStyle.SHORT, Locale.ENGLISH),
                     style = MaterialTheme.typography.labelSmall,
                     color = if (day == today) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline,
                 )

@@ -66,11 +66,11 @@ internal fun DictationDialog(onInsert: (String) -> Unit, onCopy: (String) -> Uni
                 }
                 listening = false
                 error = when (code) {
-                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "마이크 권한이 필요합니다"
-                    SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "네트워크 연결을 확인해주세요"
+                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission is needed"
+                    SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Check your network connection"
                     SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED, SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE ->
-                        "이 기기에서 지원하지 않는 언어입니다"
-                    else -> "받아쓰기가 멈췄습니다 ($code)"
+                        "This language isn't supported on this device"
+                    else -> "Dictation stopped ($code)"
                 }
             }
             override fun onReadyForSpeech(params: Bundle?) { error = null }
@@ -86,11 +86,11 @@ internal fun DictationDialog(onInsert: (String) -> Unit, onCopy: (String) -> Uni
     }
     AlertDialog(
         onDismissRequest = { listening = false; recognizer?.cancel(); onDismiss() },
-        title = { Text("음성 받아쓰기") },
+        title = { Text("Dictation") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 if (!available) {
-                    Text("이 기기에는 음성 인식 서비스가 없습니다.")
+                    Text("This device has no speech recognition service.")
                     return@Column
                 }
                 Row(Modifier.horizontalScroll(rememberScrollState())) {
@@ -108,11 +108,11 @@ internal fun DictationDialog(onInsert: (String) -> Unit, onCopy: (String) -> Uni
                             listening = true
                             recognizer?.startListening(intent())
                         }
-                    }) { Text(if (listening) "■ 멈추기" else "● 듣기 시작") }
-                    TextButton(enabled = transcript.isNotEmpty() && !listening, onClick = { transcript = "" }) { Text("지우기") }
+                    }) { Text(if (listening) "■ Stop" else "● Start listening") }
+                    TextButton(enabled = transcript.isNotEmpty() && !listening, onClick = { transcript = "" }) { Text("Clear") }
                 }
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-                Text(transcript.ifEmpty { if (listening) "듣는 중…" else "말한 내용이 여기에 적힙니다." },
+                Text(transcript.ifEmpty { if (listening) "Listening…" else "What you say appears here." },
                     style = MaterialTheme.typography.bodyMedium)
                 if (partial.isNotBlank()) Text(partial, color = MaterialTheme.colorScheme.outline,
                     style = MaterialTheme.typography.bodySmall)
@@ -123,12 +123,12 @@ internal fun DictationDialog(onInsert: (String) -> Unit, onCopy: (String) -> Uni
                 listening = false
                 recognizer?.cancel()
                 onInsert(transcript)
-            }) { Text("페이지에 붙이기") }
+            }) { Text("Add to page") }
         },
         dismissButton = {
             Row {
-                TextButton(enabled = transcript.isNotBlank(), onClick = { onCopy(transcript) }) { Text("복사") }
-                TextButton(onClick = { listening = false; recognizer?.cancel(); onDismiss() }) { Text("닫기") }
+                TextButton(enabled = transcript.isNotBlank(), onClick = { onCopy(transcript) }) { Text("Copy") }
+                TextButton(onClick = { listening = false; recognizer?.cancel(); onDismiss() }) { Text("Close") }
             }
         },
     )

@@ -110,7 +110,7 @@ internal object MathExpr {
                     "logb" -> ln(go(e.args[1])) / ln(v)
                     "exp" -> exp(v)
                     "abs" -> abs(v)
-                    else -> throw MathError("알 수 없는 함수: ${e.name}")
+                    else -> throw MathError("Unknown function: ${e.name}")
                 }
             }
         }
@@ -199,7 +199,7 @@ internal object MathExpr {
      * steep ones get the samples they need. Angles in radians.
      */
     fun integrate(expr: Expr, a: Double, b: Double, ans: Double = 0.0): Double {
-        if (!a.isFinite() || !b.isFinite()) throw MathError("구간은 유한한 수여야 합니다")
+        if (!a.isFinite() || !b.isFinite()) throw MathError("The bounds must be finite numbers")
         if (a == b) return 0.0
         val f = { x: Double -> eval(expr, degrees = false, x = x, ans = ans) }
         val fa = f(a)
@@ -208,7 +208,7 @@ internal object MathExpr {
         val fm = f(m)
         val whole = (b - a) / 6 * (fa + 4 * fm + fb)
         val result = simpson(f, a, b, fa, fm, fb, whole, 1e-11 * maxOf(1.0, abs(whole)), MAX_DEPTH)
-        if (!result.isFinite()) throw MathError("구간 안에서 정의되지 않는 곳이 있습니다")
+        if (!result.isFinite()) throw MathError("The function is undefined somewhere in the interval")
         return result
     }
 
@@ -384,7 +384,7 @@ internal fun power(a: Double, b: Double): Double {
 
 /** n! for whole n up to 170, beyond which a Double cannot hold it. */
 internal fun factorial(n: Double): Double {
-    if (!isWhole(n) || n < 0) throw MathError("계승(!)은 0 이상의 정수에만 쓸 수 있습니다")
+    if (!isWhole(n) || n < 0) throw MathError("Factorial (!) only works on whole numbers 0 or greater")
     if (n > 170) return Double.POSITIVE_INFINITY
     var result = 1.0
     for (i in 2..n.toInt()) result *= i
@@ -405,7 +405,7 @@ private fun exactTrig(v: Double): Double = when {
 
 /** A result for the display: up to 12 significant figures, no trailing zeros, E for the very large and small. */
 internal fun formatNumber(v: Double): String {
-    if (v.isNaN()) return "정의되지 않음"
+    if (v.isNaN()) return "Undefined"
     if (v == Double.POSITIVE_INFINITY) return "∞"
     if (v == Double.NEGATIVE_INFINITY) return "-∞"
     val clean = if (abs(v) < 1e-13) 0.0 else v
@@ -425,10 +425,10 @@ private class Parser(private val text: String) {
     private var at = 0
 
     fun parseAll(): Expr {
-        if (text.isBlank()) throw MathError("식을 입력하세요")
+        if (text.isBlank()) throw MathError("Enter an expression")
         val e = expr()
         skip()
-        if (at < text.length) throw MathError("'${text[at]}' 앞에서 식이 끝나지 않았습니다")
+        if (at < text.length) throw MathError("The expression doesn't end before '${text[at]}'")
         return e
     }
 
@@ -501,7 +501,7 @@ private class Parser(private val text: String) {
     }
 
     private fun primary(): Expr {
-        val c = peek() ?: throw MathError("식이 덜 끝났습니다")
+        val c = peek() ?: throw MathError("The expression is incomplete")
         if (c == '(') {
             at++
             val inner = expr()
@@ -515,7 +515,7 @@ private class Parser(private val text: String) {
             val name = text.substring(start, at)
             return named(name.lowercase(), start)
         }
-        throw MathError("'$c'은(는) 여기 올 수 없습니다")
+        throw MathError("'$c' can't go here")
     }
 
     private fun number(): Expr {
@@ -528,7 +528,7 @@ private class Parser(private val text: String) {
             at += 2
             while (at < text.length && text[at].isDigit()) at++
         }
-        val value = text.substring(start, at).toDoubleOrNull() ?: throw MathError("숫자를 읽을 수 없습니다")
+        val value = text.substring(start, at).toDoubleOrNull() ?: throw MathError("Can't read the number")
         return Expr.Num(value)
     }
 
@@ -555,7 +555,7 @@ private class Parser(private val text: String) {
             }
             val wanted = if (name == "logb") 2 else 1
             if (args.size != wanted) {
-                throw MathError(if (name == "logb") "logb(밑, 값) 형태로 입력하세요" else "$name 에는 값 하나가 들어갑니다")
+                throw MathError(if (name == "logb") "Enter it as logb(base, value)" else "$name takes one value")
             }
             return Expr.Fn(name, args)
         }
@@ -568,6 +568,6 @@ private class Parser(private val text: String) {
                 return named(known, start)
             }
         }
-        throw MathError("알 수 없는 이름: $name")
+        throw MathError("Unknown name: $name")
     }
 }

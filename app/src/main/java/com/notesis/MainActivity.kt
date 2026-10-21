@@ -320,7 +320,7 @@ class MainActivity : ComponentActivity() {
                             pickedDocument = null
                         },
                         onImport = { title, markdown ->
-                            val created = store.createMarkdown(title.ifBlank { "가져온 문서" }, markdown)
+                            val created = store.createMarkdown(title.ifBlank { "Imported document" }, markdown)
                             incomingViewerRequest = null
                             pickedDocument = null
                             openNote = created
@@ -447,7 +447,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private val dateFormat = SimpleDateFormat("M월 d일 HH:mm", Locale.KOREA)
+private val dateFormat = SimpleDateFormat("MMM d, HH:mm", Locale.ENGLISH)
 
 
 /**
@@ -555,11 +555,11 @@ private fun NoteListScreen(
                     val title = displayName(context, uri).removeSuffix(".md").removeSuffix(".markdown")
                     val text = context.contentResolver.openInputStream(uri)?.use {
                         it.readBytes().toString(Charsets.UTF_8)
-                    } ?: error("파일을 읽을 수 없습니다")
-                    store.createMarkdown(title.ifBlank { "Markdown 노트" }, text)
+                    } ?: error("Can't read the file")
+                    store.createMarkdown(title.ifBlank { "Markdown note" }, text)
                 }.getOrNull()
             }
-            if (imported == null) report = "Markdown 파일을 가져오지 못했습니다"
+            if (imported == null) report = "Couldn't import the Markdown file"
             else { revision++; onOpen(imported) }
         }
     }
@@ -627,7 +627,7 @@ private fun NoteListScreen(
         val target = exporting?.first
         exporting = null
         if (uri == null || target == null) return@rememberLauncherForActivityResult
-        busy = "내보내는 중"
+        busy = "Exporting"
         scope.launch {
             val ok = withContext(Dispatchers.IO) {
                 context.contentResolver.openOutputStream(uri)?.use {
@@ -635,7 +635,7 @@ private fun NoteListScreen(
                 } ?: false
             }
             busy = null
-            report = if (ok) "백업 파일을 저장했습니다" else "내보내지 못했습니다"
+            report = if (ok) "Backup saved" else "Export failed"
         }
     }
 
@@ -643,7 +643,7 @@ private fun NoteListScreen(
         ActivityResultContracts.CreateDocument("application/zip"),
     ) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
-        busy = "전체 백업 중"
+        busy = "Backing up all notes"
         scope.launch {
             val ids = withContext(Dispatchers.IO) { store.list().map { it.id } }
             val ok = withContext(Dispatchers.IO) {
@@ -652,7 +652,7 @@ private fun NoteListScreen(
                 } ?: false
             }
             busy = null
-            report = if (ok) "노트 ${ids.size}개를 백업했습니다" else "내보내지 못했습니다"
+            report = if (ok) "Backed up ${countNoun(ids.size, "note")}" else "Export failed"
         }
     }
 
@@ -661,13 +661,13 @@ private fun NoteListScreen(
     ) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
         val ids = selectedIds.toList()
-        busy = "선택한 노트 내보내는 중"
+        busy = "Exporting selected notes"
         scope.launch {
             val ok = withContext(Dispatchers.IO) {
                 context.contentResolver.openOutputStream(uri)?.use { store.exportArchive(ids, it) } ?: false
             }
             busy = null
-            report = if (ok) "노트 ${ids.size}개를 내보냈습니다" else "내보내지 못했습니다"
+            report = if (ok) "Exported ${countNoun(ids.size, "note")}" else "Export failed"
         }
     }
 
@@ -679,7 +679,7 @@ private fun NoteListScreen(
         exporting = null
         exportPageOptions = null
         if (uri == null || target == null) return@rememberLauncherForActivityResult
-        busy = "PDF로 그리는 중"
+        busy = "Rendering PDF"
         scope.launch {
             val ok = withContext(Dispatchers.IO) {
                 context.contentResolver.openOutputStream(uri)?.use {
@@ -687,12 +687,12 @@ private fun NoteListScreen(
                 } ?: false
             }
             busy = null
-            report = if (ok) "PDF를 저장했습니다" else "내보내지 못했습니다"
+            report = if (ok) "PDF saved" else "Export failed"
         }
     }
 
     fun writePng(note: NoteMeta, options: PageExportOptions) {
-        busy = "PNG로 그리는 중"
+        busy = "Rendering PNG"
         scope.launch {
             val ok = withContext(Dispatchers.IO) {
                 store.exportPng(note.id, options) { page, bitmap ->
@@ -700,7 +700,7 @@ private fun NoteListScreen(
                 }
             }
             busy = null
-            report = if (ok) "PNG를 갤러리에 저장했습니다" else "PNG로 내보내지 못했습니다"
+            report = if (ok) "PNG saved to Gallery" else "PNG export failed"
         }
     }
     val addPageTemplate = rememberLauncherForActivityResult(
@@ -713,7 +713,7 @@ private fun NoteListScreen(
                     store.addPageTemplate(displayName(context, uri).substringBeforeLast('.'), input)
                 }
             }
-            if (added == null) report = "템플릿 이미지를 추가하지 못했습니다"
+            if (added == null) report = "Couldn't add the template image"
             else templateRevision++
         }
     }
@@ -728,7 +728,7 @@ private fun NoteListScreen(
             val ok = withContext(Dispatchers.IO) {
                 context.contentResolver.openOutputStream(uri)?.use { store.exportMarkdown(target, it) } ?: false
             }
-            report = if (ok) "Markdown 파일을 저장했습니다" else "Markdown으로 내보내지 못했습니다"
+            report = if (ok) "Markdown file saved" else "Markdown export failed"
         }
     }
 
@@ -736,7 +736,7 @@ private fun NoteListScreen(
         ActivityResultContracts.OpenDocument(),
     ) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
-        busy = "복원하는 중"
+        busy = "Restoring"
         scope.launch {
             val added = withContext(Dispatchers.IO) {
                 context.contentResolver.openInputStream(uri)?.use { store.importArchive(it) } ?: 0
@@ -744,9 +744,9 @@ private fun NoteListScreen(
             busy = null
             revision++
             report = if (added > 0) {
-                "노트 ${added}개를 복원했습니다"
+                "Restored ${countNoun(added, "note")}"
             } else {
-                "Notesis 백업 파일이 아닙니다"
+                "Not a Notesis backup file"
             }
         }
     }
@@ -765,7 +765,7 @@ private fun NoteListScreen(
                     context.contentResolver.openOutputStream(uri)?.use { SettingsBackup.export(context, it, version) }
                 }.getOrNull()
             }
-            report = if (count != null) "설정 ${count}개를 저장했습니다" else "설정을 저장하지 못했습니다"
+            report = if (count != null) "Saved ${countNoun(count, "setting")}" else "Couldn't save settings"
         }
     }
     val openSettings = rememberLauncherForActivityResult(
@@ -782,11 +782,11 @@ private fun NoteListScreen(
                 }.getOrNull()
             }
             if (count == null) {
-                report = "Notesis 설정 파일이 아닙니다"
+                report = "Not a Notesis settings file"
                 return@launch
             }
             StudyClock.reload(context)
-            android.widget.Toast.makeText(context, "설정 ${count}개를 불러왔습니다", android.widget.Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(context, "Loaded ${countNoun(count, "setting")}", android.widget.Toast.LENGTH_SHORT).show()
             // Pens, skin, gestures and the bars all read their settings as
             // the screen is built, so it is built again.
             (context as? android.app.Activity)?.recreate()
@@ -805,14 +805,14 @@ private fun NoteListScreen(
     orderingImages?.let { uris ->
         ImageOrderDialog(uris, onDismiss = { orderingImages = null }) { ordered ->
             orderingImages = null
-            busy = "이미지로 노트를 만드는 중"
+            busy = "Making a note from images"
             scope.launch {
                 val created = withContext(Dispatchers.IO) {
-                    store.createFromImages("이미지 노트", ordered.map { uri -> { context.contentResolver.openInputStream(uri) } })
+                    store.createFromImages("Image note", ordered.map { uri -> { context.contentResolver.openInputStream(uri) } })
                 }
                 busy = null
                 revision++
-                if (created != null) onOpen(created) else report = "이미지를 읽지 못했습니다"
+                if (created != null) onOpen(created) else report = "Couldn't read the images"
             }
         }
     }
@@ -820,23 +820,23 @@ private fun NoteListScreen(
         var address by remember { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { askingUrl = false },
-            title = { Text("웹페이지로 노트 만들기") },
+            title = { Text("New note from a web page") },
             text = { OutlinedTextField(address, { address = it.trim() }, label = { Text("https://…") }, singleLine = true) },
             confirmButton = { TextButton(enabled = address.contains('.'), onClick = {
                 askingUrl = false
-                busy = "웹페이지를 읽는 중"
+                busy = "Reading the web page"
                 scope.launch {
                     val page = withContext(Dispatchers.IO) { fetchWebPage(address) }
                     busy = null
-                    if (page == null) { report = "웹페이지를 읽지 못했습니다"; return@launch }
+                    if (page == null) { report = "Couldn't read the web page"; return@launch }
                     val created = withContext(Dispatchers.IO) {
-                        store.createMarkdown(page.title.take(80), "# ${page.title}\n\n출처: $address\n\n${page.text}")
+                        store.createMarkdown(page.title.take(80), "# ${page.title}\n\nSource: $address\n\n${page.text}")
                     }
                     revision++
                     onOpen(created)
                 }
-            }) { Text("만들기") } },
-            dismissButton = { TextButton(onClick = { askingUrl = false }) { Text("취소") } },
+            }) { Text("Create") } },
+            dismissButton = { TextButton(onClick = { askingUrl = false }) { Text("Cancel") } },
         )
     }
 
@@ -863,8 +863,8 @@ private fun NoteListScreen(
             when {
                 imported.isEmpty() -> importFailed = true
                 uris.size == 1 -> onOpen(imported.first())
-                else -> report = "PDF ${imported.size}개를 가져왔습니다" +
-                    if (imported.size < uris.size) " (${uris.size - imported.size}개 실패)" else ""
+                else -> report = "Imported ${countNoun(imported.size, "PDF")}" +
+                    if (imported.size < uris.size) " (${uris.size - imported.size} failed)" else ""
             }
         }
     }
@@ -907,33 +907,33 @@ private fun NoteListScreen(
                     TextButton(onClick = {
                         selectionMode = !selectionMode
                         selectedIds.clear()
-                    }) { Text(if (selectionMode) "선택 종료" else "여러 노트 선택") }
+                    }) { Text(if (selectionMode) "Done" else "Select notes") }
                     ToolsMenuButton()
                     IconButton(onClick = { creatingFolder = true }) {
-                        Icon(Reicons.Folder, contentDescription = "폴더 만들기")
+                        Icon(Reicons.Folder, contentDescription = "New folder")
                     }
                     if (folder.isNotBlank()) Box {
                         IconButton(onClick = { folderMenu = true }) {
-                            Icon(Reicons.MoreVert, contentDescription = "폴더 관리")
+                            Icon(Reicons.MoreVert, contentDescription = "Folder options")
                         }
                         DropdownMenu(folderMenu, onDismissRequest = { folderMenu = false }) {
-                            DropdownMenuItem(text = { Text("폴더 이름 바꾸기") }, onClick = {
+                            DropdownMenuItem(text = { Text("Rename folder") }, onClick = {
                                 folderMenu = false; renamingFolder = true
                             })
-                            DropdownMenuItem(text = { Text("폴더 삭제") }, onClick = {
+                            DropdownMenuItem(text = { Text("Delete folder") }, onClick = {
                                 folderMenu = false; deletingFolder = true
                             })
                         }
                     }
                     Box {
                         IconButton(onClick = { sortMenu = true }) {
-                            Icon(LibraryIcons.Sort, contentDescription = "정렬")
+                            Icon(LibraryIcons.Sort, contentDescription = "Sort")
                         }
                         DropdownMenu(sortMenu, onDismissRequest = { sortMenu = false }) {
                             listOf(
-                                LIBRARY_SORT_MODIFIED to "최근 수정 순",
-                                LIBRARY_SORT_TITLE to "이름 순",
-                                LIBRARY_SORT_PAGES to "쪽수 많은 순",
+                                LIBRARY_SORT_MODIFIED to "Last modified",
+                                LIBRARY_SORT_TITLE to "Name",
+                                LIBRARY_SORT_PAGES to "Most pages",
                             ).forEach { (mode, label) ->
                                 DropdownMenuItem(
                                     text = { Text(label) },
@@ -950,16 +950,16 @@ private fun NoteListScreen(
                         }
                     }
                     IconButton(onClick = { showTrash = true }) {
-                        Icon(Reicons.Delete, contentDescription = "휴지통")
+                        Icon(Reicons.Delete, contentDescription = "Trash")
                     }
                     IconButton(onClick = { showHomeBackground = true }) {
-                        Icon(Reicons.Image, contentDescription = "노트 목록 배경")
+                        Icon(Reicons.Image, contentDescription = "Library background")
                     }
                     IconButton(onClick = onSettings) {
-                        Icon(Reicons.Tune, contentDescription = "화면 설정")
+                        Icon(Reicons.Tune, contentDescription = "Display settings")
                     }
                     IconButton(onClick = { showHelp = true }) {
-                        Icon(Reicons.BugReport, contentDescription = "앱 정보 · 도움말")
+                        Icon(Reicons.BugReport, contentDescription = "About · Help")
                     }
                 },
                 navigationIcon = {
@@ -969,7 +969,7 @@ private fun NoteListScreen(
                         IconButton(onClick = { folder = "" }) {
                             Icon(
                                 Reicons.ArrowBack,
-                                contentDescription = "전체 노트",
+                                contentDescription = "All notes",
                             )
                         }
                     }
@@ -986,7 +986,7 @@ private fun NoteListScreen(
                             value = query,
                             onValueChange = { query = it },
                             singleLine = true,
-                            placeholder = { Text("모든 노트에서 찾기 · 제목 · PDF · 필기") },
+                            placeholder = { Text("Search all notes · titles · PDFs · handwriting") },
                             leadingIcon = {
                                 Icon(Reicons.Search, contentDescription = null)
                             },
@@ -1009,29 +1009,29 @@ private fun NoteListScreen(
         floatingActionButton = {
             Column(horizontalAlignment = Alignment.End) {
                 BackupButton(
-                    onBackupAll = { saveAllArchive.launch("Notesis-백업") },
+                    onBackupAll = { saveAllArchive.launch("Notesis-backup") },
                     onRestore = { openArchive.launch(arrayOf("*/*")) },
-                    onSaveSettings = { saveSettings.launch("Notesis-설정.json") },
+                    onSaveSettings = { saveSettings.launch("Notesis-settings.json") },
                     onLoadSettings = { openSettings.launch(arrayOf("*/*")) },
                 )
                 Spacer(Modifier.height(12.dp))
                 // Everything that makes a note, folded into the one button.
                 NewNoteDial(
                     listOf(
-                        DialOption("웹페이지로 새 노트", AppIconStyle.pick(Lucide.Globe, Reicons.Language)) { askingUrl = true },
-                        DialOption("이미지로 새 노트", AppIconStyle.pick(Lucide.Image, Reicons.AddPhotoAlternate)) {
+                        DialOption("New note from web page", AppIconStyle.pick(Lucide.Globe, Reicons.Language)) { askingUrl = true },
+                        DialOption("New note from images", AppIconStyle.pick(Lucide.Image, Reicons.AddPhotoAlternate)) {
                             pickImages.launch(arrayOf("image/*"))
                         },
-                        DialOption("Markdown 가져오기", AppIconStyle.pick(Lucide.FileText, Reicons.Description)) {
+                        DialOption("Import Markdown", AppIconStyle.pick(Lucide.FileText, Reicons.Description)) {
                             importMarkdown.launch(arrayOf("text/markdown", "text/plain", "application/octet-stream"))
                         },
-                        DialOption("문서 열기 · Drive · OneDrive", AppIconStyle.pick(Lucide.FolderOpen, Reicons.FolderOpen)) {
+                        DialOption("Open document · Drive · OneDrive", AppIconStyle.pick(Lucide.FolderOpen, Reicons.FolderOpen)) {
                             openDocument.launch(SUPPORTED_DOCUMENT_MIME_TYPES)
                         },
-                        DialOption("PDF 가져오기", AppIconStyle.pick(Lucide.File, Reicons.PictureAsPdf)) {
+                        DialOption("Import PDF", AppIconStyle.pick(Lucide.File, Reicons.PictureAsPdf)) {
                             pickPdf.launch(arrayOf("application/pdf"))
                         },
-                        DialOption("새 노트", AppIconStyle.pick(Lucide.NotebookPen, Reicons.Edit)) { naming = true },
+                        DialOption("New note", AppIconStyle.pick(Lucide.NotebookPen, Reicons.Edit)) { naming = true },
                     ),
                 )
             }
@@ -1067,9 +1067,9 @@ private fun NoteListScreen(
             ) {
                 Text(
                     when {
-                        query.isNotBlank() -> "\"$query\" 검색 결과가 없습니다"
-                        folder.isNotBlank() -> "이 폴더가 비었습니다"
-                        else -> "아직 노트가 없습니다"
+                        query.isNotBlank() -> "No results for \"$query\""
+                        folder.isNotBlank() -> "This folder is empty"
+                        else -> "No notes yet"
                     },
                     color = MaterialTheme.colorScheme.outline,
                 )
@@ -1117,7 +1117,7 @@ private fun NoteListScreen(
                 if (results != null && pageHits.isNotEmpty()) {
                     item(span = { GridItemSpan(maxLineSpan) }) {
                         Text(
-                            "페이지에서 찾은 곳",
+                            "Matches in pages",
                             style = MaterialTheme.typography.titleSmall,
                             modifier = Modifier.padding(top = 4.dp),
                         )
@@ -1134,7 +1134,7 @@ private fun NoteListScreen(
                     }
                     item(span = { GridItemSpan(maxLineSpan) }) {
                         Text(
-                            "노트",
+                            "Notes",
                             style = MaterialTheme.typography.titleSmall,
                             modifier = Modifier.padding(top = 4.dp),
                         )
@@ -1198,16 +1198,16 @@ private fun NoteListScreen(
                             } else lockingNote = note
                         },
                         onIndex = {
-                            busy = "필기를 읽는 중"
+                            busy = "Reading handwriting"
                             scope.launch {
                                 val pages = withContext(Dispatchers.IO) {
                                     indexNote(store, indexer, note.id)
                                 }
                                 busy = null
                                 report = if (pages < 0) {
-                                    "인식 모델을 받지 못했습니다. 인터넷을 확인해주세요"
+                                    "Couldn't download the recognition model. Check your internet connection"
                                 } else {
-                                    "페이지 " + pages + "장을 색인했습니다"
+                                    "Indexed " + countNoun(pages, "page")
                                 }
                             }
                         },
@@ -1221,32 +1221,32 @@ private fun NoteListScreen(
             corner = 16.dp,
         ) {
             Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("${selectedIds.size}개 선택", modifier = Modifier.padding(horizontal = 8.dp))
+                Text("${selectedIds.size} selected", modifier = Modifier.padding(horizontal = 8.dp))
                 TextButton(onClick = { bulkFolder = true }, enabled = selectedIds.isNotEmpty()) {
-                    Text("이동")
+                    Text("Move")
                 }
                 TextButton(onClick = {
                     val ids = selectedIds.filter { id -> notes.any { it.id == id && it.kind == NoteKind.INK } }
-                    busy = "노트를 합치는 중"
+                    busy = "Merging notes"
                     scope.launch {
                         val merged = withContext(Dispatchers.IO) {
-                            store.mergeNotes(ids, "합친 노트")
+                            store.mergeNotes(ids, "Merged note")
                         }
                         busy = null
-                        if (merged == null) report = "노트를 합치지 못했습니다"
+                        if (merged == null) report = "Couldn't merge the notes"
                         else {
                             selectedIds.clear(); selectionMode = false; revision++
                             onOpen(merged)
                         }
                     }
                 }, enabled = selectedIds.count { id -> notes.any { it.id == id && it.kind == NoteKind.INK } } >= 2) {
-                    Text("합치기")
+                    Text("Merge")
                 }
-                TextButton(onClick = { saveSelectedArchive.launch("Notesis-선택-백업") }, enabled = selectedIds.isNotEmpty()) {
-                    Text("내보내기")
+                TextButton(onClick = { saveSelectedArchive.launch("Notesis-selected-backup") }, enabled = selectedIds.isNotEmpty()) {
+                    Text("Export")
                 }
                 TextButton(onClick = { bulkDelete = true }, enabled = selectedIds.isNotEmpty()) {
-                    Text("삭제")
+                    Text("Delete")
                 }
             }
         }
@@ -1265,7 +1265,7 @@ private fun NoteListScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.width(14.dp))
-                    Text("잠시만요")
+                    Text("Please wait")
                 }
             },
             confirmButton = {},
@@ -1276,7 +1276,7 @@ private fun NoteListScreen(
         AlertDialog(
             onDismissRequest = { report = null },
             title = { Text(message) },
-            confirmButton = { TextButton(onClick = { report = null }) { Text("확인") } },
+            confirmButton = { TextButton(onClick = { report = null }) { Text("OK") } },
         )
     }
 
@@ -1302,19 +1302,19 @@ private fun NoteListScreen(
     )
     if (bulkDelete) AlertDialog(
         onDismissRequest = { bulkDelete = false },
-        title = { Text("선택한 노트 ${selectedIds.size}개를 휴지통으로 옮길까요?") },
-        text = { Text("휴지통에서 ${NoteStore.TRASH_DAYS}일 동안 복원할 수 있습니다.") },
+        title = { Text("Move ${countNoun(selectedIds.size, "selected note")} to Trash?") },
+        text = { Text("You can restore them from Trash for ${NoteStore.TRASH_DAYS} days.") },
         confirmButton = { TextButton(onClick = {
             selectedIds.forEach(store::moveToTrash)
             selectedIds.clear(); selectionMode = false; bulkDelete = false; revision++
-        }) { Text("삭제") } },
-        dismissButton = { TextButton(onClick = { bulkDelete = false }) { Text("취소") } },
+        }) { Text("Delete") } },
+        dismissButton = { TextButton(onClick = { bulkDelete = false }) { Text("Cancel") } },
     )
 
     if (creatingFolder || renamingFolder) {
         val rename = renamingFolder
         FolderNameDialog(
-            title = if (rename) "폴더 이름 바꾸기" else "새 폴더",
+            title = if (rename) "Rename folder" else "New folder",
             initial = if (rename) folder else "",
             onDismiss = { creatingFolder = false; renamingFolder = false },
             onConfirm = { name ->
@@ -1322,21 +1322,21 @@ private fun NoteListScreen(
                 if (ok) {
                     if (rename) folder = name.trim()
                     revision++
-                } else report = "폴더 이름을 사용할 수 없습니다"
+                } else report = "That folder name can't be used"
                 creatingFolder = false; renamingFolder = false
             },
         )
     }
     if (deletingFolder) AlertDialog(
         onDismissRequest = { deletingFolder = false },
-        title = { Text("폴더 삭제") },
-        text = { Text("폴더와 노트를 휴지통으로 옮깁니다. 노트를 복원하면 폴더도 다시 생깁니다.") },
+        title = { Text("Delete folder") },
+        text = { Text("Moves the folder and its notes to Trash. Restoring a note brings the folder back.") },
         confirmButton = { TextButton(onClick = {
             store.deleteFolder(folder)
             folder = ""
             revision++
             deletingFolder = false
-        }) { Text("휴지통으로") } },
+        }) { Text("Move to Trash") } },
         dismissButton = {
             Row {
                 TextButton(onClick = {
@@ -1344,8 +1344,8 @@ private fun NoteListScreen(
                     folder = ""
                     revision++
                     deletingFolder = false
-                }) { Text("노트는 남기기") }
-                TextButton(onClick = { deletingFolder = false }) { Text("취소") }
+                }) { Text("Keep notes") }
+                TextButton(onClick = { deletingFolder = false }) { Text("Cancel") }
             }
         },
     )
@@ -1362,9 +1362,9 @@ private fun NoteListScreen(
     if (importFailed) {
         AlertDialog(
             onDismissRequest = { importFailed = false },
-            title = { Text("PDF를 열 수 없습니다") },
-            text = { Text("손상되었거나 암호가 걸린 파일일 수 있습니다.") },
-            confirmButton = { TextButton(onClick = { importFailed = false }) { Text("확인") } },
+            title = { Text("Can't open the PDF") },
+            text = { Text("The file may be damaged or password-protected.") },
+            confirmButton = { TextButton(onClick = { importFailed = false }) { Text("OK") } },
         )
     }
 
@@ -1393,9 +1393,9 @@ private fun NoteListScreen(
             onConfirm = { title, kind, background, templateId ->
                 naming = false
                 onOpen(if (kind == NoteKind.MARKDOWN) {
-                    store.createMarkdown(title.ifBlank { "제목 없음" }, "# ${title.ifBlank { "제목 없음" }}\n\n")
+                    store.createMarkdown(title.ifBlank { "Untitled" }, "# ${title.ifBlank { "Untitled" }}\n\n")
                 } else {
-                    store.create(title.ifBlank { "제목 없음" }, background, templateId)
+                    store.create(title.ifBlank { "Untitled" }, background, templateId)
                 })
             },
         )
@@ -1405,11 +1405,11 @@ private fun NoteListScreen(
         var text by remember(target.id) { mutableStateOf(target.tags.joinToString(", ")) }
         AlertDialog(
             onDismissRequest = { taggingNote = null },
-            title = { Text("태그") },
+            title = { Text("Tags") },
             text = {
                 Column {
                     OutlinedTextField(value = text, onValueChange = { text = it },
-                        label = { Text("쉼표로 구분") }, singleLine = true)
+                        label = { Text("Separate with commas") }, singleLine = true)
                     if (allTags.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState()).padding(top = 8.dp)) {
                         allTags.forEach { tag ->
                             SuggestionChip(onClick = {
@@ -1424,15 +1424,15 @@ private fun NoteListScreen(
                 store.setTags(target.id, text.split(','))
                 taggingNote = null
                 revision++
-            }) { Text("저장") } },
-            dismissButton = { TextButton(onClick = { taggingNote = null }) { Text("취소") } },
+            }) { Text("Save") } },
+            dismissButton = { TextButton(onClick = { taggingNote = null }) { Text("Cancel") } },
         )
     }
 
     labelingNote?.let { target ->
         AlertDialog(
             onDismissRequest = { labelingNote = null },
-            title = { Text("색 라벨") },
+            title = { Text("Color label") },
             text = {
                 Row(Modifier.horizontalScroll(rememberScrollState())) {
                     (listOf(0) + NOTE_LABELS).forEach { color ->
@@ -1450,11 +1450,11 @@ private fun NoteListScreen(
                                     revision++
                                 },
                             contentAlignment = Alignment.Center,
-                        ) { if (color == 0) Text("없음", style = MaterialTheme.typography.labelSmall) }
+                        ) { if (color == 0) Text("None", style = MaterialTheme.typography.labelSmall) }
                     }
                 }
             },
-            confirmButton = { TextButton(onClick = { labelingNote = null }) { Text("닫기") } },
+            confirmButton = { TextButton(onClick = { labelingNote = null }) { Text("Close") } },
         )
     }
 
@@ -1486,8 +1486,8 @@ private fun NoteListScreen(
     pendingDelete?.let { note ->
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
-            title = { Text("노트를 휴지통으로 옮길까요?") },
-            text = { Text("\"${note.title}\" 은(는) 휴지통에서 ${NoteStore.TRASH_DAYS}일 동안 복원할 수 있습니다.") },
+            title = { Text("Move note to Trash?") },
+            text = { Text("You can restore \"${note.title}\" from Trash for ${NoteStore.TRASH_DAYS} days.") },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -1495,10 +1495,10 @@ private fun NoteListScreen(
                         pendingDelete = null
                         revision++
                     },
-                ) { Text("삭제") }
+                ) { Text("Delete") }
             },
             dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) { Text("취소") }
+                TextButton(onClick = { pendingDelete = null }) { Text("Cancel") }
             },
         )
     }
@@ -1520,7 +1520,7 @@ private fun SearchHitRow(note: NoteMeta, hit: PageHit, onOpen: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                "${note.title} · ${hit.pageIndex + 1}쪽",
+                "${note.title} · p. ${hit.pageIndex + 1}",
                 style = MaterialTheme.typography.labelLarge,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -1562,18 +1562,18 @@ internal fun InputSettingsDialog(gestures: CanvasGestures, onGestures: (CanvasGe
             }
         }
     }
-    val taps = listOf(TAP_NONE to "없음", TAP_UNDO to "실행 취소", TAP_REDO to "다시 실행")
+    val taps = listOf(TAP_NONE to "None", TAP_UNDO to "Undo", TAP_REDO to "Redo")
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("손가락·제스처") },
+        title = { Text("Fingers & gestures") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                choices("한 손가락", listOf(FINGER_SCROLL to "스크롤", FINGER_IGNORED to "무시", FINGER_DRAW to "그리기"),
+                choices("One finger", listOf(FINGER_SCROLL to "Scroll", FINGER_IGNORED to "Ignore", FINGER_DRAW to "Draw"),
                     gestures.oneFinger) { onGestures(gestures.copy(oneFinger = it)) }
-                choices("두 손가락", listOf(TWO_ZOOM_PAN to "확대·이동", TWO_SCROLL to "스크롤", TWO_IGNORED to "무시"),
+                choices("Two fingers", listOf(TWO_ZOOM_PAN to "Zoom & pan", TWO_SCROLL to "Scroll", TWO_IGNORED to "Ignore"),
                     gestures.twoFingers) { onGestures(gestures.copy(twoFingers = it)) }
-                choices("두 손가락 두 번 탭", taps, gestures.twoFingerTap) { onGestures(gestures.copy(twoFingerTap = it)) }
-                choices("세 손가락 두 번 탭", taps, gestures.threeFingerTap) { onGestures(gestures.copy(threeFingerTap = it)) }
+                choices("Two-finger double tap", taps, gestures.twoFingerTap) { onGestures(gestures.copy(twoFingerTap = it)) }
+                choices("Three-finger double tap", taps, gestures.threeFingerTap) { onGestures(gestures.copy(threeFingerTap = it)) }
                 @Composable
                 fun toggle(label: String, on: Boolean, set: (Boolean) -> Unit) {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
@@ -1582,18 +1582,18 @@ internal fun InputSettingsDialog(gestures: CanvasGestures, onGestures: (CanvasGe
                         Text(label)
                     }
                 }
-                toggle("확대·축소 잠금", gestures.zoomLocked) { onGestures(gestures.copy(zoomLocked = it)) }
-                toggle("한 손가락 두 번 탭으로 확대", gestures.doubleTapZoom) { onGestures(gestures.copy(doubleTapZoom = it)) }
-                toggle("길게 눌러 메뉴 열기", gestures.longPressMenu) { onGestures(gestures.copy(longPressMenu = it)) }
-                toggle("링크 객체에 파란 표시", gestures.linkOverlay) { onGestures(gestures.copy(linkOverlay = it)) }
-                toggle("지우개로 지운 뒤 이전 도구로", gestures.eraserReturns) { onGestures(gestures.copy(eraserReturns = it)) }
-                choices("펜 버튼 누르고 쓰기", listOf(PEN_BUTTON_ERASE to "지우개",
-                    PEN_BUTTON_LASSO to "올가미"), gestures.penButton.takeIf { it != PEN_BUTTON_LASER } ?: PEN_BUTTON_ERASE) { onGestures(gestures.copy(penButton = it)) }
-                Text("손바닥이 닿는다면 한 손가락을 '무시'로, 두 손가락을 '스크롤'로 두세요. 그리기 모드에서는 두 손가락으로 화면을 움직입니다.",
+                toggle("Lock zoom", gestures.zoomLocked) { onGestures(gestures.copy(zoomLocked = it)) }
+                toggle("Double-tap with one finger to zoom", gestures.doubleTapZoom) { onGestures(gestures.copy(doubleTapZoom = it)) }
+                toggle("Long-press to open the menu", gestures.longPressMenu) { onGestures(gestures.copy(longPressMenu = it)) }
+                toggle("Mark linked objects in blue", gestures.linkOverlay) { onGestures(gestures.copy(linkOverlay = it)) }
+                toggle("Back to the previous tool after erasing", gestures.eraserReturns) { onGestures(gestures.copy(eraserReturns = it)) }
+                choices("Writing with the pen button held", listOf(PEN_BUTTON_ERASE to "Eraser",
+                    PEN_BUTTON_LASSO to "Lasso"), gestures.penButton.takeIf { it != PEN_BUTTON_LASER } ?: PEN_BUTTON_ERASE) { onGestures(gestures.copy(penButton = it)) }
+                Text("If your palm touches the screen, set one finger to 'Ignore' and two fingers to 'Scroll'. In Draw mode, two fingers move the page.",
                     style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("닫기") } },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
     )
 }
 
@@ -1626,12 +1626,12 @@ internal fun LinkDialog(
     }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("링크") },
+        title = { Text("Link") },
         text = {
             Column {
-                if (current != null) Text("현재: $current", style = MaterialTheme.typography.bodySmall)
+                if (current != null) Text("Current: $current", style = MaterialTheme.typography.bodySmall)
                 Row {
-                    listOf("이 노트의 쪽", "다른 노트", "웹 주소").forEachIndexed { i, label ->
+                    listOf("Page in this note", "Another note", "Web address").forEachIndexed { i, label ->
                         SettingsChoiceChip(selected = kind == i, onClick = { kind = i }, label = label,
                             modifier = Modifier.padding(end = 6.dp))
                     }
@@ -1647,17 +1647,17 @@ internal fun LinkDialog(
                             }
                         }
                         OutlinedTextField(page, { page = it.filter(Char::isDigit).take(5) },
-                            label = { Text(if (kind == 0) "쪽 (1–$pageCount)" else "쪽") }, singleLine = true,
+                            label = { Text(if (kind == 0) "Page (1–$pageCount)" else "Page") }, singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
                     }
                 }
             }
         },
-        confirmButton = { TextButton(onClick = { onSave(target) }, enabled = target != null) { Text("연결") } },
+        confirmButton = { TextButton(onClick = { onSave(target) }, enabled = target != null) { Text("Link") } },
         dismissButton = {
             Row {
-                if (current != null) TextButton(onClick = { onSave(null) }) { Text("링크 제거") }
-                TextButton(onClick = onDismiss) { Text("취소") }
+                if (current != null) TextButton(onClick = { onSave(null) }) { Text("Remove link") }
+                TextButton(onClick = onDismiss) { Text("Cancel") }
             }
         },
     )
@@ -1674,7 +1674,7 @@ internal fun LibraryDialog(store: NoteStore, onPaste: (InkClipboard.Clip) -> Uni
     val tags = items.flatMap { it.tags }.distinct().sorted()
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("라이브러리") },
+        title = { Text("Library") },
         text = {
             Column {
                 if (tags.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState())) {
@@ -1683,7 +1683,7 @@ internal fun LibraryDialog(store: NoteStore, onPaste: (InkClipboard.Clip) -> Uni
                             label = { Text("#$tag") }, modifier = Modifier.padding(end = 6.dp))
                     }
                 }
-                if (items.isEmpty()) Text("올가미로 고른 뒤 '라이브러리에 추가'를 누르면 여기에 남습니다.",
+                if (items.isEmpty()) Text("Select with the lasso and tap 'Add to library' to keep it here.",
                     style = MaterialTheme.typography.bodySmall)
                 LazyVerticalGrid(GridCells.Adaptive(96.dp), Modifier.heightIn(max = 420.dp)) {
                     items(items.filter { filter == null || filter in it.tags }, key = { it.id }) { item ->
@@ -1708,23 +1708,23 @@ internal fun LibraryDialog(store: NoteStore, onPaste: (InkClipboard.Clip) -> Uni
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("닫기") } },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
     )
     editing?.let { item ->
         var text by remember(item.id) { mutableStateOf(item.tags.joinToString(", ")) }
         AlertDialog(
             onDismissRequest = { editing = null },
-            title = { Text("라이브러리 항목") },
-            text = { OutlinedTextField(text, { text = it }, label = { Text("태그 (쉼표로 구분)") }, singleLine = true) },
+            title = { Text("Library item") },
+            text = { OutlinedTextField(text, { text = it }, label = { Text("Tags (comma-separated)") }, singleLine = true) },
             confirmButton = { TextButton(onClick = {
                 store.setLibraryTags(item.id, text.split(','))
                 editing = null
                 revision++
-            }) { Text("저장") } },
+            }) { Text("Save") } },
             dismissButton = {
                 Row {
-                    TextButton(onClick = { store.deleteLibraryItem(item.id); editing = null; revision++ }) { Text("삭제") }
-                    TextButton(onClick = { editing = null }) { Text("취소") }
+                    TextButton(onClick = { store.deleteLibraryItem(item.id); editing = null; revision++ }) { Text("Delete") }
+                    TextButton(onClick = { editing = null }) { Text("Cancel") }
                 }
             },
         )
@@ -1740,23 +1740,23 @@ private fun SetPasswordDialog(onSet: (String, String) -> Unit, onDismiss: () -> 
     val ok = first.length >= 4 && first == second
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("노트 잠금 암호 만들기") },
+        title = { Text("Create a note password") },
         text = {
             Column {
-                Text("모든 잠긴 노트가 이 암호 하나를 씁니다. 이 기기에만 저장되며 잊으면 복구할 수 없습니다.",
+                Text("All locked notes share this one password. It is stored only on this device and can't be recovered if you forget it.",
                     style = MaterialTheme.typography.bodySmall)
-                OutlinedTextField(first, { first = it }, label = { Text("암호 (4자 이상)") }, singleLine = true,
+                OutlinedTextField(first, { first = it }, label = { Text("Password (4+ characters)") }, singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
-                OutlinedTextField(second, { second = it }, label = { Text("암호 확인") }, singleLine = true,
+                OutlinedTextField(second, { second = it }, label = { Text("Confirm password") }, singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     isError = second.isNotEmpty() && second != first)
-                OutlinedTextField(hint, { hint = it }, label = { Text("힌트 (선택)") }, singleLine = true)
+                OutlinedTextField(hint, { hint = it }, label = { Text("Hint (optional)") }, singleLine = true)
             }
         },
-        confirmButton = { TextButton(onClick = { onSet(first, hint.trim()) }, enabled = ok) { Text("잠그기") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+        confirmButton = { TextButton(onClick = { onSet(first, hint.trim()) }, enabled = ok) { Text("Lock") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 
@@ -1767,28 +1767,28 @@ internal fun UnlockDialog(lock: NoteLock, title: String, onUnlocked: () -> Unit,
     var password by remember { mutableStateOf("") }
     var wrong by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
-        if (activity != null) lock.askBiometric(activity, "\"$title\" 열기") { passed -> if (passed) onUnlocked() }
+        if (activity != null) lock.askBiometric(activity, "Open \"$title\"") { passed -> if (passed) onUnlocked() }
     }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("잠긴 노트") },
+        title = { Text("Locked note") },
         text = {
             Column {
                 Text(title, style = MaterialTheme.typography.bodyMedium)
-                OutlinedTextField(password, { password = it; wrong = false }, label = { Text("암호") },
+                OutlinedTextField(password, { password = it; wrong = false }, label = { Text("Password") },
                     singleLine = true, isError = wrong,
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
-                if (wrong && lock.hint.isNotBlank()) Text("힌트: ${lock.hint}", style = MaterialTheme.typography.bodySmall)
-                else if (wrong) Text("암호가 맞지 않습니다", color = MaterialTheme.colorScheme.error,
+                if (wrong && lock.hint.isNotBlank()) Text("Hint: ${lock.hint}", style = MaterialTheme.typography.bodySmall)
+                else if (wrong) Text("Wrong password", color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall)
             }
         },
         confirmButton = {
             TextButton(onClick = { if (lock.check(password)) onUnlocked() else wrong = true },
-                enabled = password.isNotEmpty()) { Text("열기") }
+                enabled = password.isNotEmpty()) { Text("Open") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 
@@ -1799,7 +1799,7 @@ private fun ImageOrderDialog(uris: List<Uri>, onDismiss: () -> Unit, onConfirm: 
     val order = remember { mutableStateListOf<Uri>().apply { addAll(uris) } }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("이미지 ${order.size}장 순서") },
+        title = { Text("Order of ${countNoun(order.size, "image")}") },
         text = {
             LazyColumn(Modifier.heightIn(max = 420.dp)) {
                 items(order.toList(), key = { it.toString() }) { uri ->
@@ -1819,8 +1819,8 @@ private fun ImageOrderDialog(uris: List<Uri>, onDismiss: () -> Unit, onConfirm: 
                 }
             }
         },
-        confirmButton = { TextButton(onClick = { onConfirm(order.toList()) }) { Text("만들기") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+        confirmButton = { TextButton(onClick = { onConfirm(order.toList()) }) { Text("Create") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 
@@ -1832,17 +1832,17 @@ private fun TrashDialog(store: NoteStore, onChanged: () -> Unit, onDismiss: () -
     var confirmEmpty by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("휴지통") },
+        title = { Text("Trash") },
         text = {
             if (trashed.isEmpty()) {
-                Text("비어 있습니다", color = MaterialTheme.colorScheme.outline)
+                Text("Trash is empty", color = MaterialTheme.colorScheme.outline)
             } else LazyColumn(Modifier.heightIn(max = 420.dp)) {
                 items(trashed, key = { it.id }) { note ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(note.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(
-                                "${dateFormat.format(Date(note.trashedAt))}에 삭제 · ${note.pageCount}쪽",
+                                "Deleted ${dateFormat.format(Date(note.trashedAt))} · ${countNoun(note.pageCount, "page")}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.outline,
                             )
@@ -1851,30 +1851,30 @@ private fun TrashDialog(store: NoteStore, onChanged: () -> Unit, onDismiss: () -
                             store.restoreFromTrash(note.id)
                             revision++
                             onChanged()
-                        }) { Text("복원") }
+                        }) { Text("Restore") }
                         TextButton(onClick = {
                             store.delete(note.id)
                             revision++
-                        }) { Text("영구 삭제") }
+                        }) { Text("Delete forever") }
                     }
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("닫기") } },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
         dismissButton = if (trashed.isNotEmpty()) {
-            { TextButton(onClick = { confirmEmpty = true }) { Text("비우기") } }
+            { TextButton(onClick = { confirmEmpty = true }) { Text("Empty") } }
         } else null,
     )
     if (confirmEmpty) AlertDialog(
         onDismissRequest = { confirmEmpty = false },
-        title = { Text("휴지통을 비울까요?") },
-        text = { Text("노트 ${trashed.size}개가 완전히 삭제되어 복구할 수 없습니다.") },
+        title = { Text("Empty Trash?") },
+        text = { Text("${countNoun(trashed.size, "note")} will be deleted for good and can't be recovered.") },
         confirmButton = { TextButton(onClick = {
             store.emptyTrash()
             confirmEmpty = false
             revision++
-        }) { Text("비우기") } },
-        dismissButton = { TextButton(onClick = { confirmEmpty = false }) { Text("취소") } },
+        }) { Text("Empty") } },
+        dismissButton = { TextButton(onClick = { confirmEmpty = false }) { Text("Cancel") } },
     )
 }
 
@@ -1886,7 +1886,7 @@ private fun displayName(context: android.content.Context, uri: Uri): String {
             if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
         }
     }.getOrNull()
-    return (name ?: "가져온 PDF").removeSuffix(".pdf")
+    return (name ?: "Imported PDF").removeSuffix(".pdf")
 }
 
 @Composable
@@ -1980,13 +1980,13 @@ private fun NoteCard(
                 }
                 if (note.favorite) Icon(
                     LibraryIcons.Star,
-                    contentDescription = "즐겨찾기",
+                    contentDescription = "Favorite",
                     tint = Color(0xFFF5B400),
                     modifier = Modifier.align(Alignment.TopStart).padding(10.dp),
                 )
                 if (note.locked) Icon(
                     Icons.Filled.Lock,
-                    contentDescription = "잠긴 노트",
+                    contentDescription = "Locked note",
                     tint = MaterialTheme.colorScheme.outline,
                     modifier = Modifier.size(36.dp),
                 )
@@ -1999,7 +1999,7 @@ private fun NoteCard(
                 )
                 if (selectionMode) Icon(
                     if (selected) Reicons.Check else Reicons.Circle,
-                    contentDescription = if (selected) "선택됨" else "선택 안 됨",
+                    contentDescription = if (selected) "Selected" else "Not selected",
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.align(Alignment.TopEnd).padding(10.dp),
                 )
@@ -2018,7 +2018,7 @@ private fun NoteCard(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        "${dateFormat.format(Date(note.modified))} · ${note.pageCount}쪽",
+                        "${dateFormat.format(Date(note.modified))} · ${countNoun(note.pageCount, "page")}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.outline,
                     )
@@ -2034,13 +2034,13 @@ private fun NoteCard(
                     IconButton(onClick = { menuOpen = true }) {
                         Icon(
                             Reicons.MoreVert,
-                            contentDescription = "더보기",
+                            contentDescription = "More",
                             tint = MaterialTheme.colorScheme.outline,
                         )
                     }
                     DropdownMenu(menuOpen, onDismissRequest = { menuOpen = false }) {
                         DropdownMenuItem(
-                            text = { Text("썸네일 설정") },
+                            text = { Text("Set thumbnail") },
                             leadingIcon = { Icon(Reicons.Image, contentDescription = null) },
                             onClick = {
                                 menuOpen = false
@@ -2049,7 +2049,7 @@ private fun NoteCard(
                         )
                         if (onExportMarkdown != null) {
                             DropdownMenuItem(
-                                text = { Text(".md 파일로 내보내기") },
+                                text = { Text("Export as .md") },
                                 leadingIcon = { Icon(Reicons.Description, contentDescription = null) },
                                 onClick = {
                                     menuOpen = false
@@ -2059,7 +2059,7 @@ private fun NoteCard(
                         }
                         if (hasCustomThumbnail) {
                             DropdownMenuItem(
-                                text = { Text("첫 페이지로 되돌리기") },
+                                text = { Text("Reset to first page") },
                                 onClick = {
                                     menuOpen = false
                                     onClearThumbnail()
@@ -2068,7 +2068,7 @@ private fun NoteCard(
                         }
                         HorizontalDivider()
                         DropdownMenuItem(
-                            text = { Text(if (note.favorite) "즐겨찾기 해제" else "즐겨찾기") },
+                            text = { Text(if (note.favorite) "Remove from favorites" else "Add to favorites") },
                             leadingIcon = { Icon(LibraryIcons.Star, contentDescription = null) },
                             onClick = {
                                 menuOpen = false
@@ -2076,25 +2076,25 @@ private fun NoteCard(
                             },
                         )
                         if (onMoveFavorite != null) {
-                            DropdownMenuItem(text = { Text("즐겨찾기에서 앞으로") }, onClick = { menuOpen = false; onMoveFavorite(-1) })
-                            DropdownMenuItem(text = { Text("즐겨찾기에서 뒤로") }, onClick = { menuOpen = false; onMoveFavorite(1) })
+                            DropdownMenuItem(text = { Text("Move up in favorites") }, onClick = { menuOpen = false; onMoveFavorite(-1) })
+                            DropdownMenuItem(text = { Text("Move down in favorites") }, onClick = { menuOpen = false; onMoveFavorite(1) })
                         }
                         DropdownMenuItem(
-                            text = { Text("태그") },
+                            text = { Text("Tags") },
                             onClick = { menuOpen = false; onTags() },
                         )
                         DropdownMenuItem(
-                            text = { Text("색 라벨") },
+                            text = { Text("Color label") },
                             leadingIcon = { Icon(Reicons.Palette, contentDescription = null) },
                             onClick = { menuOpen = false; onLabel() },
                         )
                         DropdownMenuItem(
-                            text = { Text(if (note.locked) "잠금 해제" else "암호로 잠그기") },
+                            text = { Text(if (note.locked) "Unlock" else "Lock with password") },
                             leadingIcon = { Icon(Icons.Filled.Lock, contentDescription = null) },
                             onClick = { menuOpen = false; onLock() },
                         )
                         DropdownMenuItem(
-                            text = { Text("폴더로 이동") },
+                            text = { Text("Move to folder") },
                             leadingIcon = {
                                 Icon(Reicons.FolderOpen, contentDescription = null)
                             },
@@ -2104,7 +2104,7 @@ private fun NoteCard(
                             },
                         )
                         DropdownMenuItem(
-                            text = { Text("필기 검색 색인") },
+                            text = { Text("Index handwriting for search") },
                             leadingIcon = {
                                 Icon(Reicons.Search, contentDescription = null)
                             },
@@ -2115,7 +2115,7 @@ private fun NoteCard(
                         )
                         HorizontalDivider()
                         DropdownMenuItem(
-                            text = { Text("백업 파일로 내보내기") },
+                            text = { Text("Export as backup file") },
                             leadingIcon = {
                                 Icon(Reicons.Archive, contentDescription = null)
                             },
@@ -2125,7 +2125,7 @@ private fun NoteCard(
                             },
                         )
                         DropdownMenuItem(
-                            text = { Text("PDF로 내보내기") },
+                            text = { Text("Export as PDF") },
                             leadingIcon = {
                                 Icon(Reicons.PictureAsPdf, contentDescription = null)
                             },
@@ -2136,7 +2136,7 @@ private fun NoteCard(
                         )
                         HorizontalDivider()
                         DropdownMenuItem(
-                            text = { Text("삭제") },
+                            text = { Text("Delete") },
                             leadingIcon = { Icon(Reicons.Delete, contentDescription = null) },
                             onClick = {
                                 menuOpen = false
@@ -2155,7 +2155,7 @@ private fun NoteCard(
 private fun SkinButton(skin: Skin, onSkin: (Skin) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
-        AppIconButton(onClick = { open = true }, icon = AppIcons.skin, contentDescription = "테마")
+        AppIconButton(onClick = { open = true }, icon = AppIcons.skin, contentDescription = "Theme")
         DropdownMenu(open, onDismissRequest = { open = false }) {
             for (option in Skin.entries) {
                 DropdownMenuItem(
@@ -2252,20 +2252,20 @@ private fun FolderDialog(
     var name by remember { mutableStateOf(current) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("폴더로 이동") },
+        title = { Text("Move to folder") },
         text = {
             Column {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
                     singleLine = true,
-                    label = { Text("폴더 이름") },
-                    placeholder = { Text("비우면 맨 위로") },
+                    label = { Text("Folder name") },
+                    placeholder = { Text("Leave blank for the top level") },
                 )
                 if (folders.isNotEmpty()) {
                     Spacer(Modifier.height(12.dp))
                     Text(
-                        "이미 있는 폴더",
+                        "Existing folders",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.outline,
                     )
@@ -2278,8 +2278,8 @@ private fun FolderDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = { onPick(name.trim()) }) { Text("이동") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+        confirmButton = { TextButton(onClick = { onPick(name.trim()) }) { Text("Move") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 
@@ -2380,7 +2380,7 @@ private fun NewNoteDial(options: List<DialOption>) {
         GlassFab(
             onClick = { open = !open },
             icon = AppIconStyle.pick(Lucide.Plus, Reicons.Add),
-            contentDescription = if (open) "닫기" else "새 노트 · 가져오기",
+            contentDescription = if (open) "Close" else "New note · Import",
             iconRotation = turn,
         )
     }
@@ -2399,12 +2399,12 @@ private fun BackupButton(
         GlassFab(
             onClick = { open = true },
             icon = Reicons.Archive,
-            contentDescription = "백업",
+            contentDescription = "Backup",
             small = true,
         )
         DropdownMenu(open, onDismissRequest = { open = false }) {
             DropdownMenuItem(
-                text = { Text("전체 백업") },
+                text = { Text("Back up all notes") },
                 leadingIcon = { Icon(Reicons.Archive, contentDescription = null) },
                 onClick = {
                     open = false
@@ -2412,7 +2412,7 @@ private fun BackupButton(
                 },
             )
             DropdownMenuItem(
-                text = { Text("백업에서 복원") },
+                text = { Text("Restore from backup") },
                 leadingIcon = { Icon(Reicons.Restore, contentDescription = null) },
                 onClick = {
                     open = false
@@ -2421,7 +2421,7 @@ private fun BackupButton(
             )
             HorizontalDivider()
             DropdownMenuItem(
-                text = { Text("설정 저장") },
+                text = { Text("Save settings") },
                 leadingIcon = { Icon(Reicons.Tune, contentDescription = null) },
                 onClick = {
                     open = false
@@ -2429,7 +2429,7 @@ private fun BackupButton(
                 },
             )
             DropdownMenuItem(
-                text = { Text("설정 불러오기") },
+                text = { Text("Load settings") },
                 leadingIcon = { Icon(Reicons.Restore, contentDescription = null) },
                 onClick = {
                     open = false
@@ -2503,13 +2503,13 @@ private fun ToolChip(
 }
 
 internal fun toolLabel(mode: EditMode): String = when (mode) {
-    EditMode.PEN -> "펜"
-    EditMode.PENCIL -> "연필"
-    EditMode.HIGHLIGHTER -> "형광펜"
-    EditMode.MASK -> "마스킹테이프"
-    EditMode.SHAPE -> "도형"
-    EditMode.ERASE -> "지우개"
-    else -> "도구"
+    EditMode.PEN -> "Pen"
+    EditMode.PENCIL -> "Pencil"
+    EditMode.HIGHLIGHTER -> "Highlighter"
+    EditMode.MASK -> "Masking tape"
+    EditMode.SHAPE -> "Shape"
+    EditMode.ERASE -> "Eraser"
+    else -> "Tool"
 }
 
 /** Saturation across, brightness down, at the given [hue]. */
@@ -2617,7 +2617,7 @@ private fun ShapeButton(
 ) {
     var open by remember { mutableStateOf(false) }
     Box {
-        ToolButton(shapeIcon(kind), "도형", selected) { open = true }
+        ToolButton(shapeIcon(kind), "Shape", selected) { open = true }
         DropdownMenu(open, onDismissRequest = { open = false }) {
             // The other shapes stay in the code for a later fix, but not on offer.
             for (option in OFFERED_SHAPES) {
@@ -2647,31 +2647,31 @@ private fun shapeIcon(kind: ShapeKind): ImageVector = when (kind) {
 }
 
 private fun shapeLabel(kind: ShapeKind): String = when (kind) {
-    ShapeKind.LINE -> "직선"
-    ShapeKind.ARROW -> "화살표"
-    ShapeKind.DOUBLE_ARROW -> "양방향 화살표"
-    ShapeKind.RECT -> "사각형"
-    ShapeKind.OVAL -> "원"
-    ShapeKind.TRIANGLE -> "삼각형"
-    ShapeKind.RIGHT_TRIANGLE -> "직각삼각형"
-    ShapeKind.DIAMOND -> "마름모"
-    ShapeKind.PARALLELOGRAM -> "평행사변형"
-    ShapeKind.TRAPEZOID -> "사다리꼴"
-    ShapeKind.PENTAGON -> "오각형"
-    ShapeKind.HEXAGON -> "육각형"
-    ShapeKind.STAR -> "별"
-    ShapeKind.HEART -> "하트"
-    ShapeKind.ARC -> "호"
-    ShapeKind.SECTOR -> "부채꼴"
-    ShapeKind.SINE -> "사인 곡선"
-    ShapeKind.AXES -> "좌표축"
-    ShapeKind.BRACE -> "중괄호"
-    ShapeKind.BUBBLE -> "말풍선"
-    ShapeKind.CUBE -> "정육면체"
-    ShapeKind.CYLINDER -> "원기둥"
-    ShapeKind.CURVE -> "곡선"
-    ShapeKind.POLYGON -> "다각형 · 연속 직선"
-    ShapeKind.CHECKBOX -> "체크박스 (누르면 생성 · 다시 누르면 체크)"
+    ShapeKind.LINE -> "Line"
+    ShapeKind.ARROW -> "Arrow"
+    ShapeKind.DOUBLE_ARROW -> "Double arrow"
+    ShapeKind.RECT -> "Rectangle"
+    ShapeKind.OVAL -> "Circle"
+    ShapeKind.TRIANGLE -> "Triangle"
+    ShapeKind.RIGHT_TRIANGLE -> "Right triangle"
+    ShapeKind.DIAMOND -> "Diamond"
+    ShapeKind.PARALLELOGRAM -> "Parallelogram"
+    ShapeKind.TRAPEZOID -> "Trapezoid"
+    ShapeKind.PENTAGON -> "Pentagon"
+    ShapeKind.HEXAGON -> "Hexagon"
+    ShapeKind.STAR -> "Star"
+    ShapeKind.HEART -> "Heart"
+    ShapeKind.ARC -> "Arc"
+    ShapeKind.SECTOR -> "Sector"
+    ShapeKind.SINE -> "Sine curve"
+    ShapeKind.AXES -> "Axes"
+    ShapeKind.BRACE -> "Brace"
+    ShapeKind.BUBBLE -> "Speech bubble"
+    ShapeKind.CUBE -> "Cube"
+    ShapeKind.CYLINDER -> "Cylinder"
+    ShapeKind.CURVE -> "Curve"
+    ShapeKind.POLYGON -> "Polygon · polyline"
+    ShapeKind.CHECKBOX -> "Checkbox (tap to add · tap again to tick)"
 }
 
 /** Opens one of the AI sites in the side panel. */
@@ -2721,20 +2721,20 @@ private fun QuickColors(current: Int, onPick: (Int) -> Unit, onSettings: () -> U
                         .border(if (chosen) 3.dp else 1.dp,
                             if (chosen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
                             CircleShape)
-                        .semantics { contentDescription = "빠른 색상 #%06X".format(rgb and 0xFFFFFF) }
+                        .semantics { contentDescription = "Quick color #%06X".format(rgb and 0xFFFFFF) }
                         .combinedClickable(
                             onClick = { if (chosen) onSettings() else onPick(rgb) },
                             onLongClick = { menuFor = index },
                         ),
                 )
                 DropdownMenu(menuFor == index, onDismissRequest = { menuFor = null }) {
-                    DropdownMenuItem(text = { Text("앞으로") }, enabled = index > 0, onClick = {
+                    DropdownMenuItem(text = { Text("Move left") }, enabled = index > 0, onClick = {
                         save(colors.toMutableList().apply { add(index - 1, removeAt(index)) }); menuFor = null
                     })
-                    DropdownMenuItem(text = { Text("뒤로") }, enabled = index < colors.lastIndex, onClick = {
+                    DropdownMenuItem(text = { Text("Move right") }, enabled = index < colors.lastIndex, onClick = {
                         save(colors.toMutableList().apply { add(index + 1, removeAt(index)) }); menuFor = null
                     })
-                    DropdownMenuItem(text = { Text("삭제") }, onClick = {
+                    DropdownMenuItem(text = { Text("Delete") }, onClick = {
                         save(colors.filterIndexed { i, _ -> i != index }); menuFor = null
                     })
                 }
@@ -2764,7 +2764,7 @@ private fun PaletteDialog(onDismiss: () -> Unit, onPick: (Int) -> Unit) {
     })
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("색상 템플릿") },
+        title = { Text("Color templates") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 for ((name, colors) in COLOR_TEMPLATES + custom) {
@@ -2779,7 +2779,7 @@ private fun PaletteDialog(onDismiss: () -> Unit, onPick: (Int) -> Unit) {
                                     .clip(CircleShape)
                                     .background(Color(rgb))
                                     .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
-                                    .semantics { contentDescription = "색상 #%06X".format(rgb and 0xFFFFFF) }
+                                    .semantics { contentDescription = "Color #%06X".format(rgb and 0xFFFFFF) }
                                     .clickable { onPick(rgb) },
                             )
                         }
@@ -2787,13 +2787,13 @@ private fun PaletteDialog(onDismiss: () -> Unit, onPick: (Int) -> Unit) {
                     if ((name to colors) in custom) TextButton(onClick = {
                         custom = custom - (name to colors)
                         store.saveColorTemplates(custom)
-                    }) { Text("템플릿 삭제") }
+                    }) { Text("Delete template") }
                     Spacer(Modifier.height(14.dp))
                 }
             }
         },
-        dismissButton = { TextButton(onClick = { adding = true }) { Text("+ 템플릿 추가") } },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("닫기") } },
+        dismissButton = { TextButton(onClick = { adding = true }) { Text("+ Add template") } },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
     )
 }
 
@@ -2810,7 +2810,7 @@ internal fun sendSelectedText(context: android.content.Context, text: String, ac
         } else putExtra(android.content.Intent.EXTRA_TEXT, text)
     }
     runCatching { context.startActivity(android.content.Intent.createChooser(intent, null)) }
-        .onFailure { Toast.makeText(context, "열 수 있는 앱이 없습니다", Toast.LENGTH_SHORT).show() }
+        .onFailure { Toast.makeText(context, "No app can open this", Toast.LENGTH_SHORT).show() }
 }
 
 /** What came back from a capture, and the two things worth doing with it. */
@@ -2902,16 +2902,16 @@ private fun WebPanel(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = { web?.let { if (it.canGoBack()) it.goBack() } }) {
-                    Icon(Reicons.ArrowBack, contentDescription = "뒤로")
+                    Icon(Reicons.ArrowBack, contentDescription = "Back")
                 }
                 IconButton(onClick = { web?.reload() }) {
-                    Icon(Reicons.Refresh, contentDescription = "새로고침")
+                    Icon(Reicons.Refresh, contentDescription = "Reload")
                 }
                 OutlinedTextField(
                     value = address,
                     onValueChange = { address = it },
                     singleLine = true,
-                    placeholder = { Text("주소 또는 검색어") },
+                    placeholder = { Text("Address or search") },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
                     keyboardActions = KeyboardActions(onGo = { web?.loadUrl(asUrl(address)) }),
                     modifier = Modifier
@@ -2921,7 +2921,7 @@ private fun WebPanel(
                 IconButton(onClick = onToggleLog) {
                     Icon(
                         Reicons.BugReport,
-                        contentDescription = "오류 기록",
+                        contentDescription = "Error log",
                         tint = if (log.isEmpty()) {
                             MaterialTheme.colorScheme.outlineVariant
                         } else {
@@ -2932,20 +2932,20 @@ private fun WebPanel(
                 IconButton(onClick = onToggleDesktop) {
                     Icon(
                         if (desktop) Reicons.Computer else Reicons.PhoneAndroid,
-                        contentDescription = if (desktop) "PC 화면" else "모바일 화면",
+                        contentDescription = if (desktop) "Desktop site" else "Mobile site",
                     )
                 }
                 IconButton(onClick = { openExternally(web?.context, web?.url ?: url) }) {
-                    Icon(Reicons.Launch, contentDescription = "브라우저로 열기")
+                    Icon(Reicons.Launch, contentDescription = "Open in browser")
                 }
                 IconButton(onClick = onTogglePopup) {
                     Icon(
                         if (popup) Reicons.CloseFullscreen else Reicons.OpenInFull,
-                        contentDescription = if (popup) "붙이기" else "팝업",
+                        contentDescription = if (popup) "Dock" else "Pop out",
                     )
                 }
                 IconButton(onClick = { web?.clearFocus(); keyboard?.hide(); onClose() }) {
-                    Icon(Reicons.Close, contentDescription = "닫기")
+                    Icon(Reicons.Close, contentDescription = "Close")
                 }
             }
             key(rendererGeneration) { AndroidView(
@@ -2993,7 +2993,7 @@ private fun WebPanel(
                         .padding(8.dp),
                 ) {
                     if (log.isEmpty()) {
-                        Text("기록된 오류 없음", style = MaterialTheme.typography.bodySmall)
+                        Text("No errors logged", style = MaterialTheme.typography.bodySmall)
                     }
                     for (line in log) {
                         Text(
@@ -3002,7 +3002,7 @@ private fun WebPanel(
                             fontFamily = FontFamily.Monospace,
                         )
                     }
-                    TextButton(onClick = { log.clear() }) { Text("지우기") }
+                    TextButton(onClick = { log.clear() }) { Text("Clear") }
                 }
             }
         }
@@ -3154,31 +3154,31 @@ private fun PageExportDialog(
     val valid = from != null && to != null && from >= 1 && to >= from && to <= pageCount
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("페이지 내보내기") },
+        title = { Text("Export pages") },
         text = { Column {
-            Text("형식")
+            Text("Format")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(selected = !png, onClick = { png = false }, label = { Text("PDF") })
                 FilterChip(selected = png, onClick = { png = true }, label = { Text("PNG") })
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(first, { first = it.filter(Char::isDigit) },
-                    label = { Text("시작 쪽") }, singleLine = true, modifier = Modifier.weight(1f))
+                    label = { Text("From page") }, singleLine = true, modifier = Modifier.weight(1f))
                 OutlinedTextField(last, { last = it.filter(Char::isDigit) },
-                    label = { Text("끝 쪽") }, singleLine = true, modifier = Modifier.weight(1f))
+                    label = { Text("To page") }, singleLine = true, modifier = Modifier.weight(1f))
             }
             Spacer(Modifier.height(8.dp))
-            Text("크기")
+            Text("Size")
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf(
-                    ExportPageSize.ORIGINAL to "원본", ExportPageSize.A4 to "A4",
+                    ExportPageSize.ORIGINAL to "Original", ExportPageSize.A4 to "A4",
                     ExportPageSize.LETTER to "Letter",
                 ).forEach { (value, label) ->
                     FilterChip(selected = size == value, onClick = { size = value },
                         label = { Text(label) })
                 }
             }
-            Text("회전")
+            Text("Rotation")
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf(0, 90, 180, 270).forEach { value ->
                     FilterChip(selected = rotation == value, onClick = { rotation = value },
@@ -3186,16 +3186,16 @@ private fun PageExportDialog(
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (!png) FilterChip(selected = raster, onClick = { raster = !raster }, label = { Text("이미지 PDF") })
-                FilterChip(selected = invert, onClick = { invert = !invert }, label = { Text("색 반전") })
+                if (!png) FilterChip(selected = raster, onClick = { raster = !raster }, label = { Text("Image PDF") })
+                FilterChip(selected = invert, onClick = { invert = !invert }, label = { Text("Invert colors") })
             }
-            if (png) Text("PNG는 갤러리(Pictures/Notesis)에 페이지마다 저장됩니다.",
+            if (png) Text("PNGs go to the Gallery (Pictures/Notesis), one per page.",
                 style = MaterialTheme.typography.bodySmall)
         } },
         confirmButton = { TextButton(enabled = valid, onClick = {
             onExport(png, PageExportOptions(from!!, to!!, size, rotation, raster = raster && !png, invert = invert))
-        }) { Text("저장") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+        }) { Text("Save") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 
@@ -3212,34 +3212,34 @@ private fun NameDialog(
     var templateId by remember { mutableStateOf<String?>(null) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("새 노트") },
+        title = { Text("New note") },
         text = {
             Column {
                 OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
                     singleLine = true,
-                    label = { Text("이름") },
+                    label = { Text("Name") },
                 )
                 Spacer(Modifier.height(12.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    FilterChip(selected = kind == NoteKind.INK, onClick = { kind = NoteKind.INK }, label = { Text("필기 노트") })
+                    FilterChip(selected = kind == NoteKind.INK, onClick = { kind = NoteKind.INK }, label = { Text("Handwritten note") })
                     Spacer(Modifier.width(8.dp))
                     FilterChip(selected = kind == NoteKind.MARKDOWN, onClick = { kind = NoteKind.MARKDOWN }, label = { Text("Markdown (.md)") })
                 }
                 Text(
-                    if (kind == NoteKind.MARKDOWN) "Obsidian에서 열 수 있는 note.md 파일로 저장됩니다." else "펜과 텍스트 상자를 사용하는 종이 노트입니다.",
+                    if (kind == NoteKind.MARKDOWN) "Saved as a note.md file that Obsidian can open." else "A paper notebook for pens and text boxes.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.outline,
                 )
                 if (kind == NoteKind.INK) {
                     Spacer(Modifier.height(12.dp))
-                    Text("첫 페이지 템플릿", style = MaterialTheme.typography.labelMedium)
+                    Text("First page template", style = MaterialTheme.typography.labelMedium)
                     val labels = listOf(
-                        PageBackground.BLANK to "무지", PageBackground.LINED to "줄",
-                        PageBackground.NARROW_LINED to "좁은 줄", PageBackground.GRID to "모눈",
-                        PageBackground.DOT to "도트", PageBackground.CORNELL to "코넬",
-                        PageBackground.INFINITE to "무한 노트",
+                        PageBackground.BLANK to "Blank", PageBackground.LINED to "Lined",
+                        PageBackground.NARROW_LINED to "Narrow lined", PageBackground.GRID to "Grid",
+                        PageBackground.DOT to "Dot", PageBackground.CORNELL to "Cornell",
+                        PageBackground.INFINITE to "Infinite",
                     )
                     Column {
                         labels.chunked(3).forEach { row ->
@@ -3255,7 +3255,7 @@ private fun NameDialog(
                         }
                     }
                     if (userTemplates.isNotEmpty()) {
-                        Text("사용자 템플릿", style = MaterialTheme.typography.labelMedium)
+                        Text("Custom templates", style = MaterialTheme.typography.labelMedium)
                         Row(Modifier.horizontalScroll(rememberScrollState())) {
                             userTemplates.forEach { template ->
                                 FilterChip(
@@ -3270,12 +3270,12 @@ private fun NameDialog(
                             }
                         }
                     }
-                    TextButton(onClick = onAddTemplate) { Text("+ 이미지 템플릿 추가") }
+                    TextButton(onClick = onAddTemplate) { Text("+ Add image template") }
                 }
             }
         },
-        confirmButton = { TextButton(onClick = { onConfirm(title, kind, background, templateId) }) { Text("만들기") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+        confirmButton = { TextButton(onClick = { onConfirm(title, kind, background, templateId) }) { Text("Create") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 

@@ -21,8 +21,8 @@ internal object WorkStats {
     val layerSettlesTail = AtomicLong()
 
     fun render(): String =
-        "load ${pagesLoaded.get()} (늦게 도착 ${pagesLoadedStale.get()}, 중단 ${loadsAbandoned.get()})" +
-            " · refine ${refinesApplied.get()}/낡음 ${refinesStale.get()} · 미리 ${prefetched.get()}\n" +
-            "pdf ${pdfRenders.get()} (미룸 ${pdfDeferred.get()}) · 타일 기록 ${tilesRecorded.get()}" +
-            " · 레이어 전체 ${layerSettlesFull.get()}/끝만 ${layerSettlesTail.get()}"
+        "load ${pagesLoaded.get()} (late ${pagesLoadedStale.get()}, abandoned ${loadsAbandoned.get()})" +
+            " · refine ${refinesApplied.get()}/stale ${refinesStale.get()} · prefetch ${prefetched.get()}\n" +
+            "pdf ${pdfRenders.get()} (deferred ${pdfDeferred.get()}) · tiles recorded ${tilesRecorded.get()}" +
+            " · layer settle full ${layerSettlesFull.get()}/tail ${layerSettlesTail.get()}"
 }

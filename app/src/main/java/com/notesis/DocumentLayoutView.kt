@@ -32,7 +32,7 @@ internal fun DocumentLayoutView(name: String, bytes: ByteArray, modifier: Modifi
     var processFailed by remember(bytes) { mutableStateOf(false) }
     if (processFailed) {
         Box(modifier.padding(24.dp), contentAlignment = Alignment.Center) {
-            Text("문서를 표시할 메모리가 부족하거나 뷰어가 종료되었습니다. 다시 열거나 상단의 텍스트 보기를 이용해 주세요.")
+            Text("Not enough memory to show the document, or the viewer stopped. Open it again, or use the text view at the top.")
         }
         return
     }

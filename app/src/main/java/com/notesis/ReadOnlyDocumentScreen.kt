@@ -89,7 +89,7 @@ internal fun viewerRequest(context: Context, uri: Uri): ViewerRequest {
             ?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
     }.getOrNull()
     val fallback = uri.lastPathSegment?.substringAfterLast('/').orEmpty()
-    var name = queried?.takeIf(String::isNotBlank) ?: fallback.ifBlank { "문서" }
+    var name = queried?.takeIf(String::isNotBlank) ?: fallback.ifBlank { "Document" }
     if (!name.contains('.')) {
         val suffix = when (context.contentResolver.getType(uri)) {
             "text/plain" -> ".txt"
@@ -138,16 +138,16 @@ internal fun ReadOnlyDocumentScreen(
         state = withContext(Dispatchers.IO) {
             runCatching {
                 val bytes = context.contentResolver.openInputStream(request.uri)?.use(::readDocumentBytes)
-                    ?: throw UnsupportedDocumentException("파일을 열 수 없습니다.")
+                    ?: throw UnsupportedDocumentException("Can't open the file.")
                 if (hasLayout && !textOnly) ViewerLoadState.Layout(bytes)
                 else ViewerLoadState.Ready(OfficeDocumentParser.parse(request.name, bytes))
             }.getOrElse { error ->
                 if (error is CancellationException) throw error
                 ViewerLoadState.Failed(
                     when (error) {
-                        is UnsupportedDocumentException -> error.message ?: "지원하지 않는 문서입니다."
-                        is SecurityException -> "파일 읽기 권한이 없습니다. 파일을 다시 선택해 주세요."
-                        else -> "문서를 읽는 중 오류가 발생했습니다: ${error.message ?: error.javaClass.simpleName}"
+                        is UnsupportedDocumentException -> error.message ?: "This document type isn't supported."
+                        is SecurityException -> "No permission to read the file. Please pick it again."
+                        else -> "Error reading the document: ${error.message ?: error.javaClass.simpleName}"
                     },
                 )
             }
@@ -162,7 +162,7 @@ internal fun ReadOnlyDocumentScreen(
                 TopAppBar(
                     navigationIcon = {
                         IconButton(onClick = onBack) {
-                            Icon(Reicons.ArrowBack, contentDescription = "문서 닫기")
+                            Icon(Reicons.ArrowBack, contentDescription = "Close document")
                         }
                     },
                     title = {
@@ -175,8 +175,8 @@ internal fun ReadOnlyDocumentScreen(
                             )
                             Text(
                                 if (hasLayout) {
-                                    if (textOnly) "텍스트 보기 · 읽기 전용" else "문서 보기 · 읽기 전용"
-                                } else document?.let { "${it.kind.label} · 읽기 전용" } ?: "읽기 전용",
+                                    if (textOnly) "Text view · Read-only" else "Document view · Read-only"
+                                } else document?.let { "${it.kind.label} · Read-only" } ?: "Read-only",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -188,29 +188,29 @@ internal fun ReadOnlyDocumentScreen(
                                 val markdown = withContext(Dispatchers.IO) {
                                     runCatching {
                                         val bytes = context.contentResolver.openInputStream(request.uri)?.use(::readDocumentBytes)
-                                            ?: error("파일을 열 수 없습니다.")
+                                            ?: error("Can't open the file.")
                                         OfficeDocumentParser.parse(request.name, bytes).toMarkdown()
                                     }.getOrNull()
                                 }
                                 if (markdown != null) onImport(request.name.substringBeforeLast('.'), markdown)
-                                else android.widget.Toast.makeText(context, "가져오지 못했습니다", android.widget.Toast.LENGTH_SHORT).show()
+                                else android.widget.Toast.makeText(context, "Import failed", android.widget.Toast.LENGTH_SHORT).show()
                             }
-                        }) { Text("노트로 가져오기") }
+                        }) { Text("Import as note") }
                         if (hasLayout) {
                             TextButton(onClick = { textOnly = !textOnly }) {
-                                Text(if (textOnly) "문서 보기" else "텍스트 보기")
+                                Text(if (textOnly) "Document view" else "Text view")
                             }
                         }
                         if (document != null && document.sections.size > 1) {
                             IconButton(
                                 onClick = { sectionIndex = (sectionIndex - 1).coerceAtLeast(0) },
                                 enabled = sectionIndex > 0,
-                            ) { Icon(Reicons.ChevronLeft, contentDescription = "이전") }
+                            ) { Icon(Reicons.ChevronLeft, contentDescription = "Previous") }
                             Text("${sectionIndex + 1} / ${document.sections.size}")
                             IconButton(
                                 onClick = { sectionIndex = (sectionIndex + 1).coerceAtMost(document.sections.lastIndex) },
                                 enabled = sectionIndex < document.sections.lastIndex,
-                            ) { Icon(Reicons.ChevronRight, contentDescription = "다음") }
+                            ) { Icon(Reicons.ChevronRight, contentDescription = "Next") }
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
@@ -243,7 +243,7 @@ private fun LoadingDocument(modifier: Modifier = Modifier) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             CircularProgressIndicator()
             Spacer(Modifier.height(16.dp))
-            Text("문서를 여는 중…")
+            Text("Opening document…")
         }
     }
 }
@@ -259,7 +259,7 @@ private fun FailedDocument(message: String, modifier: Modifier = Modifier) {
                 tint = MaterialTheme.colorScheme.error,
             )
             Spacer(Modifier.height(16.dp))
-            Text("문서를 열 수 없습니다", style = MaterialTheme.typography.titleLarge)
+            Text("Can't open the document", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(8.dp))
             Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -454,7 +454,7 @@ private fun readDocumentBytes(input: java.io.InputStream): ByteArray {
         val read = input.read(buffer)
         if (read < 0) break
         if (output.size() + read > MAX_SOURCE_BYTES) {
-            throw UnsupportedDocumentException("128MB보다 큰 문서는 현재 미리보기에서 열 수 없습니다.")
+            throw UnsupportedDocumentException("Documents larger than 128 MB can't be previewed yet.")
         }
         output.write(buffer, 0, read)
     }

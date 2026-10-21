@@ -146,7 +146,7 @@ internal object AppUpdate {
             setRequestProperty("User-Agent", "Notesis")
         }
         try {
-            if (connection.responseCode != HttpURLConnection.HTTP_OK) error("서버 응답 ${connection.responseCode}")
+            if (connection.responseCode != HttpURLConnection.HTTP_OK) error("Server responded ${connection.responseCode}")
             val total = release.apkSize.takeIf { it > 0 } ?: connection.contentLengthLong
             var read = 0L
             connection.inputStream.use { input ->
@@ -162,7 +162,7 @@ internal object AppUpdate {
                     }
                 }
             }
-            if (release.apkSize > 0 && read != release.apkSize) error("받은 파일 크기가 다릅니다")
+            if (release.apkSize > 0 && read != release.apkSize) error("The downloaded file size doesn't match")
         } catch (e: Throwable) {
             partial.delete()
             throw e
@@ -172,14 +172,14 @@ internal object AppUpdate {
         val hex = digest.digest().joinToString("") { "%02x".format(it) }
         if (release.sha256 != null && hex != release.sha256) {
             partial.delete()
-            error("파일이 손상되었습니다")
+            error("The file is corrupted")
         }
         val archive = context.packageManager.getPackageArchiveInfo(partial.path, 0)
         if (archive == null || archive.packageName != context.packageName || archive.longVersionCode <= installedCode(context)) {
             partial.delete()
-            error("Notesis의 새 버전 파일이 아닙니다")
+            error("Not a new version of Notesis")
         }
-        if (!partial.renameTo(target)) error("파일을 저장하지 못했습니다")
+        if (!partial.renameTo(target)) error("Couldn't save the file")
         return target
     }
 
@@ -247,7 +247,7 @@ internal fun UpdateDialog(release: AppRelease, onDismiss: () -> Unit, onSkip: ((
             return
         }
         needsPermission = false
-        if (!AppUpdate.install(context, apk)) failure = "설치 화면을 열지 못했습니다"
+        if (!AppUpdate.install(context, apk)) failure = "Couldn't open the installer"
     }
 
     fun start() {
@@ -258,17 +258,17 @@ internal fun UpdateDialog(release: AppRelease, onDismiss: () -> Unit, onSkip: ((
                 runCatching { AppUpdate.download(context, release) { progress = it } }
             }
             result.onSuccess { downloaded = it; installNow(it) }
-                .onFailure { failure = it.message?.takeIf { m -> m.isNotBlank() } ?: "내려받지 못했습니다" }
+                .onFailure { failure = it.message?.takeIf { m -> m.isNotBlank() } ?: "Download failed" }
         }
     }
 
     AlertDialog(
         onDismissRequest = { if (!downloading) onDismiss() },
-        title = { Text("새 버전 ${release.versionName}") },
+        title = { Text("New version ${release.versionName}") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    "지금 ${AppUpdate.installedName(context)} · 새 버전 ${release.versionName} (${release.versionCode})" +
+                    "Installed ${AppUpdate.installedName(context)} · New ${release.versionName} (${release.versionCode})" +
                         if (release.apkSize > 0) " · %.1fMB".format(release.apkSize / 1_048_576f) else "",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.outline,
@@ -283,18 +283,18 @@ internal fun UpdateDialog(release: AppRelease, onDismiss: () -> Unit, onSkip: ((
                 progress?.let { p ->
                     if (downloaded == null && failure == null) {
                         LinearProgressIndicator(progress = { p }, modifier = Modifier.fillMaxWidth())
-                        Text("내려받는 중 ${(p * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
+                        Text("Downloading ${(p * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
                     }
                 }
                 if (needsPermission) {
                     Text(
-                        "열린 설정 화면에서 \"이 출처 허용\"을 켠 뒤 돌아와 설치를 누르세요. 처음 한 번만 필요합니다.",
+                        "Turn on \"Allow from this source\" in the settings screen that opened, then come back and tap Install. This is needed only the first time.",
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
                 failure?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
                 Text(
-                    "노트와 설정은 그대로 남습니다. 설치 화면에서 업데이트를 한 번 눌러 주세요.",
+                    "Your notes and settings stay as they are. Tap Update once on the install screen.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.outline,
                 )
@@ -303,16 +303,16 @@ internal fun UpdateDialog(release: AppRelease, onDismiss: () -> Unit, onSkip: ((
         confirmButton = {
             val apk = downloaded
             when {
-                apk != null -> TextButton(onClick = { installNow(apk) }) { Text("설치") }
-                downloading -> TextButton(onClick = {}, enabled = false) { Text("내려받는 중") }
-                failure != null -> TextButton(onClick = ::start) { Text("다시 시도") }
-                else -> TextButton(onClick = ::start) { Text("업데이트") }
+                apk != null -> TextButton(onClick = { installNow(apk) }) { Text("Install") }
+                downloading -> TextButton(onClick = {}, enabled = false) { Text("Downloading") }
+                failure != null -> TextButton(onClick = ::start) { Text("Try again") }
+                else -> TextButton(onClick = ::start) { Text("Update") }
             }
         },
         dismissButton = {
             Row {
-                if (onSkip != null && progress == null) TextButton(onClick = onSkip) { Text("이 버전 건너뛰기") }
-                TextButton(onClick = onDismiss, enabled = !downloading) { Text("나중에") }
+                if (onSkip != null && progress == null) TextButton(onClick = onSkip) { Text("Skip this version") }
+                TextButton(onClick = onDismiss, enabled = !downloading) { Text("Later") }
             }
         },
     )
@@ -341,17 +341,17 @@ internal fun AppVersionSection(onLicenses: () -> Unit) {
                 val latest = withContext(Dispatchers.IO) { AppUpdate.fetchLatest() }
                 checking = false
                 when {
-                    latest == null -> status = "업데이트를 확인하지 못했습니다. 인터넷 연결을 확인해 주세요."
+                    latest == null -> status = "Couldn't check for updates. Check your internet connection."
                     latest.versionCode > AppUpdate.installedCode(context) -> found = latest
-                    else -> status = "최신 버전입니다"
+                    else -> status = "You're up to date"
                 }
             }
-        }) { Text(if (checking) "확인하는 중…" else "업데이트 확인") }
-        TextButton(onClick = onLicenses) { Text("오픈소스 라이선스") }
+        }) { Text(if (checking) "Checking…" else "Check for updates") }
+        TextButton(onClick = onLicenses) { Text("Open-source licenses") }
     }
     status?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
     Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-        Text("앱을 열 때 업데이트 확인", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Text("Check for updates when the app opens", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
         SkinSwitch(checked = auto, onCheckedChange = { auto = it; AppUpdate.setAutoCheck(context, it) })
     }
 }

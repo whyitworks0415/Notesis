@@ -80,6 +80,6 @@ class MathExprTest {
         assertEquals("0.3", formatNumber(0.1 + 0.2))
         assertEquals("120", formatNumber(120.0))
         assertEquals("1.5E-7", formatNumber(1.5e-7))
-        assertEquals("정의되지 않음", formatNumber(Double.NaN))
+        assertEquals("Undefined", formatNumber(Double.NaN))
     }
 }

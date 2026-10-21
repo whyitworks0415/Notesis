@@ -19,10 +19,10 @@ import java.time.ZoneId
 internal const val CLOCK_TICK_MS = 250L
 
 internal enum class ClockTab(val label: String) {
-    TIMER("타이머"),
-    STOPWATCH("스톱워치"),
-    ALARM("알람"),
-    STUDY("순공"),
+    TIMER("Timer"),
+    STOPWATCH("Stopwatch"),
+    ALARM("Alarm"),
+    STUDY("Study"),
 }
 
 /** An alarm at [hour]:[minute], next due at [nextAt] while [enabled]. */

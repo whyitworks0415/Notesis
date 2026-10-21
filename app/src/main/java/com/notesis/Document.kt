@@ -626,9 +626,9 @@ class NoteStore(context: Context) {
     fun templateFile(id: String): File = File(root, "templates/$id.png")
 
     fun addPageTemplate(name: String, input: java.io.InputStream): UserPageTemplate? = runCatching {
-        val bitmap = decodeSampled(input, MAX_TEMPLATE_PX) ?: error("이미지를 읽을 수 없습니다")
+        val bitmap = decodeSampled(input, MAX_TEMPLATE_PX) ?: error("Can't read the image")
         val item = UserPageTemplate(UUID.randomUUID().toString(),
-            name.trim().ifBlank { "내 템플릿" })
+            name.trim().ifBlank { "My template" })
         val file = templateFile(item.id)
         file.parentFile?.mkdirs()
         try {
@@ -848,7 +848,7 @@ class NoteStore(context: Context) {
                 .put("title", title).put("kind", NoteKind.MARKDOWN.name)
                 .put("modified", System.currentTimeMillis()).put("folder", folder)
                 .put("pages", JSONArray()).toString())
-            return readMeta(dir) ?: error("노트를 만들지 못했습니다")
+            return readMeta(dir) ?: error("Couldn't create the note")
         } catch (error: Exception) {
             dir.deleteRecursively()
             throw error
@@ -952,7 +952,7 @@ class NoteStore(context: Context) {
     fun appendPages(targetId: String, sourceId: String, pages: List<Page>): Boolean = runCatching {
         PDFBoxResourceLoader.init(appContext)
         val target = load(targetId)
-        val title = readMeta(File(root, targetId))?.title ?: "노트"
+        val title = readMeta(File(root, targetId))?.title ?: "Note"
         val memory = { MemoryUsageSetting.setupTempFileOnly().setTempDir(appContext.cacheDir) }
         val sourcePdf = pdfFile(sourceId).takeIf { it.isFile && pages.any { p -> p.pdfPageIndex >= 0 } }
             ?.let { PDDocument.load(it, memory()) }
@@ -1063,9 +1063,9 @@ class NoteStore(context: Context) {
             }
             if (pdf.numberOfPages > 0) pdf.save(pdfFile(newId))
             val merged = Document(pages)
-            writeMeta(newId, title.trim().ifBlank { "합친 노트" }, merged)
+            writeMeta(newId, title.trim().ifBlank { "Merged note" }, merged)
             writeAutoThumbnail(newId, merged)
-            readMeta(target) ?: error("합친 노트를 읽을 수 없습니다")
+            readMeta(target) ?: error("Can't read the merged note")
         } catch (error: Throwable) {
             target.deleteRecursively()
             throw error
@@ -2037,7 +2037,7 @@ class NoteStore(context: Context) {
             val json = JSONObject(file.readText())
             NoteMeta(
                 id = dir.name,
-                title = json.optString("title", "제목 없음"),
+                title = json.optString("title", "Untitled"),
                 modified = json.optLong("modified"),
                 pageCount = json.optJSONArray("pages")?.length() ?: 1,
                 strokeCount = json.optInt("strokeCount"),
