@@ -882,8 +882,46 @@ class PdfSource private constructor(
         }
     }
 
+    /**
+     * Blocking render of only [source] (page-local world units) at [widthPx] x
+     * [heightPx], for a capture: the region alone is rasterised at the size it
+     * is wanted, where a whole page at that density would be many times the
+     * pixels. Null past [cropSideLimit] a side or when the page cannot render.
+     */
+    fun renderCropNow(index: Int, source: RectF, widthPx: Int, heightPx: Int): Bitmap? {
+        if (widthPx !in 1..MAX_CROP_PX || heightPx !in 1..MAX_CROP_PX) return null
+        return renderCrop(index, source, widthPx, heightPx) ?: run {
+            // Most likely out of memory: give back what the caches hold, once.
+            trimMemory(severe = false)
+            renderCrop(index, source, widthPx, heightPx)
+        }
+    }
+
+    /**
+     * Where the [occurrence]th match of [query] sits on PDF page [index], as
+     * boxes in page-local world units - the first match when there are fewer.
+     * Empty when nothing matches, or before Android 15, which cannot search.
+     */
+    fun matchBounds(index: Int, query: String, occurrence: Int = 0): List<RectF> = synchronized(renderLock) {
+        if (Build.VERSION.SDK_INT < 35) return emptyList()
+        if (closed || index !in 0 until pageCount || query.isBlank()) return emptyList()
+        runCatching {
+            renderer.openPage(index).use { page ->
+                val matches = page.searchText(query)
+                val match = matches.getOrNull(occurrence) ?: matches.firstOrNull() ?: return emptyList()
+                match.bounds.map { rect ->
+                    RectF(
+                        rect.left * POINTS_TO_WORLD,
+                        rect.top * POINTS_TO_WORLD,
+                        rect.right * POINTS_TO_WORLD,
+                        rect.bottom * POINTS_TO_WORLD,
+                    )
+                }
+            }
+        }.getOrDefault(emptyList())
+    }
+
     /** [source] is in page-local world units. */
-    @Suppress("unused")
     private fun renderCrop(index: Int, source: RectF, widthPx: Int, heightPx: Int): Bitmap? =
         synchronized(renderLock) {
             if (closed) return null
@@ -1009,6 +1047,9 @@ class PdfSource private constructor(
          */
         /** Beyond this many pixels across, a page needs tiles to stay sharp. */
         fun baseWidthLimit(): Int = MAX_PAGE_WIDTH
+
+        /** The largest side [renderCropNow] renders. */
+        fun cropSideLimit(): Int = MAX_CROP_PX
 
         /**
          * The budget for one open PDF. Bitmaps live outside the Java heap, so
