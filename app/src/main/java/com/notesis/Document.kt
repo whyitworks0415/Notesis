@@ -1696,13 +1696,17 @@ class NoteStore(context: Context) {
         val selected = document.pages.subList(first - 1, last)
         if (selected.isEmpty()) return false
         if (options != null && (options.size != ExportPageSize.ORIGINAL || options.raster || options.invert)) {
-            return exportSizedPdf(id, selected, out, options)
+            return exportSizedPdf(id, selected, out, options, document.layers)
         }
+        // The file holds hidden layers' ink too, in file order: export what is seen.
+        val look = document.layers.translucentLook()
         val pages = selected.map { page ->
             VectorPdfPage(
                 page = page,
-                strokes = readStrokes(File(root, "$id/pages/${page.id}.bin"), PDF_EXPORT_EPSILON),
+                strokes = document.layers.shownInOrder(
+                    readStrokes(File(root, "$id/pages/${page.id}.bin"), PDF_EXPORT_EPSILON), StrokeLayers::of),
                 masks = readStrokes(File(root, "$id/pages/${page.id}.mask"), PDF_EXPORT_EPSILON),
+                look = look,
             )
         }
         return writeVectorPdf(
@@ -1719,14 +1723,14 @@ class NoteStore(context: Context) {
     }
 
     private fun exportSizedPdf(
-        id: String, pages: List<Page>, out: java.io.OutputStream, options: PageExportOptions,
+        id: String, pages: List<Page>, out: java.io.OutputStream, options: PageExportOptions, layers: NoteLayers,
     ): Boolean = runCatching {
         val pdf = android.graphics.pdf.PdfDocument()
         val source = PdfSource.open(pdfFile(id))
         val renderer = CanvasStrokeRenderer.create(PencilTextureStore)
         try {
             for ((index, page) in pages.withIndex()) {
-                val bitmap = renderExportBitmap(id, page, source, renderer,
+                val bitmap = renderExportBitmap(id, page, layers, source, renderer,
                     options.size, options.rotation, options.invert)
                 try {
                     val pdfPage = pdf.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(
@@ -1759,7 +1763,7 @@ class NoteStore(context: Context) {
         val renderer = CanvasStrokeRenderer.create(PencilTextureStore)
         try {
             for (number in options.first..options.last) {
-                val bitmap = renderExportBitmap(id, document.pages[number - 1],
+                val bitmap = renderExportBitmap(id, document.pages[number - 1], document.layers,
                     source, renderer, options.size, options.rotation, options.invert)
                 try { check(write(number, bitmap)) } finally { bitmap.recycle() }
             }
@@ -1784,7 +1788,7 @@ class NoteStore(context: Context) {
     }
 
     private fun renderExportBitmap(
-        id: String, page: Page, source: PdfSource?, renderer: CanvasStrokeRenderer,
+        id: String, page: Page, layers: NoteLayers, source: PdfSource?, renderer: CanvasStrokeRenderer,
         size: ExportPageSize, rotation: Int, invert: Boolean = false,
     ): Bitmap {
         val (width, height) = when (size) {
@@ -1805,7 +1809,7 @@ class NoteStore(context: Context) {
         canvas.save()
         canvas.translate((width - page.width * scale) / 2f,
             (height - page.height * scale) / 2f)
-        drawWholePage(id, page, canvas, source, renderer, scale)
+        drawWholePage(id, page, layers, canvas, source, renderer, scale)
         canvas.restore()
         if (invert) invertColours(bitmap)
         val degrees = ((rotation % 360) + 360) % 360
@@ -1824,6 +1828,7 @@ class NoteStore(context: Context) {
     private fun drawWholePage(
         id: String,
         page: Page,
+        layers: NoteLayers,
         canvas: Canvas,
         source: PdfSource?,
         renderer: CanvasStrokeRenderer,
@@ -1915,7 +1920,11 @@ class NoteStore(context: Context) {
         } else {
             readStrokes(File(root, "$id/pages/${page.id}.mask"))
         }
-        for (stroke in strokes) renderer.draw(canvas, stroke, transform)
+        // Shown layers only, in layer order, each translucent one composited at
+        // its opacity - the page as it is seen, not as the file lists it.
+        drawLayered(canvas, layers.shownInOrder(strokes, StrokeLayers::of), layers.translucentLook(), null) {
+            renderer.draw(canvas, it, transform)
+        }
         for (stroke in masks) renderer.draw(canvas, stroke, transform)
     }
 
@@ -1953,7 +1962,10 @@ class NoteStore(context: Context) {
                 readStrokes(File(root, "$id/pages/${page.id}.mask"))
             }
             val renderer = CanvasStrokeRenderer.create(PencilTextureStore)
-            for (stroke in strokes) renderer.draw(canvas, stroke, transform)
+            val layers = document.layers
+            drawLayered(canvas, layers.shownInOrder(strokes, StrokeLayers::of), layers.translucentLook(), null) {
+                renderer.draw(canvas, it, transform)
+            }
             for (stroke in masks) renderer.draw(canvas, stroke, transform)
             val tmp = File(root, "$id/$AUTO_THUMB.tmp")
             tmp.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 90, it) }

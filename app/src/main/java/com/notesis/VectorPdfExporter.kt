@@ -6,22 +6,31 @@ import android.graphics.Color
 import androidx.ink.geometry.MutableVec
 import androidx.ink.strokes.Stroke
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
+import com.tom_roush.pdfbox.cos.COSDictionary
+import com.tom_roush.pdfbox.cos.COSName
 import com.tom_roush.pdfbox.io.MemoryUsageSetting
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPage
 import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
+import com.tom_roush.pdfbox.pdmodel.PDResources
 import com.tom_roush.pdfbox.pdmodel.common.PDRectangle
+import com.tom_roush.pdfbox.pdmodel.graphics.form.PDFormXObject
 import com.tom_roush.pdfbox.pdmodel.graphics.image.LosslessFactory
 import com.tom_roush.pdfbox.pdmodel.graphics.state.PDExtendedGraphicsState
 import com.tom_roush.pdfbox.util.Matrix
 import java.io.File
 import java.io.OutputStream
 
-/** Immutable page payload assembled from the note files before PDF export. */
+/**
+ * Immutable page payload assembled from the note files before PDF export.
+ * [strokes] are the shown layers' ink in layer order; [look] carries the
+ * layers' opacity when some layer is translucent.
+ */
 internal data class VectorPdfPage(
     val page: Page,
     val strokes: List<Stroke>,
     val masks: List<Stroke>,
+    val look: LayerLook? = null,
 )
 
 /**
@@ -91,7 +100,7 @@ internal fun writeVectorPdf(
                     }
                 }
                 drawImages(result, stream, model, imageFile)
-                for (stroke in item.strokes) drawStroke(stream, stroke)
+                drawInk(result, stream, item)
                 for (stroke in item.masks) drawStroke(stream, stroke)
                 stream.restoreGraphicsState()
             }
@@ -256,6 +265,45 @@ private fun drawStroke(stream: PDPageContentStream, stroke: Stroke) {
         // particularly at short pen caps and where masking/highlighter loops.
         if (hasPath) stream.fill()
     }
+    stream.restoreGraphicsState()
+}
+
+/**
+ * The page's ink. A translucent layer's strokes go into a transparency group
+ * painted once at the layer's opacity - the PDF form of the canvas layer the
+ * screen uses - so its overlapping strokes do not darken each other, and every
+ * stroke stays a vector path in its own colour.
+ */
+private fun drawInk(document: PDDocument, stream: PDPageContentStream, item: VectorPdfPage) {
+    val look = item.look
+    if (look == null) {
+        for (stroke in item.strokes) drawStroke(stream, stroke)
+        return
+    }
+    for ((alpha, run) in layerRuns(item.strokes, StrokeLayers::of, look.alpha)) {
+        if (alpha >= 255) run.forEach { drawStroke(stream, it) }
+        else drawGroup(document, stream, item.page, run, alpha / 255f)
+    }
+}
+
+private fun drawGroup(document: PDDocument, stream: PDPageContentStream, page: Page, strokes: List<Stroke>, alpha: Float) {
+    val unit = PdfSource.POINTS_TO_WORLD
+    val form = PDFormXObject(document)
+    // The form draws in the page's own system (the stream's transform is
+    // already applied where it is painted), so its box is the page in points.
+    form.setBBox(PDRectangle(0f, 0f, page.width / unit, page.height / unit))
+    form.setResources(PDResources())
+    form.getCOSObject().setItem(COSName.GROUP, COSDictionary().apply { setItem(COSName.S, COSName.TRANSPARENCY) })
+    PDPageContentStream(document, form, form.getStream().createOutputStream(COSName.FLATE_DECODE)).use { group ->
+        for (stroke in strokes) drawStroke(group, stroke)
+    }
+    stream.saveGraphicsState()
+    // The alpha in force when a group is painted applies to the group as a whole.
+    stream.setGraphicsStateParameters(PDExtendedGraphicsState().apply {
+        nonStrokingAlphaConstant = alpha
+        strokingAlphaConstant = alpha
+    })
+    stream.drawForm(form)
     stream.restoreGraphicsState()
 }
 

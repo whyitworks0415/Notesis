@@ -20,6 +20,11 @@ import kotlin.math.floor
  *
  * Only committed ink is cached. New strokes use a short delta display list
  * until writing pauses; existing layers need no re-recording at pen-up.
+ *
+ * A translucent note layer is composited inside each tile (see [drawLayered]):
+ * a tile holds a page's ink, and a layer's run of strokes within it is one
+ * offscreen group. A change of opacity re-records the page's tiles in view,
+ * with no geometry rebuilt; notes whose layers are all opaque never pay for it.
  */
 internal class InkTileCache(
     private val byteBudget: Int = 48 * 1024 * 1024,
@@ -28,7 +33,7 @@ internal class InkTileCache(
 ) {
     private data class Key(val page: Page, val x: Int, val y: Int, val highlight: Boolean)
 
-    private class Tile(val key: Key, val scale: Float, val excluded: Set<Stroke>?) {
+    private class Tile(val key: Key, val scale: Float, val excluded: Set<Stroke>?, val look: LayerLook?) {
         val base = RenderNode("ink tile")
         val delta = RenderNode("ink delta")
         val appended = ArrayList<Stroke>()
@@ -44,6 +49,8 @@ internal class InkTileCache(
         val strokes = ArrayList<Stroke>()
         val positions = IdentityHashMap<Stroke, Int>()
         var excluded: Set<Stroke>? = null
+        /** The translucent layer look the tiles were recorded under; null when all layers are opaque. */
+        var look: LayerLook? = null
     }
 
     private val tiles = LinkedHashMap<Key, Tile>(32, 0.75f, true)
@@ -154,14 +161,17 @@ internal class InkTileCache(
         return box.right >= left && box.left <= right && box.bottom >= top && box.top <= bottom
     }
 
-    private fun changedStroke(page: Page, stroke: Stroke, append: Boolean) {
+    private fun changedStroke(page: Page, stroke: Stroke, append: Boolean, look: LayerLook? = null) {
         if ((tilesPerPage[page] ?: 0) == 0) return
         val box = strokeBounds(stroke) ?: return
         val highlight = stroke.brush.family == highlightFamily
+        // A delta list draws on top of the tile, outside its layer's group:
+        // fine for an opaque layer, a darker overlap for a translucent one.
+        val deltaOk = append && (look == null || look.alphaOf(StrokeLayers.of(stroke)) >= 255)
         for (tile in tiles.values) {
             if (tile.key.page !== page || tile.key.highlight != highlight || !touches(tile, box)) continue
             if (tile.excluded?.contains(stroke) == true) continue
-            if (append && !tile.dirty) {
+            if (deltaOk && !tile.dirty) {
                 tile.appended += stroke
                 tile.deltaDirty = true
             } else {
@@ -173,7 +183,7 @@ internal class InkTileCache(
 
     /** Compare content once per edit, rather than scanning the page per tile. */
     private fun sync(page: Page, requestedScale: Float, interacting: Boolean, excluded: Set<Stroke>?,
-        viewport: RectF, passes: Int): PageState {
+        viewport: RectF, passes: Int, look: LayerLook?): PageState {
         val state = pages.getOrPut(page) { PageState() }
         // Reusing the old resolution is cheap for a small pinch. After a deep
         // zoom-out it can require hundreds of oversized tiles in one frame.
@@ -186,10 +196,11 @@ internal class InkTileCache(
         val nearlySame = state.scale > 0f && abs(state.scale / requestedScale - 1f) < SETTLED_SCALE_SLACK
         val scale = if (keepScale || nearlySame) state.scale else requestedScale
         if (state.scale == 0f || abs(state.scale / scale - 1f) >= 0.001f ||
-            state.meshRevision != page.meshRevision || state.excluded !== excluded) {
+            state.meshRevision != page.meshRevision || state.excluded !== excluded || !sameLook(state.look, look)) {
             discardPage(page)
             state.scale = scale
             state.excluded = excluded
+            state.look = look
         }
         val current = page.strokes
         if (state.revision != page.revision || state.meshRevision != page.meshRevision ||
@@ -206,7 +217,7 @@ internal class InkTileCache(
             if (appendOnly) {
                 val hasCachedTiles = (tilesPerPage[page] ?: 0) > 0
                 for (i in old.size until current.size) {
-                    if (hasCachedTiles) changedStroke(page, current[i], append = true)
+                    if (hasCachedTiles) changedStroke(page, current[i], append = true, look = look)
                     state.positions[current[i]] = i
                     state.strokes += current[i]
                 }
@@ -254,9 +265,11 @@ internal class InkTileCache(
         var hasInk = false
         try {
             canvas.concat(transform)
-            for (stroke in strokes) {
-                if (tile.excluded?.contains(stroke) == true) continue
-                if ((stroke.brush.family == highlightFamily) != tile.key.highlight) continue
+            // The tile's own extent bounds each translucent layer's group.
+            drawLayered(canvas, strokes, tile.look, null, include = { stroke ->
+                tile.excluded?.contains(stroke) != true &&
+                    (stroke.brush.family == highlightFamily) == tile.key.highlight
+            }) { stroke ->
                 renderer.draw(canvas, screenStroke(stroke), transform)
                 recordedStrokes++
                 hasInk = true
@@ -270,7 +283,7 @@ internal class InkTileCache(
         val scale = state.scale
         val tile = tiles.getOrPut(key) {
             tilesPerPage[key.page] = (tilesPerPage[key.page] ?: 0) + 1
-            Tile(key, scale, state.excluded)
+            Tile(key, scale, state.excluded, state.look)
         }
         // Android can discard a display list when its node leaves the drawing
         // tree. A Java cache entry can therefore outlive the GPU recording.
@@ -297,11 +310,11 @@ internal class InkTileCache(
 
     fun draw(canvas: Canvas, page: Page, scale: Float, viewport: RectF,
         interacting: Boolean, consolidate: Boolean, hasHighlighter: Boolean,
-        highlighterAbove: Boolean, multiply: Paint, excluded: Set<Stroke>? = null) {
+        highlighterAbove: Boolean, multiply: Paint, excluded: Set<Stroke>? = null, look: LayerLook? = null) {
         if (viewport.isEmpty) return
         framePages += page
         val passes = if (hasHighlighter) 2 else 1
-        val state = sync(page, scale, interacting, excluded, viewport, passes)
+        val state = sync(page, scale, interacting, excluded, viewport, passes, look)
         val recordedScale = state.scale
         val firstX = floor(viewport.left * recordedScale / TILE_PX).toInt()
         val firstY = floor(viewport.top * recordedScale / TILE_PX).toInt()

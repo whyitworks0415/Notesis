@@ -3334,6 +3334,8 @@ private fun NoteScreen(
     var editingTools by remember { mutableStateOf(false) }
     var showLayers by remember { mutableStateOf(false) }
     var exportingPages by remember { mutableStateOf<List<Page>?>(null) }
+    /** The layers' opacity when the pages were taken, for compositing them in the PDF. */
+    var exportingLook by remember { mutableStateOf<LayerLook?>(null) }
     /** Pages picked to go to another note, and whether they leave this one. */
     var sendingPages by remember { mutableStateOf<Pair<List<Int>, Boolean>?>(null) }
     val savePagesPdf = rememberLauncherForActivityResult(
@@ -3346,7 +3348,7 @@ private fun NoteScreen(
             val ok = withContext(Dispatchers.IO) {
                 context.contentResolver.openOutputStream(uri)?.use { out ->
                     writeVectorPdf(context, store.pdfFile(note.id),
-                        pages.map { VectorPdfPage(it, it.strokes, it.masks.map { m -> m.stroke }) },
+                        pages.map { VectorPdfPage(it, it.strokes, it.masks.map { m -> m.stroke }, exportingLook) },
                         { imageId -> store.imageFile(note.id, imageId) }, out)
                 } ?: false
             }
@@ -5100,13 +5102,15 @@ private fun NoteScreen(
             )
         }
         if (editingTools) ToolbarEditDialog(onDismiss = { editingTools = false })
-        if (showLayers) canvas?.let { view ->
-            LayersDialog(
-                view.layers,
-                onChanged = { view.layersChanged(); edits++ },
-                onDelete = { view.deleteLayer(it.id); edits++ },
-                onDismiss = { showLayers = false },
-            )
+        // The layer panel slides in from the end, like the page sidebar; the
+        // canvas saves every change itself.
+        androidx.compose.animation.AnimatedVisibility(
+            visible = showLayers && canvas != null,
+            enter = slideInHorizontally { it },
+            exit = slideOutHorizontally { it },
+            modifier = Modifier.align(Alignment.CenterEnd),
+        ) {
+            canvas?.let { view -> LayerPanel(view, onClose = { showLayers = false }) }
         }
         if (pullingForPage) Box(
             Modifier
@@ -5171,7 +5175,10 @@ private fun NoteScreen(
                         TextButton(onClick = { filing = true }) { Text("폴더로 이동") }
                         TextButton(onClick = {
                             noteMenu = false
-                            canvas?.let { view -> exportingPages = view.snapshotPages(view.document.pages.indices.toList()) }
+                            canvas?.let { view ->
+                                exportingPages = view.snapshotPages(view.document.pages.indices.toList())
+                                exportingLook = view.layers.translucentLook()
+                            }
                             savePagesPdf.launch(safeFileName(note.title) + ".pdf")
                         }) { Text("PDF로 내보내기") }
                         TextButton(enabled = meta.locked || NoteLock(context).hasPassword, onClick = {
@@ -5421,6 +5428,7 @@ private fun NoteScreen(
                 },
                 onExportPages = { indices ->
                     exportingPages = canvas?.snapshotPages(indices)
+                    exportingLook = canvas?.layers?.translucentLook()
                     if (exportingPages != null) savePagesPdf.launch(safeFileName(note.title) + "-선택.pdf")
                 },
                 onSendPages = { indices, move -> sendingPages = indices to move },
