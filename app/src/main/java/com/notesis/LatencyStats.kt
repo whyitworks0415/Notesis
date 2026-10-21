@@ -8,6 +8,14 @@ internal enum class PerformanceMetric {
     PDF_RENDER,
     CANVAS_DRAW,
     DENSE_DRAW,
+    /** Pen down to the first wet-ink frame handed to the display (submission, not photons). */
+    FIRST_INK,
+    /** A pen MOVE event's timestamp to the end of its handling on the UI thread. */
+    INPUT_HANDLED,
+    /** A background page load or refine result being put into the UI, on the UI thread. */
+    PAGE_APPLY,
+    /** The autosave snapshot taken on the UI thread. */
+    SAVE_SNAPSHOT,
 }
 
 internal data class Percentiles(
@@ -206,6 +214,11 @@ class LatencyStats(private val capacity: Int = 512) {
             "$frame   $lead",
             allocation,
         ).joinToString("\n")
+    }
+
+    /** Any metric without a dedicated recorder; one volatile read when diagnostics are off. */
+    internal fun record(metric: PerformanceMetric, latencyNanos: Long) {
+        if (enabled) addNanos(metric, latencyNanos)
     }
 
     @Synchronized
