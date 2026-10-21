@@ -4292,7 +4292,6 @@ private fun NoteScreen(
                     view.highlighterAboveInk = highlighterAboveInk
                     view.meshInk = meshInk
                     view.compatWetInk = compatWetInk
-                    view.wetSurfaceAllowed = noteRotation == 0f
                     // Turned inside the canvas, not as a view: a turned view clipped the
                     // page's corners and left the wet ink's surface behind the pen.
                     view.viewRotation = noteRotation

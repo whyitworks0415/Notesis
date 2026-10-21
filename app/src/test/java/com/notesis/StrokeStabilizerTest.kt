@@ -244,4 +244,44 @@ class StrokeStabilizerTest {
         stabilizer.add(30f, 0f, 40L, finalSample = true)
         assertEquals(30f, stabilizer.x, 1e-4f)
     }
+
+    @Test
+    fun `sliding window lags by time, not by samples, whatever the input rate`() {
+        // 1 px/ms either way; a 20ms window lags 10ms - 10px - at 200Hz and at 100Hz.
+        fun lagAt(stepMs: Long): Float {
+            val stabilizer = AdaptiveStrokeStabilizer()
+            stabilizer.slidingWindow = true
+            stabilizer.reset(50, 0f, 0f, 0L)
+            var t = 0L
+            while (t < 200L) {
+                t += stepMs
+                stabilizer.add(t.toFloat(), 0f, t)
+            }
+            return t - stabilizer.x
+        }
+        assertEquals(lagAt(5L), lagAt(10L), 1e-3f)
+        assertEquals(10f, lagAt(5L), 1e-3f)
+    }
+
+    @Test
+    fun `filters are fed sample by sample, so a frame's batching changes nothing`() {
+        // What the canvas does with a MOVE's history: every sample in turn.
+        // Delivered as one batch per 60Hz frame or one per 120Hz frame, the
+        // samples - and so the output - are the same.
+        val samples = (1..48).map { Triple(it * 2.5f, if (it % 2 == 0) 0.7f else -0.7f, it * 4L) }
+        fun run(batch: Int): List<Pair<Float, Float>> {
+            val filter = AdaptiveStrokeStabilizer()
+            filter.reset(40, 0f, 0f, 0L)
+            val out = ArrayList<Pair<Float, Float>>()
+            samples.chunked(batch).forEach { frame ->
+                frame.forEach { (x, y, t) -> filter.add(x, y, t) }
+                out += filter.x to filter.y
+            }
+            return out
+        }
+        // Same positions at every frame boundary the two share.
+        val at60 = run(4)
+        val at120 = run(2)
+        at60.forEachIndexed { i, p -> assertEquals(p, at120[i * 2 + 1]) }
+    }
 }
