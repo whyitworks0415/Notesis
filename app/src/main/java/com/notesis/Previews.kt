@@ -42,44 +42,44 @@ import androidx.compose.ui.unit.dp
  * Each preview is one skin at one setting, so a change that only looks right in
  * one of them shows up as soon as it is made rather than on the next install.
  */
-@Preview(name = "컨트롤 · 머티리얼", widthDp = 420, heightDp = 340)
+@Preview(name = "Controls · Material", widthDp = 420, heightDp = 340)
 @Composable
 private fun PreviewMaterial() = ChromeSample(Skin.MATERIAL, SkinSettings())
 
-@Preview(name = "컨트롤 · 글래스", widthDp = 420, heightDp = 340)
+@Preview(name = "Controls · Glass", widthDp = 420, heightDp = 340)
 @Composable
 private fun PreviewGlass() = ChromeSample(Skin.GLASSMORPHISM, SkinSettings())
 
-@Preview(name = "컨트롤 · 굴절 유리", widthDp = 420, heightDp = 340)
+@Preview(name = "Controls · Liquid glass", widthDp = 420, heightDp = 340)
 @Composable
 private fun PreviewLiquidGlass() = ChromeSample(Skin.LIQUID_GLASS, SkinSettings())
 
-@Preview(name = "컨트롤 · 유리 바", widthDp = 420, heightDp = 340)
+@Preview(name = "Controls · Glass bar", widthDp = 420, heightDp = 340)
 @Composable
 private fun PreviewSpotiGlass() = ChromeSample(Skin.SPOTIGLASS, SkinSettings())
 
-@Preview(name = "컨트롤 · 유리 바 다크", widthDp = 420, heightDp = 340)
+@Preview(name = "Controls · Glass bar dark", widthDp = 420, heightDp = 340)
 @Composable
 private fun PreviewSpotiGlassDark() = ChromeSample(Skin.SPOTIGLASS, SkinSettings(themeMode = AppThemeMode.DARK))
 
-@Preview(name = "컨트롤 · 글래스 고대비", widthDp = 420, heightDp = 340)
+@Preview(name = "Controls · Glass high contrast", widthDp = 420, heightDp = 340)
 @Composable
 private fun PreviewHighContrast() =
     ChromeSample(Skin.GLASSMORPHISM, SkinSettings(highContrast = true))
 
-@Preview(name = "컨트롤 · 초록 강조", widthDp = 420, heightDp = 340)
+@Preview(name = "Controls · Green accent", widthDp = 420, heightDp = 340)
 @Composable
 private fun PreviewGreenAccent() =
     ChromeSample(Skin.GLASSMORPHISM, SkinSettings(accent = 0xFF00A03C.toInt()))
 
-@Preview(name = "컨트롤 · 짙은 잉크", widthDp = 420, heightDp = 340)
+@Preview(name = "Controls · Deep ink", widthDp = 420, heightDp = 340)
 @Composable
 private fun PreviewInk() = ChromeSample(
     Skin.GLASSMORPHISM,
     SkinSettings(accent = 0xFF0A84FF.toInt(), content = 0xFF10314F.toInt()),
 )
 
-@Preview(name = "컨트롤 · 다크 모드", widthDp = 420, heightDp = 340)
+@Preview(name = "Controls · Dark mode", widthDp = 420, heightDp = 340)
 @Composable
 private fun PreviewDark() = ChromeSample(
     Skin.LIQUID_GLASS,
@@ -132,7 +132,7 @@ private fun ChromeSample(skin: Skin, look: SkinSettings) {
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             Spacer(Modifier.width(10.dp))
-                            Text("굵기", style = MaterialTheme.typography.bodyLarge)
+                            Text("Width", style = MaterialTheme.typography.bodyLarge)
                         }
                         Spacer(Modifier.height(6.dp))
                         SkinSlider(
@@ -147,16 +147,16 @@ private fun ChromeSample(skin: Skin, look: SkinSettings) {
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text("필압", style = MaterialTheme.typography.bodyLarge)
+                            Text("Pressure", style = MaterialTheme.typography.bodyLarge)
                             SkinSwitch(on) { on = it }
                         }
                         Spacer(Modifier.height(10.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Button(onClick = {}) { Text("적용") }
+                            Button(onClick = {}) { Text("Apply") }
                             Spacer(Modifier.width(12.dp))
                             OutlinedButton(onClick = {}) {
                                 Icon(Reicons.Delete, contentDescription = null)
-                                Text(" 삭제")
+                                Text(" Delete")
                             }
                         }
                     }

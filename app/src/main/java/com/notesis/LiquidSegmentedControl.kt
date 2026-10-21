@@ -50,7 +50,7 @@ fun LiquidSegmentedControl(
     modifier: Modifier = Modifier,
     useLiquidGlass: Boolean = true,
 ) {
-    require(segments.size in 2..4) { "LiquidSegmentedControl은 2~4개 세그먼트를 지원합니다." }
+    require(segments.size in 2..4) { "LiquidSegmentedControl supports 2 to 4 segments." }
     if (useLiquidGlass && LocalSkin.current == Skin.SPOTIGLASS) {
         SpotiGlassBar(segments.map { SpotiGlassItem(it) }, selectedIndex, onSelected, modifier)
         return
@@ -111,7 +111,7 @@ fun LiquidSegmentedControl(
             } else {
                 snap()
             },
-            label = "세그먼트 인디케이터 위치",
+            label = "Segment indicator position",
         )
         val extra = segmentWidth * (0.14f * morph.value)
 
@@ -186,7 +186,7 @@ private fun LiquidSegmentedControlPreview() {
         LiquidGlassPreviewFrame {
             Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
                 LiquidSegmentedControl(
-                    segments = listOf("추천", "보관함", "최근"),
+                    segments = listOf("For you", "Library", "Recent"),
                     selectedIndex = selected,
                     onSelected = { selected = it },
                     modifier = Modifier.fillMaxWidth(),

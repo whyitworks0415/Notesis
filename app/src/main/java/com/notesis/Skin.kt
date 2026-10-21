@@ -80,15 +80,15 @@ import kotlin.math.roundToInt
  * paper - so this only reaches the bars, panels and dialogs floating over it.
  */
 enum class Skin(val label: String, val blurb: String) {
-    MATERIAL("머티리얼", "안드로이드 기본. 불투명하고 또렷합니다."),
-    GLASSMORPHISM("글래스모피즘", "서리 낀 유리. 뒤가 흐려지고 고르게 반투명합니다."),
+    MATERIAL("Material", "Android default. Opaque and crisp."),
+    GLASSMORPHISM("Glassmorphism", "Frosted glass. Blurs what is behind it, evenly translucent."),
     LIQUID_GLASS(
-        "굴절 유리",
-        "빛을 굴절시키는 얇은 렌즈. 누르고 움직이면 형태와 광택이 살아납니다.",
+        "Liquid glass",
+        "A thin lens that bends light. Shape and sheen come alive as you press and move.",
     ),
     SPOTIGLASS(
-        "유리 바",
-        "둥근 유리 바에서 선택 렌즈가 손끝을 따라 미끄러집니다.",
+        "Glass bar",
+        "On a rounded glass bar, the selection lens glides after your fingertip.",
     ),
 }
 
@@ -608,7 +608,7 @@ fun SkinSlider(
             valueRange = valueRange,
             modifier = modifier,
             steps = steps,
-            label = "값",
+            label = "Value",
         )
         return
     }

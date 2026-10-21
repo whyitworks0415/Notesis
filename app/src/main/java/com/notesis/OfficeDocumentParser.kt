@@ -23,12 +23,12 @@ internal data class PreviewDocument(
 )
 
 internal enum class PreviewKind(val label: String) {
-    TEXT("텍스트"),
-    MARKDOWN("마크다운"),
-    WORD("문서"),
-    PRESENTATION("프레젠테이션"),
-    WORKBOOK("스프레드시트"),
-    HANGUL("한글 문서"),
+    TEXT("Text"),
+    MARKDOWN("Markdown"),
+    WORD("Document"),
+    PRESENTATION("Presentation"),
+    WORKBOOK("Spreadsheet"),
+    HANGUL("HWP document"),
 }
 
 internal data class PreviewSection(
@@ -132,7 +132,7 @@ internal object OfficeDocumentParser {
             "doc", "dot" -> parseDoc(fileName, CompoundFile(bytes))
             "ppt", "pps", "pot" -> parsePpt(fileName, CompoundFile(bytes))
             "xls", "xlt" -> parseXls(fileName, CompoundFile(bytes))
-            else -> throw UnsupportedDocumentException("지원하지 않는 파일 형식입니다: .$extension")
+            else -> throw UnsupportedDocumentException("Unsupported file type: .$extension")
         }
     }
 
@@ -151,7 +151,7 @@ internal object OfficeDocumentParser {
         return PreviewDocument(
             title = name,
             kind = if (markdown) PreviewKind.MARKDOWN else PreviewKind.TEXT,
-            sections = listOf(PreviewSection("본문", blocks.ifEmpty { listOf(PreviewBlock.Paragraph("빈 문서")) })),
+            sections = listOf(PreviewSection("Body", blocks.ifEmpty { listOf(PreviewBlock.Paragraph("Empty document")) })),
         )
     }
 
@@ -204,13 +204,13 @@ internal object OfficeDocumentParser {
 
     private fun parseDocx(name: String, entries: Map<String, ByteArray>): PreviewDocument {
         val xml = entries.findEntry("word/document.xml")
-            ?: throw UnsupportedDocumentException("DOCX 본문을 찾을 수 없습니다.")
+            ?: throw UnsupportedDocumentException("Can't find the DOCX body.")
         val blocks = parseWordXml(xml)
         return PreviewDocument(
             name,
             PreviewKind.WORD,
-            listOf(PreviewSection("본문", blocks.ifEmpty { listOf(PreviewBlock.Paragraph("빈 문서")) })),
-            "읽기 전용 · 텍스트와 표를 표시합니다",
+            listOf(PreviewSection("Body", blocks.ifEmpty { listOf(PreviewBlock.Paragraph("Empty document")) })),
+            "Read-only · shows text and tables",
         )
     }
 
@@ -287,14 +287,14 @@ internal object OfficeDocumentParser {
             .mapIndexed { index, entry ->
                 val paragraphs = parseParagraphXml(entry.value, "p", "t")
                 PreviewSection(
-                    "슬라이드 ${index + 1}",
+                    "Slide ${index + 1}",
                     paragraphs.mapIndexed { textIndex, text ->
                         PreviewBlock.Paragraph(text, if (textIndex == 0) 1 else 0)
-                    }.ifEmpty { listOf(PreviewBlock.Paragraph("내용 없음")) },
+                    }.ifEmpty { listOf(PreviewBlock.Paragraph("No content")) },
                 )
             }
-        if (slides.isEmpty()) throw UnsupportedDocumentException("PPTX 슬라이드를 찾을 수 없습니다.")
-        return PreviewDocument(name, PreviewKind.PRESENTATION, slides, "읽기 전용 · 슬라이드의 텍스트를 표시합니다")
+        if (slides.isEmpty()) throw UnsupportedDocumentException("Can't find any PPTX slides.")
+        return PreviewDocument(name, PreviewKind.PRESENTATION, slides, "Read-only · shows the slides' text")
     }
 
     private fun parseHwpx(name: String, entries: Map<String, ByteArray>): PreviewDocument {
@@ -305,13 +305,13 @@ internal object OfficeDocumentParser {
             .mapIndexed { index, entry ->
                 val paragraphs = parseParagraphXml(entry.value, "p", "t")
                 PreviewSection(
-                    "구역 ${index + 1}",
+                    "Section ${index + 1}",
                     paragraphs.map { PreviewBlock.Paragraph(it) }
-                        .ifEmpty { listOf(PreviewBlock.Paragraph("내용 없음")) },
+                        .ifEmpty { listOf(PreviewBlock.Paragraph("No content")) },
                 )
             }
-        if (sections.isEmpty()) throw UnsupportedDocumentException("HWPX 본문을 찾을 수 없습니다.")
-        return PreviewDocument(name, PreviewKind.HANGUL, sections, "읽기 전용 · 문서의 텍스트를 표시합니다")
+        if (sections.isEmpty()) throw UnsupportedDocumentException("Can't find the HWPX body.")
+        return PreviewDocument(name, PreviewKind.HANGUL, sections, "Read-only · shows the document's text")
     }
 
     private fun parseParagraphXml(xml: ByteArray, paragraphTag: String, textTag: String): List<String> {
@@ -359,14 +359,14 @@ internal object OfficeDocumentParser {
         val fallback = entries.keys
             .filter { it.matches(Regex("(?i)xl/worksheets/sheet\\d+\\.xml")) }
             .sortedBy(::numberedName)
-            .mapIndexed { index, path -> "시트 ${index + 1}" to path }
+            .mapIndexed { index, path -> "Sheet ${index + 1}" to path }
         val selected = (targets.ifEmpty { fallback }).take(MAX_SECTIONS)
         val sections = selected.mapNotNull { (sheetName, path) ->
             val xml = entries.findEntry(path) ?: return@mapNotNull null
             PreviewSection(sheetName, listOf(PreviewBlock.Table(parseSheet(xml, strings))))
         }
-        if (sections.isEmpty()) throw UnsupportedDocumentException("Excel 시트를 찾을 수 없습니다.")
-        return PreviewDocument(name, PreviewKind.WORKBOOK, sections, "읽기 전용 · 수식은 파일에 저장된 계산값으로 표시합니다")
+        if (sections.isEmpty()) throw UnsupportedDocumentException("Can't find any Excel sheets.")
+        return PreviewDocument(name, PreviewKind.WORKBOOK, sections, "Read-only · formulas show the values saved in the file")
     }
 
     private fun parseSharedStrings(xml: ByteArray): List<String> {
@@ -415,7 +415,7 @@ internal object OfficeDocumentParser {
         sax(xml, object : DefaultHandler() {
             override fun startElement(uri: String?, localName: String?, qName: String?, attributes: Attributes) {
                 if (element(localName, qName) == "sheet") {
-                    val name = attr(attributes, "name") ?: "시트 ${result.size + 1}"
+                    val name = attr(attributes, "name") ?: "Sheet ${result.size + 1}"
                     val relation = attr(attributes, "id") ?: return
                     result += SheetRef(name, relation)
                 }
@@ -468,14 +468,14 @@ internal object OfficeDocumentParser {
                 }
             }
         })
-        if (cells.isEmpty()) return listOf(listOf("빈 시트"))
+        if (cells.isEmpty()) return listOf(listOf("Empty sheet"))
         val lastRow = cells.lastKey().coerceAtMost(MAX_ROWS - 1)
         val lastColumn = cells.values.maxOfOrNull { it.keys.maxOrNull() ?: 0 }?.coerceAtMost(MAX_COLUMNS - 1) ?: 0
         return (0..lastRow).map { row -> (0..lastColumn).map { column -> cells[row]?.get(column).orEmpty() } }
     }
 
     private fun parseHwp(name: String, file: CompoundFile): PreviewDocument {
-        val header = file.stream("FileHeader") ?: throw UnsupportedDocumentException("올바른 HWP 5.x 파일이 아닙니다.")
+        val header = file.stream("FileHeader") ?: throw UnsupportedDocumentException("Not a valid HWP 5.x file.")
         val compressed = header.size > 39 && (header.int32(36) and 1) != 0
         val sectionNames = file.streamNames()
             .filter { it.matches(Regex("(?i)(BodyText/)?Section\\d+")) }
@@ -486,13 +486,13 @@ internal object OfficeDocumentParser {
             val data = if (compressed) inflateRaw(source) else source
             val paragraphs = hwpParagraphs(data)
             PreviewSection(
-                "구역 ${index + 1}",
+                "Section ${index + 1}",
                 paragraphs.map { PreviewBlock.Paragraph(it) }
-                    .ifEmpty { listOf(PreviewBlock.Paragraph("내용 없음")) },
+                    .ifEmpty { listOf(PreviewBlock.Paragraph("No content")) },
             )
         }
-        if (sections.isEmpty()) throw UnsupportedDocumentException("HWP 본문을 찾을 수 없습니다.")
-        return PreviewDocument(name, PreviewKind.HANGUL, sections, "읽기 전용 · HWP 5.x 문서의 텍스트를 표시합니다")
+        if (sections.isEmpty()) throw UnsupportedDocumentException("Can't find the HWP body.")
+        return PreviewDocument(name, PreviewKind.HANGUL, sections, "Read-only · shows the text of an HWP 5.x document")
     }
 
     private fun hwpParagraphs(data: ByteArray): List<String> {
@@ -523,7 +523,7 @@ internal object OfficeDocumentParser {
     }
 
     private fun parseDoc(name: String, file: CompoundFile): PreviewDocument {
-        val word = file.stream("WordDocument") ?: throw UnsupportedDocumentException("Word 문서 스트림을 찾을 수 없습니다.")
+        val word = file.stream("WordDocument") ?: throw UnsupportedDocumentException("Can't find the Word document stream.")
         val tableName = if (word.size > 12 && (word.u16(10) and 0x0200) != 0) "1Table" else "0Table"
         val table = file.stream(tableName)
         val text = if (table != null) extractWordPieces(word, table) else ""
@@ -535,8 +535,8 @@ internal object OfficeDocumentParser {
             .filter { it.isNotBlank() }
             .take(MAX_PARAGRAPHS)
             .map { PreviewBlock.Paragraph(it) }
-        if (paragraphs.isEmpty()) throw UnsupportedDocumentException("이 DOC 파일에서 표시할 텍스트를 찾지 못했습니다.")
-        return PreviewDocument(name, PreviewKind.WORD, listOf(PreviewSection("본문", paragraphs)), "읽기 전용 · 구형 DOC의 텍스트를 표시합니다")
+        if (paragraphs.isEmpty()) throw UnsupportedDocumentException("Found no text to show in this DOC file.")
+        return PreviewDocument(name, PreviewKind.WORD, listOf(PreviewSection("Body", paragraphs)), "Read-only · shows the text of a legacy DOC")
     }
 
     private fun extractWordPieces(word: ByteArray, table: ByteArray): String {
@@ -576,7 +576,7 @@ internal object OfficeDocumentParser {
 
     private fun parsePpt(name: String, file: CompoundFile): PreviewDocument {
         val stream = file.stream("PowerPoint Document")
-            ?: throw UnsupportedDocumentException("PowerPoint 문서 스트림을 찾을 수 없습니다.")
+            ?: throw UnsupportedDocumentException("Can't find the PowerPoint document stream.")
         val slides = mutableListOf<MutableList<String>>()
         var current = mutableListOf<String>()
         fun walk(start: Int, end: Int, depth: Int, insideSlide: Boolean) {
@@ -609,17 +609,17 @@ internal object OfficeDocumentParser {
         if (current.isNotEmpty()) slides += current
         val sections = slides.take(MAX_SECTIONS).mapIndexed { index, lines ->
             PreviewSection(
-                "슬라이드 ${index + 1}",
+                "Slide ${index + 1}",
                 lines.take(MAX_PARAGRAPHS).mapIndexed { line, text -> PreviewBlock.Paragraph(text, if (line == 0) 1 else 0) },
             )
         }
-        if (sections.isEmpty()) throw UnsupportedDocumentException("이 PPT 파일에서 표시할 텍스트를 찾지 못했습니다.")
-        return PreviewDocument(name, PreviewKind.PRESENTATION, sections, "읽기 전용 · 구형 PPT의 텍스트를 표시합니다")
+        if (sections.isEmpty()) throw UnsupportedDocumentException("Found no text to show in this PPT file.")
+        return PreviewDocument(name, PreviewKind.PRESENTATION, sections, "Read-only · shows the text of a legacy PPT")
     }
 
     private fun parseXls(name: String, file: CompoundFile): PreviewDocument {
         val workbook = file.stream("Workbook") ?: file.stream("Book")
-            ?: throw UnsupportedDocumentException("Excel 통합 문서 스트림을 찾을 수 없습니다.")
+            ?: throw UnsupportedDocumentException("Can't find the Excel workbook stream.")
         val records = biffRecords(workbook)
         val boundSheets = records.filter { it.id == 0x0085 }.mapIndexedNotNull { index, record ->
             if (record.data.size < 8) return@mapIndexedNotNull null
@@ -630,7 +630,7 @@ internal object OfficeDocumentParser {
             val count = minOf(length, available)
             val sheetName = if (unicode) String(record.data, 8, count * 2, StandardCharsets.UTF_16LE)
             else decodeLegacy(record.data.copyOfRange(8, 8 + count))
-            position to sheetName.ifBlank { "시트 ${index + 1}" }
+            position to sheetName.ifBlank { "Sheet ${index + 1}" }
         }.toMap()
         val sharedStrings = parseBiffSharedStrings(records)
         val sheets = mutableListOf<Pair<String, MutableMap<Int, MutableMap<Int, String>>>>()
@@ -638,7 +638,7 @@ internal object OfficeDocumentParser {
         records.forEach { record ->
             if (record.id == 0x0809 && record.data.size >= 4 && record.data.u16(2) == 0x0010) {
                 current = mutableMapOf()
-                sheets += (boundSheets[record.offset] ?: "시트 ${sheets.size + 1}") to current!!
+                sheets += (boundSheets[record.offset] ?: "Sheet ${sheets.size + 1}") to current!!
                 return@forEach
             }
             val cells = current ?: return@forEach
@@ -666,13 +666,13 @@ internal object OfficeDocumentParser {
         val sections = sheets.take(MAX_SECTIONS).map { (sheetName, cells) ->
             val lastRow = (cells.keys.maxOrNull() ?: 0).coerceAtMost(MAX_ROWS - 1)
             val lastColumn = (cells.values.maxOfOrNull { it.keys.maxOrNull() ?: 0 } ?: 0).coerceAtMost(MAX_COLUMNS - 1)
-            val rows = if (cells.isEmpty()) listOf(listOf("빈 시트")) else (0..lastRow).map { row ->
+            val rows = if (cells.isEmpty()) listOf(listOf("Empty sheet")) else (0..lastRow).map { row ->
                 (0..lastColumn).map { column -> cells[row]?.get(column).orEmpty() }
             }
             PreviewSection(sheetName, listOf(PreviewBlock.Table(rows)))
         }
-        if (sections.isEmpty()) throw UnsupportedDocumentException("이 XLS 파일에서 표시할 시트를 찾지 못했습니다.")
-        return PreviewDocument(name, PreviewKind.WORKBOOK, sections, "읽기 전용 · 구형 XLS의 저장된 셀 값을 표시합니다")
+        if (sections.isEmpty()) throw UnsupportedDocumentException("Found no sheets to show in this XLS file.")
+        return PreviewDocument(name, PreviewKind.WORKBOOK, sections, "Read-only · shows the saved cell values of a legacy XLS")
     }
 
     private data class BiffRecord(val id: Int, val data: ByteArray, val offset: Int)
@@ -758,7 +758,7 @@ internal object OfficeDocumentParser {
                             entryBytes += read
                             total += read
                             if (entryBytes > MAX_ZIP_ENTRY_BYTES || total > MAX_ZIP_BYTES) {
-                                throw UnsupportedDocumentException("문서 내부 데이터가 너무 큽니다.")
+                                throw UnsupportedDocumentException("The document's internal data is too large.")
                             }
                             output.write(buffer, 0, read)
                         }
@@ -768,7 +768,7 @@ internal object OfficeDocumentParser {
                 zip.closeEntry()
             }
         }
-        if (result.isEmpty()) throw UnsupportedDocumentException("압축 문서가 비어 있거나 손상되었습니다.")
+        if (result.isEmpty()) throw UnsupportedDocumentException("The compressed document is empty or damaged.")
         return result
     }
 
@@ -827,12 +827,12 @@ internal object OfficeDocumentParser {
             while (true) {
                 val read = input.read(buffer)
                 if (read < 0) break
-                if (output.size() + read > MAX_ZIP_ENTRY_BYTES) throw UnsupportedDocumentException("HWP 구역이 너무 큽니다.")
+                if (output.size() + read > MAX_ZIP_ENTRY_BYTES) throw UnsupportedDocumentException("An HWP section is too large.")
                 output.write(buffer, 0, read)
             }
             output.toByteArray()
         }
-    }.getOrElse { throw UnsupportedDocumentException("압축된 HWP 본문을 읽지 못했습니다.", it) }
+    }.getOrElse { throw UnsupportedDocumentException("Couldn't read the compressed HWP body.", it) }
 
     private fun Map<String, ByteArray>.findEntry(path: String): ByteArray? =
         this[path] ?: entries.firstOrNull { it.key.equals(path, ignoreCase = true) }?.value
@@ -893,12 +893,12 @@ internal class CompoundFile(private val bytes: ByteArray) {
     init {
         if (bytes.size < 512 || !bytes.startsWithBytes(byteArrayOf(
                 0xD0.toByte(), 0xCF.toByte(), 0x11, 0xE0.toByte(), 0xA1.toByte(), 0xB1.toByte(), 0x1A, 0xE1.toByte(),
-            ))) throw UnsupportedDocumentException("구형 문서 컨테이너가 손상되었습니다.")
+            ))) throw UnsupportedDocumentException("The legacy document container is damaged.")
         sectorSize = 1 shl bytes.u16(30)
         miniSectorSize = 1 shl bytes.u16(32)
         miniCutoff = bytes.int32(56)
         if (sectorSize !in setOf(512, 4096) || miniSectorSize != 64) {
-            throw UnsupportedDocumentException("지원하지 않는 문서 컨테이너입니다.")
+            throw UnsupportedDocumentException("Unsupported document container.")
         }
         val fatSectors = mutableListOf<Int>()
         repeat(109) { index ->
@@ -956,7 +956,7 @@ internal class CompoundFile(private val bytes: ByteArray) {
     private fun sector(id: Int): ByteArray {
         val offset = (id.toLong() + 1L) * sectorSize
         if (id < 0 || offset < 0 || offset + sectorSize > bytes.size) {
-            throw UnsupportedDocumentException("문서 섹터가 손상되었습니다.")
+            throw UnsupportedDocumentException("A document sector is damaged.")
         }
         return bytes.copyOfRange(offset.toInt(), offset.toInt() + sectorSize)
     }
@@ -973,7 +973,7 @@ internal class CompoundFile(private val bytes: ByteArray) {
                 rootData.copyOfRange(offset.toInt(), offset.toInt() + miniSectorSize)
             } else sector(current)
             if (output.size() + block.size > OfficeDocumentParser.MAX_CONTAINER_BYTES) {
-                throw UnsupportedDocumentException("문서 스트림이 너무 큽니다.")
+                throw UnsupportedDocumentException("A document stream is too large.")
             }
             output.write(block)
             current = allocation[current]

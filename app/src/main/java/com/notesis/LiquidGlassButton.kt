@@ -76,7 +76,7 @@ fun LiquidGlassButton(
     val scale by animateFloatAsState(
         targetValue = if (pressed && enabled && effectsAllowed) 1f - 0.04f * response else 1f,
         animationSpec = if (effectsAllowed) spring(dampingRatio = 0.82f, stiffness = 620f) else snap(),
-        label = "버튼 눌림 크기",
+        label = "Button press scale",
     )
     val glassAmount by animateFloatAsState(
         targetValue = when {
@@ -85,13 +85,13 @@ fun LiquidGlassButton(
             else -> 0.76f
         },
         animationSpec = if (effectsAllowed) tween(170) else snap(),
-        label = "버튼 굴절 강도",
+        label = "Button refraction",
     )
     val haloScale by animateFloatAsState(
         // Apple식 버튼은 손가락 아래에서 살짝 퍼지되 터치 영역은 바꾸지 않습니다.
         targetValue = if (pressed && enabled && useLiquidGlass && effectsAllowed) 1f + 0.08f * response else 1f,
         animationSpec = if (effectsAllowed) tween(190) else snap(),
-        label = "버튼 유리 확장",
+        label = "Button glass expansion",
     )
 
     val longClick = if (expandedContent != null || onLongClick != null) {
@@ -152,7 +152,7 @@ fun LiquidGlassButton(
         AnimatedContent(
             targetState = expanded,
             transitionSpec = { fadeIn(tween(140)) togetherWith fadeOut(tween(90)) },
-            label = "버튼 메뉴 모핑",
+            label = "Button menu morph",
         ) { isExpanded ->
             CompositionLocalProvider(
                 LocalContentColor provides contentColor.copy(alpha = if (enabled) 1f else 0.38f),
@@ -182,9 +182,9 @@ private fun LiquidGlassButtonPreview() {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 LiquidGlassButton(
                     onClick = {},
-                    expandedContent = { Text("복사   공유   삭제") },
+                    expandedContent = { Text("Copy   Share   Delete") },
                 ) {
-                    Text("길게 눌러 메뉴")
+                    Text("Long-press for menu")
                 }
             }
         }

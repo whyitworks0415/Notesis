@@ -112,11 +112,11 @@ internal fun ImageCropDialog(
     }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("자르기") },
+        title = { Text("Crop") },
         text = {
             Column {
                 Row {
-                    listOf(CropShape.RECT to "사각형", CropShape.OVAL to "타원", CropShape.FREE to "자유형").forEach { (s, label) ->
+                    listOf(CropShape.RECT to "Rectangle", CropShape.OVAL to "Ellipse", CropShape.FREE to "Freeform").forEach { (s, label) ->
                         SettingsChoiceChip(selected = shape == s, onClick = {
                             shape = s; start = null; end = null; outline.clear()
                         }, label = label, modifier = Modifier.padding(end = 6.dp))
@@ -167,9 +167,9 @@ internal fun ImageCropDialog(
                     val b = fraction(end!!)
                     onCrop(shape, RectF(minOf(a.x, b.x), minOf(a.y, b.y), maxOf(a.x, b.x), maxOf(a.y, b.y)), emptyList())
                 }
-            }) { Text("자르기") }
+            }) { Text("Crop") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 
@@ -187,20 +187,20 @@ internal fun ImageStyleDialog(
     var alpha by remember { mutableFloatStateOf(opacity) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("사진 스타일") },
+        title = { Text("Photo style") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text("투명도 ${(alpha * 100).toInt()}%")
+                Text("Opacity ${(alpha * 100).toInt()}%")
                 SkinSlider(alpha, { alpha = it; onOpacity(it) }, 0.1f..1f, step = 0.01f)
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))
-                Text("모서리 ${(corner * 100).toInt()}%")
+                Text("Corners ${(corner * 100).toInt()}%")
                 SkinSlider(corner, { corner = it }, 0f..0.5f, step = 0.01f)
-                Text("테두리 ${border.toInt()}px")
+                Text("Border ${border.toInt()}px")
                 SkinSlider(border, { border = it }, 0f..40f, step = 1f)
                 if (border > 0f) ColorInput(color) { color = it }
-                TextButton(onClick = { onDecorate(corner, border, color) }) { Text("모서리·테두리 적용") }
+                TextButton(onClick = { onDecorate(corner, border, color) }) { Text("Apply corners & border") }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("닫기") } },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
     )
 }

@@ -38,14 +38,14 @@ internal fun MarkdownNoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> 
     LaunchedEffect(note.id) {
         store.loadMarkdownLater(note.id) { result ->
             result.onSuccess { text = it; loaded = true }
-                .onFailure { loaded = true; saveMessage = "Markdown 파일을 읽지 못했습니다" }
+                .onFailure { loaded = true; saveMessage = "Couldn't read the Markdown file" }
         }
     }
     fun save() {
         if (!loaded || !dirty) return
         dirty = false
         store.saveMarkdownLater(note.id, note.title, text) { result ->
-            result.onFailure { saveMessage = "저장하지 못했습니다" }
+            result.onFailure { saveMessage = "Couldn't save" }
         }
     }
     LaunchedEffect(text, loaded) {
@@ -63,12 +63,12 @@ internal fun MarkdownNoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> 
             SkinSurface(flush = true) {
                 TopAppBar(
                     navigationIcon = { IconButton(onClick = { save(); onBack() }) {
-                        Icon(Reicons.ArrowBack, "뒤로가기")
+                        Icon(Reicons.ArrowBack, "Back")
                     } },
                     title = {
                         Column {
                             Text(note.title, maxLines = 1)
-                            Text(if (dirty) "Markdown · 저장 대기" else "Markdown · note.md",
+                            Text(if (dirty) "Markdown · Unsaved" else "Markdown · note.md",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.outline)
                         }
@@ -76,9 +76,9 @@ internal fun MarkdownNoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> 
                     actions = {
                         IconButton(onClick = { preview = !preview }) {
                             Icon(if (preview) Reicons.Edit else Reicons.Visibility,
-                                if (preview) "편집" else "미리보기")
+                                if (preview) "Edit" else "Preview")
                         }
-                        TextButton(onClick = { save() }, enabled = dirty) { Text("저장") }
+                        TextButton(onClick = { save() }, enabled = dirty) { Text("Save") }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                 )
@@ -102,14 +102,14 @@ internal fun MarkdownNoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> 
                     onValueChange = { text = it; dirty = true },
                     modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp),
                     textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 16.sp),
-                    placeholder = { Text("# 제목\n\n여기에 Markdown으로 작성하세요…") },
+                    placeholder = { Text("# Title\n\nWrite in Markdown here…") },
                 )
             }
         }
     }
     saveMessage?.let { message ->
         AlertDialog(onDismissRequest = { saveMessage = null }, title = { Text(message) },
-            confirmButton = { TextButton(onClick = { saveMessage = null }) { Text("확인") } })
+            confirmButton = { TextButton(onClick = { saveMessage = null }) { Text("OK") } })
     }
 }
 
@@ -117,7 +117,7 @@ internal fun MarkdownNoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> 
 private fun MarkdownToolbar(onInsert: (String) -> Unit) {
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        listOf("# " to "제목", "**굵게**" to "굵게", "- " to "목록", "- [ ] " to "체크", "```\n\n```" to "코드", "[링크](url)" to "링크")
+        listOf("# " to "Heading", "**bold**" to "Bold", "- " to "List", "- [ ] " to "Checkbox", "```\n\n```" to "Code", "[link](url)" to "Link")
             .forEach { (syntax, label) -> TextButton(onClick = { onInsert("\n$syntax") }) { Text(label) } }
     }
 }

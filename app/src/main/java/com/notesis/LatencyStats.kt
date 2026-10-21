@@ -155,13 +155,13 @@ class LatencyStats(private val capacity: Int = 512) {
     @Synchronized
     fun render(strokeCount: Int): String {
         val wet = metricLine("wet ink", PerformanceMetric.WET_INK)
-        val finalize = metricLine("pen-up 확정", PerformanceMetric.PEN_FINALIZE)
+        val finalize = metricLine("pen-up finalize", PerformanceMetric.PEN_FINALIZE)
         val refine = metricLine("mesh/refine", PerformanceMetric.MESH_REFINE,
-            if (lastRefinedStrokes > 0) "최근 ${lastRefinedStrokes}획" else null)
+            if (lastRefinedStrokes > 0) "last ${lastRefinedStrokes} strokes" else null)
         val pdf = metricLine("PDF render", PerformanceMetric.PDF_RENDER,
-            if (lastPdfPixels > 0L) "최근 %.1fMP".format(lastPdfPixels / 1_000_000.0) else null)
+            if (lastPdfPixels > 0L) "last %.1fMP".format(lastPdfPixels / 1_000_000.0) else null)
         val draw = metricLine("page draw", PerformanceMetric.CANVAS_DRAW,
-            "화면 ${lastVisibleStrokes}획")
+            "visible ${lastVisibleStrokes} strokes")
         val dense = metricLine("dense draw(≥$DENSE_PAGE_STROKES)", PerformanceMetric.DENSE_DRAW)
 
         val frame = frames.snapshot()?.let {
@@ -186,9 +186,9 @@ class LatencyStats(private val capacity: Int = 512) {
             pdf,
             draw,
             dense,
-            "mesh cache %d타일 %.1fMB   이번 화면 재기록 %d획".format(
+            "mesh cache %d tiles %.1fMB   re-recorded this frame %d strokes".format(
                 inkCacheTiles, inkCacheBytes / BYTES_PER_MIB, inkCacheFrameRecorded),
-            "input %.0fHz   total %d획".format(lastInputRateHz, strokeCount),
+            "input %.0fHz   total %d strokes".format(lastInputRateHz, strokeCount),
             "$frame   $lead",
             allocation,
         ).joinToString("\n")

@@ -62,7 +62,7 @@ fun LiquidGlassSlider(
     valueRange: ClosedFloatingPointRange<Float> = 0f..1f,
     steps: Int = 0,
     enabled: Boolean = true,
-    label: String = "값",
+    label: String = "Value",
     valueFormatter: (Float) -> String = { "${(it * 100f).roundToInt()}%" },
     useLiquidGlass: Boolean = true,
     onValueChangeFinished: (() -> Unit)? = null,
@@ -100,7 +100,7 @@ fun LiquidGlassSlider(
         } else {
             snap()
         },
-        label = "슬라이더 유리 전환",
+        label = "Slider glass transition",
     )
     val thumbWidth by androidx.compose.animation.core.animateDpAsState(
         targetValue = if (dragging && enabled && useLiquidGlass && effectsAllowed) 36.dp + 8.dp * response else 36.dp,
@@ -109,7 +109,7 @@ fun LiquidGlassSlider(
         } else {
             snap()
         },
-        label = "슬라이더 손잡이 너비",
+        label = "Slider thumb width",
     )
 
     val restingThumbWidth = 36.dp
@@ -249,7 +249,7 @@ private fun LiquidGlassSliderPreview() {
                 LiquidGlassSlider(
                     value = value,
                     onValueChange = { value = it },
-                    label = "불투명도",
+                    label = "Opacity",
                     modifier = Modifier.fillMaxWidth(),
                 )
             }

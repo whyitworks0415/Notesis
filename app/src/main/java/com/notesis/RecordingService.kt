@@ -40,8 +40,8 @@ class RecordingService : Service() {
         val manager = getSystemService(NotificationManager::class.java)
         if (manager.getNotificationChannel(CHANNEL) == null) {
             manager.createNotificationChannel(
-                NotificationChannel(CHANNEL, "녹음", NotificationManager.IMPORTANCE_LOW).apply {
-                    description = "노트에서 녹음하는 동안 표시됩니다"
+                NotificationChannel(CHANNEL, "Recording", NotificationManager.IMPORTANCE_LOW).apply {
+                    description = "Shown while recording in a note"
                     setShowBadge(false)
                 },
             )
@@ -53,8 +53,8 @@ class RecordingService : Service() {
         )
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setContentTitle("녹음 중")
-            .setContentText("Notesis 노트에 녹음하고 있습니다")
+            .setContentTitle("Recording")
+            .setContentText("Recording into a Notesis note")
             .setContentIntent(open)
             .setOngoing(true)
             .setCategory(Notification.CATEGORY_SERVICE)

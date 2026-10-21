@@ -114,7 +114,7 @@ internal fun Instrumentation.checkToolSettingsUi() {
                     }
                 }
             }
-            awaitNode { it.text?.toString() == if (mode == EditMode.HIGHLIGHTER) "형광펜" else "지우개" }
+            awaitNode { it.text?.toString() == if (mode == EditMode.HIGHLIGHTER) "Highlighter" else "Eraser" }
             waitForIdleSync()
             Thread.sleep(250)
             if (mode == EditMode.HIGHLIGHTER) {
