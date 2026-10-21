@@ -136,6 +136,12 @@ data class CanvasGestures(
     val lassoRect: Boolean = false,
     /** The pen's 480 Hz in-between travel shown ahead of the tip: [SUBFRAME_OFF], [SUBFRAME_BLUR] or [SUBFRAME_GHOST]. */
     val subframe: Int = SUBFRAME_OFF,
+    /**
+     * Whether three fingers on the page do anything: the three-finger double
+     * tap, opening and closing the reference panel, moving and resizing it,
+     * and turning the note. Off, three fingers are simply ignored.
+     */
+    val threeFingerGestures: Boolean = true,
 )
 
 const val PRESSURE_RESPONSE_DEFAULT = 10
@@ -189,6 +195,7 @@ fun InkCanvasView.applyGestures(gestures: CanvasGestures) {
     windowedStabilizer = gestures.windowedStabilizer
     lassoRect = gestures.lassoRect
     subframeMode = gestures.subframe
+    threeFingerGestures = gestures.threeFingerGestures
 }
 
 /**
@@ -204,6 +211,17 @@ class PenStore(context: Context) {
     var toolbarSize: Int
         get() = prefs.getInt("toolbarSize", 0).coerceIn(0, 3)
         set(value) = prefs.edit().putInt("toolbarSize", value.coerceIn(0, 3)).apply()
+
+    /** How wide the settings sidebar was left, in dp; clamped to the screen when it opens. */
+    var settingsSidebarWidth: Float
+        get() = prefs.getFloat("settingsSidebarWidth", SETTINGS_SIDEBAR_DEFAULT_DP)
+            .takeIf { it.isFinite() && it > 0f } ?: SETTINGS_SIDEBAR_DEFAULT_DP
+        set(value) = prefs.edit().putFloat("settingsSidebarWidth", value).apply()
+
+    /** What the appearance preview sits on: an ordinal of [PreviewBackground]. */
+    var previewBackground: Int
+        get() = prefs.getInt("appearancePreviewBackground", 0)
+        set(value) = prefs.edit().putInt("appearancePreviewBackground", value).apply()
 
     var homeColor: Int?
         get() = if (prefs.contains("homeColor")) prefs.getInt("homeColor", 0) else null
@@ -401,6 +419,7 @@ class PenStore(context: Context) {
             windowedStabilizer = prefs.getBoolean("windowedStabilizer", false),
             lassoRect = prefs.getBoolean("lassoRect", false),
             subframe = prefs.getInt("subframe", SUBFRAME_OFF).coerceIn(SUBFRAME_OFF, SUBFRAME_GHOST),
+            threeFingerGestures = prefs.getBoolean("threeFingerGestures", true),
         )
         set(value) = prefs.edit()
             .putBoolean("eraseInk", value.eraseInk)
@@ -435,6 +454,7 @@ class PenStore(context: Context) {
             .putBoolean("windowedStabilizer", value.windowedStabilizer)
             .putBoolean("lassoRect", value.lassoRect)
             .putInt("subframe", value.subframe)
+            .putBoolean("threeFingerGestures", value.threeFingerGestures)
             .apply()
 
     /** See [InkCanvasView.compatWetInk]; on by default where the front buffer is known to fail. */

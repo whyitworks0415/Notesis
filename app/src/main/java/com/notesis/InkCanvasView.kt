@@ -1029,6 +1029,8 @@ class InkCanvasView @JvmOverloads constructor(
     /** What a two- and a three-finger double tap do: [TAP_NONE], [TAP_UNDO], [TAP_REDO]. */
     var twoFingerTap: Int = TAP_UNDO
     var threeFingerTap: Int = TAP_REDO
+    /** Off, three fingers on the page do nothing: no tap action, no reference panel, no turning. */
+    var threeFingerGestures: Boolean = true
     /** A finger held still on the page; null leaves long presses alone. */
     var onLongPressCanvas: ((Float, Float) -> Unit)? = null
     private var fingerDrawing = false
@@ -4257,6 +4259,11 @@ class InkCanvasView @JvmOverloads constructor(
                 // never pan or zoom it - they only ever move the reference
                 // panel, or, held still, redo.
                 if (event.pointerCount >= 3) {
+                    if (!threeFingerGestures) {
+                        lastFocusX = focus[0]
+                        lastFocusY = focus[1]
+                        return true
+                    }
                     val rawFocus = rawFingerFocus(event)
                     val spread = rawFingerSpread(event, rawFocus[0], rawFocus[1])
                     // Turning the hand turns the note; sliding it still moves the panel.
@@ -4502,7 +4509,7 @@ class InkCanvasView @JvmOverloads constructor(
                     else zoomBy(DOUBLE_TAP_ZOOM, lastFocusX, lastFocusY)
                 }
                 2 -> runTapAction(twoFingerTap)
-                3 -> runTapAction(threeFingerTap)
+                3 -> if (threeFingerGestures) runTapAction(threeFingerTap)
             }
             lastTapFingers = 0
         } else {

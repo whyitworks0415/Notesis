@@ -35,6 +35,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
@@ -57,95 +59,14 @@ import kotlin.math.sin
 import com.kyant.backdrop.drawBackdrop
 
 internal enum class SpotiToolbarTool(val mode: EditMode?, val label: String) {
-    READ(EditMode.READ, "읽기"), PEN(EditMode.PEN, "펜"), PENCIL(EditMode.PENCIL, "연필"),
-    HIGHLIGHTER(EditMode.HIGHLIGHTER, "형광펜"), MASK(EditMode.MASK, "마스킹"),
-    ERASE(EditMode.ERASE, "지우개"), SHAPE(EditMode.SHAPE, "도형"), TEXT(EditMode.TEXT, "텍스트"),
-    LASSO(EditMode.LASSO, "올가미"), CAPTURE(EditMode.CAPTURE, "캡쳐"), AI(null, "AI"),
+    READ(EditMode.READ, "Read"), PEN(EditMode.PEN, "Pen"), PENCIL(EditMode.PENCIL, "Pencil"),
+    HIGHLIGHTER(EditMode.HIGHLIGHTER, "Highlighter"), MASK(EditMode.MASK, "Mask"),
+    ERASE(EditMode.ERASE, "Eraser"), SHAPE(EditMode.SHAPE, "Shape"), TEXT(EditMode.TEXT, "Text"),
+    LASSO(EditMode.LASSO, "Lasso"), CAPTURE(EditMode.CAPTURE, "Capture"), AI(null, "AI"),
 }
 
-internal fun spotiToolbarTools(level: Int): List<SpotiToolbarTool> = when (level) {
-    2 -> listOf(SpotiToolbarTool.READ, SpotiToolbarTool.PEN, SpotiToolbarTool.HIGHLIGHTER, SpotiToolbarTool.MASK)
-    3 -> emptyList()
-    else -> ToolbarLayout.tools
-}
-
-/**
- * Which tools the full bar shows, in what order. Snapshot state, so the bar
- * redraws the moment it is edited; kept in preferences between runs. The
- * keyboard's Ctrl+1..9 follows the same order.
- */
-internal object ToolbarLayout {
-    var tools by mutableStateOf(SpotiToolbarTool.entries.toList())
-        private set
-
-    private fun prefs(context: android.content.Context) =
-        context.getSharedPreferences("pens", android.content.Context.MODE_PRIVATE)
-
-    fun load(context: android.content.Context) {
-        val prefs = prefs(context)
-        val saved = prefs.getString("toolbarTools", null)
-        if (saved == null) {
-            // The default bar already has the pencil; nothing to put back later.
-            prefs.edit().putBoolean(PENCIL_RETURNED, true).apply()
-            return
-        }
-        tools = saved.split(',').mapNotNull { name -> SpotiToolbarTool.entries.firstOrNull { it.name == name } }
-            .ifEmpty { SpotiToolbarTool.entries.toList() }
-        // 0.35.1 took the pencil off the bar, so a bar arranged since then has
-        // no place for it. Put it back beside the pen once; after that, taking
-        // it off again in the editor is the person's own choice and sticks.
-        if (!prefs.getBoolean(PENCIL_RETURNED, false)) {
-            if (SpotiToolbarTool.PENCIL !in tools) {
-                val at = tools.indexOf(SpotiToolbarTool.PEN)
-                set(context, tools.toMutableList().apply {
-                    add(if (at >= 0) at + 1 else size, SpotiToolbarTool.PENCIL)
-                })
-            }
-            prefs.edit().putBoolean(PENCIL_RETURNED, true).apply()
-        }
-    }
-
-    private const val PENCIL_RETURNED = "toolbarPencilReturned"
-
-    fun set(context: android.content.Context, value: List<SpotiToolbarTool>) {
-        tools = value.ifEmpty { listOf(SpotiToolbarTool.PEN) }
-        prefs(context).edit().putString("toolbarTools", tools.joinToString(",") { it.name }).apply()
-    }
-}
-
-/** Tick the tools to show and move them up or down; the bar follows as you go. */
-@Composable
-internal fun ToolbarEditDialog(onDismiss: () -> Unit) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val shown = ToolbarLayout.tools
-    val all = shown + SpotiToolbarTool.entries.filter { it !in shown }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("도구 편집") },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                all.forEach { tool ->
-                    val on = tool in shown
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = on, onCheckedChange = {
-                            ToolbarLayout.set(context, if (on) shown - tool else shown + tool)
-                        })
-                        Text(tool.label, Modifier.weight(1f))
-                        val at = shown.indexOf(tool)
-                        TextButton(enabled = on && at > 0, onClick = {
-                            ToolbarLayout.set(context, shown.toMutableList().apply { add(at - 1, removeAt(at)) })
-                        }) { Text("▲") }
-                        TextButton(enabled = on && at in 0 until shown.lastIndex, onClick = {
-                            ToolbarLayout.set(context, shown.toMutableList().apply { add(at + 1, removeAt(at)) })
-                        }) { Text("▼") }
-                    }
-                }
-                Text("위에서부터 Ctrl+1~9로 고를 수 있습니다.", style = MaterialTheme.typography.bodySmall)
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("닫기") } },
-    )
-}
+/** The tools the bar shows at [level], as arranged in [ToolbarLayout]. */
+internal fun spotiToolbarTools(level: Int): List<SpotiToolbarTool> = ToolbarLayout.config.tools(level)
 
 /**
  * How the bar moves between its four sizes: how long it takes and the curve
@@ -156,7 +77,7 @@ internal object ToolbarMotion {
     private var prefs: android.content.SharedPreferences? = null
 
     /** The curves offered, in the order the menu shows them. */
-    val EASINGS = listOf("가감속", "감속", "일정", "탄성")
+    val EASINGS = listOf("Ease in-out", "Ease out", "Linear", "Spring")
     const val DEFAULT_MS = 360
     const val MAX_MS = 1000
 
@@ -278,9 +199,9 @@ private fun Modifier.spotiToolbarGlass(circle: Boolean = false): Modifier {
 }
 internal fun SpotiToolbarTool.icon(): ImageVector = when (this) {
     SpotiToolbarTool.READ -> AppIcons.read
-    SpotiToolbarTool.PEN -> AppIconStyle.pick(Lucide.Pencil, Reicons.Create)
+    SpotiToolbarTool.PEN -> AppIcons.penTool
     SpotiToolbarTool.PENCIL -> AppIcons.pencilTool
-    SpotiToolbarTool.HIGHLIGHTER -> AppIconStyle.pick(Lucide.Highlighter, Reicons.Highlight)
+    SpotiToolbarTool.HIGHLIGHTER -> AppIcons.highlighterTool
     SpotiToolbarTool.MASK -> AppIconStyle.pick(Lucide.EyeOff, Reicons.VisibilityOff)
     SpotiToolbarTool.ERASE -> AppIconStyle.pick(Lucide.Eraser, Reicons.Eraser)
     SpotiToolbarTool.SHAPE -> AppIconStyle.pick(Lucide.Shapes, Reicons.Category)
@@ -292,7 +213,12 @@ internal fun SpotiToolbarTool.icon(): ImageVector = when (this) {
 
 internal data class SpotiToolbarAction(
     val label: String, val icon: ImageVector, val enabled: Boolean = true,
-    val selected: Boolean = false, val slot: Int? = null, val onClick: () -> Unit,
+    val selected: Boolean = false,
+    /** Why the action cannot be used right now; shown under its label while it is disabled. */
+    val disabledReason: String? = null,
+    /** Opens the list of other notes inside the menu rather than acting and closing it. */
+    val opensNotes: Boolean = false,
+    val onClick: () -> Unit,
 )
 
 /** Apply the original optics during a size/menu change, then hand back to frost.
@@ -322,29 +248,37 @@ internal fun Modifier.spotiGlassMorph(key: Any, enter: Boolean = false): Modifie
     }
 }
 
+
 @Composable
 private fun SpotiActionButton(
     label: String, icon: ImageVector? = null, modifier: Modifier = Modifier,
     selected: Boolean = false, enabled: Boolean = true, iconOnly: Boolean = false,
-    persistentGlass: Boolean = false, plain: Boolean = false, onClick: () -> Unit,
+    persistentGlass: Boolean = false, plain: Boolean = false,
+    /** Why it is disabled; shown under the label and read out with it. */
+    subtitle: String? = null,
+    onClick: () -> Unit,
 ) {
     // Each tap plays the icon once, where the icon set has motion.
     var taps by remember { mutableIntStateOf(0) }
     val tapped = { taps++; onClick() }
+    val reason = subtitle.takeIf { !enabled }
+    val described = Modifier.semantics {
+        contentDescription = label
+        if (reason != null) stateDescription = reason
+    }
     if (plain || LocalSkin.current != Skin.SPOTIGLASS) {
         val scheme = MaterialTheme.colorScheme
         val shape = androidx.compose.foundation.shape.RoundedCornerShape(22.dp)
         Box(modifier.sizeIn(minWidth = 44.dp, minHeight = 44.dp)
             .background(if (selected) scheme.primaryContainer else scheme.surfaceContainerHigh, shape)
-            .semantics { contentDescription = label }
+            .then(described)
             .clickable(enabled = enabled, role = Role.Button, onClick = tapped),
             contentAlignment = Alignment.Center) {
             Column(Modifier.padding(horizontal = 8.dp, vertical = 5.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 val color = (if (selected) scheme.onPrimaryContainer else scheme.onSurface)
                     .copy(alpha = if (enabled) 1f else 0.38f)
                 icon?.let { AppIcon(it, null, Modifier.size(20.dp), tint = color, play = taps) }
-                if (!iconOnly) Text(label, color = color, style = MaterialTheme.typography.labelSmall,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (!iconOnly) ActionLabels(label, reason, color)
             }
         }
         return
@@ -361,7 +295,7 @@ private fun SpotiActionButton(
         if (pressed && effects && persistentGlass) 1f + 0.08f * look.spotiglassResponse else 1f,
         if (effects) spring(0.78f, 430f) else tween(0), label = "기능 버튼 들림")
     Box(modifier.sizeIn(minWidth = 44.dp, minHeight = 44.dp)
-        .semantics { contentDescription = label }
+        .then(described)
         .clickable(enabled = enabled, role = Role.Button, interactionSource = interaction, indication = null, onClick = tapped),
         contentAlignment = Alignment.Center) {
         val body = Modifier.matchParentSize().graphicsLayer { scaleX = grow; scaleY = grow }
@@ -371,13 +305,21 @@ private fun SpotiActionButton(
             horizontalAlignment = Alignment.CenterHorizontally) {
             val color = (if (selected) scheme.primary else scheme.onSurface).copy(alpha = if (enabled) 1f else 0.38f)
             icon?.let { AppIcon(it, null, Modifier.size(20.dp), tint = color, play = taps) }
-            if (!iconOnly) Text(label, color = color, style = MaterialTheme.typography.labelSmall,
-                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (!iconOnly) ActionLabels(label, reason, color)
         }
     }
 }
 
-private enum class ToolbarMenu { FUNCTIONS, SIZES, NOTES, AI, TOOLS, MORE }
+@Composable
+private fun ActionLabels(label: String, reason: String?, color: Color) {
+    Text(label, color = color, style = MaterialTheme.typography.labelSmall,
+        maxLines = 1, overflow = TextOverflow.Ellipsis)
+    if (reason != null) Text(reason, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+        style = MaterialTheme.typography.labelSmall, maxLines = 2, overflow = TextOverflow.Ellipsis,
+        textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+}
+
+private enum class ToolbarMenu { FUNCTIONS, NOTES, AI }
 
 internal class SpotiToolbarPopupPosition(private val atStart: Boolean, private val gap: Int) : PopupPositionProvider {
     override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize,
@@ -397,13 +339,19 @@ internal class SpotiToolbarPopupPosition(private val atStart: Boolean, private v
     }
 }
 
+/**
+ * The bar in its four sizes, and the function menu behind its button. The
+ * menu holds the size switch and [functions], one group to a block; settings
+ * live in their own sidebar, reached from the last group.
+ */
 @Composable
 internal fun SpotiGlassToolbar(
     sizeLevel: Int, onSizeLevel: (Int) -> Unit, mode: EditMode,
     toolColors: Map<EditMode, Color>,
     targetWidth: Dp,
     docked: Boolean, modifier: Modifier, onDrag: (Offset) -> Unit,
-    onTool: (SpotiToolbarTool) -> Unit, actions: List<SpotiToolbarAction>,
+    onTool: (SpotiToolbarTool) -> Unit,
+    functions: List<List<SpotiToolbarAction>>,
     notes: List<SpotiToolbarAction>, ai: List<SpotiToolbarAction>,
     topRow: @Composable () -> Unit, penOptions: @Composable (Dp) -> Unit,
 ) {
@@ -416,6 +364,7 @@ internal fun SpotiGlassToolbar(
         if (tool == SpotiToolbarTool.AI) menu(ToolbarMenu.AI)
         else { open = false; onTool(tool) }
     }
+    val config = currentToolbarConfig()
     val skin = LocalSkin.current
     val effects = skin != Skin.MATERIAL && rememberLiquidGlassEffectsAllowed() && !LocalSkinSettings.current.highContrast
     val popupBackdrop = LocalSpotiPopupBackdrop.current ?: LocalLiquidGlassBackdrop.current
@@ -446,8 +395,8 @@ internal fun SpotiGlassToolbar(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
                 Box {
-                    if (sizeLevel == 3) {
-                        SpotiActionButton("도구·기능 메뉴", AppIconStyle.pick(Lucide.SlidersHorizontal, Reicons.Menu),
+                    if (sizeLevel == ToolbarConfig.BUTTON_ONLY_STAGE) {
+                        SpotiActionButton("Tools and functions", AppIcons.functions,
                             Modifier.size(52.dp).pointerInput(Unit) {
                                 detectDragGestures { change, delta -> change.consume(); onDrag(delta) }
                             }, iconOnly = true, persistentGlass = true, onClick = { menu(ToolbarMenu.FUNCTIONS) })
@@ -460,8 +409,9 @@ internal fun SpotiGlassToolbar(
                               // spring grows the bar; avoid 6 -> 3 -> 2 -> 1 rows.
                               val toolWidth = (targetWidth.value - 100f).coerceAtLeast(100f)
                               Column {
-                                val rows = if (sizeLevel == 0) listOf(spotiToolbarTools(0))
-                                    else spotiToolRows(spotiToolbarTools(sizeLevel), toolWidth)
+                                val shown = config.tools(sizeLevel)
+                                val rows = if (sizeLevel == 0) listOf(shown).filter { it.isNotEmpty() }
+                                    else spotiToolRows(shown, toolWidth)
                                 rows.forEach { tools ->
                                   if (skin == Skin.SPOTIGLASS) SpotiGlassBar(tools.map { SpotiGlassItem(it.label, it.icon(), toolColors[it.mode]) },
                                     selectedIndex = if (open && page == ToolbarMenu.AI) tools.indexOf(SpotiToolbarTool.AI)
@@ -473,7 +423,7 @@ internal fun SpotiGlassToolbar(
                               }
                             }
                             if (sizeLevel == 0) Box(Modifier.width(360.dp)) { penOptions(360.dp) }
-                            SpotiActionButton("기능", AppIconStyle.pick(Lucide.SlidersHorizontal, Reicons.Tune), selected = open,
+                            SpotiActionButton("Functions", AppIcons.functions, selected = open,
                                 modifier = Modifier.size(if (sizeLevel == 0) 44.dp else 52.dp), iconOnly = true,
                                 persistentGlass = sizeLevel != 0, plain = sizeLevel == 0,
                                 onClick = { menu(ToolbarMenu.FUNCTIONS) })
@@ -482,9 +432,7 @@ internal fun SpotiGlassToolbar(
                     if (visible.currentState || visible.targetState) {
                         val maxHeight = (LocalConfiguration.current.screenHeightDp - 140).coerceAtLeast(180).dp
                         val gap = with(androidx.compose.ui.platform.LocalDensity.current) { 8.dp.roundToPx() }
-                        val position = remember(page == ToolbarMenu.SIZES, gap) {
-                            SpotiToolbarPopupPosition(page == ToolbarMenu.SIZES, gap)
-                        }
+                        val position = remember(gap) { SpotiToolbarPopupPosition(false, gap) }
                         Popup(popupPositionProvider = position,
                             onDismissRequest = { open = false }, properties = PopupProperties(focusable = true)) {
                           androidx.compose.animation.AnimatedVisibility(visibleState = visible,
@@ -503,59 +451,50 @@ internal fun SpotiGlassToolbar(
                                         verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                             Text(when (page) {
-                                                ToolbarMenu.FUNCTIONS -> "기능"
-                                                ToolbarMenu.SIZES -> "상단 바"
-                                                ToolbarMenu.NOTES -> "노트 바꾸기"
+                                                ToolbarMenu.FUNCTIONS -> "Functions"
+                                                ToolbarMenu.NOTES -> "Notes"
                                                 ToolbarMenu.AI -> "AI"
-                                                ToolbarMenu.TOOLS -> "모든 도구"
-                                                ToolbarMenu.MORE -> "더보기"
                                             }, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                                            IconButton(onClick = { open = false }, Modifier.size(32.dp)) {
-                                                AppIcon(AppIconStyle.pick(Lucide.X, Reicons.Close), "기능 메뉴 닫기")
+                                            IconButton(onClick = { open = false }, Modifier.size(44.dp)) {
+                                                AppIcon(AppIcons.close, "Close menu")
                                             }
                                         }
-                                        if (page == ToolbarMenu.FUNCTIONS || page == ToolbarMenu.SIZES) {
-                                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                                repeat(4) { level ->
-                                                    SpotiActionButton("${level + 1}/4", modifier = Modifier.weight(1f),
-                                                        selected = sizeLevel == level, onClick = { open = false; onSizeLevel(level) })
+                                        when (page) {
+                                            ToolbarMenu.FUNCTIONS -> {
+                                                Text("Toolbar size", style = MaterialTheme.typography.labelMedium,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                ToolbarStageSelector(sizeLevel, onSelect = { open = false; onSizeLevel(it) })
+                                                // The button-only bar has no tools of its own to hand,
+                                                // so its menu carries the compact size's.
+                                                val quick = if (sizeLevel == ToolbarConfig.BUTTON_ONLY_STAGE) config.tools(2) else emptyList()
+                                                if (quick.isNotEmpty()) {
+                                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                                    SpotiMenuGrid(quick.map { tool ->
+                                                        SpotiToolbarAction(tool.label, tool.icon(), selected = tool.mode == mode) { pick(tool) }
+                                                    }, columns = 2)
+                                                }
+                                                functions.forEach { group ->
+                                                    if (group.isNotEmpty()) {
+                                                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                                        SpotiMenuGrid(group, columns = when (group.size) {
+                                                            1 -> 1
+                                                            2, 4 -> 2
+                                                            else -> 3
+                                                        }, onAction = { action ->
+                                                            if (action.opensNotes) page = ToolbarMenu.NOTES
+                                                            else { open = false; action.onClick() }
+                                                        })
+                                                    }
                                                 }
                                             }
-                                            var motion by remember { mutableStateOf(page == ToolbarMenu.SIZES) }
-                                            TextButton(onClick = { motion = !motion }) {
-                                                Text(if (motion) "전환 애니메이션 접기" else "전환 애니메이션 · ${ToolbarMotion.durationMs}ms")
+                                            ToolbarMenu.NOTES, ToolbarMenu.AI -> {
+                                                val entries = if (page == ToolbarMenu.NOTES) notes else ai
+                                                if (entries.isEmpty()) Text("No other notes yet",
+                                                    style = MaterialTheme.typography.bodyMedium)
+                                                SpotiMenuGrid(entries, onAction = { open = false; it.onClick() })
+                                                TextButton(onClick = { page = ToolbarMenu.FUNCTIONS },
+                                                    modifier = Modifier.heightIn(min = 44.dp)) { Text("Back to functions") }
                                             }
-                                            if (motion) ToolbarMotionSettings()
-                                        }
-                                        if (page == ToolbarMenu.FUNCTIONS) {
-                                            if (sizeLevel >= 2) {
-                                                SpotiMenuGrid(spotiToolbarTools(2).map { tool ->
-                                                    SpotiToolbarAction(tool.label, tool.icon(), selected = tool.mode == mode) { pick(tool) }
-                                                })
-                                                HorizontalDivider()
-                                                TextButton(onClick = { page = ToolbarMenu.TOOLS }) { Text("모든 도구") }
-                                            }
-                                            SpotiMenuGrid((actions.filter { it.slot != null } + listOf(
-                                                SpotiToolbarAction("노트 바꾸기", AppIconStyle.pick(Lucide.FileText, Reicons.Description), slot = 3) { page = ToolbarMenu.NOTES },
-                                                SpotiToolbarAction("AI", AppIconStyle.pick(Lucide.Zap, Reicons.AutoAwesome), slot = 9) { page = ToolbarMenu.AI },
-                                            )).sortedBy { it.slot }, onAction = { action ->
-                                                if (action.label != "노트 바꾸기" && action.label != "AI") open = false
-                                                action.onClick()
-                                            })
-                                            TextButton(onClick = { page = ToolbarMenu.MORE }) { Text("더보기") }
-                                        } else if (page == ToolbarMenu.TOOLS) {
-                                            SpotiMenuGrid(SpotiToolbarTool.entries.filter { it != SpotiToolbarTool.AI }.map { tool ->
-                                                SpotiToolbarAction(tool.label, tool.icon(), selected = tool.mode == mode) { pick(tool) }
-                                            })
-                                            TextButton(onClick = { page = ToolbarMenu.FUNCTIONS }) { Text("← 기능") }
-                                        } else if (page == ToolbarMenu.MORE) {
-                                            SpotiMenuGrid(actions.filter { it.slot == null }, onAction = { open = false; it.onClick() })
-                                            TextButton(onClick = { page = ToolbarMenu.FUNCTIONS }) { Text("← 기능") }
-                                        } else if (page == ToolbarMenu.NOTES || page == ToolbarMenu.AI) {
-                                            val entries = if (page == ToolbarMenu.NOTES) notes else ai
-                                            if (entries.isEmpty()) Text("다른 노트가 없습니다")
-                                            SpotiMenuGrid(entries, onAction = { open = false; it.onClick() })
-                                            TextButton(onClick = { page = ToolbarMenu.FUNCTIONS }) { Text("← 기능") }
                                         }
                                     }
                                 }
@@ -571,10 +510,10 @@ internal fun SpotiGlassToolbar(
 
 /** The bar's switch between sizes: its length, and the curve it moves on. */
 @Composable
-private fun ToolbarMotionSettings() {
+internal fun ToolbarMotionSettings() {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(
-            if (ToolbarMotion.durationMs == 0) "바로 바꾸기" else "전환 시간 ${ToolbarMotion.durationMs}ms",
+            if (ToolbarMotion.durationMs == 0) "Instant switch" else "Switch time ${ToolbarMotion.durationMs} ms",
             style = MaterialTheme.typography.bodyMedium,
         )
         SkinSlider(
@@ -612,27 +551,38 @@ private fun ThemedToolbarTools(tools: List<SpotiToolbarTool>, mode: EditMode,
         .background(scheme.onSurface.copy(alpha = 0.06f), androidx.compose.foundation.shape.RoundedCornerShape(28.dp))
         .padding(6.dp), verticalAlignment = Alignment.CenterVertically) {
         for (tool in tools) {
+            val chosen = tool.mode == mode
             Box(Modifier.weight(1f).fillMaxHeight()
-                .background(if (tool.mode == mode) scheme.primaryContainer else Color.Transparent,
+                .background(if (chosen) scheme.primaryContainer else Color.Transparent,
                     androidx.compose.foundation.shape.RoundedCornerShape(22.dp))
                 .clickable(role = Role.Tab, onClick = { onTool(tool) })
-                .semantics { contentDescription = tool.label }, contentAlignment = Alignment.Center) {
-                AppIcon(tool.icon(), null, Modifier.size(20.dp), play = tool.mode == mode,
-                    tint = colors[tool.mode] ?: if (tool.mode == mode) scheme.onPrimaryContainer else scheme.onSurface)
+                .semantics {
+                    contentDescription = tool.label
+                    selected = chosen
+                }, contentAlignment = Alignment.Center) {
+                AppIcon(tool.icon(), null, Modifier.size(20.dp), play = chosen,
+                    tint = colors[tool.mode] ?: if (chosen) scheme.onPrimaryContainer else scheme.onSurface)
             }
         }
     }
 }
 
+/** Buttons [columns] to a row, the last row padded so every button keeps one width. */
 @Composable
-private fun SpotiMenuGrid(actions: List<SpotiToolbarAction>, onAction: (SpotiToolbarAction) -> Unit = { it.onClick() }) {
+internal fun SpotiMenuGrid(
+    actions: List<SpotiToolbarAction>,
+    columns: Int = 2,
+    onAction: (SpotiToolbarAction) -> Unit = { it.onClick() },
+) {
+    val across = columns.coerceAtLeast(1)
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        actions.chunked(2).forEach { row ->
+        actions.chunked(across).forEach { row ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 row.forEach { action ->
-                    SpotiActionButton(action.label, action.icon, Modifier.weight(1f), action.selected, action.enabled) { onAction(action) }
+                    SpotiActionButton(action.label, action.icon, Modifier.weight(1f), action.selected, action.enabled,
+                        subtitle = action.disabledReason) { onAction(action) }
                 }
-                if (row.size == 1) Spacer(Modifier.weight(1f))
+                repeat(across - row.size) { Spacer(Modifier.weight(1f)) }
             }
         }
     }
