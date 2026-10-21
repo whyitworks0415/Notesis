@@ -2813,10 +2813,29 @@ internal fun sendSelectedText(context: android.content.Context, text: String, ac
         .onFailure { Toast.makeText(context, "No app can open this", Toast.LENGTH_SHORT).show() }
 }
 
-/** What came back from a capture, and the two things worth doing with it. */
+/**
+ * The size [region] will come out at for [size]: the selection's aspect ratio,
+ * held within the bitmap budget and, on a PDF page, within what the PDF renders.
+ */
+internal fun captureOutputPlan(region: CaptureRegion, size: CaptureSize): CapturePlan = planCapture(
+    region.rect.width(), region.rect.height(), size, region.screenScale,
+    BitmapBudget.bytes(), BitmapBudget.MAX_SIDE,
+    if (region.onPdf) PdfSource.cropSideLimit() else null,
+)
+
+/**
+ * What came back from a capture: how big and in what format it is kept, and
+ * what to do with it. [bitmap] is only the preview; every action gets the
+ * capture rendered again at the size picked here.
+ */
 @Composable
 private fun CaptureDialog(
     bitmap: Bitmap,
+    region: CaptureRegion?,
+    options: CaptureOptions,
+    onOptions: (CaptureOptions) -> Unit,
+    /** True while the chosen size is being rendered. */
+    busy: Boolean,
     onPaste: () -> Unit,
     onCarryLinked: (() -> Unit)? = null,
     onAttach: () -> Unit,
@@ -2824,27 +2843,83 @@ private fun CaptureDialog(
     onShare: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val plan = remember(region, options.size) { region?.let { captureOutputPlan(it, options.size) } }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("캡쳐") },
+        title = { Text("Capture") },
         text = {
-            Image(
-                bitmap = bitmap.asImageBitmap(),
-                contentDescription = null,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 320.dp),
-            )
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 260.dp),
+                )
+                if (region != null) {
+                    Spacer(Modifier.height(10.dp))
+                    Text("Size", style = MaterialTheme.typography.labelMedium)
+                    Row(Modifier.horizontalScroll(rememberScrollState())) {
+                        for (size in CaptureSize.entries) {
+                            SettingsChoiceChip(
+                                selected = options.size == size,
+                                onClick = { onOptions(options.copy(size = size)) },
+                                label = size.label,
+                                modifier = Modifier.padding(end = 6.dp),
+                            )
+                        }
+                    }
+                }
+                Text("Format", style = MaterialTheme.typography.labelMedium)
+                Row(Modifier.horizontalScroll(rememberScrollState())) {
+                    for (format in CaptureFormat.entries) {
+                        SettingsChoiceChip(
+                            selected = options.format == format,
+                            onClick = { onOptions(options.copy(format = format)) },
+                            label = format.label,
+                            modifier = Modifier.padding(end = 6.dp),
+                        )
+                    }
+                    if (options.format == CaptureFormat.JPEG) {
+                        for (quality in CaptureOptions.JPEG_QUALITIES) {
+                            SettingsChoiceChip(
+                                selected = options.jpegQuality == quality,
+                                onClick = { onOptions(options.copy(jpegQuality = quality)) },
+                                label = "Quality $quality",
+                                modifier = Modifier.padding(end = 6.dp),
+                            )
+                        }
+                    }
+                }
+                plan?.let {
+                    Text(
+                        "${it.width} × ${it.height} px",
+                        style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                    captureLimitMessage(it.limit, BitmapBudget.MAX_SIDE, PdfSource.cropSideLimit())?.let { note ->
+                        Text(note, style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.outline)
+                    }
+                }
+                if (busy) {
+                    androidx.compose.material3.LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    )
+                }
+            }
         },
-        confirmButton = { TextButton(onClick = onPaste) { Text("이 페이지에 붙이기") } },
+        confirmButton = { TextButton(onClick = onPaste, enabled = !busy) { Text("Paste on this page") } },
         dismissButton = {
             Row(Modifier.horizontalScroll(rememberScrollState())) {
-                if (onCarryLinked != null) TextButton(onClick = onCarryLinked) { Text("링크로 가져가기") }
-                TextButton(onClick = onAttach) { Text("AI에 첨부") }
-                TextButton(onClick = onSave) { Text("PNG 저장") }
-                TextButton(onClick = onShare) { Text("공유") }
-                TextButton(onClick = onDismiss) { Text("닫기") }
+                if (onCarryLinked != null) {
+                    TextButton(onClick = onCarryLinked, enabled = !busy) { Text("Carry as link") }
+                }
+                TextButton(onClick = onAttach, enabled = !busy) { Text("Attach to AI") }
+                TextButton(onClick = onSave, enabled = !busy) { Text("Save") }
+                TextButton(onClick = onShare, enabled = !busy) { Text("Share") }
+                TextButton(onClick = onDismiss) { Text("Close") }
             }
         },
     )
@@ -3458,6 +3533,10 @@ private fun NoteScreen(
     var replacingText by remember { mutableStateOf<PageImage?>(null) }
     var textPosition by remember { mutableStateOf<Triple<Int, Float, Float>?>(null) }
     var captured by remember { mutableStateOf<Bitmap?>(null) }
+    // How captures come out, kept between them: picking 4x once is picking it.
+    val captureOptionPrefs = remember { context.getSharedPreferences("capture", android.content.Context.MODE_PRIVATE) }
+    var captureOptions by remember { mutableStateOf(CaptureOptions.decode(captureOptionPrefs.getString("options", null))) }
+    var captureBusy by remember { mutableStateOf(false) }
     /** The site the side panel is showing, or null while it is closed. */
     var webUrl by remember { mutableStateOf<String?>(null) }
     // One WebView for the whole note. Closing the panel used to destroy it, so
@@ -3579,6 +3658,27 @@ private fun NoteScreen(
         mutableStateOf(with(density) { Size(340.dp.toPx(), 440.dp.toPx()) })
     }
     var referenceStretch by remember { mutableFloatStateOf(1f) }
+    // How far the hand has carried the panel past the bottom edge in this
+    // drag. Let go far enough past it and the panel is put down (closed);
+    // short of that it stays exactly where it was let go. Dragging down
+    // used to be read as "close" from the first few pixels, so a panel could
+    // not be moved down at all - it froze, then vanished.
+    var referenceOvershoot by remember { mutableFloatStateOf(0f) }
+    // A free resize from one of the panel's handles: the outline of the size
+    // it will be, and the drag so far. Folded into the size when the hand
+    // lifts, so the page inside is laid out once, at its new size.
+    var referenceDraft by remember { mutableStateOf<Size?>(null) }
+    var referenceResizeDrag by remember { mutableStateOf(Offset.Zero) }
+    fun resizeReference(dx: Float, dy: Float) {
+        val minSize = with(density) { REFERENCE_MIN_SIZE.toPx() }
+        val drag = referenceResizeDrag + Offset(dx, dy)
+        referenceResizeDrag = drag
+        val (w, h) = freeResize(
+            referenceSize.width, referenceSize.height, drag.x, drag.y, minSize,
+            containerSize.width - referenceOffset.x, containerSize.height - referenceOffset.y,
+        )
+        referenceDraft = Size(w, h)
+    }
     // Three fingers on the panel itself, once it is open: the spread is how
     // much it grows, the drag is where it goes. One function because the
     // panel's own view and the gesture that opened it both end up calling it.
@@ -3610,12 +3710,12 @@ private fun NoteScreen(
         val oldH = referenceSize.height * oldStretch
         val maxX = (containerSize.width - w).coerceAtLeast(0f)
         val maxY = (containerSize.height - h).coerceAtLeast(0f)
-        referenceOffset = Offset(
-            // 핀치 중심을 화면에 고정합니다. 좌상단 고정 확대는 손가락과
-            // 팝업이 서로 다른 방향으로 미끄러져 보였습니다.
-            (referenceOffset.x + panX - (w - oldW) / 2f).coerceIn(0f, maxX),
-            (referenceOffset.y + panY - (h - oldH) / 2f).coerceIn(0f, maxY),
-        )
+        // 핀치 중심을 화면에 고정합니다. 좌상단 고정 확대는 손가락과
+        // 팝업이 서로 다른 방향으로 미끄러져 보였습니다.
+        val (top, overshoot) = panelTopWithOvershoot(
+            referenceOffset.y, referenceOvershoot, panY - (h - oldH) / 2f, maxY)
+        referenceOffset = Offset((referenceOffset.x + panX - (w - oldW) / 2f).coerceIn(0f, maxX), top)
+        referenceOvershoot = overshoot
     }
     val maxBarWidth = with(density) {
         (containerSize.width.takeIf { it > 0 } ?: Int.MAX_VALUE).toDp()
@@ -3632,6 +3732,11 @@ private fun NoteScreen(
     var ruler by remember { mutableStateOf<RulerKind?>(null) }
     var rulerAngle by remember { mutableStateOf(false) }
     var showPages by remember { mutableStateOf(false) }
+    // The page panel's body search. Held here, not in the panel, so the query
+    // and the place in its results outlive the panel closing under the pen.
+    val noteSearch = remember(note.id) {
+        NoteSearchState(store.inkIndexFile(note.id, "search").parentFile ?: context.filesDir)
+    }
     var goToPage by remember { mutableStateOf(false) }
     var showSkinSettings by remember { mutableStateOf(false) }
     var pageLayout by remember { mutableStateOf(penStore.pageLayoutOf(note.id)) }
@@ -4165,6 +4270,10 @@ private fun NoteScreen(
                     view.laserMode = laser
                     view.onPullForPage = { pullingForPage = it }
                     view.onEditTextBox = { replacingText = canvas?.selectedTextBox(); showTextBox = true }
+                    // Writing puts the page panel away; using it, scrolling and
+                    // zooming do not. Read when it fires, not here, so this
+                    // update block does not rerun every time the panel toggles.
+                    view.onWritingStarted = { if (showPages) showPages = false }
                     view.shapeCornerRadius = shapeCorner
                     if (mode != EditMode.ERASE && mode in PenStore.DEFAULTS) beforeEraser = mode
                     view.onEraseFinished = if (gestures.eraserReturns && mode == EditMode.ERASE) {
@@ -4227,6 +4336,8 @@ private fun NoteScreen(
                                 true
                             }
                             command && keyCode == android.view.KeyEvent.KEYCODE_F -> {
+                                // Find means the body search: open the panel on it.
+                                noteSearch.panelTab = PAGE_PANEL_SEARCH_TAB
                                 showPages = true
                                 true
                             }
@@ -4570,57 +4681,101 @@ private fun NoteScreen(
             )
         }
 
-        captured?.let { bitmap ->
+        captured?.let { preview ->
+            /**
+             * Renders the capture again at the size picked in the dialog and
+             * hands it on. Off the main thread: a 4096 px render of a dense page
+             * is a visible pause. Dropped if the dialog was closed meanwhile.
+             */
+            fun withOutput(use: (Bitmap) -> Unit) {
+                val view = canvas
+                val region = view?.lastCapture
+                if (view == null || region == null) { use(preview); return }
+                val options = captureOptions
+                captureBusy = true
+                scope.launch {
+                    val plan = captureOutputPlan(region, options.size)
+                    val output = withContext(Dispatchers.Default) { view.renderCapture(region, plan.scale) }
+                    captureBusy = false
+                    if (captured == null) return@launch
+                    if (output == null) {
+                        Toast.makeText(context, "Couldn't render the capture at this size", Toast.LENGTH_SHORT).show()
+                    } else use(output)
+                }
+            }
             CaptureDialog(
-                bitmap = bitmap,
+                bitmap = preview,
+                region = canvas?.lastCapture,
+                options = captureOptions,
+                onOptions = {
+                    captureOptions = it
+                    captureOptionPrefs.edit().putString("options", it.encode()).apply()
+                },
+                busy = captureBusy,
                 onPaste = {
-                    val added = store.addImage(note.id, bitmap)
-                    if (added != null) {
-                        canvas?.insertImage(added.first, added.second)
-                        mode = EditMode.IMAGE
-                        edits++
+                    withOutput { bitmap ->
+                        val added = store.addImage(note.id, bitmap)
+                        if (added != null) {
+                            canvas?.insertImage(added.first, added.second)
+                            mode = EditMode.IMAGE
+                            edits++
+                        }
+                        captured = null
                     }
-                    captured = null
                 },
                 onCarryLinked = {
-                    val view = canvas
-                    val source = view?.lastCapturePage ?: -1
-                    val pageId = view?.pageIdAt(source)
-                    if (pageId != null) {
-                        SnipLink.pending = SnipLink.Snip(bitmap, note.id, note.title, pageId, source)
-                        Toast.makeText(context, "붙일 노트·쪽으로 가서 \"여기에 붙이기\"를 누르세요", Toast.LENGTH_LONG).show()
+                    withOutput { bitmap ->
+                        val view = canvas
+                        val source = view?.lastCapturePage ?: -1
+                        val pageId = view?.pageIdAt(source)
+                        if (pageId != null) {
+                            SnipLink.pending = SnipLink.Snip(bitmap, note.id, note.title, pageId, source)
+                            Toast.makeText(context, "Go to the note and page to paste it into, then tap \"Paste here\"",
+                                Toast.LENGTH_LONG).show()
+                        }
+                        captured = null
                     }
-                    captured = null
                 },
                 onAttach = {
-                    val uri = captureUri(context, bitmap)
-                    if (uri == null) {
-                        Toast.makeText(context, "캡쳐를 저장하지 못했습니다", Toast.LENGTH_SHORT).show()
-                    } else {
-                        pendingAttachment.value = uri
-                        if (webUrl == null) webUrl = AI_SITES.first().second
-                        // Naming the two taps: the sheet behind "+" offers a
-                        // camera and a photo picker too, and neither of those
-                        // is the file chooser this capture is waiting for.
-                        Toast.makeText(
-                            context,
-                            "대화창의 + 를 누르고 \"파일\"을 고르세요",
-                            Toast.LENGTH_LONG,
-                        ).show()
+                    withOutput { bitmap ->
+                        val options = captureOptions
+                        val uri = captureUri(context, bitmap, options.format, options.jpegQuality)
+                        if (uri == null) {
+                            Toast.makeText(context, "Couldn't save the capture", Toast.LENGTH_SHORT).show()
+                        } else {
+                            pendingAttachment.value = uri
+                            if (webUrl == null) webUrl = AI_SITES.first().second
+                            // Naming the two taps: the sheet behind "+" offers a
+                            // camera and a photo picker too, and neither of those
+                            // is the file chooser this capture is waiting for.
+                            Toast.makeText(
+                                context,
+                                "Tap + in the chat and choose \"Files\"",
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                        captured = null
                     }
-                    captured = null
                 },
                 onShare = {
-                    shareBitmap(context, bitmap)
-                    captured = null
+                    withOutput { bitmap ->
+                        shareBitmap(context, bitmap, captureOptions.format, captureOptions.jpegQuality)
+                        captured = null
+                    }
                 },
                 onSave = {
-                    captured = null
-                    scope.launch {
-                        val ok = withContext(Dispatchers.IO) {
-                            saveToGallery(context, "Notesis-capture-${System.currentTimeMillis()}.png", bitmap)
+                    withOutput { bitmap ->
+                        captured = null
+                        val options = captureOptions
+                        scope.launch {
+                            val ok = withContext(Dispatchers.IO) {
+                                saveToGallery(context,
+                                    "Notesis-capture-${System.currentTimeMillis()}.${options.format.extension}",
+                                    bitmap, options.format, options.jpegQuality)
+                            }
+                            Toast.makeText(context, if (ok) "Saved to the gallery" else "Couldn't save the capture",
+                                Toast.LENGTH_SHORT).show()
                         }
-                        Toast.makeText(context, if (ok) "갤러리에 저장했습니다" else "PNG 저장 실패", Toast.LENGTH_SHORT).show()
                     }
                 },
                 onDismiss = { captured = null },
@@ -4642,7 +4797,8 @@ private fun NoteScreen(
                         contentScale = ContentScale.Crop,
                     )
                     Text(
-                        if (snip.noteId == note.id) " ${snip.pageIndex + 1}쪽 캡처" else " ${snip.noteTitle} ${snip.pageIndex + 1}쪽 캡처",
+                        if (snip.noteId == note.id) " Capture from page ${snip.pageIndex + 1}"
+                        else " Capture from ${snip.noteTitle}, page ${snip.pageIndex + 1}",
                         style = MaterialTheme.typography.bodySmall,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -4656,8 +4812,8 @@ private fun NoteScreen(
                             edits++
                         }
                         SnipLink.pending = null
-                    }) { Text("여기에 붙이기") }
-                    TextButton(onClick = { SnipLink.pending = null }) { Text("취소") }
+                    }) { Text("Paste here") }
+                    TextButton(onClick = { SnipLink.pending = null }) { Text("Cancel") }
                 }
             }
         }
@@ -5352,9 +5508,39 @@ private fun NoteScreen(
                 },
                 onExportPages = { indices ->
                     exportingPages = canvas?.snapshotPages(indices)
-                    if (exportingPages != null) savePagesPdf.launch(safeFileName(note.title) + "-선택.pdf")
+                    if (exportingPages != null) savePagesPdf.launch(safeFileName(note.title) + "-pages.pdf")
                 },
                 onSendPages = { indices, move -> sendingPages = indices to move },
+                search = noteSearch,
+                searchView = canvas,
+                onSearchHit = { hit ->
+                    val view = canvas
+                    val pages = view?.document?.pages
+                    if (view != null && pages != null) {
+                        // By id: the page may have moved since the search ran.
+                        val index = pages.indexOfFirst { it.id == hit.pageId }.takeIf { it >= 0 } ?: hit.pageIndex
+                        val page = pages.getOrNull(index)
+                        val box = hit.box
+                        if (box != null) {
+                            view.showSearchHit(index, listOf(android.graphics.RectF(box.left, box.top, box.right, box.bottom)))
+                        } else if (hit.source == SearchSource.PDF && page != null && page.pdfPageIndex >= 0) {
+                            // The PDF knows where its own text is; asking it opens
+                            // one page off the main thread. Until it answers, the
+                            // page is already in view.
+                            view.scrollToPage(index)
+                            val pdfIndex = page.pdfPageIndex
+                            val query = noteSearch.query.trim()
+                            scope.launch {
+                                val rects = withContext(Dispatchers.IO) {
+                                    view.pdfMatchBounds(pdfIndex, query, hit.occurrence)
+                                }
+                                if (noteSearch.hits.getOrNull(noteSearch.selected) == hit) view.showSearchHit(index, rects)
+                            }
+                        } else {
+                            view.showSearchHit(index, emptyList())
+                        }
+                    }
+                },
             )
         }
 
@@ -5410,6 +5596,21 @@ private fun NoteScreen(
                 offset = referenceOffset,
                 size = referenceSize,
                 stretch = referenceStretch,
+                dismissProgress = (referenceOvershoot / with(density) { REFERENCE_DISMISS_DRAG.toPx() })
+                    .coerceIn(0f, 1f),
+                draft = referenceDraft,
+                onResize = { dx, dy -> resizeReference(dx, dy) },
+                onResizeEnd = { view ->
+                    val draft = referenceDraft
+                    referenceDraft = null
+                    referenceResizeDrag = Offset.Zero
+                    if (draft != null && draft != referenceSize) {
+                        val widthFactor = draft.width / referenceSize.width
+                        referenceSize = draft
+                        // Spent by the view when the new size arrives, as with a spread.
+                        if (abs(widthFactor - 1f) > 0.001f) view?.onNextResize(widthFactor, fitInstead = referenceFit)
+                    }
+                },
                 onStretchEnd = { view ->
                     // The stretch becomes the size. What happens to the page is
                     // left with the view to do when the new size actually
@@ -5427,6 +5628,10 @@ private fun NoteScreen(
                         referenceStretch = 1f
                         view?.onNextResize(factor, fitInstead = false)
                     }
+                    // Put down: let go well past the bottom edge.
+                    val dismiss = referenceOvershoot >= with(density) { REFERENCE_DISMISS_DRAG.toPx() }
+                    referenceOvershoot = 0f
+                    dismiss
                 },
                 fit = referenceFit,
                 onFit = {
@@ -5447,7 +5652,13 @@ private fun NoteScreen(
                     penStore.setLastPage(activeReferenceNoteId, it)
                 },
                 onDrag = { x, y, spread -> moveReference(x, y, spread) },
-                onClose = { referenceStretch = 1f; referenceOpen = false },
+                onClose = {
+                    referenceStretch = 1f
+                    referenceOvershoot = 0f
+                    referenceDraft = null
+                    referenceResizeDrag = Offset.Zero
+                    referenceOpen = false
+                },
             ) }
         }
     }
@@ -5815,17 +6026,23 @@ private fun barPlacement(offset: Offset?, bar: IntSize, container: IntSize): Int
  * Writes [bitmap] into the shared Pictures/Notesis album, where the gallery
  * finds it. Scoped storage (minSdk 29) needs no permission for this.
  */
-internal fun saveToGallery(context: android.content.Context, name: String, bitmap: Bitmap): Boolean {
+internal fun saveToGallery(
+    context: android.content.Context,
+    name: String,
+    bitmap: Bitmap,
+    format: CaptureFormat = CaptureFormat.PNG,
+    jpegQuality: Int = 90,
+): Boolean {
     val resolver = context.contentResolver
     val values = android.content.ContentValues().apply {
         put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, name)
-        put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/png")
+        put(android.provider.MediaStore.Images.Media.MIME_TYPE, format.mime)
         put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Notesis")
         put(android.provider.MediaStore.Images.Media.IS_PENDING, 1)
     }
     val uri = resolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return false
     val ok = runCatching {
-        resolver.openOutputStream(uri)?.use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) } == true
+        resolver.openOutputStream(uri)?.use { compressCapture(bitmap, format, jpegQuality, it) } == true
     }.getOrDefault(false)
     // A half-written picture would sit in the gallery as a broken tile.
     if (!ok) { resolver.delete(uri, null, null); return false }
@@ -5835,13 +6052,25 @@ internal fun saveToGallery(context: android.content.Context, name: String, bitma
     return true
 }
 
+/** [bitmap] into [out] as [format]; PNG ignores [jpegQuality]. */
+private fun compressCapture(bitmap: Bitmap, format: CaptureFormat, jpegQuality: Int, out: java.io.OutputStream): Boolean =
+    when (format) {
+        CaptureFormat.PNG -> bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+        CaptureFormat.JPEG -> bitmap.compress(Bitmap.CompressFormat.JPEG, jpegQuality.coerceIn(1, 100), out)
+    }
+
 /** A capture written where another app is allowed to read it. */
-private fun captureUri(context: android.content.Context, bitmap: Bitmap): Uri? {
+private fun captureUri(
+    context: android.content.Context,
+    bitmap: Bitmap,
+    format: CaptureFormat = CaptureFormat.PNG,
+    jpegQuality: Int = 90,
+): Uri? {
     val shared = java.io.File(context.cacheDir, "shared").apply { mkdirs() }
-    val file = java.io.File(shared, "capture.png")
+    val file = java.io.File(shared, "capture.${format.extension}")
     val written = runCatching {
-        file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 95, it) }
-    }.isSuccess
+        file.outputStream().use { compressCapture(bitmap, format, jpegQuality, it) }
+    }.getOrDefault(false)
     if (!written) return null
     return androidx.core.content.FileProvider.getUriForFile(
         context,
@@ -5865,14 +6094,19 @@ internal fun shareFile(context: android.content.Context, file: java.io.File, mim
 }
 
 /** Hands the captured region to whatever the user picks in the share sheet. */
-private fun shareBitmap(context: android.content.Context, bitmap: Bitmap) {
-    val uri = captureUri(context, bitmap) ?: return
+private fun shareBitmap(
+    context: android.content.Context,
+    bitmap: Bitmap,
+    format: CaptureFormat = CaptureFormat.PNG,
+    jpegQuality: Int = 90,
+) {
+    val uri = captureUri(context, bitmap, format, jpegQuality) ?: return
     val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-        type = "image/png"
+        type = format.mime
         putExtra(android.content.Intent.EXTRA_STREAM, uri)
         addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
-    context.startActivity(android.content.Intent.createChooser(intent, "캡쳐 공유"))
+    context.startActivity(android.content.Intent.createChooser(intent, "Share capture"))
 }
 
 /**
@@ -5913,8 +6147,20 @@ private fun ReferencePanel(
     size: Size,
     /** What the whole panel is scaled by while a spread is in progress. */
     stretch: Float,
-    /** The spread has ended: fold [stretch] into the size, given this panel's view. */
-    onStretchEnd: (InkCanvasView?) -> Unit,
+    /**
+     * The three-finger drag has ended: fold [stretch] into the size, given this
+     * panel's view. True means the panel was let go past the bottom edge, and
+     * is put down.
+     */
+    onStretchEnd: (InkCanvasView?) -> Boolean,
+    /** 0 to 1: how close the panel, dragged past the bottom edge, is to being put down on release. */
+    dismissProgress: Float = 0f,
+    /** The size a resize handle is being dragged to, drawn as an outline; null when none is held. */
+    draft: Size? = null,
+    /** A resize handle moved by this much (pixels, each axis free). */
+    onResize: (Float, Float) -> Unit = { _, _ -> },
+    /** The resize handle was let go: take the [draft] size, given this panel's view. */
+    onResizeEnd: (InkCanvasView?) -> Unit = {},
     /**
      * Whether the page is fitted to the panel's width - on opening a note, on
      * changing page, and after a resize. Off, it keeps whatever zoom it was put
@@ -5936,6 +6182,8 @@ private fun ReferencePanel(
     var loadAttempt by remember { mutableIntStateOf(0) }
     val latestDrag by rememberUpdatedState(onDrag)
     val latestStretchEnd by rememberUpdatedState(onStretchEnd)
+    val latestResize by rememberUpdatedState(onResize)
+    val latestResizeEnd by rememberUpdatedState(onResizeEnd)
     val latestClose by rememberUpdatedState(onClose)
     fun closePanel() {
         val ready: () -> Unit = {
@@ -6042,12 +6290,26 @@ private fun ReferencePanel(
         Modifier
             .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
             .size(with(density) { size.width.toDp() }, with(density) { size.height.toDp() })
+            // Carried past the bottom edge, the panel gives a little and fades:
+            // let go now and it is put down; bring it back and it is not.
+            .graphicsLayer {
+                translationY = dismissProgress * REFERENCE_DISMISS_SAG.toPx()
+                alpha = 1f - 0.45f * dismissProgress
+            }
             .drawWithContent {
                 drawContent()
                 if (abs(stretch - 1f) > 0.001f) {
                     drawRect(
                         color = Color(0xFF3B7DDD),
                         size = Size(this.size.width * stretch, this.size.height * stretch),
+                        style = Stroke(width = 2.dp.toPx()),
+                    )
+                }
+                // A free resize in progress: the size it will be, outlined.
+                if (draft != null) {
+                    drawRect(
+                        color = Color(0xFF3B7DDD),
+                        size = draft,
                         style = Stroke(width = 2.dp.toPx()),
                     )
                 }
@@ -6079,7 +6341,7 @@ private fun ReferencePanel(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.widthIn(max = 120.dp),
                         )
-                        Icon(Reicons.ArrowDropDown, contentDescription = "다른 노트")
+                        Icon(Reicons.ArrowDropDown, contentDescription = "Other notes")
                     }
                     DropdownMenu(
                         noteMenu,
@@ -6094,7 +6356,7 @@ private fun ReferencePanel(
                             value = noteQuery,
                             onValueChange = { noteQuery = it },
                             singleLine = true,
-                            placeholder = { Text("노트 찾기") },
+                            placeholder = { Text("Find a note") },
                             leadingIcon = { Icon(Reicons.Search, contentDescription = null) },
                             modifier = Modifier
                                 .padding(horizontal = 12.dp, vertical = 4.dp)
@@ -6105,7 +6367,7 @@ private fun ReferencePanel(
                         }
                         if (matches.isEmpty()) {
                             DropdownMenuItem(
-                                text = { Text("결과가 없습니다") },
+                                text = { Text("No results") },
                                 enabled = false,
                                 onClick = {},
                             )
@@ -6148,7 +6410,7 @@ private fun ReferencePanel(
                         DropdownMenu(pageMenu, onDismissRequest = { pageMenu = false }) {
                             for (index in 0 until pageCount) {
                                 DropdownMenuItem(
-                                    text = { Text("${index + 1}쪽") },
+                                    text = { Text("Page ${index + 1}") },
                                     trailingIcon = {
                                         if (index == page) {
                                             Icon(Reicons.Check, contentDescription = null)
@@ -6167,7 +6429,7 @@ private fun ReferencePanel(
                 IconButton(onClick = { onFit(!fit) }) {
                     Icon(
                         Reicons.FitScreen,
-                        contentDescription = "크기에 맞추기",
+                        contentDescription = "Fit to width",
                         tint = if (fit) {
                             MaterialTheme.colorScheme.primary
                         } else {
@@ -6186,14 +6448,14 @@ private fun ReferencePanel(
                     },
                     onClick = ::closePanel,
                 ) {
-                    Icon(Reicons.Close, contentDescription = "참고 화면 닫기")
+                    Icon(Reicons.Close, contentDescription = "Close reference")
                 }
             }
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 val ready = opened
                 if (ready == null) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        if (loadFailed) TextButton(onClick = { loadAttempt++ }) { Text("노트 열기 실패 · 다시 시도") }
+                        if (loadFailed) TextButton(onClick = { loadAttempt++ }) { Text("Couldn't open the note · Retry") }
                         else CircularProgressIndicator()
                     }
                 } else {
@@ -6238,9 +6500,12 @@ private fun ReferencePanel(
                                 // open a reference panel of its own.
                                 referenceOpen = true
                                 onReferenceDrag = { x, y, factor -> latestDrag(x, y, factor) }
-                                onReferenceDragEnd = { latestStretchEnd(this) }
+                                onReferenceDragEnd = { if (latestStretchEnd(this)) closePanel() }
                                 onCloseReference = { closePanel() }
-                                closeReferenceOnDownwardDrag = true
+                                // Down is a direction like any other: the panel
+                                // follows the hand there too, and is put down only
+                                // when let go past the bottom edge (see onStretchEnd).
+                                closeReferenceOnDownwardDrag = false
                                 onUndo = { undo(); popupEdits++ }
                                 onRedo = { redo(); popupEdits++ }
                                 view = this
@@ -6295,6 +6560,64 @@ private fun ReferencePanel(
         }
 
     }
+    // Free resize: the right edge, the bottom edge and the corner between
+    // them, each axis on its own, so the panel takes whatever shape the hand
+    // drags it to. Hidden while a three-finger spread is scaling the panel.
+    if (abs(stretch - 1f) <= 0.001f) {
+        val resize: (Float, Float) -> Unit = { dx, dy -> latestResize(dx, dy) }
+        val resizeEnd: () -> Unit = { latestResizeEnd(view) }
+        ReferenceResizeGrip(horizontal = true, vertical = false, onDrag = resize, onEnd = resizeEnd,
+            modifier = Modifier.align(Alignment.CenterEnd).size(18.dp, 64.dp))
+        ReferenceResizeGrip(horizontal = false, vertical = true, onDrag = resize, onEnd = resizeEnd,
+            modifier = Modifier.align(Alignment.BottomCenter).size(64.dp, 18.dp))
+        ReferenceResizeGrip(horizontal = true, vertical = true, onDrag = resize, onEnd = resizeEnd,
+            modifier = Modifier.align(Alignment.BottomEnd).size(30.dp))
+    }
+    }
+}
+
+/**
+ * One of the reference panel's resize handles: dragging it moves the panel's
+ * right edge ([horizontal]), its bottom edge ([vertical]) or both. A small
+ * mark rather than a bar, so it does not take a strip of the page.
+ */
+@Composable
+private fun ReferenceResizeGrip(
+    horizontal: Boolean,
+    vertical: Boolean,
+    onDrag: (Float, Float) -> Unit,
+    onEnd: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val color = MaterialTheme.colorScheme.primary.copy(alpha = 0.72f)
+    Canvas(
+        modifier
+            .semantics { contentDescription = "Resize" }
+            .pointerInput(horizontal, vertical) {
+                detectDragGestures(onDragEnd = onEnd, onDragCancel = onEnd) { change, amount ->
+                    change.consume()
+                    onDrag(if (horizontal) amount.x else 0f, if (vertical) amount.y else 0f)
+                }
+            },
+    ) {
+        val thick = 3.dp.toPx()
+        val round = androidx.compose.ui.graphics.StrokeCap.Round
+        when {
+            horizontal && vertical -> {
+                // Two short diagonals tucked into the corner, as on a window.
+                val inset = 7.dp.toPx()
+                val right = size.width - inset
+                val bottom = size.height - inset
+                for (step in 1..2) {
+                    val reach = step * 6.dp.toPx()
+                    drawLine(color, Offset(right - reach, bottom), Offset(right, bottom - reach), thick, round)
+                }
+            }
+            horizontal -> drawLine(color, Offset(size.width / 2f, size.height * 0.25f),
+                Offset(size.width / 2f, size.height * 0.75f), thick, round)
+            else -> drawLine(color, Offset(size.width * 0.25f, size.height / 2f),
+                Offset(size.width * 0.75f, size.height / 2f), thick, round)
+        }
     }
 }
 
@@ -6517,7 +6840,7 @@ private fun PageScrubber(
                         .background(Color.White)
                         .border(0.5.dp, scheme.outlineVariant, RoundedCornerShape(8.dp)),
                 ) {
-                    Image(bitmap.asImageBitmap(), contentDescription = "${page + 1}쪽 미리보기",
+                    Image(bitmap.asImageBitmap(), contentDescription = "Page ${page + 1} preview",
                         modifier = Modifier.fillMaxSize())
                     Text(
                         "${page + 1}",
@@ -6549,6 +6872,8 @@ private fun PageScrubber(
 }
 
 private val SCRUBBER_PREVIEW_WIDTH = 120.dp
+/** The page panel's tabs: pages, contents, masks, then the body search. */
+private const val PAGE_PANEL_SEARCH_TAB = 3
 private const val SCRUBBER_THUMBNAIL_PX = 240
 private const val THUMBNAIL_ATTEMPTS = 40
 private const val THUMBNAIL_RETRY_MS = 80L
@@ -6592,9 +6917,15 @@ private fun PageSidebar(
     onRenameMask: (Int, Int) -> Unit = { _, _ -> },
     onAnswerMask: (Int, Int, Boolean) -> Unit = { _, _, _ -> },
     onStudy: (Int, Boolean) -> Unit = { _, _ -> },
+    /** The in-note body search, kept by the note screen; null leaves the Search tab out. */
+    search: NoteSearchState? = null,
+    searchView: InkCanvasView? = null,
+    onSearchHit: (NoteSearchHit) -> Unit = {},
 ) {
     val pages = document?.pages ?: return
-    var tab by remember { mutableIntStateOf(0) }
+    // Kept with the search, so a panel that writing put away opens again on
+    // the tab it was left on - the search, most of all.
+    var tab by remember { mutableIntStateOf(search?.panelTab ?: 0) }
     var editingPage by remember { mutableStateOf<Page?>(null) }
     var bookmarksOnly by remember { mutableStateOf(false) }
     var tocQuery by remember { mutableStateOf("") }
@@ -6622,12 +6953,12 @@ private fun PageSidebar(
         val index = pages.indexOf(page)
         if (index >= 0) AlertDialog(
             onDismissRequest = { editingPage = null },
-            title = { Text("${index + 1}쪽 목차") },
+            title = { Text("Contents entry for page ${index + 1}") },
             text = {
                 OutlinedTextField(
                     value = tocName,
                     onValueChange = { tocName = it },
-                    label = { Text("목차 이름") },
+                    label = { Text("Entry name") },
                     singleLine = true,
                 )
             },
@@ -6635,10 +6966,10 @@ private fun PageSidebar(
                 TextButton(onClick = {
                     onSetToc(index, tocName)
                     editingPage = null
-                }, enabled = tocName.isNotBlank()) { Text("저장") }
+                }, enabled = tocName.isNotBlank()) { Text("Save") }
             },
             dismissButton = {
-                TextButton(onClick = { editingPage = null }) { Text("취소") }
+                TextButton(onClick = { editingPage = null }) { Text("Cancel") }
             },
         )
     }
@@ -6651,16 +6982,24 @@ private fun PageSidebar(
     ) {
         Column {
             LiquidSegmentedControl(
-                segments = listOf("페이지", "목차", "마스킹"),
+                segments = if (search != null) listOf("Pages", "TOC", "Masks", "Search")
+                    else listOf("Pages", "TOC", "Masks"),
                 selectedIndex = tab,
-                onSelected = { tab = it },
+                onSelected = { tab = it; search?.panelTab = it },
                 useLiquidGlass = LocalSkin.current.isRefractive,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(8.dp),
             )
-            LazyColumn(
-                Modifier.weight(1f),
+            val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+            if (tab == PAGE_PANEL_SEARCH_TAB && search != null) NoteSearchPanel(
+                state = search,
+                view = searchView,
+                onOpen = onSearchHit,
+                modifier = Modifier.weight(1f),
+            ) else LazyColumn(
+                Modifier.weight(1f).glassEdges(listState),
+                state = listState,
                 contentPadding = PaddingValues(10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -6669,7 +7008,7 @@ private fun PageSidebar(
                         OutlinedTextField(
                             value = tocQuery,
                             onValueChange = { tocQuery = it },
-                            placeholder = { Text("목차 검색") },
+                            placeholder = { Text("Search contents") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                         )
@@ -6681,13 +7020,13 @@ private fun PageSidebar(
                             FilterChip(
                                 selected = bookmarksOnly,
                                 onClick = { bookmarksOnly = !bookmarksOnly },
-                                label = { Text("북마크만") },
+                                label = { Text("Bookmarks") },
                             )
                             Spacer(Modifier.weight(1f))
                             TextButton(onClick = { choosing = !choosing; chosen.clear() }) {
-                                Text(if (choosing) "선택 끝" else "선택")
+                                Text(if (choosing) "Done" else "Select")
                             }
-                            TextButton(onClick = { goingTo = true }) { Text("쪽 이동") }
+                            TextButton(onClick = { goingTo = true }) { Text("Go to") }
                         }
                     }
                 }
@@ -6695,14 +7034,14 @@ private fun PageSidebar(
                 if (tab == 1 && pdfOutline.isNotEmpty()) {
                     item {
                         FilterChip(selected = showPdfOutline, onClick = { showPdfOutline = !showPdfOutline },
-                            label = { Text("PDF 목차 ${pdfOutline.size}") })
+                            label = { Text("PDF contents ${pdfOutline.size}") })
                     }
                     if (showPdfOutline) items(pdfOutline.filter {
                         tocQuery.isBlank() || it.title.contains(tocQuery.trim(), ignoreCase = true)
                     }) { entry ->
                         val target = pages.indexOfFirst { it.background == PageBackground.PDF && it.pdfPageIndex == entry.pdfPage }
                         Text(
-                            entry.title.ifBlank { "(제목 없음)" } + "  · ${entry.pdfPage + 1}",
+                            entry.title.ifBlank { "(Untitled)" } + "  · ${entry.pdfPage + 1}",
                             style = MaterialTheme.typography.bodySmall,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
@@ -6714,12 +7053,12 @@ private fun PageSidebar(
                     }
                 }
                 if (tab == 1 && pages.any { it.tocTitle != null } && pdfOutline.isNotEmpty()) {
-                    item { Text("내 목차", style = MaterialTheme.typography.labelMedium) }
+                    item { Text("My contents", style = MaterialTheme.typography.labelMedium) }
                 }
                 if (tab == 1 && pages.none { it.tocTitle != null } && pdfOutline.isEmpty()) {
                     item {
                         Text(
-                            "등록된 목차가 없습니다. 현재 쪽을 추가하거나 페이지를 길게 눌러 설정하세요.",
+                            "No contents yet. Add the current page, or long-press a page to set one.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.outline,
                             modifier = Modifier.padding(8.dp),
@@ -6746,7 +7085,7 @@ private fun PageSidebar(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Checkbox(checked = page.id in chosen, onCheckedChange = null)
-                            Text("${index + 1}쪽", style = MaterialTheme.typography.titleSmall)
+                            Text("Page ${index + 1}", style = MaterialTheme.typography.titleSmall)
                         }
                     } else if (tab == 0) {
                         PageChip(
@@ -6805,13 +7144,13 @@ private fun PageSidebar(
                     val any = chosen.isNotEmpty()
                     TextButton(enabled = any && chosen.size < pages.size, onClick = {
                         onDeletePages(chosenIndices()); chosen.clear()
-                    }) { Text("삭제") }
-                    TextButton(enabled = any, onClick = { onDuplicatePages(chosenIndices()); chosen.clear() }) { Text("복제") }
+                    }) { Text("Delete") }
+                    TextButton(enabled = any, onClick = { onDuplicatePages(chosenIndices()); chosen.clear() }) { Text("Duplicate") }
                     TextButton(enabled = any, onClick = { onExportPages(chosenIndices()) }) { Text("PDF") }
-                    TextButton(enabled = any, onClick = { onSendPages(chosenIndices(), false) }) { Text("복사…") }
+                    TextButton(enabled = any, onClick = { onSendPages(chosenIndices(), false) }) { Text("Copy to…") }
                     TextButton(enabled = any && chosen.size < pages.size, onClick = {
                         onSendPages(chosenIndices(), true); chosen.clear()
-                    }) { Text("이동…") }
+                    }) { Text("Move to…") }
                 }
             } else if (tab == 0) {
                 TextButton(
@@ -6821,7 +7160,7 @@ private fun PageSidebar(
                         .padding(bottom = 6.dp),
                 ) {
                     Icon(Reicons.Add, contentDescription = null)
-                    Text(" 페이지")
+                    Text(" Page")
                 }
             } else if (tab == 1) {
                 TextButton(
@@ -6829,20 +7168,20 @@ private fun PageSidebar(
                     modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
                 ) {
                     Icon(Reicons.Add, contentDescription = null)
-                    Text(" 현재 쪽 목차 설정")
+                    Text(" Add current page")
                 }
-            } else {
+            } else if (tab == 2) {
                 // Whole-note switches, which is how a page of covered answers
                 // actually gets used: cover everything, then go looking.
                 Row(Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
                     TextButton(
                         onClick = { pages.indices.forEach { onReveal(it, false) } },
                         modifier = Modifier.weight(1f),
-                    ) { Text("모두 가림") }
+                    ) { Text("Cover all") }
                     TextButton(
                         onClick = { pages.indices.forEach { onReveal(it, true) } },
                         modifier = Modifier.weight(1f),
-                    ) { Text("모두 보임") }
+                    ) { Text("Reveal all") }
                 }
             }
         }
@@ -6893,37 +7232,37 @@ internal fun PageSizeDialog(width: Float, height: Float, onDismiss: () -> Unit, 
     val ph = h.toIntOrNull()?.takeIf { it in PAGE_PX_RANGE }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("페이지 크기") },
+        title = { Text("Page size") },
         text = {
             Column {
                 Row(Modifier.horizontalScroll(rememberScrollState())) {
                     PAGE_SIZES.forEach { (name, size) ->
                         TextButton(onClick = { w = size.first.toString(); h = size.second.toString() }) { Text(name) }
                     }
-                    TextButton(onClick = { val t = w; w = h; h = t }) { Text("가로↔세로") }
+                    TextButton(onClick = { val t = w; w = h; h = t }) { Text("Swap ↔") }
                 }
                 Row {
-                    OutlinedTextField(w, { w = it.filter(Char::isDigit).take(4) }, label = { Text("너비 px") },
+                    OutlinedTextField(w, { w = it.filter(Char::isDigit).take(4) }, label = { Text("Width px") },
                         singleLine = true, isError = pw == null, modifier = Modifier.weight(1f),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
                     Spacer(Modifier.width(8.dp))
-                    OutlinedTextField(h, { h = it.filter(Char::isDigit).take(4) }, label = { Text("높이 px") },
+                    OutlinedTextField(h, { h = it.filter(Char::isDigit).take(4) }, label = { Text("Height px") },
                         singleLine = true, isError = ph == null, modifier = Modifier.weight(1f),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
                 }
-                Text("300dpi 기준, 100–9,999px", style = MaterialTheme.typography.bodySmall)
+                Text("At 300 dpi, 100–9,999 px", style = MaterialTheme.typography.bodySmall)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = all, onCheckedChange = { all = it })
-                    Text("PDF가 아닌 모든 페이지에 적용")
+                    Text("Apply to all non-PDF pages")
                 }
             }
         },
         confirmButton = {
             TextButton(enabled = pw != null && ph != null, onClick = {
                 onSize(pw!! / PX_300_PER_UNIT, ph!! / PX_300_PER_UNIT, all)
-            }) { Text("적용") }
+            }) { Text("Apply") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 
@@ -6934,7 +7273,7 @@ internal fun GoToPageDialog(pageCount: Int, onGo: (Int) -> Unit, onDismiss: () -
     val target = text.toIntOrNull()?.takeIf { it in 1..pageCount }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("쪽 이동") },
+        title = { Text("Go to page") },
         text = {
             OutlinedTextField(
                 value = text,
@@ -6946,10 +7285,10 @@ internal fun GoToPageDialog(pageCount: Int, onGo: (Int) -> Unit, onDismiss: () -
         },
         confirmButton = {
             TextButton(onClick = { target?.let { onGo(it - 1) }; onDismiss() }, enabled = target != null) {
-                Text("이동")
+                Text("Go")
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 
@@ -6986,32 +7325,32 @@ private fun TocChip(
             Text(page.tocTitle.orEmpty(), style = MaterialTheme.typography.titleSmall,
                 color = if (highlighted) colors.onTertiaryContainer else colors.onSurface,
                 maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text("${index + 1}쪽", style = MaterialTheme.typography.labelSmall,
+            Text("p. ${index + 1}", style = MaterialTheme.typography.labelSmall,
                 color = if (highlighted) colors.onTertiaryContainer else colors.outline)
         }
         IconButton(onClick = onHighlight, modifier = Modifier.size(32.dp)) {
             Icon(Reicons.Highlight,
-                contentDescription = if (highlighted) "강조 해제" else "목차 강조",
+                contentDescription = if (highlighted) "Remove highlight" else "Highlight entry",
                 tint = if (highlighted) colors.onTertiaryContainer else colors.outline,
                 modifier = Modifier.size(18.dp))
         }
         var menu by remember { mutableStateOf(false) }
         Box {
             IconButton(onClick = { menu = true }, modifier = Modifier.size(32.dp)) {
-                Icon(Reicons.MoreVert, contentDescription = "목차 옵션",
+                Icon(Reicons.MoreVert, contentDescription = "Entry options",
                     modifier = Modifier.size(18.dp))
             }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                DropdownMenuItem(text = { Text("이름 변경") }, onClick = {
+                DropdownMenuItem(text = { Text("Rename") }, onClick = {
                     menu = false; onEdit()
                 })
-                DropdownMenuItem(text = { Text("안으로") }, onClick = {
+                DropdownMenuItem(text = { Text("Indent") }, onClick = {
                     menu = false; onIndent()
                 })
-                DropdownMenuItem(text = { Text("밖으로") }, enabled = page.tocLevel > 0, onClick = {
+                DropdownMenuItem(text = { Text("Outdent") }, enabled = page.tocLevel > 0, onClick = {
                     menu = false; onOutdent()
                 })
-                DropdownMenuItem(text = { Text("목차 삭제") }, onClick = {
+                DropdownMenuItem(text = { Text("Remove entry") }, onClick = {
                     menu = false; onDelete()
                 })
             }
@@ -7071,7 +7410,7 @@ private fun MaskChip(
             Column(Modifier.weight(1f)) {
                 Text("${index + 1}", style = MaterialTheme.typography.titleSmall)
                 Text(
-                    if (masks.isEmpty()) "없음" else "$hidden / ${masks.size} 가림",
+                    if (masks.isEmpty()) "None" else "$hidden / ${masks.size} covered",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.outline,
                 )
@@ -7079,7 +7418,7 @@ private fun MaskChip(
                     val right = records.count { it.last == MaskRecord.RESULT_RIGHT }
                     val wrong = records.count { it.last == MaskRecord.RESULT_WRONG }
                     Text(
-                        "맞음 $right · 틀림 $wrong",
+                        "Right $right · Wrong $wrong",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.outline,
                     )
@@ -7089,20 +7428,20 @@ private fun MaskChip(
                 IconButton(onClick = { onReveal(hidden > 0) }) {
                     Icon(
                         if (hidden > 0) Reicons.Visibility else Reicons.VisibilityOff,
-                        contentDescription = if (hidden > 0) "이 페이지 보이기" else "이 페이지 가리기",
+                        contentDescription = if (hidden > 0) "Reveal this page" else "Cover this page",
                     )
                 }
                 IconButton(onClick = onClear) {
-                    Icon(Reicons.Delete, contentDescription = "이 페이지 마스킹 삭제")
+                    Icon(Reicons.Delete, contentDescription = "Delete this page's masks")
                 }
             }
         }
         if (masks.isNotEmpty() && study != null) Row(Modifier.padding(start = 16.dp)) {
-            TextButton(onClick = { onStudy(false) }) { Text("학습") }
+            TextButton(onClick = { onStudy(false) }) { Text("Study") }
             TextButton(
                 onClick = { onStudy(true) },
                 enabled = records.any { it.last == MaskRecord.RESULT_WRONG },
-            ) { Text("틀린 것만") }
+            ) { Text("Wrong only") }
         }
         for ((maskIndex, mask) in masks.withIndex()) {
             val record = records.getOrNull(maskIndex) ?: MaskRecord()
@@ -7117,7 +7456,7 @@ private fun MaskChip(
                         MaskRecord.RESULT_RIGHT -> "✓ "
                         MaskRecord.RESULT_WRONG -> "✗ "
                         else -> ""
-                    } + record.name.ifBlank { "마스크 ${maskIndex + 1}" },
+                    } + record.name.ifBlank { "Mask ${maskIndex + 1}" },
                     style = MaterialTheme.typography.labelSmall,
                     color = when (record.last) {
                         MaskRecord.RESULT_RIGHT -> Color(0xFF2E7D32)
@@ -7136,7 +7475,7 @@ private fun MaskChip(
                 ) {
                     Icon(
                         if (mask.revealed) Reicons.Visibility else Reicons.VisibilityOff,
-                        contentDescription = if (mask.revealed) "이 마스킹 가리기" else "이 마스킹 보이기",
+                        contentDescription = if (mask.revealed) "Cover this mask" else "Reveal this mask",
                         modifier = Modifier.size(18.dp),
                     )
                 }
@@ -7146,7 +7485,7 @@ private fun MaskChip(
                 ) {
                     Icon(
                         Reicons.Delete,
-                        contentDescription = "이 마스킹 삭제",
+                        contentDescription = "Delete this mask",
                         modifier = Modifier.size(18.dp),
                     )
                 }
@@ -7203,15 +7542,15 @@ private fun PageChip(
             Text("${index + 1}", style = MaterialTheme.typography.titleMedium)
             Text(
                 when (page.background) {
-                    PageBackground.BLANK -> "무지"
-                    PageBackground.LINED -> "줄"
-                    PageBackground.GRID -> "모눈"
+                    PageBackground.BLANK -> "Blank"
+                    PageBackground.LINED -> "Lined"
+                    PageBackground.GRID -> "Grid"
                     PageBackground.PDF -> "PDF"
-                    PageBackground.DOT -> "도트"
-                    PageBackground.NARROW_LINED -> "좁은 줄"
-                    PageBackground.CORNELL -> "코넬"
-                    PageBackground.CUSTOM -> "사용자"
-                    PageBackground.INFINITE -> "무한"
+                    PageBackground.DOT -> "Dot"
+                    PageBackground.NARROW_LINED -> "Narrow lined"
+                    PageBackground.CORNELL -> "Cornell"
+                    PageBackground.CUSTOM -> "Custom"
+                    PageBackground.INFINITE -> "Infinite"
                 },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.outline,
@@ -7229,7 +7568,7 @@ private fun PageChip(
         ) {
             Icon(
                 if (page.bookmarked) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
-                contentDescription = if (page.bookmarked) "북마크 해제" else "북마크",
+                contentDescription = if (page.bookmarked) "Remove bookmark" else "Bookmark",
                 tint = if (page.bookmarked) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.outline,
                 modifier = Modifier.size(18.dp),
@@ -7237,77 +7576,77 @@ private fun PageChip(
         }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             DropdownMenuItem(
-                text = { Text(if (page.tocTitle == null) "목차 설정" else "목차 이름 변경") },
+                text = { Text(if (page.tocTitle == null) "Set contents entry" else "Rename contents entry") },
                 onClick = { menu = false; onEditToc() },
             )
             DropdownMenuItem(
-                text = { Text("앞 페이지로") }, enabled = index > 0,
+                text = { Text("Move earlier") }, enabled = index > 0,
                 onClick = { onMove(-1); menu = false },
             )
             DropdownMenuItem(
-                text = { Text("뒤 페이지로") },
+                text = { Text("Move later") },
                 onClick = { onMove(1); menu = false },
             )
             DropdownMenuItem(
-                text = { Text("페이지 복제") },
+                text = { Text("Duplicate page") },
                 onClick = { onDuplicate(); menu = false },
             )
             if (page.background != PageBackground.PDF && page.pdfPageIndex < 0) {
                 DropdownMenuItem(
-                    text = { Text("왼쪽으로 회전") },
+                    text = { Text("Rotate left") },
                     onClick = { onRotate(false); menu = false },
                 )
                 DropdownMenuItem(
-                    text = { Text("오른쪽으로 회전") },
+                    text = { Text("Rotate right") },
                     onClick = { onRotate(true); menu = false },
                 )
             }
             if (page.background != PageBackground.PDF) {
                 DropdownMenuItem(
-                    text = { Text("페이지 크기…") },
+                    text = { Text("Page size…") },
                     onClick = { onPageSize(); menu = false },
                 )
                 DropdownMenuItem(
-                    text = { Text("이 배경을 모든 페이지에") },
+                    text = { Text("Use this background on all pages") },
                     onClick = { onBackgroundAll(); menu = false },
                 )
                 DropdownMenuItem(
-                    text = { Text("무지") },
+                    text = { Text("Blank") },
                     onClick = { onBackground(PageBackground.BLANK); menu = false },
                 )
                 DropdownMenuItem(
-                    text = { Text("줄") },
+                    text = { Text("Lined") },
                     onClick = { onBackground(PageBackground.LINED); menu = false },
                 )
                 DropdownMenuItem(
-                    text = { Text("모눈") },
+                    text = { Text("Grid") },
                     onClick = { onBackground(PageBackground.GRID); menu = false },
                 )
                 DropdownMenuItem(
-                    text = { Text("도트") },
+                    text = { Text("Dot") },
                     onClick = { onBackground(PageBackground.DOT); menu = false },
                 )
                 DropdownMenuItem(
-                    text = { Text("좁은 줄") },
+                    text = { Text("Narrow lined") },
                     onClick = { onBackground(PageBackground.NARROW_LINED); menu = false },
                 )
                 DropdownMenuItem(
-                    text = { Text("코넬") },
+                    text = { Text("Cornell") },
                     onClick = { onBackground(PageBackground.CORNELL); menu = false },
                 )
                 DropdownMenuItem(
-                    text = { Text("무한 노트") },
+                    text = { Text("Infinite note") },
                     onClick = { onBackground(PageBackground.INFINITE); menu = false },
                 )
                 userTemplates.forEach { template ->
                     DropdownMenuItem(
-                        text = { Text("템플릿 · ${template.name}") },
+                        text = { Text("Template · ${template.name}") },
                         onClick = { onTemplate(template.id); menu = false },
                     )
                 }
             }
             DropdownMenuItem(
-                text = { Text("페이지 삭제") },
+                text = { Text("Delete page") },
                 enabled = deletable,
                 onClick = { onDelete(); menu = false },
             )
@@ -7669,6 +8008,10 @@ private val WEB_PANEL_MAX = 1100.dp
 
 /** Below this the reference panel is too small to hold a readable page. */
 private val REFERENCE_MIN_SIZE = 220.dp
+/** How far past the bottom edge a reference panel has to be carried for letting go to close it. */
+private val REFERENCE_DISMISS_DRAG = 96.dp
+/** How far the panel sags towards the edge as that distance is reached. */
+private val REFERENCE_DISMISS_SAG = 28.dp
 
 
 private const val SEARCH_HOME = "https://www.google.com/"

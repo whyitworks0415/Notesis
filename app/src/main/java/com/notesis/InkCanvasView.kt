@@ -1165,6 +1165,14 @@ class InkCanvasView @JvmOverloads constructor(
     /** Handed a rendering of the captured region, on a background thread. */
     var onCaptured: ((Bitmap) -> Unit)? = null
 
+    /**
+     * Fired on the UI thread, once per stroke, as real ink starts: a pen,
+     * pencil, highlighter, tape or shape stroke, or an erase. Not for taps,
+     * selections, captures, scrolling or zooming. What closes panels that
+     * would otherwise sit over the writing.
+     */
+    var onWritingStarted: (() -> Unit)? = null
+
     // ---- finger gestures, alongside the pen -----------------------------
     //
     // Undo, redo and the reference panel all live here rather than in an
@@ -3212,20 +3220,55 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun onStylus(event: MotionEvent): Boolean {
-        if (pressureResponse == PRESSURE_RESPONSE_DEFAULT ||
-            event.getToolType(event.actionIndex) != MotionEvent.TOOL_TYPE_STYLUS
+        val masked = event.actionMasked
+        if (activeStylusPointer == null &&
+            (masked == MotionEvent.ACTION_DOWN || masked == MotionEvent.ACTION_POINTER_DOWN)
+        ) {
+            // Judged once per stroke, at the sample that starts it: every
+            // sample of one stroke has to agree on whether pressure is real.
+            strokePressureReal = reportsRealPressure(
+                event.getToolType(event.actionIndex),
+                hasPressureAxis(event),
+                event.getPressure(event.actionIndex),
+            )
+        }
+        val flat = !strokePressureReal
+        if (!flat && (pressureResponse == PRESSURE_RESPONSE_DEFAULT ||
+            event.getToolType(event.actionIndex) != MotionEvent.TOOL_TYPE_STYLUS)
         ) return onStylusEvent(event)
         // Every sample through the curve once, here, so the wet ink, the
         // stabilizer, the predictor and the saved stroke all see one pressure.
-        val curved = withPressureCurve(event)
+        // Input without real pressure gets one steady value the same way, so
+        // a pressure brush under a finger or a mouse does not throb.
+        val curved = withPressureCurve(event, flat)
         return try { onStylusEvent(curved) } finally { curved.recycle() }
+    }
+
+    /** Whether the stroke in progress has real pen pressure; see [reportsRealPressure]. */
+    private var strokePressureReal = true
+    private var pressureAxisDevice = Int.MIN_VALUE
+    private var pressureAxisKnown: Boolean? = null
+
+    /** What the device says about its pressure axis, asked once per device rather than once per stroke. */
+    private fun hasPressureAxis(event: MotionEvent): Boolean? {
+        if (event.deviceId != pressureAxisDevice) {
+            pressureAxisDevice = event.deviceId
+            pressureAxisKnown = event.device?.let { device ->
+                val range = device.getMotionRange(MotionEvent.AXIS_PRESSURE)
+                range != null && range.range > 0f
+            }
+        }
+        return pressureAxisKnown
     }
 
     private var curvePointerProperties = emptyArray<MotionEvent.PointerProperties>()
     private var curvePointerCoordinates = emptyArray<MotionEvent.PointerCoords>()
 
-    /** A copy of [event], history included, with each pressure passed through [pressureCurve]. */
-    private fun withPressureCurve(event: MotionEvent): MotionEvent {
+    /**
+     * A copy of [event], history included, with each pressure passed through
+     * [pressureCurve], or set to [NEUTRAL_PRESSURE] when [flat].
+     */
+    private fun withPressureCurve(event: MotionEvent, flat: Boolean = false): MotionEvent {
         val count = event.pointerCount
         if (curvePointerProperties.size < count) {
             curvePointerProperties = Array(count) { MotionEvent.PointerProperties() }
@@ -3239,7 +3282,8 @@ class InkCanvasView @JvmOverloads constructor(
             for (i in 0 until count) {
                 if (history < 0) event.getPointerCoords(i, coordinates[i])
                 else event.getHistoricalPointerCoords(i, history, coordinates[i])
-                coordinates[i].pressure = pressureCurve(coordinates[i].pressure, pressureResponse)
+                coordinates[i].pressure = if (flat) normalizedPressure(coordinates[i].pressure, false)
+                    else pressureCurve(coordinates[i].pressure, pressureResponse)
             }
         }
         val samples = event.historySize
@@ -3368,6 +3412,7 @@ class InkCanvasView @JvmOverloads constructor(
                     val edge = ruler.edgeAt(event.x, event.y)
                     if (edge != null) {
                         onDrawingChanged?.invoke(true)
+                        onWritingStarted?.invoke()
                         rulerEdge = edge
                         shapePage = index
                         drawingShape = true
@@ -3380,6 +3425,7 @@ class InkCanvasView @JvmOverloads constructor(
                 val shape = shapeKind
                 if (shape == ShapeKind.POLYGON && !readMode && !eraserGesture && tool != Tool.ERASER) {
                     onDrawingChanged?.invoke(true)
+                    onWritingStarted?.invoke()
                     tapPolygon(event, index)
                     return true
                 }
@@ -3387,6 +3433,7 @@ class InkCanvasView @JvmOverloads constructor(
                     tool != Tool.ERASER
                 ) {
                     onDrawingChanged?.invoke(true)
+                    onWritingStarted?.invoke()
                     shapePage = index
                     drawingShape = true
                     pageLocalInto(event.x, event.y, index, shapeStart)
@@ -3412,6 +3459,8 @@ class InkCanvasView @JvmOverloads constructor(
                 }
                 strokeIsMask = maskMode
                 erasing = tool == Tool.ERASER || eraserGesture
+                // Past every tap, selection and capture above: this is ink.
+                onWritingStarted?.invoke()
                 if (erasing) {
                     onDrawingChanged?.invoke(true)
                     hasLastErasePoint = false
@@ -4370,7 +4419,10 @@ class InkCanvasView @JvmOverloads constructor(
                 val endedZoom = zooming
                 val openedLink = !longPressFired && (unfoldTap(event) || objectLinkTap(event) ||
                     maybeOpenPdfLink(event.x, event.y))
-                if (!openedLink) startFling()
+                // Three fingers never move the page, so they never fling it: the
+                // last finger off after moving the reference panel flung the
+                // page inside it, which read as the panel jumping on release.
+                if (!openedLink && gestureMaxPointers < 3) startFling()
                 viewportInteracting = false
                 viewportSpeedPxPerSecond = 0f
                 viewportWasFast = false
@@ -6860,6 +6912,68 @@ class InkCanvasView @JvmOverloads constructor(
         afterEdit(page)
     }
 
+    // ---- in-note search results ------------------------------------------
+
+    /** The page an in-note search result is being shown on, or -1. */
+    private var searchHitPage = -1
+    /** Its boxes in page-local units; empty flashes the whole page instead. */
+    private var searchHitRects: List<RectF> = emptyList()
+    private val clearSearchHit = Runnable {
+        searchHitPage = -1
+        searchHitRects = emptyList()
+        dry.invalidate()
+    }
+
+    /**
+     * Brings a search result into view and marks it for a moment: [rects]
+     * (page-local) when its place on the page is known, the whole page
+     * flashed when it is not. Two redraws, on and off - nothing animates.
+     */
+    fun showSearchHit(pageIndex: Int, rects: List<RectF>) {
+        if (pageIndex !in document.pages.indices) return
+        scrollToPage(pageIndex)
+        if (rects.isNotEmpty()) {
+            val union = RectF(rects[0])
+            for (rect in rects) union.union(rect)
+            val left = document.leftOf(pageIndex)
+            val top = document.topOf(pageIndex)
+            val corners = floatArrayOf(left + union.left, top + union.top, left + union.right, top + union.bottom)
+            documentToScreen.mapPoints(corners)
+            // Paging puts the top of the page in view; a match further down is
+            // brought up to a third of the way down the screen.
+            val dy = if (corners[1] < 0f || corners[3] > height) height / 3f - corners[1] else 0f
+            val dx = if (corners[0] < 0f || corners[2] > width) width / 2f - (corners[0] + corners[2]) / 2f else 0f
+            if (dx != 0f || dy != 0f) {
+                documentToScreen.postTranslate(dx, dy)
+                onTransformChanged()
+            }
+        }
+        searchHitPage = pageIndex
+        searchHitRects = rects.map { RectF(it) }
+        removeCallbacks(clearSearchHit)
+        postDelayed(clearSearchHit, if (rects.isEmpty()) SEARCH_FLASH_MS else SEARCH_HIT_MS)
+        dry.invalidate()
+    }
+
+    /**
+     * Where the [occurrence]th match of [query] is on PDF page [pdfPageIndex],
+     * in page-local units; empty when the PDF cannot say. Blocking: call it off
+     * the main thread.
+     */
+    fun pdfMatchBounds(pdfPageIndex: Int, query: String, occurrence: Int): List<RectF> =
+        pdf?.matchBounds(pdfPageIndex, query, occurrence).orEmpty()
+
+    /** The text of PDF page [pdfPageIndex], from the PDF already open here. Blocking. */
+    fun pdfPageText(pdfPageIndex: Int): String = pdf?.textOf(pdfPageIndex).orEmpty()
+
+    /**
+     * The last capture's region, kept so the capture dialog can render it again
+     * at whatever size is picked for it. Holds its own snapshot of the ink and
+     * pictures, so it stays valid while the page carries on being written on.
+     */
+    @Volatile var lastCapture: CaptureRegion? = null
+        private set
+
     private fun finishCapture() {
         capturing = false
         lastCapturePage = capturePage
@@ -6872,18 +6986,36 @@ class InkCanvasView @JvmOverloads constructor(
         // Snapshot on the UI thread: the render runs on a worker, and a stroke
         // arriving on the page mid-render would otherwise be a concurrent
         // modification of the list being walked.
-        val strokes = page.strokes.toList()
-        val images = page.images.map { it to imageLoader?.invoke(it.id) }
-        val pdfIndex = if (page.background == PageBackground.PDF) page.pdfPageIndex else -1
-        val pageWidth = page.width
-        val pageHeight = page.height
+        val region = CaptureRegion(
+            pageIndex = capturePage,
+            rect = rect,
+            screenScale = currentScale(),
+            pageWidth = page.width,
+            pageHeight = page.height,
+            pdfIndex = if (page.background == PageBackground.PDF) page.pdfPageIndex else -1,
+            strokes = page.strokes.toList(),
+            images = page.images.map { it to imageLoader?.invoke(it.id) },
+        )
+        lastCapture = region
+        // What the dialog shows: small and quick. The file that is saved, shared
+        // or pasted is rendered again from the region at the size picked there.
+        val preview = (CAPTURE_PREVIEW_PX / max(rect.width(), rect.height())).coerceAtMost(CAPTURE_MAX_SCALE)
         refiner.execute {
-            val bitmap = renderRegion(rect, pageWidth, pageHeight, pdfIndex, strokes, images)
+            val bitmap = renderCapture(region, preview)
             if (bitmap != null) onCaptured?.invoke(bitmap)
         }
     }
 
-    /** Draws one page's [rect] into a bitmap: background, pictures, then ink. */
+    /**
+     * Renders [region] at [scale] pixels per page unit - from the vectors and
+     * the PDF, never by enlarging a smaller picture. Blocking: call it off the
+     * main thread. The size should come from [planCapture]; the bitmap budget
+     * is applied again here as a backstop.
+     */
+    fun renderCapture(region: CaptureRegion, scale: Float): Bitmap? = renderRegion(
+        region.rect, region.pageWidth, region.pageHeight, region.pdfIndex, region.strokes, region.images, scale)
+
+    /** Draws one page's [rect] into a bitmap at [requestedScale]: background, pictures, then ink. */
     private fun renderRegion(
         rect: RectF,
         pageWidth: Float,
@@ -6891,13 +7023,14 @@ class InkCanvasView @JvmOverloads constructor(
         pdfIndex: Int,
         strokes: List<Stroke>,
         images: List<Pair<PageImage, Bitmap?>>,
+        requestedScale: Float,
     ): Bitmap? = runCatching {
-        val wanted = (CAPTURE_TARGET_PX / max(rect.width(), rect.height()))
-            .coerceIn(1f, CAPTURE_MAX_SCALE)
+        val wanted = requestedScale.takeIf { it.isFinite() && it > 0f } ?: 1f
         val scale = wanted * BitmapBudget.scaleFor(
-            (rect.width() * wanted).toInt(), (rect.height() * wanted).toInt())
-        val width = (rect.width() * scale).toInt().coerceAtLeast(1)
-        val height = (rect.height() * scale).toInt().coerceAtLeast(1)
+            capturePixels(rect.width(), wanted), capturePixels(rect.height(), wanted))
+        // Counted the way the capture dialog counts, so what it promised is what comes out.
+        val width = capturePixels(rect.width(), scale)
+        val height = capturePixels(rect.height(), scale)
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         canvas.drawColor(Color.WHITE)
@@ -6905,8 +7038,17 @@ class InkCanvasView @JvmOverloads constructor(
         canvas.translate(-rect.left, -rect.top)
 
         if (pdfIndex >= 0) {
-            pdf?.renderNow(pdfIndex, (pageWidth * scale).toInt().coerceAtLeast(1))?.let {
-                canvas.drawBitmap(it, null, RectF(0f, 0f, pageWidth, pageHeight), null)
+            // Only the region, rasterised at the output size: the whole page at
+            // a 4x capture's density was many times the pixels, and the source
+            // of the blur when the budget then shrank it.
+            val crop = pdf?.renderCropNow(pdfIndex, rect, width, height)
+            if (crop != null) {
+                canvas.drawBitmap(crop, null, rect, null)
+                crop.recycle()
+            } else {
+                pdf?.renderNow(pdfIndex, (pageWidth * scale).toInt().coerceIn(1, PdfSource.baseWidthLimit()))?.let {
+                    canvas.drawBitmap(it, null, RectF(0f, 0f, pageWidth, pageHeight), null)
+                }
             }
         }
         for ((placement, picture) in images) {
@@ -6925,7 +7067,20 @@ class InkCanvasView @JvmOverloads constructor(
         }
         val renderer = CanvasStrokeRenderer.create(PencilTextureStore)
         val transform = Matrix()
-        for (stroke in strokes) renderer.draw(canvas, stroke, transform)
+        // Each stroke's mesh was built for the zoom it was last seen at; one
+        // inside the region and coarser than this scale needs is rebuilt from
+        // its inputs, so a 4x capture is sharp ink rather than magnified facets.
+        val epsilon = epsilonFor(scale)
+        for (stroke in strokes) {
+            val box = stroke.shape.computeBoundingBox()
+            if (box != null && (box.xMax < rect.left || box.xMin > rect.right ||
+                    box.yMax < rect.top || box.yMin > rect.bottom)) continue
+            val fine = inkEpsilon(stroke.brush.family, stroke.brush.size, epsilon)
+            val drawn = if (stroke.brush.epsilon > fine + EPSILON_SLOP) {
+                runCatching { Stroke(stroke.brush.copy(epsilon = fine), stroke.inputs) }.getOrDefault(stroke)
+            } else stroke
+            renderer.draw(canvas, drawn, transform)
+        }
         bitmap
     }.getOrNull()
 
@@ -6939,7 +7094,8 @@ class InkCanvasView @JvmOverloads constructor(
         // size is the lightest touch: pressing only ever makes it bigger, so a
         // pen landing on a stroke - at next to no pressure - already erases at
         // full size instead of starting as a pinprick.
-        val squeeze = if (pressureEraser && event.getToolType(pointerIndex) == MotionEvent.TOOL_TYPE_STYLUS) {
+        val squeeze = if (pressureEraser && strokePressureReal &&
+            event.getToolType(pointerIndex) == MotionEvent.TOOL_TYPE_STYLUS) {
             pressureEraserScale(event.getPressure(pointerIndex))
         } else 1f
         compatWet.showCursor(screenX, screenY, eraserScreenRadius() * squeeze)
@@ -7355,6 +7511,30 @@ class InkCanvasView @JvmOverloads constructor(
             pathEffect = android.graphics.DashPathEffect(floatArrayOf(12f, 10f), 0f)
         }
         private val marqueeFill = Paint().apply { color = 0x223B7DDD }
+        private val searchHitFill = Paint().apply { color = 0x55FFC107 }
+        private val searchHitEdge = Paint().apply {
+            isAntiAlias = true
+            style = Paint.Style.STROKE
+            color = 0xFFFF9800.toInt()
+        }
+        private val searchFlash = Paint().apply { color = 0x223B7DDD }
+        private val searchHitBox = RectF()
+
+        /** Where an in-note search result is, over everything else on its page. */
+        private fun drawSearchHit(canvas: Canvas, page: Page) {
+            val rects = searchHitRects
+            if (rects.isEmpty()) {
+                canvas.drawRect(0f, 0f, page.width, page.height, searchFlash)
+                return
+            }
+            val pad = SEARCH_HIT_PAD_PX / currentScale().coerceAtLeast(0.01f)
+            searchHitEdge.strokeWidth = 2f / currentScale().coerceAtLeast(0.01f)
+            for (rect in rects) {
+                searchHitBox.set(rect.left - pad, rect.top - pad, rect.right + pad, rect.bottom + pad)
+                canvas.drawRoundRect(searchHitBox, pad, pad, searchHitFill)
+                canvas.drawRoundRect(searchHitBox, pad, pad, searchHitEdge)
+            }
+        }
         private val outlines = java.util.WeakHashMap<Stroke, android.graphics.Path>()
         private val outlinePoint = MutableVec()
         private val selectionBox = RectF()
@@ -7789,6 +7969,7 @@ class InkCanvasView @JvmOverloads constructor(
                         }
                         scoped.drawCircle(polyPoints[0][0], polyPoints[0][1], VERTEX_HANDLE_PX / currentScale(), vertexPaint)
                     }
+                    if (i == searchHitPage) drawSearchHit(scoped, page)
                     if (i == capturePage && capturing) {
                         scoped.drawRect(captureRect, marqueeFill)
                         marquee.strokeWidth = 2f / currentScale()
@@ -8355,7 +8536,13 @@ class InkCanvasView @JvmOverloads constructor(
         const val IMAGE_INSERT_FRACTION = 0.5f
         const val IMAGE_HANDLE_PX = 22f
         const val IMAGE_MIN_SIZE = 32f
-        const val CAPTURE_TARGET_PX = 2048f
+        /** The long edge of the picture the capture dialog shows. */
+        const val CAPTURE_PREVIEW_PX = 1280f
+        /** How long a found search result stays marked, and how long a page without a known place flashes. */
+        const val SEARCH_HIT_MS = 1800L
+        const val SEARCH_FLASH_MS = 450L
+        /** Screen pixels round a marked search result. */
+        const val SEARCH_HIT_PAD_PX = 4f
         const val CAPTURE_MAX_SCALE = 4f
         const val LASSO_MIN_POINTS = 6
         const val LASSO_PADDING = 10f
