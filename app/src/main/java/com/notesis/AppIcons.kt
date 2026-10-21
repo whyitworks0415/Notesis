@@ -12,7 +12,11 @@ internal object AppIcons {
     private val nibDown = Lucide.PenTool.flippedVertically()
 
     val read: ImageVector get() = AppIconStyle.pick(pointerDown, Reicons.TouchApp)
-    val pencilTool: ImageVector get() = AppIconStyle.pick(nibDown, Reicons.Brush)
+    // The pen is a nib and the pencil a pencil, so the two read apart at a glance;
+    // the pen used to wear the pencil and the pencil a nib.
+    val penTool: ImageVector get() = AppIconStyle.pick(nibDown, Reicons.Create)
+    val pencilTool: ImageVector get() = AppIconStyle.pick(Lucide.Pencil, Reicons.Brush)
+    val highlighterTool: ImageVector get() = AppIconStyle.pick(Lucide.Highlighter, Reicons.Highlight)
 
     val back get() = AppIconStyle.pick(Lucide.MoveLeft, Reicons.ArrowBack)
     val search get() = AppIconStyle.pick(Lucide.Search, Reicons.Search)
@@ -46,4 +50,14 @@ internal object AppIcons {
     val note get() = AppIconStyle.pick(Lucide.FileText, Reicons.Description)
     val ai get() = AppIconStyle.pick(Lucide.Sparkles, Reicons.AutoAwesome)
     val close get() = AppIconStyle.pick(Lucide.X, Reicons.Close)
+    val settings get() = AppIconStyle.pick(Lucide.Settings, Reicons.Settings)
+    val text get() = AppIconStyle.pick(Lucide.Type, Reicons.TextFields)
+    val touch get() = AppIconStyle.pick(Lucide.Hand, Reicons.TouchApp)
+    val appearance get() = AppIconStyle.pick(Lucide.Palette, Reicons.Palette)
+    val diagnostics get() = AppIconStyle.pick(Lucide.Gauge, Reicons.BugReport)
+    val dragHandle get() = AppIconStyle.pick(Lucide.Menu, Reicons.Menu)
+    val hide get() = AppIconStyle.pick(Lucide.EyeOff, Reicons.VisibilityOff)
+    val show get() = AppIconStyle.pick(Lucide.Plus, Reicons.Add)
+    val reset get() = AppIconStyle.pick(Lucide.History, Reicons.Restore)
+    val photo get() = AppIconStyle.pick(Lucide.Image, Reicons.Image)
 }

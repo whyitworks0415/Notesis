@@ -3399,14 +3399,12 @@ private fun NoteScreen(
     val lifecycleOwner = context as? LifecycleOwner
     val scope = rememberCoroutineScope()
     var showVoice by remember { mutableStateOf(false) }
-    var showInput by remember { mutableStateOf(false) }
     var pullingForPage by remember { mutableStateOf(false) }
     var dictating by remember { mutableStateOf(false) }
     var shapeCorner by remember { mutableFloatStateOf(PenStore(context).shapeCornerRadius) }
     /** The last tool that was not the eraser, for going back to after an erase. */
     var beforeEraser by remember { mutableStateOf(EditMode.PEN) }
     var showLibrary by remember { mutableStateOf(false) }
-    var editingTools by remember { mutableStateOf(false) }
     var showLayers by remember { mutableStateOf(false) }
     var exportingPages by remember { mutableStateOf<List<Page>?>(null) }
     /** Pages picked to go to another note, and whether they leave this one. */
@@ -3738,9 +3736,11 @@ private fun NoteScreen(
         NoteSearchState(store.inkIndexFile(note.id, "search").parentFile ?: context.filesDir)
     }
     var goToPage by remember { mutableStateOf(false) }
-    var showSkinSettings by remember { mutableStateOf(false) }
+    /** Where the settings sidebar is, or null while it is closed. */
+    var settingsNav by remember { mutableStateOf<SidebarNav?>(null) }
+    var settingsWidth by remember { mutableFloatStateOf(penStore.settingsSidebarWidth) }
+    fun openSettings(page: SettingsPage) { settingsNav = SidebarNav.at(page) }
     var pageLayout by remember { mutableStateOf(penStore.pageLayoutOf(note.id)) }
-    var noteMenu by remember { mutableStateOf(false) }
     var pageTone by remember { mutableIntStateOf(penStore.pageTone) }
     var edits by remember { mutableIntStateOf(0) }
     val indexedRevisions = remember(note.id) { mutableMapOf<String, Long>() }
@@ -3942,13 +3942,16 @@ private fun NoteScreen(
 
     // One toolbar, placed two ways: flush along the top edge, or floating
     // over the page where it can be dragged and folded away.
-    val toolbar: @Composable (Modifier) -> Unit = { barModifier ->
+    // With a level, the same bar drawn as a picture for the settings previews:
+    // that size, floating, reporting nothing back.
+    val toolbar: @Composable (Modifier, Int?) -> Unit = { barModifier, previewLevel ->
         Toolbar(
             note = note,
             otherNotes = otherNotes,
             pen = pen,
             toolPens = settings,
-            toolbarTargetWidth = minOf(maxBarWidth, spotiToolbarWidth(toolbarSize)),
+            toolbarTargetWidth = if (previewLevel != null) spotiToolbarWidth(previewLevel)
+                else minOf(maxBarWidth, spotiToolbarWidth(toolbarSize)),
             mode = mode,
             shapeKind = shapeKind,
             straightLine = straightLine,
@@ -3956,7 +3959,6 @@ private fun NoteScreen(
                 val updated = pen.copy(straightLine = !pen.straightLine)
                 settings = settings + (mode to updated)
             },
-            showLatency = showLatency,
             // edits is read here so drawing or erasing recomposes the toolbar and
             // undo/redo can re-evaluate whether there is anything on the stacks.
             canUndo = edits.let { canvas?.canUndo() == true },
@@ -4001,28 +4003,12 @@ private fun NoteScreen(
             },
             onZoomLabel = { zoomMenu = true },
             zoomLabel = "${(zoom * 100).roundToInt()}%",
-            onToggleLatency = { showLatency = !showLatency },
-            laser = laser,
-            onToggleLaser = {
-                when {
-                    !laser -> { laser = true; laserDot = false }
-                    !laserDot -> laserDot = true
-                    else -> laser = false
-                }
-            },
-            laserDot = laserDot,
-            ruler = ruler,
-            onRuler = { picked ->
-                if (picked != null && picked == ruler) rulerAngle = true else ruler = picked
-            },
             onAddPage = {
                 canvas?.let { it.addPage(it.currentPageIndex()); it.scrollToPage(it.currentPageIndex() + 1) }
                 edits++
             },
             onClock = { StudyClock.openPanel() },
-            onEditTools = { editingTools = true },
             onLayers = { showLayers = true },
-            onNoteMenu = { noteMenu = true },
             onCamera = {
                 val file = java.io.File(context.cacheDir, "shared/camera.jpg").apply { parentFile?.mkdirs() }
                 takePhoto.launch(androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".files", file))
@@ -4031,7 +4017,6 @@ private fun NoteScreen(
                 val alpha = pen.colorArgb and 0xFF000000.toInt()
                 settings = settings + (mode to pen.copy(colorArgb = (rgb and 0xFFFFFF) or alpha))
             },
-            onInputSettings = { showInput = true },
             recording = recorder != null,
             onVoice = { showVoice = true },
             noteRotation = noteRotation.roundToInt(),
@@ -4041,8 +4026,7 @@ private fun NoteScreen(
                 penStore.noteRotation = noteRotation.roundToInt()
             },
             onTogglePages = { showPages = !showPages },
-            onCollapse = { setToolbarSize((toolbarSize + 1).coerceAtMost(3)) },
-            sizeLevel = toolbarSize,
+            sizeLevel = previewLevel ?: toolbarSize,
             onSizeLevel = { setToolbarSize(it) },
             onOpenNote = onOpenNote,
             onBack = onBack,
@@ -4050,19 +4034,17 @@ private fun NoteScreen(
             onPalette = { showPalette = true },
             skin = skin,
             onSkin = onSkin,
-            docked = docked,
-            onToggleDock = {
-                docked = !docked
-                penStore.docked = docked
-            },
+            docked = docked && previewLevel == null,
             canResetBar = !docked && barOffset != null,
             onResetBar = { barOffset = null },
-            onScreenSettings = { showSkinSettings = true },
+            onSettings = { openSettings(it) },
             onDragBar = { delta ->
                 val at = barPlacement(barOffset, barSize, containerSize)
                 if (docked) { docked = false; penStore.docked = false }
                 barOffset = Offset(at.x + delta.x, at.y + delta.y)
             },
+            layerChip = { LayerTargetChip(canvas) { showLayers = true } },
+            preview = previewLevel != null,
             modifier = barModifier,
         )
     }
@@ -4323,7 +4305,7 @@ private fun NoteScreen(
                         when {
                             // The toolbar's order, so Ctrl+3 is the third tool you can see.
                             command && !event.isAltPressed && digit in 0..8 -> {
-                                ToolbarLayout.tools.mapNotNull { it.mode }.getOrNull(digit)?.let { picked ->
+                                ToolbarLayout.config.shortcutModes(toolbarSize).getOrNull(digit)?.let { picked ->
                                     canvas?.clearSelection()
                                     canvas?.clearImageSelection()
                                     canvas?.clearLassoSelection()
@@ -4496,6 +4478,7 @@ private fun NoteScreen(
                     .onSizeChanged { barSize = it }
                     .windowInsetsPadding(ChromeInsets)
                     .padding(12.dp),
+                null,
             )
         }
 
@@ -4521,12 +4504,164 @@ private fun NoteScreen(
         // Above the page and the bar, on the same glass as the bar.
         ClockOverlay()
 
-        if (showSkinSettings) {
-            Dialog(onDismissRequest = { showSkinSettings = false },
-                properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
-                SkinSettingsScreen(skin, LocalSkinSettings.current, onSkin, onLookChange,
-                    onBack = { showSkinSettings = false })
-            }
+        // Settings live in a sidebar along the edge, over the page and the
+        // bar, with its own screens inside it rather than dialogs on dialogs.
+        settingsNav?.let { nav ->
+            NoteSettingsSidebar(
+                nav = nav,
+                onNav = { settingsNav = it },
+                onClose = { settingsNav = null },
+                widthDp = settingsWidth,
+                onWidthChange = { settingsWidth = it; penStore.settingsSidebarWidth = it },
+                quickActions = listOf(
+                    SpotiToolbarAction(if (docked) "Undock bar" else "Dock bar",
+                        if (docked) AppIcons.undock else AppIcons.dock, selected = docked) {
+                        docked = !docked
+                        penStore.docked = docked
+                    },
+                    SpotiToolbarAction("Reset bar position", AppIcons.resetBar,
+                        enabled = !docked && barOffset != null,
+                        disabledReason = when {
+                            docked -> "A docked bar stays put"
+                            barOffset == null -> "Already in place"
+                            else -> null
+                        }) { barOffset = null },
+                    SpotiToolbarAction("Rotate · ${noteRotation.roundToInt()}°", AppIcons.rotate) {
+                        noteRotation = (((noteRotation / 90f).roundToInt() + 1) * 90 % 360).toFloat()
+                        penStore.noteRotation = noteRotation.roundToInt()
+                    },
+                    SpotiToolbarAction("Zoom · ${(zoom * 100).roundToInt()}%", AppIcons.zoom) { zoomMenu = true },
+                    SpotiToolbarAction("Pages & search", AppIcons.search, selected = showPages) { showPages = !showPages },
+                    SpotiToolbarAction("Pen in hand", AppIcons.penSettings) {
+                        if (mode !in PenStore.DEFAULTS) mode = EditMode.PEN
+                        editingPen = true
+                    },
+                    SpotiToolbarAction("Back to notes", AppIcons.back) {
+                        settingsNav = null
+                        onBack()
+                    },
+                ),
+                webActions = listOf(SpotiToolbarAction("Search the web", AppIcons.web) { webUrl = SEARCH_HOME }) +
+                    AI_SITES.map { (name, url) -> SpotiToolbarAction(name, AppIcons.ai) { webUrl = url } },
+                penSettings = {
+                    GlobalPenSettings(
+                        gestures = gestures,
+                        onGestures = { setGestures(it) },
+                        deferDetail = deferDetail,
+                        onDeferDetail = { deferDetail = it; penStore.deferDetail = it },
+                        meshInk = meshInk,
+                        onMeshInk = { meshInk = it; penStore.meshInk = it },
+                        compatWetInk = compatWetInk,
+                        onCompatWetInk = { compatWetInk = it; penStore.compatWetInk = it },
+                        onPenInHand = {
+                            if (mode !in PenStore.DEFAULTS) mode = EditMode.PEN
+                            editingPen = true
+                        },
+                    )
+                },
+                appearance = {
+                    AppearanceSettings(skin, LocalSkinSettings.current, onSkin, onLookChange,
+                        preview = { toolbar(Modifier, 1) })
+                },
+                touch = { TouchGestureSettings(gestures) { setGestures(it) } },
+                toolbar = { done ->
+                    ToolbarCustomizeScreen(
+                        initialStage = toolbarSize,
+                        preview = { level -> toolbar(Modifier, level) },
+                        onFinished = done,
+                    )
+                },
+                noteView = {
+                    val meta = remember(edits) { store.list().firstOrNull { it.id == note.id } ?: note }
+                    var confirmDelete by remember { mutableStateOf(false) }
+                    var filing by remember { mutableStateOf(false) }
+                    SettingsCard {
+                        SettingsSectionHeader("Page layout")
+                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf(PageLayoutMode.VERTICAL to "Vertical scroll", PageLayoutMode.HORIZONTAL to "Horizontal scroll",
+                                PageLayoutMode.SPREAD_2X1 to "Two pages", PageLayoutMode.SPREAD_COVER to "Two pages, cover alone",
+                                PageLayoutMode.GRID_2X2 to "Four pages").forEach { (layout, label) ->
+                                SettingsChoiceChip(selected = pageLayout == layout, onClick = {
+                                    pageLayout = layout
+                                    penStore.setPageLayoutOf(note.id, layout)
+                                    canvas?.setPageLayout(layout)
+                                }, label = label)
+                            }
+                        }
+                    }
+                    SettingsCard {
+                        SettingsSectionHeader("Page tone")
+                        SettingsChoices(
+                            "Screen color",
+                            listOf(PAGE_TONE_NORMAL to "Normal", PAGE_TONE_SEPIA to "Sepia", PAGE_TONE_NIGHT to "Night"),
+                            pageTone,
+                            hint = "Changes only what the screen shows. The note and its exports keep their colors, " +
+                                "and at night the stroke being written shows in its own color for a moment.",
+                        ) { tone ->
+                            pageTone = tone
+                            penStore.pageTone = tone
+                        }
+                    }
+                    SettingsCard {
+                        SettingsSectionHeader("This note")
+                        Text(note.title, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        SettingsToggle("Favorite", meta.favorite, { store.setFavorite(note.id, it); edits++ })
+                        TextButton(onClick = { filing = true }) { Text("Move to folder") }
+                        TextButton(onClick = {
+                            canvas?.let { view -> exportingPages = view.snapshotPages(view.document.pages.indices.toList()) }
+                            savePagesPdf.launch(safeFileName(note.title) + ".pdf")
+                        }) { Text("Export as PDF") }
+                        val canLock = meta.locked || NoteLock(context).hasPassword
+                        TextButton(
+                            enabled = canLock,
+                            onClick = { store.setLocked(note.id, !meta.locked); edits++ },
+                            modifier = Modifier.disabledReason(if (canLock) null else "No password set yet"),
+                        ) { Text(if (meta.locked) "Unlock" else "Lock with password") }
+                        if (!canLock) SettingsNote("Set a password from the note list to lock notes.")
+                        if (!confirmDelete) {
+                            TextButton(onClick = { confirmDelete = true }) {
+                                Text("Move to trash", color = MaterialTheme.colorScheme.error)
+                            }
+                        } else {
+                            // Asked in place: one more tap, not one more dialog.
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Move this note to the trash?", style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.weight(1f))
+                                TextButton(onClick = { confirmDelete = false }) { Text("Cancel") }
+                                TextButton(onClick = {
+                                    confirmDelete = false
+                                    settingsNav = null
+                                    store.moveToTrash(note.id)
+                                    onBack()
+                                }) { Text("Move", color = MaterialTheme.colorScheme.error) }
+                            }
+                        }
+                    }
+                    SettingsCard {
+                        SettingsSectionHeader("Handwriting recognition")
+                        SettingsNote("The languages handwriting is read in for search; the first is tried first.")
+                        var languages by remember { mutableStateOf(InkIndexer.languages(context)) }
+                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            InkIndexer.OFFERED.forEach { (tag, label) ->
+                                SettingsChoiceChip(selected = tag in languages, onClick = {
+                                    val next = if (tag in languages) languages - tag else languages + tag
+                                    if (next.isNotEmpty()) { languages = next; InkIndexer.setLanguages(context, next) }
+                                }, label = label)
+                            }
+                        }
+                    }
+                    if (filing) FolderDialog(current = meta.folder, folders = remember { store.folders() },
+                        onDismiss = { filing = false }, onPick = { store.setFolder(note.id, it); filing = false; edits++ })
+                },
+                diagnostics = {
+                    DiagnosticsSettings(
+                        view = canvas,
+                        overlay = showLatency,
+                        onOverlay = { showLatency = it },
+                        zoomPercent = (zoom * 100).roundToInt(),
+                    )
+                },
+            )
         }
 
         /**
@@ -4625,19 +4760,14 @@ private fun NoteScreen(
             PenDialog(
                 mode = mode,
                 pen = pen,
-                deferDetail = deferDetail,
-                onDeferDetail = {
-                    deferDetail = it
-                    penStore.deferDetail = it
-                },
                 highlighterAboveInk = highlighterAboveInk,
                 onHighlighterAboveInk = {
                     highlighterAboveInk = it; penStore.highlighterAboveInk = it
                 },
-                meshInk = meshInk,
-                onMeshInk = { meshInk = it; penStore.meshInk = it },
-                compatWetInk = compatWetInk,
-                onCompatWetInk = { compatWetInk = it; penStore.compatWetInk = it },
+                onAllPens = {
+                    editingPen = false
+                    openSettings(SettingsPage.PEN)
+                },
                 partialEraser = partialEraser,
                 onPartialEraser = { partialEraser = it; penStore.partialEraser = it },
                 gestures = gestures,
@@ -5193,7 +5323,6 @@ private fun NoteScreen(
                 onDismiss = { editingPicture = 0; edits++ },
             )
         }
-        if (editingTools) ToolbarEditDialog(onDismiss = { editingTools = false })
         if (showLayers) canvas?.let { view ->
             LayersDialog(
                 view.layers,
@@ -5216,87 +5345,6 @@ private fun NoteScreen(
             onCopy = { text -> clipboard.setText(AnnotatedString(text)) },
             onDismiss = { dictating = false },
         )
-        if (noteMenu) {
-            val meta = remember(edits) { store.list().firstOrNull { it.id == note.id } ?: note }
-            var confirmDelete by remember { mutableStateOf(false) }
-            var filing by remember { mutableStateOf(false) }
-            AlertDialog(
-                onDismissRequest = { noteMenu = false },
-                title = { Text(note.title) },
-                text = {
-                    Column {
-                        Text("보기 방식", style = MaterialTheme.typography.bodyMedium)
-                        Row(Modifier.horizontalScroll(rememberScrollState())) {
-                            listOf(PageLayoutMode.VERTICAL to "세로 스크롤", PageLayoutMode.HORIZONTAL to "가로 스크롤",
-                                PageLayoutMode.SPREAD_2X1 to "두 쪽", PageLayoutMode.SPREAD_COVER to "두 쪽 · 표지 따로",
-                                PageLayoutMode.GRID_2X2 to "네 쪽").forEach { (layout, label) ->
-                                SettingsChoiceChip(selected = pageLayout == layout, onClick = {
-                                    pageLayout = layout
-                                    penStore.setPageLayoutOf(note.id, layout)
-                                    canvas?.setPageLayout(layout)
-                                }, label = label, modifier = Modifier.padding(end = 6.dp))
-                            }
-                        }
-                        Text("화면 색", style = MaterialTheme.typography.bodyMedium)
-                        Row(Modifier.horizontalScroll(rememberScrollState())) {
-                            listOf(PAGE_TONE_NORMAL to "기본", PAGE_TONE_SEPIA to "세피아", PAGE_TONE_NIGHT to "야간").forEach { (tone, label) ->
-                                SettingsChoiceChip(selected = pageTone == tone, onClick = {
-                                    pageTone = tone
-                                    penStore.pageTone = tone
-                                }, label = label, modifier = Modifier.padding(end = 6.dp))
-                            }
-                        }
-                        Text(
-                            "화면에 보이는 색만 바꿉니다. 노트와 내보내기는 원래 색 그대로이고, 야간에서는 쓰는 중인 획만 잠깐 원래 색으로 보입니다",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.outline,
-                        )
-                        HorizontalDivider(Modifier.padding(vertical = 8.dp))
-                        TextButton(onClick = { store.setFavorite(note.id, !meta.favorite); edits++ }) {
-                            Text(if (meta.favorite) "즐겨찾기 해제" else "즐겨찾기")
-                        }
-                        TextButton(onClick = { filing = true }) { Text("폴더로 이동") }
-                        TextButton(onClick = {
-                            noteMenu = false
-                            canvas?.let { view -> exportingPages = view.snapshotPages(view.document.pages.indices.toList()) }
-                            savePagesPdf.launch(safeFileName(note.title) + ".pdf")
-                        }) { Text("PDF로 내보내기") }
-                        TextButton(enabled = meta.locked || NoteLock(context).hasPassword, onClick = {
-                            store.setLocked(note.id, !meta.locked); edits++
-                        }) { Text(if (meta.locked) "잠금 해제" else "암호로 잠그기") }
-                        TextButton(onClick = { confirmDelete = true }) {
-                            Text("휴지통으로", color = MaterialTheme.colorScheme.error)
-                        }
-                        HorizontalDivider(Modifier.padding(vertical = 8.dp))
-                        Text("필기 인식 언어 (앞쪽이 우선)", style = MaterialTheme.typography.bodyMedium)
-                        var languages by remember { mutableStateOf(InkIndexer.languages(context)) }
-                        Row(Modifier.horizontalScroll(rememberScrollState())) {
-                            InkIndexer.OFFERED.forEach { (tag, label) ->
-                                SettingsChoiceChip(selected = tag in languages, onClick = {
-                                    val next = if (tag in languages) languages - tag else languages + tag
-                                    if (next.isNotEmpty()) { languages = next; InkIndexer.setLanguages(context, next) }
-                                }, label = label, modifier = Modifier.padding(end = 6.dp))
-                            }
-                        }
-                    }
-                },
-                confirmButton = { TextButton(onClick = { noteMenu = false }) { Text("닫기") } },
-            )
-            if (filing) FolderDialog(current = meta.folder, folders = remember { store.folders() },
-                onDismiss = { filing = false }, onPick = { store.setFolder(note.id, it); filing = false; edits++ })
-            if (confirmDelete) AlertDialog(
-                onDismissRequest = { confirmDelete = false },
-                title = { Text("이 노트를 휴지통으로 옮길까요?") },
-                confirmButton = { TextButton(onClick = {
-                    confirmDelete = false
-                    noteMenu = false
-                    store.moveToTrash(note.id)
-                    onBack()
-                }) { Text("옮기기") } },
-                dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("취소") } },
-            )
-        }
-        if (showInput) InputSettingsDialog(gestures, onGestures = { setGestures(it) }, onDismiss = { showInput = false })
 
         pressMenu?.let { at ->
             val system = context.getSystemService(android.content.ClipboardManager::class.java)
@@ -5345,15 +5393,10 @@ private fun NoteScreen(
 
         selectionColorMode?.let { colorMode ->
             PenDialog(mode = colorMode, pen = settings.getValue(colorMode),
-                deferDetail = deferDetail, onDeferDetail = { deferDetail = it; penStore.deferDetail = it },
                 highlighterAboveInk = highlighterAboveInk,
                 onHighlighterAboveInk = {
                     highlighterAboveInk = it; penStore.highlighterAboveInk = it
                 },
-                meshInk = meshInk,
-                onMeshInk = { meshInk = it; penStore.meshInk = it },
-                compatWetInk = compatWetInk,
-                onCompatWetInk = { compatWetInk = it; penStore.compatWetInk = it },
                 axisSnap = axisSnap,
                 onAxisSnap = { axisSnap = it; penStore.axisSnap = it },
                 onDismiss = { selectionColorMode = null }, onConfirm = {
@@ -5666,7 +5709,7 @@ private fun NoteScreen(
             toolbar(Modifier.align(Alignment.TopCenter).then(
                 if (toolbarSize > 0) Modifier.spotiToolbarAnimatedWidth(floatingBarWidth)
                     .windowInsetsPadding(ChromeInsets.only(WindowInsetsSides.Top))
-                else Modifier.fillMaxWidth()))
+                else Modifier.fillMaxWidth()), null)
         }
     }
 
@@ -7668,7 +7711,6 @@ private fun Toolbar(
     skin: Skin,
     onSkin: (Skin) -> Unit,
     docked: Boolean,
-    showLatency: Boolean,
     canUndo: Boolean,
     canRedo: Boolean,
     pageLabel: String,
@@ -7686,41 +7728,39 @@ private fun Toolbar(
     onZoomLabel: () -> Unit,
     /** The zoom as a percentage of fit-to-width. */
     zoomLabel: String,
-    onToggleLatency: () -> Unit,
     recording: Boolean,
     onVoice: () -> Unit,
     noteRotation: Int,
     onRotate: () -> Unit,
     onTogglePages: () -> Unit,
-    onCollapse: () -> Unit,
     sizeLevel: Int,
     onSizeLevel: (Int) -> Unit,
     onOpenNote: (NoteMeta) -> Unit,
     onBack: () -> Unit,
     onPalette: () -> Unit,
-    onToggleDock: () -> Unit,
     /** Whether the bar has been dragged away from where it starts. */
     canResetBar: Boolean,
     onResetBar: () -> Unit,
-    onScreenSettings: () -> Unit,
+    /** Opens the settings sidebar at the given screen. */
+    onSettings: (SettingsPage) -> Unit,
     onDragBar: (Offset) -> Unit,
     modifier: Modifier = Modifier,
-    laser: Boolean = false,
-    onToggleLaser: () -> Unit = {},
-    laserDot: Boolean = false,
-    ruler: RulerKind? = null,
-    onRuler: (RulerKind?) -> Unit = {},
     onAddPage: () -> Unit = {},
-    onInputSettings: () -> Unit = {},
     onClock: () -> Unit = {},
-    onEditTools: () -> Unit = {},
     onQuickColor: (Int) -> Unit = {},
-    onNoteMenu: () -> Unit = {},
     onCamera: () -> Unit = {},
     onLayers: () -> Unit = {},
+    /** The layer new ink goes to, shown beside the pen options (and in the top row if placed there). */
+    layerChip: @Composable () -> Unit = {},
+    /** Drawn as a picture of the bar in a settings preview: it reports no position for the pen panel. */
+    preview: Boolean = false,
 ) {
+    val config = currentToolbarConfig()
+    val undoReason = if (canUndo) null else "Nothing to undo"
+    val redoReason = if (canRedo) null else "Nothing to redo"
     val topRow: @Composable () -> Unit = {
-        // ---- top row: the note, and what is done to the whole of it
+        // ---- top row: the note, and what is done to the whole of it, in
+        // the order the toolbar editor left it.
         Row(
             // Docked the bar is the window and everything fits. Floating it
             // is capped, and narrower still with the browser panel open -
@@ -7731,140 +7771,159 @@ private fun Toolbar(
             Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            AppIconButton(onClick = onBack, icon = AppIcons.back, contentDescription = "뒤로가기")
-            AppIconButton(onClick = onTogglePages, icon = AppIcons.search, contentDescription = "페이지 · 검색")
-
-            Text(
-                note.title,
-                style = MaterialTheme.typography.titleSmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center,
-                // Docked the bar is the window's width and the title takes
-                // the slack, so the two clusters stay pinned to their ends.
-                // Floating, the bar is only as wide as it needs to be, and a
-                // title that takes the slack has no end to stop at - which
-                // is how a landscape tablet ended up with a 2960px bar and
-                // the tools huddled in the first third of it.
-                modifier = Modifier.weight(1f)
-                    .padding(horizontal = 16.dp),
-            )
-
-            AppIconButton(onClick = onUndo, icon = AppIcons.undo, contentDescription = "실행취소", enabled = canUndo)
-            AppIconButton(onClick = onRedo, icon = AppIcons.redo, contentDescription = "다시실행", enabled = canRedo)
-            AppIconButton(
-                onClick = onVoice,
-                icon = AppIcons.mic,
-                contentDescription = if (recording) "녹음 중 · 녹음 패널 열기" else "녹음 패널 열기",
-                tint = if (recording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-            )
-            AppIconButton(onClick = onRotate, icon = AppIcons.rotate, contentDescription = "노트 회전 ${noteRotation}도")
-            // 확대 아이콘과 수치는 분리해 둘을 감싸는 강조 칸은 만들지 않고,
-            // 숫자는 행의 정중앙에 놓습니다.
-            // The reading is the button: tapping it offers the zoom steps.
-            Text(
-                zoomLabel,
-                // Tabular figures: 97% and 100% take the same width, so the
-                // buttons beside the reading do not shuffle as the zoom changes.
-                style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum"),
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .clickable(onClick = onZoomLabel)
-                    .widthIn(min = 52.dp)
-                    .padding(horizontal = 6.dp, vertical = 10.dp),
-            )
-            SkinButton(skin, onSkin)
-            // Docking stays in the function menu; the top row has no room to spare.
-            // Only once there is somewhere to come back from. A bar that
-            // has never been moved does not need a button for moving it
-            // back, and a bar dragged to a corner and left there had no way
-            // back at all short of docking it and undocking it again.
-            if (canResetBar) {
-                AppIconButton(onClick = onResetBar, icon = AppIcons.resetBar, contentDescription = "도구막대 제자리로")
+            for (item in config.topRow) {
+                when (item) {
+                    TopRowItem.BACK -> AppIconButton(onClick = onBack, icon = AppIcons.back, contentDescription = "Back to notes")
+                    TopRowItem.PAGES -> AppIconButton(onClick = onTogglePages, icon = AppIcons.search, contentDescription = "Pages & search")
+                    TopRowItem.TITLE -> Text(
+                        note.title,
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center,
+                        // Docked the bar is the window's width and the title takes
+                        // the slack, so the two clusters stay pinned to their ends.
+                        // Floating, the bar is only as wide as it needs to be, and a
+                        // title that takes the slack has no end to stop at - which
+                        // is how a landscape tablet ended up with a 2960px bar and
+                        // the tools huddled in the first third of it.
+                        modifier = Modifier.weight(1f)
+                            .padding(horizontal = 16.dp),
+                    )
+                    TopRowItem.UNDO -> AppIconButton(onClick = onUndo, icon = AppIcons.undo, contentDescription = "Undo",
+                        enabled = canUndo, modifier = Modifier.disabledReason(undoReason))
+                    TopRowItem.REDO -> AppIconButton(onClick = onRedo, icon = AppIcons.redo, contentDescription = "Redo",
+                        enabled = canRedo, modifier = Modifier.disabledReason(redoReason))
+                    TopRowItem.MIC -> AppIconButton(
+                        onClick = onVoice,
+                        icon = AppIcons.mic,
+                        contentDescription = if (recording) "Recording · open recordings" else "Open recordings",
+                        tint = if (recording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                    )
+                    TopRowItem.ROTATE -> AppIconButton(onClick = onRotate, icon = AppIcons.rotate,
+                        contentDescription = "Rotate note, now $noteRotation°")
+                    // 확대 아이콘과 수치는 분리해 둘을 감싸는 강조 칸은 만들지 않고,
+                    // 숫자는 행의 정중앙에 놓습니다.
+                    // The reading is the button: tapping it offers the zoom steps.
+                    TopRowItem.ZOOM -> Text(
+                        zoomLabel,
+                        // Tabular figures: 97% and 100% take the same width, so the
+                        // buttons beside the reading do not shuffle as the zoom changes.
+                        style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum"),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable(onClickLabel = "Zoom presets", onClick = onZoomLabel)
+                            .widthIn(min = 52.dp)
+                            .padding(horizontal = 6.dp, vertical = 10.dp),
+                    )
+                    TopRowItem.SKIN -> SkinButton(skin, onSkin)
+                    // Only once there is somewhere to come back from. A bar that
+                    // has never been moved does not need a button for moving it
+                    // back, and a bar dragged to a corner and left there had no way
+                    // back at all short of docking it and undocking it again.
+                    TopRowItem.RESET_BAR -> if (canResetBar) {
+                        AppIconButton(onClick = onResetBar, icon = AppIcons.resetBar, contentDescription = "Reset bar position")
+                    }
+                    // The clock, the calculator, the to-do list and the calendar.
+                    TopRowItem.PLANNER -> ToolsMenuButton()
+                    TopRowItem.GESTURES -> AppIconButton(onClick = { onSettings(SettingsPage.TOUCH) }, icon = AppIcons.touch,
+                        contentDescription = "Touch & gestures")
+                    TopRowItem.ADD_PAGE -> AppIconButton(onClick = onAddPage, icon = AppIcons.addPage, contentDescription = "Add page")
+                    TopRowItem.NOTE_MENU -> AppIconButton(onClick = { onSettings(SettingsPage.NOTE_VIEW) }, icon = AppIcons.noteMenu,
+                        contentDescription = "Note & view")
+                    TopRowItem.OTHER_NOTES -> OtherNotesButton(otherNotes, onOpenNote)
+                    TopRowItem.LAYER -> layerChip()
+                    TopRowItem.SETTINGS -> AppIconButton(onClick = { onSettings(SettingsPage.ROOT) }, icon = AppIcons.settings,
+                        contentDescription = "Settings")
+                }
             }
-            // The clock, the calculator, the to-do list and the calendar.
-            ToolsMenuButton()
-            AppIconButton(onClick = onInputSettings, icon = AppIcons.input, contentDescription = "손가락·제스처")
-            AppIconButton(onClick = onAddPage, icon = AppIcons.addPage, contentDescription = "페이지 추가")
-            AppIconButton(onClick = onNoteMenu, icon = AppIcons.noteMenu, contentDescription = "노트 · 보기 방식")
-            OtherNotesButton(otherNotes, onOpenNote)
         }
     }
     SpotiGlassToolbar(sizeLevel, onSizeLevel, mode,
             toolColors = toolPens.filterKeys { it.tints }.mapValues { Color(it.value.colorArgb.or(0xFF000000.toInt())) },
             targetWidth = toolbarTargetWidth,
-            docked = docked, modifier = modifier, onDrag = onDragBar,
+            docked = docked,
+            // Where the pen panel grows from: the middle of the bar's lower edge.
+            modifier = if (preview) modifier else modifier.onGloballyPositioned {
+                val at = it.positionOnScreen()
+                PenPopupAnchor.screen = Offset(at.x + it.size.width / 2f, at.y + it.size.height)
+            },
+            onDrag = onDragBar,
             onTool = { tool -> when (tool.mode) {
                 EditMode.SHAPE -> onShape(shapeKind)
                 EditMode.TEXT -> onText()
                 null -> Unit
                 else -> onMode(tool.mode)
             } },
-            actions = buildList {
-                add(SpotiToolbarAction("뒤로가기", AppIcons.back, onClick = onBack))
-                add(SpotiToolbarAction("검색 · 페이지", AppIcons.search, slot = 8, onClick = onTogglePages))
-                add(SpotiToolbarAction("실행취소", AppIcons.undo, enabled = canUndo, onClick = onUndo))
-                add(SpotiToolbarAction("다시실행", AppIcons.redo, enabled = canRedo, onClick = onRedo))
-                add(SpotiToolbarAction("마이크", AppIcons.mic, selected = recording, slot = 0, onClick = onVoice))
-                add(SpotiToolbarAction(if (docked) "상단 고정 해제" else "상단 고정", if (docked) AppIcons.undock else AppIcons.dock,
-                    selected = docked, slot = 1, onClick = onToggleDock))
-                add(SpotiToolbarAction("노트 회전", AppIcons.rotate, slot = 7, onClick = onRotate))
-                add(SpotiToolbarAction("캡쳐", AppIcons.capture, slot = 5, onClick = { onMode(EditMode.CAPTURE) }))
-                add(SpotiToolbarAction("페이지 추가", AppIcons.addPage, onClick = onAddPage))
-                add(SpotiToolbarAction("필기 설정", AppIcons.penSettings, slot = 4, onClick = {
-                    if (mode !in PenStore.DEFAULTS) onMode(EditMode.PEN)
-                    onEditPen()
-                }))
-                add(SpotiToolbarAction("사진", AppIcons.picture, onClick = onPickImage))
-                add(SpotiToolbarAction("시계", AppIcons.clock, onClick = onClock))
-                add(SpotiToolbarAction("계산기", AppIcons.tools, onClick = { Planner.show(ToolPanel.CALCULATOR) }))
-                add(SpotiToolbarAction("할 일", AppIcons.todo, onClick = { Planner.show(ToolPanel.TODO) }))
-                add(SpotiToolbarAction("캘린더", AppIcons.calendar, onClick = { Planner.show(ToolPanel.CALENDAR) }))
-                add(SpotiToolbarAction("손가락·제스처", AppIcons.input, onClick = onInputSettings))
-                add(SpotiToolbarAction("레이어", AppIcons.layers, slot = 2, onClick = onLayers))
-                add(SpotiToolbarAction("도구 편집", AppIcons.editTools, onClick = onEditTools))
-                add(SpotiToolbarAction("노트 · 보기 방식", AppIcons.noteMenu, onClick = onNoteMenu))
-                add(SpotiToolbarAction("사진 찍어 넣기", AppIcons.camera, onClick = onCamera))
-                add(SpotiToolbarAction("UI · 화면 설정", AppIcons.skin, slot = 6, onClick = onScreenSettings))
-                add(SpotiToolbarAction("확대 · $zoomLabel", AppIcons.zoom, onClick = onZoomLabel))
-                add(SpotiToolbarAction("인터넷", AppIcons.web, onClick = { onWeb(SEARCH_HOME) }))
-                add(SpotiToolbarAction("지연 측정", AppIcons.latency, selected = showLatency, onClick = onToggleLatency))
-                if (canResetBar) add(SpotiToolbarAction("도구막대 제자리로", AppIcons.resetBar, onClick = onResetBar))
-            },
+            // Exactly these, in these groups; everything else is in Settings.
+            functions = listOf(
+                listOf(
+                    SpotiToolbarAction("Undo", AppIcons.undo, enabled = canUndo, disabledReason = undoReason, onClick = onUndo),
+                    SpotiToolbarAction("Redo", AppIcons.redo, enabled = canRedo, disabledReason = redoReason, onClick = onRedo),
+                ),
+                listOf(
+                    SpotiToolbarAction("Picture", AppIcons.picture, onClick = onPickImage),
+                    SpotiToolbarAction("Camera", AppIcons.camera, onClick = onCamera),
+                    SpotiToolbarAction("Layers", AppIcons.layers, onClick = onLayers),
+                    SpotiToolbarAction("Microphone", AppIcons.mic, selected = recording, onClick = onVoice),
+                    SpotiToolbarAction("Capture", AppIcons.capture, selected = mode == EditMode.CAPTURE,
+                        onClick = { onMode(EditMode.CAPTURE) }),
+                    SpotiToolbarAction("Text", AppIcons.text, selected = mode == EditMode.TEXT, onClick = onText),
+                ),
+                listOf(
+                    SpotiToolbarAction("Clock", AppIcons.clock, onClick = onClock),
+                    SpotiToolbarAction("Calendar", AppIcons.calendar, onClick = { Planner.show(ToolPanel.CALENDAR) }),
+                    SpotiToolbarAction("To-do", AppIcons.todo, onClick = { Planner.show(ToolPanel.TODO) }),
+                    SpotiToolbarAction("Calculator", AppIcons.tools, onClick = { Planner.show(ToolPanel.CALCULATOR) }),
+                ),
+                listOf(
+                    SpotiToolbarAction("Notes", AppIcons.otherNotes, opensNotes = true, onClick = {}),
+                    SpotiToolbarAction("Add page", AppIcons.addPage, onClick = onAddPage),
+                ),
+                listOf(
+                    SpotiToolbarAction("Settings", AppIcons.settings, onClick = { onSettings(SettingsPage.ROOT) }),
+                ),
+            ),
             notes = otherNotes.map { other -> SpotiToolbarAction(other.title, AppIcons.note) { onOpenNote(other) } },
             ai = AI_SITES.map { (name, url) -> SpotiToolbarAction(name, AppIcons.ai) { onWeb(url) } },
             topRow = topRow,
-            penOptions = { availableWidth ->
-              val inkOptions: @Composable RowScope.() -> Unit = {
-                if (mode == EditMode.SHAPE) ShapeButton(true, shapeKind, onShape)
-                if (mode == EditMode.TEXT) TextButton(onClick = onAddText) { Text("+ 텍스트") }
-                if (mode in PenStore.DEFAULTS) {
-                    PenChip(pen, true, onEditPen)
-                }
-                if (mode.tints) QuickColors(pen.colorArgb, onQuickColor, onEditPen)
-                if (mode.tints) {
-                    var paletteTaps by remember { mutableIntStateOf(0) }
-                    IconButton(onClick = { paletteTaps++; onPalette() }, modifier = Modifier.size(32.dp)) {
-                        AppIcon(AppIcons.palette, "색상 템플릿", Modifier.size(20.dp), play = paletteTaps)
+            penOptions = { _ ->
+              // What the editor put in this row, in its order. The slider takes
+              // the slack; without it a spacer does, so the page number keeps
+              // to the end either way.
+              val stretches = PenRowItem.WIDTH in config.penRow && mode in PenStore.DEFAULTS
+              Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                for (item in config.penRow) {
+                    when (item) {
+                        PenRowItem.TOOL -> {
+                            if (mode == EditMode.SHAPE) ShapeButton(true, shapeKind, onShape)
+                            if (mode == EditMode.TEXT) TextButton(onClick = onAddText) { Text("+ Text") }
+                            if (mode in PenStore.DEFAULTS) PenChip(pen, true, onEditPen)
+                        }
+                        PenRowItem.QUICK_COLORS -> if (mode.tints) QuickColors(pen.colorArgb, onQuickColor, onEditPen)
+                        PenRowItem.PALETTE -> if (mode.tints) {
+                            var paletteTaps by remember { mutableIntStateOf(0) }
+                            IconButton(onClick = { paletteTaps++; onPalette() }, modifier = Modifier.size(32.dp)) {
+                                AppIcon(AppIcons.palette, "Color templates", Modifier.size(20.dp), play = paletteTaps)
+                            }
+                        }
+                        PenRowItem.STRAIGHT_LINE -> if (mode in STRAIGHT_LINE_MODES) {
+                            ToolButton(Reicons.Remove, "Straight line", straightLine, onClick = onToggleStraightLine)
+                        }
+                        PenRowItem.LAYER -> layerChip()
+                        PenRowItem.WIDTH -> if (mode in PenStore.DEFAULTS) {
+                            val range = PenStore.widthRange(mode, pen)
+                            FavoriteWidthButton(mode, pen.width, onWidth)
+                            SkinSlider(pen.width.coerceIn(range), onWidth, range, Modifier.weight(1f).widthIn(min = 64.dp), step = WIDTH_SLIDER_STEP)
+                        }
+                        PenRowItem.PAGE_LABEL -> {
+                            if (!stretches) Spacer(Modifier.weight(1f))
+                            TextButton(onClick = onTogglePages) { Text(pageLabel) }
+                        }
                     }
                 }
-                if (mode in STRAIGHT_LINE_MODES) {
-                    ToolButton(Reicons.Remove, "직선", straightLine, onClick = onToggleStraightLine)
-                }
-              }
-              val widthOptions: @Composable RowScope.() -> Unit = {
-                if (mode in PenStore.DEFAULTS) {
-                    val range = PenStore.widthRange(mode, pen)
-                    FavoriteWidthButton(mode, pen.width, onWidth)
-                    SkinSlider(pen.width.coerceIn(range), onWidth, range, Modifier.weight(1f).widthIn(min = 64.dp), step = WIDTH_SLIDER_STEP)
-                }
-              }
-              Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                inkOptions()
-                widthOptions()
-                if (mode !in PenStore.DEFAULTS) Spacer(Modifier.weight(1f))
-                TextButton(onClick = onTogglePages) { Text(pageLabel) }
+                if (!stretches && PenRowItem.PAGE_LABEL !in config.penRow) Spacer(Modifier.weight(1f))
               }
             })
 }

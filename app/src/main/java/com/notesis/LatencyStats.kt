@@ -152,6 +152,20 @@ class LatencyStats(private val capacity: Int = 512) {
     internal fun snapshot(metric: PerformanceMetric): Percentiles? =
         metrics[metric.ordinal].snapshot()
 
+    /** Everything [render] shows besides the per-metric timings, for a screen that lays it out itself. */
+    @Synchronized
+    internal fun extras(): LatencyExtras = LatencyExtras(
+        frame = frames.snapshot(),
+        prediction = predictionLeads.snapshot(),
+        allocationMiBPerSecond = allocationRates.snapshot(BYTES_PER_MIB),
+        gcEvents = gcEvents,
+        inputRateHz = lastInputRateHz,
+        inkCacheTiles = inkCacheTiles,
+        inkCacheMiB = inkCacheBytes / BYTES_PER_MIB,
+        inkCacheFrameRecorded = inkCacheFrameRecorded,
+        visibleStrokes = lastVisibleStrokes,
+    )
+
     @Synchronized
     fun render(strokeCount: Int): String {
         val wet = metricLine("wet ink", PerformanceMetric.WET_INK)
@@ -239,6 +253,18 @@ class LatencyStats(private val capacity: Int = 512) {
         private const val BYTES_PER_MIB = 1024.0 * 1024.0
     }
 }
+
+internal data class LatencyExtras(
+    val frame: Percentiles?,
+    val prediction: Percentiles?,
+    val allocationMiBPerSecond: Percentiles?,
+    val gcEvents: Long,
+    val inputRateHz: Double,
+    val inkCacheTiles: Int,
+    val inkCacheMiB: Double,
+    val inkCacheFrameRecorded: Long,
+    val visibleStrokes: Int,
+)
 
 /** Fixed storage: recording a sample never allocates. */
 private class LongRing(private val capacity: Int) {
