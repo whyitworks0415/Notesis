@@ -11,6 +11,7 @@ import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.spring
@@ -62,7 +63,8 @@ import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.imeAnimationSource
+import androidx.compose.foundation.layout.imeAnimationTarget
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -802,7 +804,7 @@ private fun NoteListScreen(
 
     // Pictures for a new note: picked, put in order, then one per page.
     var orderingImages by remember { mutableStateOf<List<Uri>?>(null) }
-    val pickImages = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+    val pickImages = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
         if (uris.isNotEmpty()) orderingImages = uris
     }
     var askingUrl by remember { mutableStateOf(false) }
@@ -1024,7 +1026,7 @@ private fun NoteListScreen(
                     listOf(
                         DialOption("New note from web page", AppIconStyle.pick(Lucide.Globe, Reicons.Language)) { askingUrl = true },
                         DialOption("New note from images", AppIconStyle.pick(Lucide.Image, Reicons.AddPhotoAlternate)) {
-                            pickImages.launch(arrayOf("image/*"))
+                            pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                         },
                         DialOption("Import Markdown", AppIconStyle.pick(Lucide.FileText, Reicons.Description)) {
                             importMarkdown.launch(arrayOf("text/markdown", "text/plain", "application/octet-stream"))
@@ -2933,6 +2935,7 @@ private fun CaptureDialog(
  * A browser beside the note. It is a plain WebView: the point is looking things
  * up without leaving the page being written on, not building a browser.
  */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun WebPanel(
     url: String,
@@ -2957,6 +2960,12 @@ private fun WebPanel(
         uaFor(android.webkit.WebSettings.getDefaultUserAgent(context), desktop)
     }
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    // Room for the keyboard at the height it is going to, from the first frame
+    // of its slide, and kept until it has gone. Following the slide itself
+    // resized the WebView on every frame of it: Chromium re-laid the chat out
+    // each time, which was the stutter, and the composer rode up with the
+    // keyboard instead of simply being there when it arrived.
+    val keyboardRoom = WindowInsets.imeAnimationSource.union(WindowInsets.imeAnimationTarget)
     // Out of sight the page stops: onPause alone left its JavaScript timers
     // running, so a chat page kept waking the CPU beside the writing. The
     // timers are process-wide, which is why the note screen starts them again
@@ -2982,7 +2991,7 @@ private fun WebPanel(
                 // 시스템 바 inset도 패널의 실제 표면색으로 칠해 상단 회색 띠를 없앱니다.
                 .background(MaterialTheme.colorScheme.surface)
                 .windowInsetsPadding(ChromeInsets)
-                .imePadding(),
+                .windowInsetsPadding(keyboardRoom),
         ) {
             Row(
                 Modifier
@@ -3910,7 +3919,7 @@ private fun NoteScreen(
                 }.getOrNull()
             }
             if (added == null) {
-                Toast.makeText(context, "이미지를 읽지 못했습니다", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "Couldn't read that image", Toast.LENGTH_SHORT).show()
                 return@launch
             }
             canvas?.insertImage(added.first, added.second)
@@ -3918,8 +3927,10 @@ private fun NoteScreen(
             edits++
         }
     }
+    // The gallery, not the file browser: the system photo picker opens on the
+    // pictures themselves and needs no storage permission.
     val pickImage = rememberLauncherForActivityResult(
-        ActivityResultContracts.GetContent(),
+        ActivityResultContracts.PickVisualMedia(),
     ) { uri: Uri? ->
         if (uri != null) addImageFrom(uri)
     }
@@ -4030,7 +4041,9 @@ private fun NoteScreen(
                 canvas?.clearImageSelection()
                 mode = EditMode.SHAPE
             },
-            onPickImage = { pickImage.launch("image/*") },
+            onPickImage = {
+                pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            },
             onText = {
                 if (mode == EditMode.TEXT) { replacingText = null; textPosition = null; showTextBox = true }
                 mode = EditMode.TEXT
