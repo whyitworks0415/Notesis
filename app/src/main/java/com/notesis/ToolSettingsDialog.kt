@@ -1283,7 +1283,7 @@ private fun StrokePreview(width: Float, color: Color?, linePattern: Int, modifie
     }
 }
 
-/** Where the thickness slider tops out: 얇게, 중간 or the tool's own 최대. */
+/** Where the thickness slider tops out: Thin, Medium or the tool's own Max. */
 @Composable
 private fun WidthCeilings(mode: EditMode, range: ClosedFloatingPointRange<Float>, onCeiling: (Float) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {

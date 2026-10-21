@@ -49,7 +49,7 @@ internal fun WidthControls(mode: EditMode, width: Float, onWidth: (Float) -> Uni
         OutlinedTextField(
             value = typed,
             onValueChange = { typed = it; parseWidth(it, range)?.let(onWidth) },
-            label = { Text("굵기 (${widthLabel(range.start)}–${widthLabel(range.endInclusive)})") },
+            label = { Text("Width (${widthLabel(range.start)}–${widthLabel(range.endInclusive)})") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             singleLine = true,
             isError = parsed == null,
@@ -60,7 +60,7 @@ internal fun WidthControls(mode: EditMode, width: Float, onWidth: (Float) -> Uni
                 val chosen = parsed ?: return@TextButton
                 favorites = if (chosen in favorites) favorites - chosen else (favorites + chosen).sorted()
                 store.saveFavoriteWidths(mode, favorites)
-            }) { Text(if (parsed in favorites) "★ 해제" else "☆ 즐겨찾기") }
+            }) { Text(if (parsed in favorites) "★ Unfavorite" else "☆ Favorite") }
             favorites.forEach { favorite ->
                 TextButton(onClick = { onWidth(favorite) }) { Text(widthLabel(favorite)) }
             }
@@ -74,9 +74,9 @@ internal fun FavoriteWidthButton(mode: EditMode, width: Float, onWidth: (Float) 
     TextButton(onClick = { open = true }) { Text("${widthLabel(width)} ▾") }
     if (open) AlertDialog(
         onDismissRequest = { open = false },
-        title = { Text("굵기 · 즐겨찾기") },
+        title = { Text("Width · Favorites") },
         text = { WidthControls(mode, width, onWidth) },
-        confirmButton = { TextButton(onClick = { open = false }) { Text("완료") } },
+        confirmButton = { TextButton(onClick = { open = false }) { Text("Done") } },
     )
 }
 
@@ -86,7 +86,7 @@ internal fun ToolbarSizeButton(size: Int, onSize: (Int) -> Unit) {
     Box {
         TextButton(onClick = { open = true }) { Text("${size + 1}/4") }
         DropdownMenu(open, onDismissRequest = { open = false }) {
-            listOf("최대 · 전체 도구", "중간 · 한 줄", "작게 · 필수 도구", "최소 · 버튼 하나")
+            listOf("Full · All tools", "Medium · One row", "Small · Essentials", "Minimal · One button")
                 .forEachIndexed { index, label ->
                     DropdownMenuItem(text = { Text(label) }, onClick = { onSize(index); open = false })
                 }
@@ -99,7 +99,7 @@ internal fun ColorInput(color: Int, onColor: (Int) -> Unit) {
     var value by remember(color) { mutableStateOf("%06X".format(color and 0xFFFFFF)) }
     var expanded by remember { mutableStateOf(false) }
     val hsv = remember(color) { FloatArray(3).also { android.graphics.Color.colorToHSV(color, it) } }
-    TextButton(onClick = { expanded = !expanded }) { Text("색상 직접 고르기") }
+    TextButton(onClick = { expanded = !expanded }) { Text("Pick a custom color") }
     if (expanded) {
         SaturationValueField(hsv[0], hsv[1], hsv[2]) { saturation, brightness ->
             onColor(android.graphics.Color.HSVToColor(floatArrayOf(hsv[0], saturation, brightness)))
@@ -112,7 +112,7 @@ internal fun ColorInput(color: Int, onColor: (Int) -> Unit) {
     OutlinedTextField(
         value = value,
         onValueChange = { value = it; parseColor(it)?.let(onColor) },
-        label = { Text("색상 #RRGGBB") },
+        label = { Text("Color #RRGGBB") },
         singleLine = true,
         isError = parseColor(value) == null,
         leadingIcon = { Box(Modifier.size(24.dp).background(Color(color))) },
@@ -135,13 +135,13 @@ internal fun TemplateEditor(onDismiss: () -> Unit, onSave: (String, List<Int>) -
     var colors by remember { mutableStateOf(emptyList<Int>()) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("색상 템플릿 추가") },
+        title = { Text("Add color template") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                OutlinedTextField(name, { name = it }, label = { Text("템플릿 이름") }, singleLine = true)
+                OutlinedTextField(name, { name = it }, label = { Text("Template name") }, singleLine = true)
                 ColorInput(color) { color = it }
                 TextButton(enabled = colors.size < 12 && color !in colors,
-                    onClick = { colors = colors + color }) { Text("+ 이 색상 추가 (${colors.size}/12)") }
+                    onClick = { colors = colors + color }) { Text("+ Add this color (${colors.size}/12)") }
                 Row(Modifier.horizontalScroll(rememberScrollState())) {
                     colors.forEach { saved ->
                         TextButton(onClick = { colors = colors - saved }) {
@@ -150,12 +150,12 @@ internal fun TemplateEditor(onDismiss: () -> Unit, onSave: (String, List<Int>) -
                         }
                     }
                 }
-                Text("추가한 색상을 누르면 제거합니다.", style = MaterialTheme.typography.bodySmall)
+                Text("Tap an added color to remove it.", style = MaterialTheme.typography.bodySmall)
             }
         },
         confirmButton = { TextButton(enabled = name.isNotBlank() && colors.isNotEmpty(),
-            onClick = { onSave(name.trim(), colors) }) { Text("저장") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+            onClick = { onSave(name.trim(), colors) }) { Text("Save") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 
@@ -193,24 +193,24 @@ internal fun HomeBackgroundDialog(store: PenStore, onChanged: () -> Unit, onDism
                     val options = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
                     android.graphics.BitmapFactory.decodeStream(stream, null, options)
                     check(options.outWidth > 0 && options.outHeight > 0)
-                } ?: error("사진을 읽지 못했습니다")
+                } ?: error("Couldn't read the photo")
             }.isSuccess }
             if (ok) { store.homePhoto = uri.toString(); onChanged(); onDismiss() }
-            else error = "사진을 읽지 못했습니다. 다른 사진을 선택해 주세요."
+            else error = "Couldn't read the photo. Please choose another one."
         }
     }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("노트 목록 배경") },
+        title = { Text("Note list background") },
         text = { Column(Modifier.verticalScroll(rememberScrollState())) {
             ColorInput(color) { color = it }
-            TextButton(onClick = { picker.launch(arrayOf("image/*")) }) { Text("사진 선택") }
-            TextButton(onClick = { store.homePhoto = null; store.homeColor = null; onChanged(); onDismiss() }) { Text("기본 배경으로") }
+            TextButton(onClick = { picker.launch(arrayOf("image/*")) }) { Text("Choose photo") }
+            TextButton(onClick = { store.homePhoto = null; store.homeColor = null; onChanged(); onDismiss() }) { Text("Use default background") }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         } },
         confirmButton = { TextButton(onClick = {
             store.homeColor = color; store.homePhoto = null; onChanged(); onDismiss()
-        }) { Text("색상 적용") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+        }) { Text("Apply color") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }

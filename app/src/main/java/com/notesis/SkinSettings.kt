@@ -7,14 +7,14 @@ import org.json.JSONObject
 
 /** 앱 전체에 명시적으로 적용할 화면 밝기 모드입니다. */
 enum class AppThemeMode(val label: String) {
-    LIGHT("라이트 모드"),
-    DARK("다크 모드"),
+    LIGHT("Light mode"),
+    DARK("Dark mode"),
 }
 
 /** Liquid Glass가 페이지 위로 솟아 보일지, 아래로 눌려 보일지 정합니다. */
 enum class RefractionDirection(val label: String) {
-    RAISED("위로 볼록"),
-    INSET("아래로 오목"),
+    RAISED("Raised"),
+    INSET("Pressed in"),
 }
 
 /**

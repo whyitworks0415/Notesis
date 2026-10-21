@@ -293,7 +293,7 @@ private fun SpotiActionButton(
     // the tool pill; an ordinary button stays flat.
     val grow by androidx.compose.animation.core.animateFloatAsState(
         if (pressed && effects && persistentGlass) 1f + 0.08f * look.spotiglassResponse else 1f,
-        if (effects) spring(0.78f, 430f) else tween(0), label = "기능 버튼 들림")
+        if (effects) spring(0.78f, 430f) else tween(0), label = "Action button lift")
     Box(modifier.sizeIn(minWidth = 44.dp, minHeight = 44.dp)
         .then(described)
         .clickable(enabled = enabled, role = Role.Button, interactionSource = interaction, indication = null, onClick = tapped),

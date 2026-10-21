@@ -3468,7 +3468,7 @@ private fun NoteScreen(
                         { imageId -> store.imageFile(note.id, imageId) }, out)
                 } ?: false
             }
-            Toast.makeText(context, if (ok) "PDF를 저장했습니다" else "내보내지 못했습니다", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, if (ok) "PDF saved" else "Couldn't export", Toast.LENGTH_SHORT).show()
         }
     }
     // The PDF's own contents, read once off the main thread when the note opens.
@@ -3527,7 +3527,7 @@ private fun NoteScreen(
         } else {
             active.release()
             file.delete()
-            Toast.makeText(context, "녹음을 시작하지 못했습니다", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Couldn't start recording", Toast.LENGTH_SHORT).show()
         }
     }
     val requestAudioPermission = rememberLauncherForActivityResult(
@@ -3776,7 +3776,7 @@ private fun NoteScreen(
     val floatingBarWidth = animateDpAsState(
         minOf(maxBarWidth, spotiToolbarWidth(toolbarSize)),
         if (skin != Skin.MATERIAL && toolbarEffects) ToolbarMotion.spec() else tween(0),
-        label = "상단 바 모드 너비",
+        label = "Top bar mode width",
     )
     var showLatency by remember { mutableStateOf(false) }
     var laser by remember { mutableStateOf(false) }
@@ -3850,13 +3850,13 @@ private fun NoteScreen(
         var inches by remember { mutableStateOf(canvas?.rulerInches == true) }
         AlertDialog(
             onDismissRequest = { rulerAngle = false },
-            title = { Text("자 설정") },
+            title = { Text("Ruler settings") },
             text = {
                 Column {
                     OutlinedTextField(
                         value = text,
                         onValueChange = { text = it.filter { c -> c.isDigit() || c == '.' || c == '-' }.take(6) },
-                        label = { Text("각도 (°)") },
+                        label = { Text("Angle (°)") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     )
@@ -3872,9 +3872,9 @@ private fun NoteScreen(
                     text.toFloatOrNull()?.let { canvas?.setRulerDegrees(it) }
                     canvas?.rulerInches = inches
                     rulerAngle = false
-                }) { Text("적용") }
+                }) { Text("Apply") }
             },
-            dismissButton = { TextButton(onClick = { rulerAngle = false }) { Text("취소") } },
+            dismissButton = { TextButton(onClick = { rulerAngle = false }) { Text("Cancel") } },
         )
     }
     if (goToPage) canvas?.let { view ->
@@ -4346,7 +4346,7 @@ private fun NoteScreen(
                         store.list().firstOrNull { it.id == noteId }?.let { target ->
                             penStore.setLastPage(target.id, pageIndex)
                             onOpenNote(target)
-                        } ?: Toast.makeText(context, "연결된 노트를 찾을 수 없습니다", Toast.LENGTH_SHORT).show()
+                        } ?: Toast.makeText(context, "Couldn't find the linked note", Toast.LENGTH_SHORT).show()
                     }
                     view.onLongPressCanvas = if (gestures.longPressMenu) { x, y -> pressMenu = Offset(x, y) } else null
                     view.laserTrail = !laserDot
@@ -4810,7 +4810,7 @@ private fun NoteScreen(
             val recordings = remember(note.id, voiceRevision) { store.recordings(note.id) }
             AlertDialog(
                 onDismissRequest = { showVoice = false },
-                title = { Text("음성 녹음") },
+                title = { Text("Voice recordings") },
                 text = {
                     Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
                         TextButton(onClick = {
@@ -4820,17 +4820,17 @@ private fun NoteScreen(
                                 ) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
                                 startRecording()
                             } else requestAudioPermission.launch(android.Manifest.permission.RECORD_AUDIO)
-                        }) { Text(if (recorder == null) "● 새 녹음 시작" else "■ 녹음 끝내기") }
+                        }) { Text(if (recorder == null) "● Start new recording" else "■ Stop recording") }
                         TextButton(enabled = recorder == null, onClick = {
                             showVoice = false
                             if (androidx.core.content.ContextCompat.checkSelfPermission(
                                     context, android.Manifest.permission.RECORD_AUDIO,
                                 ) == android.content.pm.PackageManager.PERMISSION_GRANTED) dictating = true
                             else requestAudioPermission.launch(android.Manifest.permission.RECORD_AUDIO)
-                        }) { Text("음성 받아쓰기") }
-                        Text("끝나면", style = MaterialTheme.typography.bodySmall)
+                        }) { Text("Dictation") }
+                        Text("When finished", style = MaterialTheme.typography.bodySmall)
                         Row(Modifier.horizontalScroll(rememberScrollState())) {
-                            listOf(PLAY_STOP to "멈춤", PLAY_NEXT to "다음 녹음", PLAY_LOOP_ONE to "한 곡 반복").forEach { (mode, label) ->
+                            listOf(PLAY_STOP to "Stop", PLAY_NEXT to "Next recording", PLAY_LOOP_ONE to "Repeat one").forEach { (mode, label) ->
                                 SettingsChoiceChip(selected = playMode == mode, onClick = {
                                     playMode = mode
                                     penStore.playMode = mode
@@ -4847,8 +4847,8 @@ private fun NoteScreen(
                                 if (playingFile == file.path) {
                                     voicePlayer?.release(); voicePlayer = null; playingFile = null
                                 } else playRecording(file.path)
-                            }) { Text(if (playingFile == file.path) "정지" else "재생") }
-                            TextButton(onClick = { shareFile(context, file, "audio/*") }) { Text("내보내기") }
+                            }) { Text(if (playingFile == file.path) "Stop" else "Play") }
+                            TextButton(onClick = { shareFile(context, file, "audio/*") }) { Text("Export") }
                             TextButton(onClick = {
                                 if (playingFile == file.path) {
                                     voicePlayer?.release(); voicePlayer = null; playingFile = null
@@ -4856,11 +4856,11 @@ private fun NoteScreen(
                                 file.delete()
                                 RecordingTimeline.fileFor(file).delete()
                                 voiceRevision++
-                            }) { Text("삭제") }
+                            }) { Text("Delete") }
                         }
                     }
                 },
-                confirmButton = { TextButton(onClick = { showVoice = false }) { Text("닫기") } },
+                confirmButton = { TextButton(onClick = { showVoice = false }) { Text("Close") } },
             )
         }
 
@@ -5068,7 +5068,7 @@ private fun NoteScreen(
                     regionOcrBusy = true
                     scope.launch {
                         regionOcrText = withContext(Dispatchers.IO) { indexer.textOf(strokes, firstReading = true) }
-                            ?: "인식 모델을 사용할 수 없습니다"
+                            ?: "Recognition model unavailable"
                         regionOcrBusy = false
                     }
                 },
@@ -5108,7 +5108,7 @@ private fun NoteScreen(
                     val kept = canvas?.lassoClipWithPreview()
                     if (kept != null) scope.launch {
                         val id = withContext(Dispatchers.IO) { store.addToLibrary(kept.first, kept.second) }
-                        Toast.makeText(context, if (id != null) "라이브러리에 추가했습니다" else "추가하지 못했습니다",
+                        Toast.makeText(context, if (id != null) "Added to library" else "Couldn't add to library",
                             Toast.LENGTH_SHORT).show()
                     }
                 },
@@ -5151,14 +5151,14 @@ private fun NoteScreen(
         ) {
             TextButton(onClick = { canvas?.goBack() }) {
                 Icon(Reicons.ArrowBack, contentDescription = null)
-                Text(" 이전 위치로")
+                Text(" Back to previous spot")
             }
         }
         sendingPages?.let { (indices, move) ->
             val others = remember { store.list().filter { it.id != note.id && it.kind == NoteKind.INK } }
             AlertDialog(
                 onDismissRequest = { sendingPages = null },
-                title = { Text(if (move) "${indices.size}쪽을 옮길 노트" else "${indices.size}쪽을 복사할 노트") },
+                title = { Text(if (move) "Move ${countNoun(indices.size, "page")} to…" else "Copy ${countNoun(indices.size, "page")} to…") },
                 text = {
                     LazyColumn(Modifier.heightIn(max = 360.dp)) {
                         items(others, key = { it.id }) { target ->
@@ -5169,14 +5169,14 @@ private fun NoteScreen(
                                     scope.launch {
                                         val ok = withContext(Dispatchers.IO) { store.appendPages(target.id, note.id, pages) }
                                         if (ok && move) { canvas?.deletePages(indices); edits++ }
-                                        Toast.makeText(context, if (ok) "\"${target.title}\"에 ${pages.size}쪽을 넣었습니다"
-                                            else "옮기지 못했습니다", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, if (ok) "Added ${countNoun(pages.size, "page")} to \"${target.title}\""
+                                            else if (move) "Couldn't move the pages" else "Couldn't copy the pages", Toast.LENGTH_SHORT).show()
                                     }
                                 }.padding(12.dp))
                         }
                     }
                 },
-                confirmButton = { TextButton(onClick = { sendingPages = null }) { Text("취소") } },
+                confirmButton = { TextButton(onClick = { sendingPages = null }) { Text("Cancel") } },
             )
         }
         if (showLibrary) LibraryDialog(store, onPaste = { clip ->
@@ -5234,25 +5234,25 @@ private fun NoteScreen(
         ) {
             Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    if (playingTimeline.isEmpty()) "녹음 재생 중"
-                    else "녹음 재생 중 · 읽기 모드에서 필기를 누르면 그 시점으로",
+                    if (playingTimeline.isEmpty()) "Playing recording"
+                    else "Playing recording · In read mode, tap ink to jump to that moment",
                     style = MaterialTheme.typography.bodySmall,
                 )
-                TextButton(onClick = { voicePlayer?.let { seekBy(it, -SKIP_MS) } }) { Text("-15초") }
-                TextButton(onClick = { voicePlayer?.let { seekBy(it, SKIP_MS) } }) { Text("+15초") }
+                TextButton(onClick = { voicePlayer?.let { seekBy(it, -SKIP_MS) } }) { Text("−15 s") }
+                TextButton(onClick = { voicePlayer?.let { seekBy(it, SKIP_MS) } }) { Text("+15 s") }
                 TextButton(onClick = {
                     playbackSpeed = nextPlaybackSpeed(playbackSpeed)
                     penStore.playbackSpeed = playbackSpeed
                     voicePlayer?.let { setPlaybackSpeed(it, playbackSpeed) }
-                }) { Text("${formatSpeed(playbackSpeed)}배") }
+                }) { Text("${formatSpeed(playbackSpeed)}×") }
                 TextButton(onClick = {
                     playMode = (playMode + 1) % 3
                     penStore.playMode = playMode
                     voicePlayer?.isLooping = playMode == PLAY_LOOP_ONE
-                }) { Text(when (playMode) { PLAY_NEXT -> "다음 녹음"; PLAY_LOOP_ONE -> "한 곡 반복"; else -> "끝나면 멈춤" }) }
+                }) { Text(when (playMode) { PLAY_NEXT -> "Next recording"; PLAY_LOOP_ONE -> "Repeat one"; else -> "Stop when finished" }) }
                 TextButton(onClick = {
                     voicePlayer?.release(); voicePlayer = null; playingFile = null
-                }) { Text("정지") }
+                }) { Text("Stop") }
             }
         }
         session?.let { run ->
@@ -5304,36 +5304,36 @@ private fun NoteScreen(
                 var name by remember(key) { mutableStateOf(study.record(key).name) }
                 AlertDialog(
                     onDismissRequest = { renamingMask = null },
-                    title = { Text("마스크 이름") },
+                    title = { Text("Mask name") },
                     text = {
                         OutlinedTextField(
                             value = name,
                             onValueChange = { name = it },
                             singleLine = true,
-                            placeholder = { Text("마스크 ${maskIndex + 1}") },
+                            placeholder = { Text("Mask ${maskIndex + 1}") },
                         )
                     },
                     confirmButton = { TextButton(onClick = {
                         study.rename(key, name)
                         studyRevision++
                         renamingMask = null
-                    }) { Text("저장") } },
-                    dismissButton = { TextButton(onClick = { renamingMask = null }) { Text("취소") } },
+                    }) { Text("Save") } },
+                    dismissButton = { TextButton(onClick = { renamingMask = null }) { Text("Cancel") } },
                 )
             }
         }
 
         if (regionOcrBusy) AlertDialog(
-            onDismissRequest = {}, title = { Text("선택한 필기를 읽는 중") }, confirmButton = {},
+            onDismissRequest = {}, title = { Text("Reading selected handwriting…") }, confirmButton = {},
         )
         regionOcrText?.let { recognized -> AlertDialog(
             onDismissRequest = { regionOcrText = null },
-            title = { Text("필기 인식 결과") },
-            text = { Text(recognized.ifBlank { "글자를 인식하지 못했습니다" }) },
+            title = { Text("Handwriting recognition") },
+            text = { Text(recognized.ifBlank { "No text recognized" }) },
             confirmButton = { TextButton(onClick = {
                 clipboard.setText(AnnotatedString(recognized))
                 regionOcrText = null
-            }) { Text("복사") } },
+            }) { Text("Copy") } },
             dismissButton = {
                 Row {
                     // The handwriting gives way to typed text where it stood.
@@ -5354,8 +5354,8 @@ private fun NoteScreen(
                                 edits++
                             }
                         }
-                    }) { Text("텍스트로 바꾸기") }
-                    TextButton(onClick = { regionOcrText = null }) { Text("닫기") }
+                    }) { Text("Convert to text") }
+                    TextButton(onClick = { regionOcrText = null }) { Text("Close") }
                 }
             },
         ) }
@@ -5367,7 +5367,7 @@ private fun NoteScreen(
                     val result = withContext(Dispatchers.IO) { runCatching {
                         val bitmap = renderTextBox(content)
                         try {
-                            val image = store.addImage(note.id, bitmap) ?: error("텍스트를 저장하지 못했습니다")
+                            val image = store.addImage(note.id, bitmap) ?: error("Couldn't save the text")
                             Triple(image.first, bitmap.width, bitmap.height)
                         } finally { bitmap.recycle() }
                     } }
@@ -5377,7 +5377,7 @@ private fun NoteScreen(
                         edits++
                         showTextBox = false
                     }.onFailure {
-                        Toast.makeText(context, it.message ?: "텍스트를 저장하지 못했습니다", Toast.LENGTH_LONG).show()
+                        Toast.makeText(context, it.message ?: "Couldn't save the text", Toast.LENGTH_LONG).show()
                     }
                 }
             })
@@ -5410,7 +5410,7 @@ private fun NoteScreen(
             scope.launch {
                 val added = withContext(Dispatchers.IO) { store.addImage(note.id, bitmap) }
                 if (added != null) { canvas?.replaceSelectedImage(added.first, area); edits++ }
-                else Toast.makeText(context, "이미지를 저장하지 못했습니다", Toast.LENGTH_SHORT).show()
+                else Toast.makeText(context, "Couldn't save the image", Toast.LENGTH_SHORT).show()
             }
         }
         if (picture == null || pictureBitmap == null) {
@@ -5462,29 +5462,29 @@ private fun NoteScreen(
             val inkClip = InkClipboard.clips.firstOrNull()
             Box(Modifier.offset { IntOffset(at.x.roundToInt(), at.y.roundToInt()) }) {
                 DropdownMenu(true, onDismissRequest = { pressMenu = null }) {
-                    if (inkClip != null) DropdownMenuItem(text = { Text("붙여넣기 (${inkClip.size}개)") }, onClick = {
+                    if (inkClip != null) DropdownMenuItem(text = { Text("Paste (${countNoun(inkClip.size, "item")})") }, onClick = {
                         pressMenu = null
                         canvas?.paste(inkClip)
                         edits++
                     })
                     val pastedText = clip?.coerceToText(context)?.toString()?.takeIf { clip.uri == null && it.isNotBlank() }
-                    if (pastedText != null) DropdownMenuItem(text = { Text("텍스트 붙여넣기") }, onClick = {
+                    if (pastedText != null) DropdownMenuItem(text = { Text("Paste text") }, onClick = {
                         pressMenu = null
                         putTypedText(pastedText)
                     })
                     val uri = clip?.uri
-                    if (uri != null) DropdownMenuItem(text = { Text("이미지 붙여넣기") }, onClick = {
+                    if (uri != null) DropdownMenuItem(text = { Text("Paste image") }, onClick = {
                         pressMenu = null
                         scope.launch {
                             val added = withContext(Dispatchers.IO) {
                                 runCatching { context.contentResolver.openInputStream(uri)?.use { store.addImage(note.id, it) } }.getOrNull()
                             }
                             if (added != null) { canvas?.insertImage(added.first, added.second); edits++ }
-                            else Toast.makeText(context, "이미지를 붙여넣지 못했습니다", Toast.LENGTH_SHORT).show()
+                            else Toast.makeText(context, "Couldn't paste the image", Toast.LENGTH_SHORT).show()
                         }
                     })
                     if (inkClip == null && pastedText == null && uri == null) {
-                        DropdownMenuItem(text = { Text("붙여넣을 내용이 없습니다") }, onClick = { pressMenu = null }, enabled = false)
+                        DropdownMenuItem(text = { Text("Nothing to paste") }, onClick = { pressMenu = null }, enabled = false)
                     }
                 }
             }
@@ -5898,12 +5898,12 @@ private fun StudyBar(
         ) {
             if (session.done) {
                 Text(
-                    "${session.queue.size}개 중 ${session.right}개 맞음",
+                    "${session.right} of ${session.queue.size} correct",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 ToolbarDivider()
                 if (session.missed.isNotEmpty()) {
-                    TextButton(onClick = onRetryMissed) { Text("틀린 ${session.missed.size}개 다시") }
+                    TextButton(onClick = onRetryMissed) { Text("Retry ${session.missed.size} missed") }
                 }
             } else {
                 Text(
@@ -5913,17 +5913,17 @@ private fun StudyBar(
                 )
                 ToolbarDivider()
                 if (!session.showing) {
-                    TextButton(onClick = onShow) { Text("정답 보기") }
+                    TextButton(onClick = onShow) { Text("Show answer") }
                 } else {
                     TextButton(onClick = { onAnswer(true) }) {
-                        Text("맞음", color = Color(0xFF2E7D32))
+                        Text("Correct", color = Color(0xFF2E7D32))
                     }
                     TextButton(onClick = { onAnswer(false) }) {
-                        Text("틀림", color = MaterialTheme.colorScheme.error)
+                        Text("Wrong", color = MaterialTheme.colorScheme.error)
                     }
                 }
             }
-            TextButton(onClick = onClose) { Text("끝내기") }
+            TextButton(onClick = onClose) { Text("Finish") }
         }
     }
 }
@@ -5963,17 +5963,17 @@ private fun LassoActions(
                 .padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("$count 개 · 끌어서 이동", style = MaterialTheme.typography.bodyMedium)
+            Text("${countNoun(count, "item")} · Drag to move", style = MaterialTheme.typography.bodyMedium)
             ToolbarDivider()
             if (onTransform != null) {
                 IconButton(onClick = { onTransform(0.8f, 0f) }) {
-                    Icon(Reicons.Remove, contentDescription = "축소")
+                    Icon(Reicons.Remove, contentDescription = "Shrink")
                 }
                 IconButton(onClick = { onTransform(1.25f, 0f) }) {
-                    Icon(Reicons.Add, contentDescription = "확대")
+                    Icon(Reicons.Add, contentDescription = "Enlarge")
                 }
                 IconButton(onClick = { onTransform(1f, 15f) }) {
-                    Icon(Reicons.Refresh, contentDescription = "15° 회전")
+                    Icon(Reicons.Refresh, contentDescription = "Rotate 15°")
                 }
             }
             if (onRecolorTo != null && recolorChoices.isNotEmpty()) {
@@ -5981,7 +5981,7 @@ private fun LassoActions(
                 var picking by remember { mutableStateOf(false) }
                 Box {
                     IconButton(onClick = { picking = true }) {
-                        Icon(Reicons.Palette, contentDescription = "색 바꾸기")
+                        Icon(Reicons.Palette, contentDescription = "Change color")
                     }
                     DropdownMenu(picking, onDismissRequest = { picking = false }) {
                         Row(Modifier.padding(horizontal = 10.dp, vertical = 4.dp)) {
@@ -6000,27 +6000,27 @@ private fun LassoActions(
                     }
                 }
             } else if (onRecolor != null) IconButton(onClick = onRecolor) {
-                Icon(Reicons.Palette, contentDescription = "현재 펜 색으로")
+                Icon(Reicons.Palette, contentDescription = "Use current pen color")
             }
             if (onDuplicate != null) IconButton(onClick = onDuplicate) {
-                Icon(Reicons.ContentCopy, contentDescription = "복제")
+                Icon(Reicons.ContentCopy, contentDescription = "Duplicate")
             }
-            if (onCopy != null) TextButton(onClick = onCopy) { Text("복사") }
-            if (onCut != null) TextButton(onClick = onCut) { Text("잘라내기") }
-            if (onLink != null) TextButton(onClick = onLink) { Text("링크") }
-            if (onAddToLibrary != null) TextButton(onClick = onAddToLibrary) { Text("라이브러리에 추가") }
+            if (onCopy != null) TextButton(onClick = onCopy) { Text("Copy") }
+            if (onCut != null) TextButton(onClick = onCut) { Text("Cut") }
+            if (onLink != null) TextButton(onClick = onLink) { Text("Link") }
+            if (onAddToLibrary != null) TextButton(onClick = onAddToLibrary) { Text("Add to library") }
             if (onGroup != null) TextButton(onClick = { onGroup(!grouped) }) {
-                Text(if (grouped) "그룹 해제" else "그룹")
+                Text(if (grouped) "Ungroup" else "Group")
             }
             if (onLock != null) TextButton(onClick = { onLock(!locked) }) {
-                Text(if (locked) "잠금 해제" else "잠금")
+                Text(if (locked) "Unlock" else "Lock")
             }
             TextButton(onClick = onDelete) {
                 Icon(Reicons.Delete, contentDescription = null)
-                Text(" 삭제")
+                Text(" Delete")
             }
             if (onOcr != null) TextButton(onClick = onOcr) { Text("OCR") }
-            TextButton(onClick = onDone) { Text("완료") }
+            TextButton(onClick = onDone) { Text("Done") }
         }
     }
 }
@@ -6055,32 +6055,32 @@ private fun PasteBar(
                 .padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TextButton(onClick = onLibrary) { Text("라이브러리") }
+            TextButton(onClick = onLibrary) { Text("Library") }
             SettingsChoiceChip(selected = !gestures.lassoRect,
                 onClick = { onGestures(gestures.copy(lassoRect = false)) },
-                label = "자유형", modifier = Modifier.padding(end = 6.dp))
+                label = "Freeform", modifier = Modifier.padding(end = 6.dp))
             SettingsChoiceChip(selected = gestures.lassoRect,
                 onClick = { onGestures(gestures.copy(lassoRect = true)) },
-                label = "사각형", modifier = Modifier.padding(end = 6.dp))
+                label = "Rectangle", modifier = Modifier.padding(end = 6.dp))
             SettingsChoiceChip(selected = wholeOnly, onClick = { onWholeOnly(!wholeOnly) },
-                label = "완전히 포함된 것만")
+                label = "Fully enclosed only")
             SettingsChoiceChip(selected = gestures.snapToAlign,
                 onClick = { onGestures(gestures.copy(snapToAlign = !gestures.snapToAlign)) },
-                label = "정렬 스냅", modifier = Modifier.padding(start = 6.dp))
+                label = "Snap to align", modifier = Modifier.padding(start = 6.dp))
             SettingsChoiceChip(selected = gestures.keepAspect,
                 onClick = { onGestures(gestures.copy(keepAspect = !gestures.keepAspect)) },
-                label = "비율 유지", modifier = Modifier.padding(start = 6.dp))
+                label = "Keep aspect ratio", modifier = Modifier.padding(start = 6.dp))
             ToolbarDivider()
             var types by remember { mutableStateOf(false) }
             Box {
-                TextButton(onClick = { types = true }) { Text("선택 대상") }
+                TextButton(onClick = { types = true }) { Text("Select types") }
                 DropdownMenu(types, onDismissRequest = { types = false }) {
                     listOf(
-                        "펜" to gestures.lassoInk,
-                        "형광펜" to gestures.lassoHighlighter,
-                        "이미지" to gestures.lassoPictures,
-                        "텍스트 상자" to gestures.lassoText,
-                        "잠긴 객체" to gestures.selectLocked,
+                        "Pen" to gestures.lassoInk,
+                        "Highlighter" to gestures.lassoHighlighter,
+                        "Images" to gestures.lassoPictures,
+                        "Text boxes" to gestures.lassoText,
+                        "Locked objects" to gestures.selectLocked,
                     ).forEachIndexed { index, (label, on) ->
                         DropdownMenuItem(
                             text = { Text((if (on) "✓ " else "    ") + label) },
@@ -6099,13 +6099,13 @@ private fun PasteBar(
             }
             if (clips.isNotEmpty()) {
                 ToolbarDivider()
-                TextButton(onClick = { onPaste(clips.first()) }) { Text("붙여넣기") }
+                TextButton(onClick = { onPaste(clips.first()) }) { Text("Paste") }
                 Box {
-                    TextButton(onClick = { open = true }) { Text("클립보드 ${clips.size}") }
+                    TextButton(onClick = { open = true }) { Text("Clipboard ${clips.size}") }
                     DropdownMenu(open, onDismissRequest = { open = false }) {
                         clips.forEachIndexed { index, clip ->
                             DropdownMenuItem(
-                                text = { Text("${index + 1}. ${clip.size} 개") },
+                                text = { Text("${index + 1}. ${countNoun(clip.size, "item")}") },
                                 onClick = { open = false; onPaste(clip) },
                             )
                         }
@@ -6141,26 +6141,26 @@ private fun ImageActions(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(when (box) {
-                PageImage.BOX_STICKY -> "스티키 노트"
-                PageImage.BOX_TABLE -> "표"
-                PageImage.BOX_CHECK -> "체크박스"
-                else -> if (isText) "텍스트" else "사진"
+                PageImage.BOX_STICKY -> "Sticky note"
+                PageImage.BOX_TABLE -> "Table"
+                PageImage.BOX_CHECK -> "Checkbox"
+                else -> if (isText) "Text" else "Photo"
             }, style = MaterialTheme.typography.bodyMedium)
-            if (box == PageImage.BOX_STICKY) TextButton(onClick = onFold) { Text("접기·펼치기") }
+            if (box == PageImage.BOX_STICKY) TextButton(onClick = onFold) { Text("Fold/Unfold") }
             // Tables can no longer be made or rebuilt; one already on a page is
             // a picture of a grid, kept as it is.
-            if (isText) TextButton(onClick = onEdit) { Text("편집") }
+            if (isText) TextButton(onClick = onEdit) { Text("Edit") }
             else if (box != PageImage.BOX_TABLE && box != PageImage.BOX_CHECK) {
-                TextButton(onClick = onCrop) { Text("자르기") }
-                TextButton(onClick = onStyle) { Text("스타일") }
+                TextButton(onClick = onCrop) { Text("Crop") }
+                TextButton(onClick = onStyle) { Text("Style") }
             }
-            IconButton(onClick = onRotate) { Icon(Reicons.Refresh, contentDescription = "90° 회전") }
+            IconButton(onClick = onRotate) { Icon(Reicons.Refresh, contentDescription = "Rotate 90°") }
             ToolbarDivider()
             TextButton(onClick = onDelete) {
                 Icon(Reicons.Delete, contentDescription = null)
-                Text(" 삭제")
+                Text(" Delete")
             }
-            TextButton(onClick = onDone) { Text("완료") }
+            TextButton(onClick = onDone) { Text("Done") }
         }
     }
 }
@@ -6813,12 +6813,12 @@ private fun FolderNameDialog(
             value = name,
             onValueChange = { name = it },
             singleLine = true,
-            label = { Text("폴더 이름") },
+            label = { Text("Folder name") },
         ) },
         confirmButton = { TextButton(onClick = { onConfirm(name.trim()) }, enabled = name.isNotBlank()) {
-            Text("저장")
+            Text("Save")
         } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 
@@ -6849,35 +6849,35 @@ private fun SelectionActions(
             Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (preview != null) Image(preview.asImageBitmap(), "선택 영역 원본",
+            if (preview != null) Image(preview.asImageBitmap(), "Original selection",
                 modifier = Modifier.width(220.dp).heightIn(max = 110.dp), contentScale = ContentScale.Fit)
-            else Text("선택 영역", modifier = Modifier.width(100.dp))
+            else Text("Selection", modifier = Modifier.width(100.dp))
             ToolbarDivider()
             TextButton(onClick = onHighlightColor) {
                 Box(Modifier.size(22.dp).background(Color(highlightColor or 0xFF000000.toInt()), CircleShape))
-                Text(" 색상")
+                Text(" Color")
             }
             TextButton(onClick = onHighlight) {
                 Icon(Reicons.Brush, contentDescription = null)
-                Text(" 형광펜")
+                Text(" Highlight")
             }
             TextButton(onClick = onMaskColor) {
                 Box(Modifier.size(22.dp).background(Color(maskColor or 0xFF000000.toInt()), CircleShape))
-                Text(" 색상")
+                Text(" Color")
             }
             TextButton(onClick = onMask) {
                 Icon(Reicons.VisibilityOff, contentDescription = null)
-                Text(" 마스킹")
+                Text(" Mask")
             }
-            TextButton(onClick = onStrike) { Text("취소선") }
+            TextButton(onClick = onStrike) { Text("Strikethrough") }
             TextButton(onClick = onCopy) {
                 Icon(Reicons.ContentCopy, contentDescription = null)
-                Text(" 복사")
+                Text(" Copy")
             }
-            TextButton(onClick = onTranslate) { Text("번역") }
-            TextButton(onClick = onSearch) { Text("검색") }
-            TextButton(onClick = onShare) { Text("공유") }
-            TextButton(onClick = onDismiss) { Text("취소") }
+            TextButton(onClick = onTranslate) { Text("Translate") }
+            TextButton(onClick = onSearch) { Text("Search") }
+            TextButton(onClick = onShare) { Text("Share") }
+            TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     }
 }
@@ -8063,9 +8063,9 @@ private fun Toolbar(
 }
 
 internal fun rulerLabel(kind: RulerKind): String = when (kind) {
-    RulerKind.RULER -> "자"
-    RulerKind.TRIANGLE -> "삼각자"
-    RulerKind.PROTRACTOR -> "각도기"
+    RulerKind.RULER -> "Ruler"
+    RulerKind.TRIANGLE -> "Set square"
+    RulerKind.PROTRACTOR -> "Protractor"
 }
 
 
@@ -8074,11 +8074,11 @@ internal fun rulerLabel(kind: RulerKind): String = when (kind) {
 private fun OtherNotesButton(notes: List<NoteMeta>, onOpenNote: (NoteMeta) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
-        AppIconButton(onClick = { open = true }, icon = AppIcons.otherNotes, contentDescription = "다른 노트")
+        AppIconButton(onClick = { open = true }, icon = AppIcons.otherNotes, contentDescription = "Other notes")
         DropdownMenu(open, onDismissRequest = { open = false }) {
             if (notes.isEmpty()) {
                 DropdownMenuItem(
-                    text = { Text("다른 노트가 없습니다") },
+                    text = { Text("No other notes") },
                     enabled = false,
                     onClick = {},
                 )
@@ -8111,7 +8111,7 @@ private fun CollapsedToolbar(onExpand: () -> Unit, onDrag: (Offset) -> Unit) {
         },
     ) {
         IconButton(onClick = onExpand) {
-            Icon(Reicons.Menu, contentDescription = "도구 보이기")
+            Icon(Reicons.Menu, contentDescription = "Show tools")
         }
     }
 }
@@ -8259,8 +8259,8 @@ private val AI_SITES = listOf(
 )
 
 internal val COLOR_TEMPLATES = listOf(
-    "기본" to listOf(0xFF000000, 0xFFD32F2F, 0xFF1976D2, 0xFF388E3C, 0xFFF9A825),
-    "파스텔" to listOf(0xFF6D6875, 0xFFE5989B, 0xFF9AC1D9, 0xFFA8D5BA, 0xFFF6D186),
-    "형광" to listOf(0x66FFEB3B, 0x6676FF03, 0x6600E5FF, 0x66FF4081, 0x66FF9100),
-    "먹" to listOf(0xFF000000, 0xFF3A3A3A, 0xFF6B6B6B, 0xFF9E9E9E, 0xFFCFCFCF),
+    "Basic" to listOf(0xFF000000, 0xFFD32F2F, 0xFF1976D2, 0xFF388E3C, 0xFFF9A825),
+    "Pastel" to listOf(0xFF6D6875, 0xFFE5989B, 0xFF9AC1D9, 0xFFA8D5BA, 0xFFF6D186),
+    "Neon" to listOf(0x66FFEB3B, 0x6676FF03, 0x6600E5FF, 0x66FF4081, 0x66FF9100),
+    "Ink" to listOf(0xFF000000, 0xFF3A3A3A, 0xFF6B6B6B, 0xFF9E9E9E, 0xFFCFCFCF),
 ).map { (name, colors) -> name to colors.map { it.toInt() } }

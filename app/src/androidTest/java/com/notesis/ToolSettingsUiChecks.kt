@@ -120,12 +120,12 @@ internal fun Instrumentation.checkToolSettingsUi() {
             if (mode == EditMode.HIGHLIGHTER) {
                 val palette = awaitNode { it.text?.toString() == "색 팔레트" }
                 click(palette)
-                val color = awaitNode { it.contentDescription?.toString()?.startsWith("색상 #") == true }
+                val color = awaitNode { it.contentDescription?.toString()?.startsWith("Color #") == true }
                 click(color)
                 click(awaitNode { it.text?.toString() == "색 팔레트" })
-                val fluorescent = awaitNode { it.contentDescription?.toString() == "색상 #FFEB3B" }
+                val fluorescent = awaitNode { it.contentDescription?.toString() == "Color #FFEB3B" }
                 check(fluorescent.performAction(AccessibilityNodeInfo.ACTION_CLICK))
-                click(awaitNode { it.text?.toString() == "저장" })
+                click(awaitNode { it.text?.toString() == "Save" })
                 Thread.sleep(250)
                 check(saved != null && (saved!!.colorArgb and 0xFFFFFF) != (pen.colorArgb and 0xFFFFFF))
                 check(saved != null && android.graphics.Color.alpha(saved!!.colorArgb) == 0x66) { "Fluorescent palette did not apply 40% opacity" }
@@ -145,7 +145,7 @@ internal fun Instrumentation.checkToolSettingsUi() {
                 val rect = Rect().also(width::getBoundsInScreen)
                 check(rect.width() > 200)
                 touch(rect.left + rect.width() * 0.8f, rect.exactCenterY())
-                click(awaitNode { it.text?.toString() == "저장" })
+                click(awaitNode { it.text?.toString() == "Save" })
                 Thread.sleep(250)
                 check(saved != null && saved!!.width > pen.width) { "Eraser thickness did not save" }
             }
