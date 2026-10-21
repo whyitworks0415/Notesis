@@ -2277,7 +2277,8 @@ class InkCanvasView @JvmOverloads constructor(
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         MemoryTrim.register(this)
-        runCatching { context.getSystemService(android.os.PowerManager::class.java)?.addThermalStatusListener(thermalListener) }
+        InteractionGovernor.init(context)
+        InteractionGovernor.noteRefreshRate(display?.refreshRate)
     }
 
     /**
@@ -2286,7 +2287,9 @@ class InkCanvasView @JvmOverloads constructor(
      */
     private fun penWorking(active: Boolean) {
         pdf?.penActive = active
-        StrokeBuilder.penActive = active
+        // Counted per canvas: the reference panel lifting its pen, or being
+        // closed, no longer ends the note's own stroke for the background work.
+        if (active) InteractionGovernor.beginWriting(this) else InteractionGovernor.endWriting(this)
     }
 
     /**
@@ -2294,11 +2297,7 @@ class InkCanvasView @JvmOverloads constructor(
      * back - fewer cores for page loads, no prefetch of the pages around - so
      * the tablet spends its budget on the ink on screen and cools.
      */
-    @Volatile private var thermalHot = false
-    private val thermalListener = android.os.PowerManager.OnThermalStatusChangedListener { status ->
-        thermalHot = status >= android.os.PowerManager.THERMAL_STATUS_MODERATE
-        StrokeBuilder.thermalThrottle = thermalHot
-    }
+    private val thermalHot: Boolean get() = InteractionGovernor.thermalStatus >= THERMAL_MODERATE
 
     /** Android wants memory back: everything here that a redraw can rebuild goes. */
     override fun trimMemory(severe: Boolean) {
@@ -2310,9 +2309,9 @@ class InkCanvasView @JvmOverloads constructor(
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         MemoryTrim.unregister(this)
-        runCatching { context.getSystemService(android.os.PowerManager::class.java)?.removeThermalStatusListener(thermalListener) }
         // Detached mid-stroke would leave background work waiting for a lift that never comes.
-        penWorking(false)
+        pdf?.penActive = false
+        InteractionGovernor.forget(this)
         registeredDocument?.detachCanvas(sharedInkChanged)
         registeredDocument = null
         stopFling(resumeDetail = false)
