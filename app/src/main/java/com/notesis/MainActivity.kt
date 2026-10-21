@@ -3579,45 +3579,6 @@ private fun NoteScreen(
         mutableStateOf(with(density) { Size(340.dp.toPx(), 440.dp.toPx()) })
     }
     var referenceStretch by remember { mutableFloatStateOf(1f) }
-    /**
-     * The panel opened as a zoom box: this note's current page in a strip
-     * across the bottom, to write into at whatever magnification it is pinched to.
-     * ponytail: no auto-advance or marker on the page; the panel is the
-     * reference panel aimed at this note.
-     */
-    var zoomBox by remember { mutableStateOf(false) }
-    // The screen split in two: the reference panel pinned to one part, this
-    // note in the rest. The ratio is this note's share.
-    var split by remember { mutableStateOf(SplitMode.NONE) }
-    var splitRatio by remember { mutableFloatStateOf(0.5f) }
-    var choosingSplit by remember { mutableStateOf(false) }
-    LaunchedEffect(split, splitRatio, containerSize) {
-        if (split == SplitMode.NONE) return@LaunchedEffect
-        val w = containerSize.width.toFloat()
-        val h = containerSize.height.toFloat()
-        if (w <= 0f || h <= 0f) return@LaunchedEffect
-        zoomBox = false
-        referenceStretch = 1f
-        if (split == SplitMode.STACKED) {
-            referenceOffset = Offset(0f, h * splitRatio)
-            referenceSize = Size(w, h * (1f - splitRatio))
-        } else {
-            referenceOffset = Offset(w * splitRatio, 0f)
-            referenceSize = Size(w * (1f - splitRatio), h)
-        }
-        referenceOpen = true
-    }
-    fun openZoomBox(page: Int) {
-        split = SplitMode.NONE
-        zoomBox = true
-        referenceNoteId = note.id
-        referencePage = page
-        referenceSize = Size(containerSize.width.toFloat().coerceAtLeast(1f),
-            (containerSize.height / 3f).coerceAtLeast(1f))
-        referenceStretch = 1f
-        referenceOffset = Offset(0f, containerSize.height - referenceSize.height)
-        referenceOpen = true
-    }
     // Three fingers on the panel itself, once it is open: the spread is how
     // much it grows, the drag is where it goes. One function because the
     // panel's own view and the gesture that opened it both end up calling it.
@@ -3696,8 +3657,6 @@ private fun NoteScreen(
     }
     // A multiple of fit-to-width, which is the 100% anybody means.
     var zoom by remember { mutableFloatStateOf(1f) }
-    var viewportTick by remember { mutableIntStateOf(0) }
-    var showMinimap by remember { mutableStateOf(penStore.minimap) }
     var zoomMenu by remember { mutableStateOf(false) }
     var canvas by remember { mutableStateOf<InkCanvasView?>(null) }
     /** Puts [text] on the page as a text box in the middle of the screen. */
@@ -3938,8 +3897,6 @@ private fun NoteScreen(
             onZoomLabel = { zoomMenu = true },
             zoomLabel = "${(zoom * 100).roundToInt()}%",
             onToggleLatency = { showLatency = !showLatency },
-            minimapOn = showMinimap,
-            onToggleMinimap = { showMinimap = !showMinimap; penStore.minimap = showMinimap },
             laser = laser,
             onToggleLaser = {
                 when {
@@ -3960,8 +3917,6 @@ private fun NoteScreen(
             onClock = { StudyClock.openPanel() },
             onEditTools = { editingTools = true },
             onLayers = { showLayers = true },
-            onSplit = { choosingSplit = true },
-            onZoomBox = { if (zoomBox && referenceOpen) { referenceOpen = false; zoomBox = false } else openZoomBox(canvas?.currentPageIndex() ?: 0) },
             onNoteMenu = { noteMenu = true },
             onCamera = {
                 val file = java.io.File(context.cacheDir, "shared/camera.jpg").apply { parentFile?.mkdirs() }
@@ -4106,7 +4061,6 @@ private fun NoteScreen(
             AndroidView(
                 modifier = Modifier
                     .fillMaxSize()
-                    .then(splitPadding(split, splitRatio, containerSize, density))
                     .dropImages(::addImageFrom)
                     // AndroidView를 Backdrop 레이어에 안정적으로 합성합니다.
                     .graphicsLayer {
@@ -4206,7 +4160,6 @@ private fun NoteScreen(
                     }
                     view.softPredictionHead = !sharedScreen && webUrl == null && !referenceOpen
                     view.pageTone = pageTone
-                    view.onViewportChanged = if (showMinimap) ({ viewportTick++ }) else null
                     view.partialEraser = partialEraser
                     view.applyGestures(gestures)
                     view.laserMode = laser
@@ -4306,7 +4259,7 @@ private fun NoteScreen(
                     }
                     // Three fingers down the page, with the panel already open,
                     // put it away: the gesture that opened it, run backwards.
-                    view.onCloseReference = { referenceOpen = false; zoomBox = false }
+                    view.onCloseReference = { referenceOpen = false }
                     // Moving and resizing the panel itself is handled on its own
                     // view, not here; see ReferencePanel.
                 },
@@ -4389,21 +4342,6 @@ private fun NoteScreen(
                     .align(Alignment.TopStart)
                     .windowInsetsPadding(ChromeInsets)
                     .padding(top = 84.dp, start = 24.dp),
-            )
-        }
-
-        val minimapView = canvas
-        if (showMinimap && minimapView != null && zoom >= MINIMAP_MIN_ZOOM && !showPages) {
-            Minimap(
-                view = minimapView,
-                page = currentPage,
-                tick = { viewportTick },
-                // Top right, clear of the toolbar above and the page scrubber's column.
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .windowInsetsPadding(ChromeInsets)
-                    .padding(top = MINIMAP_TOP_PADDING, end = 64.dp),
-                onClose = { showMinimap = false; penStore.minimap = false },
             )
         }
 
@@ -5143,13 +5081,6 @@ private fun NoteScreen(
                                 }, label = label, modifier = Modifier.padding(end = 6.dp))
                             }
                         }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("확대했을 때 미니맵", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                            SkinSwitch(checked = showMinimap, onCheckedChange = {
-                                showMinimap = it
-                                penStore.minimap = it
-                            })
-                        }
                         Text("화면 색", style = MaterialTheme.typography.bodyMedium)
                         Row(Modifier.horizontalScroll(rememberScrollState())) {
                             listOf(PAGE_TONE_NORMAL to "기본", PAGE_TONE_SEPIA to "세피아", PAGE_TONE_NIGHT to "야간").forEach { (tone, label) ->
@@ -5472,8 +5403,7 @@ private fun NoteScreen(
                 meshInk = meshInk,
                 compatWetInk = compatWetInk,
                 partialEraser = partialEraser,
-                // Circle to lasso stays off in a zoom box, as in the reference app.
-                gestures = if (zoomBox) gestures.copy(circleToLasso = false) else gestures,
+                gestures = gestures,
                 autoShapes = autoShapes,
                 axisSnap = axisSnap,
                 dottedPattern = dottedPattern,
@@ -5516,19 +5446,10 @@ private fun NoteScreen(
                     // 일반 화면과 팝업 화면이 같은 마지막 페이지 값을 공유합니다.
                     penStore.setLastPage(activeReferenceNoteId, it)
                 },
-                // Pinned in a split, the panel stays where the seam puts it.
-                onDrag = { x, y, spread -> if (split == SplitMode.NONE) moveReference(x, y, spread) },
-                onClose = { referenceStretch = 1f; referenceOpen = false; split = SplitMode.NONE },
+                onDrag = { x, y, spread -> moveReference(x, y, spread) },
+                onClose = { referenceStretch = 1f; referenceOpen = false },
             ) }
         }
-        if (referenceOpen) SplitSeam(split, splitRatio, containerSize.width.toFloat(), containerSize.height.toFloat()) {
-            splitRatio = it
-        }
-        if (choosingSplit) SplitDialog(split, onPick = { picked ->
-            choosingSplit = false
-            if (picked == SplitMode.NONE && split != SplitMode.NONE) referenceOpen = false
-            split = picked
-        }, onDismiss = { choosingSplit = false })
     }
         if (docked && !collapsed) {
             toolbar(Modifier.align(Alignment.TopCenter).then(
@@ -6628,8 +6549,6 @@ private fun PageScrubber(
 }
 
 private val SCRUBBER_PREVIEW_WIDTH = 120.dp
-/** Below the toolbar's two rows, so the minimap never sits under it. */
-private val MINIMAP_TOP_PADDING = 150.dp
 private const val SCRUBBER_THUMBNAIL_PX = 240
 private const val THUMBNAIL_ATTEMPTS = 40
 private const val THUMBNAIL_RETRY_MS = 80L
@@ -7429,8 +7348,6 @@ private fun Toolbar(
     /** The zoom as a percentage of fit-to-width. */
     zoomLabel: String,
     onToggleLatency: () -> Unit,
-    minimapOn: Boolean = false,
-    onToggleMinimap: () -> Unit = {},
     recording: Boolean,
     onVoice: () -> Unit,
     noteRotation: Int,
@@ -7459,11 +7376,9 @@ private fun Toolbar(
     onClock: () -> Unit = {},
     onEditTools: () -> Unit = {},
     onQuickColor: (Int) -> Unit = {},
-    onZoomBox: () -> Unit = {},
     onNoteMenu: () -> Unit = {},
     onCamera: () -> Unit = {},
     onLayers: () -> Unit = {},
-    onSplit: () -> Unit = {},
 ) {
     val topRow: @Composable () -> Unit = {
         // ---- top row: the note, and what is done to the whole of it
@@ -7569,16 +7484,12 @@ private fun Toolbar(
                 add(SpotiToolbarAction("캘린더", AppIcons.calendar, onClick = { Planner.show(ToolPanel.CALENDAR) }))
                 add(SpotiToolbarAction("손가락·제스처", AppIcons.input, onClick = onInputSettings))
                 add(SpotiToolbarAction("레이어", AppIcons.layers, slot = 2, onClick = onLayers))
-                add(SpotiToolbarAction("화면 나누기", AppIcons.split, slot = 10, onClick = onSplit))
                 add(SpotiToolbarAction("도구 편집", AppIcons.editTools, onClick = onEditTools))
-                add(SpotiToolbarAction("확대 필기창", AppIcons.zoomBox, onClick = onZoomBox))
                 add(SpotiToolbarAction("노트 · 보기 방식", AppIcons.noteMenu, onClick = onNoteMenu))
                 add(SpotiToolbarAction("사진 찍어 넣기", AppIcons.camera, onClick = onCamera))
                 add(SpotiToolbarAction("UI · 화면 설정", AppIcons.skin, slot = 6, onClick = onScreenSettings))
                 add(SpotiToolbarAction("확대 · $zoomLabel", AppIcons.zoom, onClick = onZoomLabel))
                 add(SpotiToolbarAction("인터넷", AppIcons.web, onClick = { onWeb(SEARCH_HOME) }))
-                add(SpotiToolbarAction(if (minimapOn) "미니맵 끄기" else "미니맵 켜기", AppIcons.minimap,
-                    selected = minimapOn, onClick = onToggleMinimap))
                 add(SpotiToolbarAction("지연 측정", AppIcons.latency, selected = showLatency, onClick = onToggleLatency))
                 if (canResetBar) add(SpotiToolbarAction("도구막대 제자리로", AppIcons.resetBar, onClick = onResetBar))
             },

@@ -6,15 +6,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class SplitAndSubframeTest {
-    @Test
-    fun `the seam moves with the drag and stops short of either edge`() {
-        assertEquals(0.6f, movedSplit(0.5f, 100f, 1000f), 1e-5f)
-        assertEquals(SplitMode.MIN_SHARE, movedSplit(0.5f, -900f, 1000f), 0f)
-        assertEquals(1f - SplitMode.MIN_SHARE, movedSplit(0.5f, 900f, 1000f), 0f)
-        assertEquals(0.5f, movedSplit(0.5f, 10f, 0f), 0f)
-    }
-
+class SubframeAndLayersTest {
     @Test
     fun `sub-frame lead follows the newest samples`() {
         val track = SubframeTrack()

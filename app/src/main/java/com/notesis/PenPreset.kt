@@ -341,10 +341,6 @@ class PenStore(context: Context) {
             ?: listOf(0xFF000000.toInt(), 0xFF1E88E5.toInt(), 0xFFE53935.toInt(), 0xFF43A047.toInt())
         set(value) = prefs.edit().putString("quickColors", value.distinct().take(MAX_QUICK_COLORS).joinToString(",")).apply()
 
-    /** Whether the minimap shows while zoomed in. */
-    var minimap: Boolean
-        get() = prefs.getBoolean("minimap", true)
-        set(value) = prefs.edit().putBoolean("minimap", value).apply()
 
     /** How pages are coloured on screen; see [InkCanvasView.pageTone]. */
     var pageTone: Int
