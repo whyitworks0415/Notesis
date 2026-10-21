@@ -215,6 +215,7 @@ private val WORK_COUNTERS
         WorkStats.refinesApplied, WorkStats.refinesStale, WorkStats.prefetched,
         WorkStats.pdfRenders, WorkStats.pdfDeferred, WorkStats.tilesRecorded,
         WorkStats.layerSettlesFull, WorkStats.layerSettlesTail,
+        WorkStats.tilesDeferred, WorkStats.savePagesReused,
     )
 
 private fun thermalName(status: Int): String = when (status) {
@@ -256,6 +257,8 @@ private fun takeSnapshot(context: Context, view: InkCanvasView?): DiagnosticSnap
             "Ink tiles recorded" to WorkStats.tilesRecorded.get(),
             "Layer settles, whole" to WorkStats.layerSettlesFull.get(),
             "Layer settles, tail only" to WorkStats.layerSettlesTail.get(),
+            "Ink tiles left for a later frame" to WorkStats.tilesDeferred.get(),
+            "Unchanged pages reused by autosave" to WorkStats.savePagesReused.get(),
         ),
         thermal = thermal?.let(::thermalName) ?: "Not reported",
         throttled = StrokeBuilder.thermalThrottle,
