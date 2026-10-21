@@ -7,6 +7,8 @@ import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Shader
 import android.view.View
+import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.hypot
 
 /** What the pen's in-between samples are shown as, ahead of the tip. */
@@ -67,6 +69,66 @@ internal class SubframeTrack(private val capacity: Int = 16) {
 }
 
 /**
+ * The pixel box, [left, top, right, bottom] into [out], that a mark from
+ * (x0, y0) to (x1, y1) drawn [pad] thick on every side covers, kept inside a
+ * parent of [maxWidth] x [maxHeight]. False when none of it is inside.
+ */
+internal fun overlayBounds(
+    x0: Float, y0: Float, x1: Float, y1: Float, pad: Float,
+    maxWidth: Int, maxHeight: Int, out: IntArray,
+): Boolean {
+    if (!x0.isFinite() || !y0.isFinite() || !x1.isFinite() || !y1.isFinite() || !pad.isFinite()) return false
+    val reach = pad.coerceAtLeast(0f)
+    val left = floor(minOf(x0, x1) - reach).toInt().coerceAtLeast(0)
+    val top = floor(minOf(y0, y1) - reach).toInt().coerceAtLeast(0)
+    val right = ceil(maxOf(x0, x1) + reach).toInt().coerceAtMost(maxWidth)
+    val bottom = ceil(maxOf(y0, y1) + reach).toInt().coerceAtMost(maxHeight)
+    if (right <= left || bottom <= top) return false
+    out[0] = left; out[1] = top; out[2] = right; out[3] = bottom
+    return true
+}
+
+/**
+ * Moves an overlay onto the box round what it is about to draw, as a small
+ * square shifted there rather than a full-screen view.
+ *
+ * A View's damage is its whole bounds, so a mark moved about a full-screen
+ * overlay on every pen frame redrew - and recomposited - the entire window,
+ * page, toolbar and glass included. Kept to the mark, a frame touches only the
+ * square where it was and where it is now: the platform damages both when a
+ * view's translation changes, which is also what wipes the mark's last
+ * position. The square moves by translation alone; changing a view's bounds
+ * would make the parent record itself again, and damage all of it. So the size
+ * changes only when the mark outgrows it, or when the parent's layout has put
+ * the view back to full size. The view draws from its own position, so it is
+ * right in either case; [overlayOrigin] is where its drawing starts.
+ */
+internal fun View.placeOver(box: IntArray) {
+    val side = overlaySide(box[2] - box[0], box[3] - box[1])
+    if (left != 0 || top != 0 || width < side || height < side || width > side * 2 || height > side * 2) {
+        setLeftTopRightBottom(0, 0, side, side)
+    }
+    val x = box[0].toFloat()
+    val y = box[1].toFloat()
+    if (translationX != x) translationX = x
+    if (translationY != y) translationY = y
+}
+
+/** Moves [canvas] so an overlay placed by [placeOver] draws in its parent's coordinates. */
+internal fun View.overlayOrigin(canvas: Canvas) {
+    canvas.translate(-(left + translationX), -(top + translationY))
+}
+
+/**
+ * The side of the square an overlay takes for a mark [w] x [h] pixels:
+ * rounded up a step, so a mark that grows by a pixel does not resize it.
+ */
+internal fun overlaySide(w: Int, h: Int): Int =
+    (maxOf(w, h, 1) + OVERLAY_STEP_PX - 1) / OVERLAY_STEP_PX * OVERLAY_STEP_PX
+
+private const val OVERLAY_STEP_PX = 64
+
+/**
  * Draws the pen's sub-frame travel just ahead of the wet ink: a streak that
  * fades out along the way (motion blur), or the nib repeated at each sample
  * step and fading (afterimage). Never saved, never part of the stroke.
@@ -91,6 +153,7 @@ internal class SubframeBlurView(context: Context) : View(context) {
     private var gradientColor = 0
     private val gradientMatrix = android.graphics.Matrix()
     private val hide = Runnable { clear() }
+    private val box = IntArray(4)
 
     init {
         setWillNotDraw(false)
@@ -108,6 +171,14 @@ internal class SubframeBlurView(context: Context) : View(context) {
         x = tipX; y = tipY; dx = leadX * scale; dy = leadY * scale
         color = colorArgb
         width = maxOf(1f, widthPx)
+        val host = parent as? View
+        if (host != null && host.width > 0) {
+            // Antialiasing reaches a pixel or two past the nib.
+            if (!overlayBounds(x, y, x + dx, y + dy, width / 2f + EDGE_PX, host.width, host.height, box)) {
+                clear(); return
+            }
+            placeOver(box)
+        }
         shown = true
         removeCallbacks(hide)
         postDelayed(hide, LIFETIME_MS)
@@ -123,6 +194,8 @@ internal class SubframeBlurView(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         if (!shown) return
+        // The marks are kept in the parent's coordinates; see [placeOver].
+        overlayOrigin(canvas)
         val alpha = Color.alpha(color)
         val rgb = color and 0xFFFFFF
         if (mode == SUBFRAME_BLUR) {
@@ -152,6 +225,7 @@ internal class SubframeBlurView(context: Context) : View(context) {
 
     private companion object {
         const val MIN_LENGTH_PX = 1.5f
+        const val EDGE_PX = 2f
         const val MIN_CAP_DP = 6f
         const val MAX_CAP_DP = 18f
         const val LIFETIME_MS = 30L

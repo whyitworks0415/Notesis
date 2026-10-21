@@ -82,6 +82,8 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
         var changed = true
         var finished = false
         var finishedAt = 0L
+        /** Its first frame has been handed on; see [onFirstShown]. */
+        var shown = false
 
         /** Every input position seen so far, in screen pixels. */
         val inputs = RectF()
@@ -114,6 +116,7 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
             changed = true
             finished = false
             finishedAt = 0L
+            shown = false
             inputs.setEmpty()
             hasInputs = false
             drawn.setEmpty()
@@ -163,6 +166,34 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
     var onFramePosted: ((Long) -> Unit)? = null
     private var newestUnpostedEventMillis = Long.MIN_VALUE
 
+    /**
+     * Called once per stroke, with its pen-down event time, when the frame
+     * that first shows it is handed on: posted to the surface, or drawn by
+     * the window on the in-window path.
+     */
+    var onFirstShown: ((Long) -> Unit)? = null
+
+    /**
+     * The eraser cursor while ink is drawn in the window: a View of its own,
+     * kept to the cursor's box, so a hover or an eraser frame redraws the
+     * cursor rather than the whole window under it. On the surface the
+     * cursor is drawn there instead.
+     */
+    private val cursorView = object : android.view.View(context) {
+        init {
+            setWillNotDraw(false)
+            importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            if (!cursorVisible || usingSurface()) return
+            overlayOrigin(canvas)
+            canvas.drawCircle(cursorX, cursorY, cursorRadius, cursorFill)
+            canvas.drawCircle(cursorX, cursorY, cursorRadius, cursorEdge)
+        }
+    }
+    private val cursorBox = IntArray(4)
+
     private val frameCallback = Choreographer.FrameCallback { frameTimeNanos ->
         framePosted = false
         lastVsyncNanos = frameTimeNanos
@@ -176,11 +207,14 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
     init {
         setWillNotDraw(false)
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+        addView(cursorView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
     }
 
     /**
-     * Whether wet ink may use its own surface. Off while the note is rotated:
-     * a surface follows its View's position and scale, never a rotation.
+     * Whether wet ink may use its own surface. A surface follows its View's
+     * position and scale, never a rotation; the canvas keeps this view in the
+     * screen's frame (as it does Ink's own front buffer) so a turned note can
+     * still use it, and this is only for a host that turns the view itself.
      */
     var surfaceAllowed: Boolean = true
         set(value) {
@@ -262,6 +296,8 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
         requestRender()
         // Whichever side is not drawing drops what it last showed.
         invalidate()
+        placeCursor()
+        cursorView.invalidate()
     }
 
     fun start(id: Any, event: MotionEvent, pointerId: Int, brush: Brush, transform: Matrix) {
@@ -350,14 +386,37 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
         cursorY = y
         cursorRadius = radius
         cursorChanged = true
-        requestRender()
+        renderCursor()
     }
 
     fun hideCursor() {
         if (!cursorVisible) return
         cursorVisible = false
         cursorChanged = true
-        requestRender()
+        renderCursor()
+    }
+
+    private fun renderCursor() {
+        if (usingSurface()) {
+            requestRender()
+            return
+        }
+        // Only the cursor's own box: its View is moved, the window is not redrawn.
+        placeCursor()
+        cursorView.invalidate()
+    }
+
+    private fun placeCursor() {
+        if (!cursorVisible || width <= 0) return
+        val reach = cursorRadius + cursorEdge.strokeWidth + 2f
+        if (overlayBounds(cursorX - reach, cursorY - reach, cursorX + reach, cursorY + reach, 0f,
+                width, height, cursorBox)) cursorView.placeOver(cursorBox)
+    }
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        super.onLayout(changed, left, top, right, bottom)
+        // Layout puts every child back to full size; the cursor goes back to its box.
+        placeCursor()
     }
 
     private fun remove(done: List<Wet>) {
@@ -549,6 +608,7 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
         newestUnpostedEventMillis = Long.MIN_VALUE
         // Event times and System.nanoTime share the monotonic clock.
         if (newest != Long.MIN_VALUE) onFramePosted?.invoke(System.nanoTime() - newest * 1_000_000L)
+        reportFirstShown()
     }
 
     /**
@@ -586,7 +646,8 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
                 canvas.restoreToCount(saved)
             }
         }
-        if (cursorVisible) {
+        // In the window the cursor has a View of its own; see [cursorView].
+        if (cursorVisible && clip != null) {
             canvas.drawCircle(cursorX, cursorY, cursorRadius, cursorFill)
             canvas.drawCircle(cursorX, cursorY, cursorRadius, cursorEdge)
         }
@@ -602,8 +663,18 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
             wet.changed = false
         }
         drawContent(canvas, null)
-        viewHasContent = strokes.isNotEmpty() || cursorVisible
+        viewHasContent = strokes.isNotEmpty()
         newestUnpostedEventMillis = Long.MIN_VALUE
+        reportFirstShown()
+    }
+
+    /** [onFirstShown] for each stroke whose first frame was just handed on. */
+    private fun reportFirstShown() {
+        for (wet in strokes) {
+            if (wet.shown || !wet.hasInputs) continue
+            wet.shown = true
+            onFirstShown?.invoke(wet.startTime)
+        }
     }
 
     override fun onDetachedFromWindow() {

@@ -213,9 +213,10 @@ internal fun predictionLeadForRefresh(
     refreshRateHz: Float,
     vsyncBoundInk: Boolean = false,
     measuredLatencyMs: Double? = null,
+    handlingDelayMs: Double = 0.0,
 ): Int {
     if (configuredMs in 1..VSYNC_BOUND_LEAD_MS) return configuredMs
-    return autoPredictionLeadMs(refreshRateHz, vsyncBoundInk, measuredLatencyMs)
+    return autoPredictionLeadMs(refreshRateHz, vsyncBoundInk, measuredLatencyMs, handlingDelayMs)
 }
 
 /**
@@ -230,20 +231,34 @@ internal fun predictionLeadForRefresh(
  * well, so it gets most of a frame: 12ms at 60Hz. When the ink is measured
  * to take longer than a frame to appear - a busy device - half of what is
  * over is added, within the 12ms the settings allow.
+ *
+ * Without a measurement, [handlingDelayMs] - how old the newest sample
+ * already was when the UI thread got to it - stands in for the same thing:
+ * the horizon counts from the sample's timestamp, so a sample that sat in
+ * the queue behind a long frame is shown that much later. Half of what is
+ * over [HANDLING_SLACK_MS] is added, within the same 12ms, so a stall never
+ * throws the tip further than the settings would.
  */
 internal fun autoPredictionLeadMs(
     refreshRateHz: Float,
     vsyncBoundInk: Boolean = false,
     measuredLatencyMs: Double? = null,
+    handlingDelayMs: Double = 0.0,
 ): Int {
     val hz = if (refreshRateHz.isFinite() && refreshRateHz >= 30f) refreshRateHz else 60f
     val periodMs = 1000.0 / hz
     var lead = periodMs * if (vsyncBoundInk) VSYNC_BOUND_SHARE else FRONT_BUFFER_SHARE
-    if (measuredLatencyMs != null && measuredLatencyMs.isFinite() && measuredLatencyMs > periodMs) {
-        lead += (measuredLatencyMs - periodMs) * 0.5
+    if (measuredLatencyMs != null && measuredLatencyMs.isFinite()) {
+        // The measurement already holds the queueing; counting it twice would overshoot.
+        if (measuredLatencyMs > periodMs) lead += (measuredLatencyMs - periodMs) * 0.5
+    } else if (handlingDelayMs.isFinite() && handlingDelayMs > HANDLING_SLACK_MS) {
+        lead += (handlingDelayMs - HANDLING_SLACK_MS) * 0.5
     }
     return lead.roundToInt().coerceIn(MIN_AUTO_LEAD_MS, VSYNC_BOUND_LEAD_MS)
 }
+
+/** What unbuffered pen dispatch takes on a UI thread with nothing else to do; not counted as delay. */
+internal const val HANDLING_SLACK_MS = 2.0
 
 private const val FRONT_BUFFER_SHARE = 0.5
 private const val VSYNC_BOUND_SHARE = 0.72
