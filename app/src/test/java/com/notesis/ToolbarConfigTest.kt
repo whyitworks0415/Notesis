@@ -74,7 +74,7 @@ class ToolbarConfigTest {
         assertEquals(400f, settingsSidebarWidth(1000f, 400f))
         assertEquals(SETTINGS_SIDEBAR_MIN_DP, settingsSidebarWidth(10f, 1200f))
         assertEquals(SETTINGS_SIDEBAR_MAX_DP, settingsSidebarWidth(5000f, 2000f))
-        assertEquals(800f - 48f, settingsSidebarWidth(5000f, 800f))
+        assertEquals(700f - 48f, settingsSidebarWidth(5000f, 700f))
         assertEquals(SETTINGS_SIDEBAR_DEFAULT_DP, settingsSidebarWidth(Float.NaN, 1200f))
     }
 }
