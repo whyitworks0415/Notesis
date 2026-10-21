@@ -164,7 +164,7 @@ private class InkNode(val node: android.graphics.RenderNode) {
 private class HighlightState(val revision: Long, val meshRevision: Long, val size: Int, val has: Boolean)
 
 /** A page-local spatial index used by both dense-page drawing and culling. */
-private class StrokeGrid {
+internal class StrokeGrid {
     private class Entry(
         val stroke: Stroke,
         val bounds: RectF,
@@ -245,6 +245,29 @@ private class StrokeGrid {
         lastStroke = strokes.lastOrNull()
         revision = page.revision
         meshRevision = page.meshRevision
+    }
+
+    /**
+     * Indexes [strokes] ahead of the page that will hold them, off the UI
+     * thread: a page read in used to build its whole index inside the first
+     * frame that drew it. [adopt] binds it to the page once it is applied.
+     */
+    fun prebuild(strokes: List<Stroke>) {
+        for (i in strokes.indices) index(strokes[i], ordered.size)
+        indexedSize = strokes.size
+        firstStroke = strokes.firstOrNull()
+        lastStroke = strokes.lastOrNull()
+    }
+
+    /** True, and current for [page], if [page] holds exactly what was [prebuild]-indexed. */
+    fun adopt(page: Page): Boolean {
+        val strokes = page.strokes
+        if (strokes.size != indexedSize || strokes.firstOrNull() !== firstStroke || strokes.lastOrNull() !== lastStroke) {
+            return false
+        }
+        revision = page.revision
+        meshRevision = page.meshRevision
+        return true
     }
 
     fun remove(page: Page, removed: Collection<Stroke>) {
@@ -1822,6 +1845,37 @@ class InkCanvasView @JvmOverloads constructor(
     private var flingLastNanos = 0L
     private var flinging = false
 
+    /** The once-a-frame part of a moving viewport; see onTransformChanged. Declared before init, which calls it. */
+    private var viewportFramePosted = false
+    private val viewportFrame = Runnable {
+        viewportFramePosted = false
+        if (!disposed) afterTransform()
+    }
+
+    /** The zoom factor the scale detector found for the MOVE being handled; applied with its pan. */
+    private var pendingPinch = 1f
+    /** Scale, translate x, translate y of [documentToScreen], for [pinchStep]. */
+    private val viewportState = FloatArray(3)
+
+    /**
+     * Whether this canvas has told [InteractionGovernor] the page is moving:
+     * from the first finger movement that moves it until the hand lifts, or,
+     * if it flings, until the fling ends or a touch stops it.
+     */
+    private var movingHeld = false
+
+    private fun holdMoving() {
+        if (movingHeld) return
+        movingHeld = true
+        InteractionGovernor.beginMoving(this)
+    }
+
+    private fun releaseMoving() {
+        if (!movingHeld) return
+        movingHeld = false
+        InteractionGovernor.endMoving(this)
+    }
+
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
     private val readButtonGesture = ReadButtonGesture(touchSlop)
     private var readingWithButton = false
@@ -1975,9 +2029,33 @@ class InkCanvasView @JvmOverloads constructor(
         refineRunnablePosted = false
         refineVisiblePages()
     }
+    /**
+     * The pages round the screen, once it has stopped. How far is the
+     * governor's call (see [prefetchSpan]): nothing while a pen writes or the
+     * page moves - the request waits, and [prefetchWhenQuiet] brings it back
+     * when the hands come off - narrower in battery saver, none when hot.
+     * Never re-posts itself: an idle canvas schedules nothing.
+     */
     private val prefetchRunnable = Runnable {
-        prioritizePdf(PREFETCH_STOP_RADIUS)
-        prefetchNearbyPages(PREFETCH_STOP_RADIUS)
+        if (disposed) return@Runnable
+        val span = prefetchSpan(InteractionGovernor.state, InteractionGovernor.powerSave, InteractionGovernor.thermalStatus)
+        if (span == null) {
+            prefetchWanted = true
+            return@Runnable
+        }
+        prefetchWanted = false
+        if (span.isEmpty) return@Runnable
+        prioritizePdf(span)
+        prefetchNearbyPages(span)
+    }
+
+    /** A stopped-viewport prefetch was asked for while the hands were busy. */
+    private var prefetchWanted = false
+    private val prefetchWhenQuiet: (Interaction) -> Unit = { state ->
+        if (prefetchWanted && state == Interaction.IDLE && !disposed && isAttachedToWindow) {
+            removeCallbacks(prefetchRunnable)
+            post(prefetchRunnable)
+        }
     }
     @Volatile private var refineRequestSerial = 0
     @Volatile private var viewportRenderGeneration = 0
@@ -2092,12 +2170,11 @@ class InkCanvasView @JvmOverloads constructor(
                 val minimum = if (minimumScaleIsFitWidth && fitScale > 0f) fitScale else MIN_SCALE
                 val factor = pinchedScale(current, detector.scaleFactor)
                     .coerceIn(minimum, maxScale()) / current
-                // Scale around the old centroid; MOVE translates it to the
-                // new centroid once. Scaling around the new point first adds
-                // a small extra drift on every moving pinch sample.
-                documentToScreen.postScale(factor, factor,
-                    if (viewportInteracting) lastFocusX else detector.focusX,
-                    if (viewportInteracting) lastFocusY else detector.focusY)
+                // Held for the MOVE that brought it, which scales about the
+                // old centroid and carries that point to the new one in a
+                // single step (see pinchStep); the page under the fingers
+                // stays under them.
+                pendingPinch *= factor
                 return true
             }
         },
@@ -2219,7 +2296,10 @@ class InkCanvasView @JvmOverloads constructor(
         document.attachCanvas(sharedInkChanged)
         this.pdf?.diagnostics = null
         this.pdf?.takeIf { it !== pdf }?.let(releasePdf)
+        if (this.document.latency === latency) this.document.latency = null
         this.document = document
+        document.latency = latency
+        prefetchedPending.clear()
         dry.clearStrokeIndexes()
         pdfPriorityInitialized = false
         document.invalidateLayout()
@@ -2289,6 +2369,7 @@ class InkCanvasView @JvmOverloads constructor(
         MemoryTrim.register(this)
         InteractionGovernor.init(context)
         InteractionGovernor.noteRefreshRate(display?.refreshRate)
+        InteractionGovernor.addListener(prefetchWhenQuiet)
     }
 
     /**
@@ -2321,12 +2402,19 @@ class InkCanvasView @JvmOverloads constructor(
         MemoryTrim.unregister(this)
         // Detached mid-stroke would leave background work waiting for a lift that never comes.
         pdf?.penActive = false
+        stopFling(resumeDetail = false)
+        movingHeld = false
         InteractionGovernor.forget(this)
+        InteractionGovernor.removeListener(prefetchWhenQuiet)
+        if (document.latency === latency) document.latency = null
         registeredDocument?.detachCanvas(sharedInkChanged)
         registeredDocument = null
-        stopFling(resumeDetail = false)
         removeCallbacks(refineRunnable)
         removeCallbacks(prefetchRunnable)
+        removeCallbacks(viewportFrame)
+        viewportFramePosted = false
+        prefetchWanted = false
+        prefetchedPending.clear()
         removeCallbacks(inkCacheRunnable)
         dry.discardInkNodes()
         disposed = true
@@ -3076,7 +3164,8 @@ class InkCanvasView @JvmOverloads constructor(
             val collections = Debug.getRuntimeStat("art.gc.gc-count")?.toLongOrNull() ?: -1L
             latency.addRuntimeSample(allocated, collections, System.nanoTime())
         }
-        return latency.render(strokeCount()) + "\n" + WorkStats.render()
+        return latency.render(strokeCount()) + "\n" + WorkStats.render() +
+            "\ntiles deferred ${WorkStats.tilesDeferred.get()} · save pages reused ${WorkStats.savePagesReused.get()}"
     }
 
     fun currentScale(): Float {
@@ -3088,14 +3177,33 @@ class InkCanvasView @JvmOverloads constructor(
     var onViewportChanged: (() -> Unit)? = null
 
     private fun onTransformChanged() {
-        onViewportChanged?.invoke()
         viewportRenderGeneration++
         clampTransform()
+        // Mapping has to be current at once: the next touch or pen down
+        // is placed with it.
         documentToScreen.invert(screenToDocument)
-        ruler.pxPerMm = currentScale() * Page.A4_WIDTH / A4_MM_WIDTH
         // Input can arrive several times inside one display interval. Ask for
         // one paint on the next vsync instead of repeatedly invalidating now.
         dry.postInvalidateOnAnimation()
+        // The rest only has to be right once per frame. While fingers or a
+        // fling move the page it runs from the frame itself, once, however
+        // many samples came in since; a jump from code still runs it now.
+        if (viewportInteracting || flinging) {
+            if (!viewportFramePosted) {
+                viewportFramePosted = true
+                postOnAnimation(viewportFrame)
+            }
+            return
+        }
+        removeCallbacks(viewportFrame)
+        viewportFramePosted = false
+        afterTransform()
+    }
+
+    /** Everything a new viewport means beyond its matrix, at most once a frame while it moves. */
+    private fun afterTransform() {
+        onViewportChanged?.invoke()
+        ruler.pxPerMm = currentScale() * Page.A4_WIDTH / A4_MM_WIDTH
         updateCurrentPage()
         if (!pdfPriorityInitialized && pdf != null) {
             pdfPriorityInitialized = true
@@ -3109,7 +3217,7 @@ class InkCanvasView @JvmOverloads constructor(
         reportZoom()
         // New pages need their stored ink even while the viewport is moving.
         // Detail rebuilding still waits for the movement to settle.
-        if (!holdingDetail() || visiblePages().any { !it.loaded }) scheduleRefine()
+        if (!holdingDetail() || anyVisibleUnloaded()) scheduleRefine()
     }
 
     private fun reportZoom(force: Boolean = false) {
@@ -3172,12 +3280,8 @@ class InkCanvasView @JvmOverloads constructor(
         if (index != currentPage) {
             lastPageDirection = if (index > currentPage) 1 else -1
             currentPage = index
-            val radius = if (flinging || viewportSpeedPxPerSecond > FAST_VIEWPORT_PX_PER_SECOND) {
-                0
-            } else {
-                PREFETCH_SLOW_RADIUS
-            }
-            prioritizePdf(radius)
+            val fast = flinging || viewportSpeedPxPerSecond > FAST_VIEWPORT_PX_PER_SECOND
+            prioritizePdf(movingPdfRadius(fast, InteractionGovernor.thermalStatus))
             onCurrentPageChanged?.invoke(index)
         }
     }
@@ -3207,6 +3311,13 @@ class InkCanvasView @JvmOverloads constructor(
         if (event.actionMasked == MotionEvent.ACTION_DOWN && !isFocused) requestFocus()
         if (activeStylusPointer == null && eyedropper.onTouch(event)) return true
         val stylus = event.getToolType(event.actionIndex) == MotionEvent.TOOL_TYPE_STYLUS
+        // A pen landing while fingers still hold the page: the pen wins, and
+        // the rest of that hand's events go the pen's way, so the finger
+        // gesture would never see its own lift.
+        if (stylus && viewportInteracting && (event.actionMasked == MotionEvent.ACTION_DOWN ||
+                event.actionMasked == MotionEvent.ACTION_POINTER_DOWN)) {
+            endFingerGestureForPen()
+        }
         if (!stylus && activeStylusPointer == null && laserPointer == null) {
             if (ruler.onFinger(event)) return true
             // A finger set to write takes the pen's path, until a second finger says otherwise.
@@ -4320,10 +4431,17 @@ class InkCanvasView @JvmOverloads constructor(
         trackVelocity(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                stopFling(resumeDetail = false)
+                // Owned before the fling stops, so stopping it does not tell
+                // the host the page has come to rest for the moment between.
                 viewportInteracting = true
+                stopFling(resumeDetail = false)
+                pendingPinch = 1f
                 // A delayed idle refine may still be waiting from the previous
-                // viewport. Cancel it as soon as a new interaction begins.
+                // viewport, or running: its meshes would land mid-gesture and
+                // have every tile on screen recorded again. Cancel it as soon
+                // as a new interaction begins; a page it was reading in is
+                // still kept (see refineVisiblePages).
+                cancelDetailWork()
                 scheduleRefine()
                 onViewportInteractionChanged?.invoke(true)
                 val focus = focusOf(event, skipPointerIndex = -1)
@@ -4352,6 +4470,9 @@ class InkCanvasView @JvmOverloads constructor(
             MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_POINTER_UP -> {
                 removeCallbacks(fingerLongPress)
                 stopFling(resumeDetail = false)
+                // Whatever the detector made of the old set of fingers is not
+                // a factor between this set's spread and the next.
+                pendingPinch = 1f
                 gestureMaxPointers = maxOf(gestureMaxPointers, event.pointerCount)
                 // A second finger is the start of a pinch, and from here until
                 // the hand lifts the page is drawn from what is already in hand.
@@ -4371,6 +4492,10 @@ class InkCanvasView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_MOVE -> {
+                // Taken first, so a sample that returns early below never
+                // leaves its factor for the next one.
+                val pinch = pendingPinch
+                pendingPinch = 1f
                 gestureMaxPointers = maxOf(gestureMaxPointers, event.pointerCount)
                 val focus = focusOf(event, skipPointerIndex = -1)
                 val moved = hypot(focus[0] - lastFocusX, focus[1] - lastFocusY)
@@ -4380,7 +4505,7 @@ class InkCanvasView @JvmOverloads constructor(
                 viewportSpeedPxPerSecond = moved * 1000f / elapsed
                 viewportWasFast = viewportSpeedPxPerSecond > FAST_VIEWPORT_PX_PER_SECOND
                 lastFingerEventTime = event.eventTime
-                if (wasFast && !viewportWasFast) prioritizePdf(PREFETCH_SLOW_RADIUS)
+                if (wasFast && !viewportWasFast) prioritizePdf(movingPdfRadius(false, InteractionGovernor.thermalStatus))
 
                 // Three fingers are a zone the page itself never used, so they
                 // never pan or zoom it - they only ever move the reference
@@ -4472,16 +4597,29 @@ class InkCanvasView @JvmOverloads constructor(
                     val armed = pullPastEnd > PULL_FOR_PAGE_PX * resources.displayMetrics.density
                     if (armed != pullArmed) { pullArmed = armed; onPullForPage?.invoke(armed) }
                 } else if (!atDocumentEnd) pullPastEnd = 0f
-                if (panAllowed && (!scaleDetector.isInProgress || event.pointerCount > 1)) {
-                    val multiplier = if (event.pointerCount == 1) {
-                        viewportPanMultiplier.coerceIn(0.5f, 3f)
-                    } else {
-                        1f
-                    }
-                    documentToScreen.postTranslate(
-                        (focus[0] - lastFocusX) * multiplier,
-                        (focus[1] - lastFocusY) * multiplier,
-                    )
+                val pans = panAllowed && (!scaleDetector.isInProgress || event.pointerCount > 1)
+                val multiplier = if (event.pointerCount == 1) {
+                    viewportPanMultiplier.coerceIn(0.5f, 3f)
+                } else {
+                    1f
+                }
+                // Scale about where the fingers were and carry that point to
+                // where they are, together; without a pan the zoom stays
+                // about the old centroid, as it did before.
+                val toX = if (pans) lastFocusX + (focus[0] - lastFocusX) * multiplier else lastFocusX
+                val toY = if (pans) lastFocusY + (focus[1] - lastFocusY) * multiplier else lastFocusY
+                if (pinch != 1f || toX != lastFocusX || toY != lastFocusY) {
+                    documentToScreen.getValues(matrixValues)
+                    viewportState[0] = matrixValues[Matrix.MSCALE_X]
+                    viewportState[1] = matrixValues[Matrix.MTRANS_X]
+                    viewportState[2] = matrixValues[Matrix.MTRANS_Y]
+                    pinchStep(viewportState, pinch, lastFocusX, lastFocusY, toX, toY)
+                    matrixValues[Matrix.MSCALE_X] = viewportState[0]
+                    matrixValues[Matrix.MSCALE_Y] = viewportState[0]
+                    matrixValues[Matrix.MTRANS_X] = viewportState[1]
+                    matrixValues[Matrix.MTRANS_Y] = viewportState[2]
+                    documentToScreen.setValues(matrixValues)
+                    holdMoving()
                     onTransformChanged()
                 }
                 lastFocusX = focus[0]
@@ -4495,6 +4633,15 @@ class InkCanvasView @JvmOverloads constructor(
                 if (pullArmed) {
                     pullArmed = false
                     pullPastEnd = 0f
+                    // The hand is off: without this the page stayed "held"
+                    // after a pull for a new page, and PDF detail with it.
+                    viewportInteracting = false
+                    zooming = false
+                    releaseVelocity()
+                    releaseMoving()
+                    suppressScaleUntilGestureEnd = false
+                    resumeViewportDetail()
+                    onViewportInteractionChanged?.invoke(false)
                     onPullForPage?.invoke(false)
                     addPage(document.pages.lastIndex)
                     scrollToPage(document.pages.lastIndex)
@@ -4512,6 +4659,8 @@ class InkCanvasView @JvmOverloads constructor(
                 viewportSpeedPxPerSecond = 0f
                 viewportWasFast = false
                 releaseVelocity()
+                // A fling keeps the page moving; it lets go when it ends.
+                if (!flinging) releaseMoving()
                 if (!openedLink && !longPressFired) maybeHandleTap()
                 endZoom()
                 if (!endedZoom && !flinging) resumeViewportDetail()
@@ -4530,6 +4679,7 @@ class InkCanvasView @JvmOverloads constructor(
                 viewportSpeedPxPerSecond = 0f
                 viewportWasFast = false
                 releaseVelocity()
+                releaseMoving()
                 endZoom()
                 if (!endedZoom) resumeViewportDetail()
                 onViewportInteractionChanged?.invoke(false)
@@ -4538,6 +4688,18 @@ class InkCanvasView @JvmOverloads constructor(
             }
         }
         return true
+    }
+
+    /** The finger gesture ends where a pen takes over: the page is no longer held or moving. */
+    private fun endFingerGestureForPen() {
+        removeCallbacks(fingerLongPress)
+        pendingPinch = 1f
+        viewportInteracting = false
+        viewportSpeedPxPerSecond = 0f
+        viewportWasFast = false
+        releaseMoving()
+        suppressScaleUntilGestureEnd = false
+        onViewportInteractionChanged?.invoke(false)
     }
 
     private fun objectLinkTap(event: MotionEvent): Boolean {
@@ -4696,50 +4858,73 @@ class InkCanvasView @JvmOverloads constructor(
         if (hypot(vx, vy) < MIN_FLING_VELOCITY) return
         flingVx = vx
         flingVy = vy
+        // Frame times from here on; the first step covers the time from the
+        // lift to the first frame, which is never more than a frame.
         flingLastNanos = System.nanoTime()
         if (!flinging) {
             flinging = true
-            postOnAnimation(flingStep)
+            holdMoving()
+            Choreographer.getInstance().postFrameCallback(flingStep)
         }
     }
 
+    /**
+     * Ends a fling, if there is one. Any touch or pen landing calls this
+     * first: a new contact always wins over the glide.
+     */
     private fun stopFling(resumeDetail: Boolean = true) {
         val wasFlinging = flinging
         flinging = false
-        removeCallbacks(flingStep)
-        onViewportInteractionChanged?.invoke(false)
-        if (wasFlinging && resumeDetail && !viewportInteracting) resumeViewportDetail()
+        Choreographer.getInstance().removeFrameCallback(flingStep)
+        if (!wasFlinging) return
+        // Only a fling ending says the page has come to rest; a finger that
+        // owns it now says otherwise straight after.
+        if (!viewportInteracting) {
+            releaseMoving()
+            onViewportInteractionChanged?.invoke(false)
+        }
+        if (resumeDetail && !viewportInteracting) resumeViewportDetail()
     }
 
-    private val flingStep = object : Runnable {
-        override fun run() {
-            if (!flinging) return
-            val now = System.nanoTime()
-            val dt = ((now - flingLastNanos) / 1e9f).coerceIn(0f, 0.05f)
-            flingLastNanos = now
+    /**
+     * One fling frame, moved by the vsync time rather than by when the
+     * callback happened to run: frames that start a little late or early
+     * still move the page by even steps, which is what reads as smooth at
+     * 60Hz. The step after a long frame is clamped (see [flingDt]).
+     */
+    private val flingStep = object : Choreographer.FrameCallback {
+        override fun doFrame(frameTimeNanos: Long) {
+            if (!flinging || disposed) return
+            val dt = flingDt(frameTimeNanos, flingLastNanos)
+            // A frame time can trail the lift's own clock reading; never step backwards.
+            flingLastNanos = maxOf(flingLastNanos, frameTimeNanos)
 
             documentToScreen.getValues(matrixValues)
             val beforeX = matrixValues[Matrix.MTRANS_X]
             val beforeY = matrixValues[Matrix.MTRANS_Y]
-            documentToScreen.postTranslate(flingVx * dt, flingVy * dt)
+            val stepX = flingDistance(flingVx, dt, FLING_FRICTION)
+            val stepY = flingDistance(flingVy, dt, FLING_FRICTION)
+            documentToScreen.postTranslate(stepX, stepY)
             onTransformChanged()
 
             // Exponential decay rather than a fixed per-frame factor, so the
             // glide feels the same whether the display is at 60Hz or 120Hz.
-            val decay = exp(-FLING_FRICTION * dt)
-            flingVx *= decay
-            flingVy *= decay
+            flingVx = flingVelocityAfter(flingVx, dt, FLING_FRICTION)
+            flingVy = flingVelocityAfter(flingVy, dt, FLING_FRICTION)
 
             documentToScreen.getValues(matrixValues)
-            val movedX = abs(matrixValues[Matrix.MTRANS_X] - beforeX)
-            val movedY = abs(matrixValues[Matrix.MTRANS_Y] - beforeY)
-            // Clamping pins the document at the ends; carrying on would just
-            // burn frames going nowhere.
-            if (hypot(flingVx, flingVy) < MIN_FLING_VELOCITY || movedX + movedY < 0.05f) {
+            val movedX = matrixValues[Matrix.MTRANS_X] - beforeX
+            val movedY = matrixValues[Matrix.MTRANS_Y] - beforeY
+            // An axis held at the document's edge has spent its speed. Kept,
+            // it pressed against the clamp for the rest of the glide while
+            // the other axis crawled, a frame drawn each time for nothing.
+            if (flingAxisBlocked(stepX, movedX)) flingVx = 0f
+            if (flingAxisBlocked(stepY, movedY)) flingVy = 0f
+            if (hypot(flingVx, flingVy) < MIN_FLING_VELOCITY || (dt > 0f && abs(movedX) + abs(movedY) < 0.05f)) {
                 stopFling()
                 return
             }
-            postOnAnimation(this)
+            Choreographer.getInstance().postFrameCallback(this)
         }
     }
 
@@ -4956,6 +5141,8 @@ class InkCanvasView @JvmOverloads constructor(
 
         releaseDistantPages()
         val visible = visiblePages()
+        // Read in already and waiting for its frame: no second read from disk.
+        takePrefetched(visible)
         val toLoad = visible.filter { !it.loaded }
 
         // At deep zoom only a fraction of a page is visible. Rebuilding the
@@ -5013,7 +5200,13 @@ class InkCanvasView @JvmOverloads constructor(
             val built = ArrayList<Triple<Page, List<Stroke>, List<Stroke>>>(work.size)
             val twins = ArrayList<Pair<Stroke, Stroke?>>()
             val builtTwins = ArrayList<Pair<Stroke, Stroke?>>()
+            // Each loaded page's stroke index, built here so the first frame
+            // that shows the page does not build it.
+            val grids = IdentityHashMap<Page, StrokeGrid>()
             var refinedCount = 0
+            // Mesh rebuilding that a newer request overtook stops; pages
+            // already read in still go to the screen.
+            var meshesOvertaken = false
             // A page read in full is kept even when a newer request has come
             // in: throwing it away and reading it again was the same dense page
             // decoded and tessellated twice for one fling, on every core.
@@ -5022,7 +5215,9 @@ class InkCanvasView @JvmOverloads constructor(
                 loading@ for (page in toLoad) {
                     if (obsolete()) { abandoned = true; break@loading }
                     loader?.let {
-                        val strokes = it(page, loadEpsilon)
+                        // The screen is waiting on this page: it keeps a
+                        // couple of cores for its meshes even mid-gesture.
+                        val strokes = StrokeBuilder.forScreen { it(page, loadEpsilon) }
                         // Interrupted, the reader hands back what it had: a partial page.
                         if (Thread.currentThread().isInterrupted || disposed) { abandoned = true; break@loading }
                         loaded += page to strokes
@@ -5041,11 +5236,15 @@ class InkCanvasView @JvmOverloads constructor(
                 if (meshInk && !disposed) {
                     for ((_, strokes) in loaded) for (stroke in strokes) twins += stroke to meshTwinOf(stroke)
                 }
-                if (!abandoned) for ((page, snapshot) in work) {
-                    if (obsolete()) return@submit
+                for ((page, strokes) in loaded) {
+                    if (disposed) break
+                    grids[page] = StrokeGrid().also { it.prebuild(strokes) }
+                }
+                if (!abandoned) rebuilding@ for ((page, snapshot) in work) {
+                    if (obsolete()) { meshesOvertaken = true; break@rebuilding }
                     val rebuilt = ArrayList<Stroke>(snapshot.size)
                     for (stroke in snapshot) {
-                        if (obsolete()) return@submit
+                        if (obsolete()) { meshesOvertaken = true; break@rebuilding }
                         rebuilt += Stroke(
                             stroke.brush.copy(epsilon = inkEpsilon(stroke.brush.family, stroke.brush.size, epsilon)),
                             stroke.inputs,
@@ -5058,9 +5257,9 @@ class InkCanvasView @JvmOverloads constructor(
                 // rather than on the first frame that draws them: thousands of
                 // Brush and Stroke allocations in one onDraw was a visible hitch
                 // every time a dense page came on screen or was retessellated.
-                if (meshInk && !abandoned) {
-                    for ((_, _, rebuilt) in built) for (stroke in rebuilt) {
-                        if (obsolete()) return@submit
+                if (meshInk && !abandoned && !meshesOvertaken) {
+                    twinning@ for ((_, _, rebuilt) in built) for (stroke in rebuilt) {
+                        if (obsolete()) { meshesOvertaken = true; break@twinning }
                         builtTwins += stroke to meshTwinOf(stroke)
                     }
                 }
@@ -5074,9 +5273,10 @@ class InkCanvasView @JvmOverloads constructor(
             if (disposed || (loaded.isEmpty() && obsolete())) return@submit
             post {
                 if (disposed) return@post
+                val applyStarted = System.nanoTime()
                 // Rebuilt meshes are for one zoom and one request; pages read
                 // from disk are good whatever has happened since.
-                val current = !abandoned && serial == refineRequestSerial &&
+                val current = !abandoned && !meshesOvertaken && serial == refineRequestSerial &&
                     (loadOnly || tessellationBucket(currentScale()) == target)
                 if (abandoned) WorkStats.loadsAbandoned.incrementAndGet()
                 if (!current && built.isNotEmpty()) WorkStats.refinesStale.incrementAndGet()
@@ -5098,13 +5298,16 @@ class InkCanvasView @JvmOverloads constructor(
                         page.masks.addAll(0, masks)
                     }
                     page.loaded = true
-                    page.settleLayers(document.layers)
+                    // Settling reorders by layer; an index built for the file's
+                    // order is only good if it left the order alone.
+                    if (!page.settleLayers(document.layers)) dry.adoptStrokeIndex(page, grids[page])
                     page.tessellatedFor = minOf(target, LOAD_TESSELLATION_SCALE)
                     page.renderState = RenderState.ViewportCached
                 }
                 dry.adoptTwins(twins)
                 if (!current) {
                     Trace.endSection()
+                    latency.record(PerformanceMetric.PAGE_APPLY, System.nanoTime() - applyStarted)
                     if (loaded.isNotEmpty()) dry.postInvalidateOnAnimation()
                     // Nothing newer was asked for (the zoom moved on without a
                     // request, say): this job's pages still need their pass.
@@ -5115,9 +5318,14 @@ class InkCanvasView @JvmOverloads constructor(
                     }
                     return@post
                 }
+                // One map for every page, and history walked once with it:
+                // walking the whole undo stack per refined page was most of
+                // this apply on a page with a long history.
+                val replacements = IdentityHashMap<Stroke, Stroke>()
                 for ((page, snapshot, rebuilt) in built) {
-                    val replacements = IdentityHashMap<Stroke, Stroke>()
+                    val before = replacements.size
                     for (i in snapshot.indices) replacements[snapshot[i]] = rebuilt[i]
+                    if (replacements.size == before) continue
                     var replaced = 0
                     for (i in page.strokes.indices) {
                         replacements[page.strokes[i]]?.let {
@@ -5130,10 +5338,10 @@ class InkCanvasView @JvmOverloads constructor(
                     // Mixed fidelity is intentional at deep zoom.
                     page.tessellatedFor = if (replaced == page.strokes.size) target else 0f
                     page.meshRevision++
-                    remapHistory(replacements)
                     // Nothing about the saved file changed: same inputs, same
                     // brush, only the generated outline. Do not dirty the page.
                 }
+                if (replacements.isNotEmpty()) remapHistory(replacements)
                 for (page in pages) {
                     page.renderState = completedRenderState(
                         page.loaded,
@@ -5145,6 +5353,7 @@ class InkCanvasView @JvmOverloads constructor(
                 dry.adoptTwins(builtTwins)
                 if (built.isNotEmpty()) WorkStats.refinesApplied.incrementAndGet()
                 Trace.endSection()
+                latency.record(PerformanceMetric.PAGE_APPLY, System.nanoTime() - applyStarted)
                 dry.postInvalidateOnAnimation()
                 // Read in at the zoom in use, a loaded page needs no second pass
                 // unless the zoom is finer than a page is first read at.
@@ -5227,6 +5436,32 @@ class InkCanvasView @JvmOverloads constructor(
         }
     }
 
+    private val visibleProbe = FloatArray(4)
+
+    /**
+     * Whether a page on screen still has its ink to read in. Asked on every
+     * moving frame, so it walks the pages in view without building a list.
+     */
+    private fun anyVisibleUnloaded(): Boolean {
+        if (width == 0 || height == 0) return false
+        val bounds = visibleProbe
+        layoutViewport(bounds)
+        screenToDocument.mapPoints(bounds)
+        val top = minOf(bounds[1], bounds[3])
+        val bottom = maxOf(bounds[1], bounds[3])
+        val left = minOf(bounds[0], bounds[2])
+        val right = maxOf(bounds[0], bounds[2])
+        for (i in document.pagesIntersecting(top, bottom)) {
+            val page = document.pages.getOrNull(i) ?: continue
+            if (page.loaded) continue
+            val pageTop = document.topOf(i)
+            val pageLeft = document.leftOf(i)
+            if (pageTop <= bottom && pageTop + page.height >= top &&
+                pageLeft <= right && pageLeft + page.width >= left) return true
+        }
+        return false
+    }
+
     private fun visiblePages(): List<Page> {
         if (width == 0 || height == 0) return emptyList()
         val bounds = FloatArray(4)
@@ -5253,23 +5488,14 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     /** Current page first, then alternating in the travel direction and behind it. */
-    private fun nearbyPageIndices(radius: Int): List<Int> {
-        if (document.pages.isEmpty()) return emptyList()
-        val center = currentPage.coerceIn(document.pages.indices)
-        val result = ArrayList<Int>(radius * 2 + 1)
-        result += center
-        for (distance in 1..radius) {
-            val ahead = center + distance * lastPageDirection
-            val behind = center - distance * lastPageDirection
-            if (ahead in document.pages.indices) result += ahead
-            if (behind in document.pages.indices) result += behind
-        }
-        return result
-    }
+    private fun nearbyPageIndices(span: PrefetchSpan): List<Int> =
+        nearbyPages(currentPage, document.pages.size, span, lastPageDirection)
 
-    private fun prioritizePdf(radius: Int) {
+    private fun prioritizePdf(radius: Int) = prioritizePdf(PrefetchSpan(radius, radius))
+
+    private fun prioritizePdf(span: PrefetchSpan) {
         val source = pdf ?: return
-        val pages = nearbyPageIndices(radius).mapNotNull { index ->
+        val pages = nearbyPageIndices(span).mapNotNull { index ->
             document.pages[index].pdfPageIndex.takeIf { it >= 0 }
         }
         if (pages.isEmpty()) return
@@ -5284,11 +5510,11 @@ class InkCanvasView @JvmOverloads constructor(
      * The visible page remains the zero-delay path; this work only fills what
      * the next short scroll is likely to expose.
      */
-    private fun prefetchNearbyPages(radius: Int) {
+    private fun prefetchNearbyPages(span: PrefetchSpan) {
         if (disposed || thermalHot) return
         val visible = Collections.newSetFromMap(IdentityHashMap<Page, Boolean>())
         visible += visiblePages()
-        val pages = nearbyPageIndices(radius).map { document.pages[it] }
+        val pages = nearbyPageIndices(span).map { document.pages[it] }
             .filter { !it.loaded && it !in visible }
         if (pages.isEmpty()) return
         val loader = pageLoader ?: return
@@ -5298,45 +5524,82 @@ class InkCanvasView @JvmOverloads constructor(
         val serial = refineRequestSerial
         val withTwins = meshInk
         runCatching { refiner.execute {
-            val loaded = ArrayList<Pair<Page, List<Stroke>>>(pages.size)
-            val masks = ArrayList<Pair<Page, List<PageMask>>>(pages.size)
-            val twins = ArrayList<Pair<Stroke, Stroke?>>()
+            val loaded = ArrayList<PrefetchedPage>(pages.size)
             for (page in pages) {
                 // A new viewport has a zero-delay visible-page job waiting on
                 // this same executor. Yield after at most one disk page instead
                 // of making it wait for the old six-page halo.
                 if (disposed || serial != refineRequestSerial) break
                 val strokes = loader(page, epsilon)
-                loaded += page to strokes
-                masksLoader?.let { masks += page to it(page, epsilon) }
+                val pageMasks = masksLoader?.let { it(page, epsilon) }
                 // Twins here too: made by the first frame that showed the page,
                 // they were thousands of allocations inside one onDraw.
-                if (withTwins) for (stroke in strokes) twins += stroke to meshTwinOf(stroke)
+                val twins = if (withTwins) strokes.map { it to meshTwinOf(it) } else emptyList()
+                val grid = StrokeGrid().also { it.prebuild(strokes) }
+                loaded += PrefetchedPage(page, strokes, pageMasks, twins, grid, scale)
             }
             if (loaded.isEmpty()) return@execute
             post {
                 // Kept even if the view has moved on: the pages are read, and a
                 // page scrolled back to would only be read again.
                 if (disposed) return@post
-                dry.adoptTwins(twins)
                 WorkStats.prefetched.addAndGet(loaded.size.toLong())
-                var changed = false
-                for ((page, strokes) in loaded) {
-                    if (page.loaded) continue
-                    page.strokes.addAll(0, strokes)
-                    page.savedOnDisk = if (page.dirty) 0 else page.strokes.size
-                    masks.firstOrNull { it.first === page }?.let { (_, pageMasks) ->
-                        page.masks.addAll(0, pageMasks)
+                // Put in one page a frame: nothing on screen waits for these,
+                // and several dense pages put in together were one long frame.
+                // A page the screen reaches first is put in by the refine
+                // that wants it (see takePrefetched).
+                for (item in loaded) prefetchedPending[item.page] = item
+                val queue = ArrayDeque(loaded)
+                val step = object : Runnable {
+                    override fun run() {
+                        if (disposed) return
+                        while (queue.isNotEmpty()) {
+                            val item = queue.removeFirst()
+                            if (prefetchedPending.remove(item.page) == null) continue
+                            applyPrefetched(item)
+                            break
+                        }
+                        if (queue.isNotEmpty()) postOnAnimation(this)
                     }
-                    page.loaded = true
-                    page.settleLayers(document.layers)
-                    page.tessellatedFor = scale
-                    page.renderState = RenderState.ViewportCached
-                    changed = true
                 }
-                if (changed) dry.invalidate()
+                step.run()
             }
         } }
+    }
+
+    /** A page read in by the prefetch, waiting for its turn on the UI thread. */
+    private class PrefetchedPage(
+        val page: Page,
+        val strokes: List<Stroke>,
+        val masks: List<PageMask>?,
+        val twins: List<Pair<Stroke, Stroke?>>,
+        val grid: StrokeGrid,
+        val scale: Float,
+    )
+
+    private val prefetchedPending = IdentityHashMap<Page, PrefetchedPage>()
+
+    private fun applyPrefetched(item: PrefetchedPage) {
+        val page = item.page
+        if (page.loaded || document.pages.none { it === page }) return
+        val started = System.nanoTime()
+        dry.adoptTwins(item.twins)
+        page.strokes.addAll(0, item.strokes)
+        page.savedOnDisk = if (page.dirty) 0 else page.strokes.size
+        item.masks?.let { page.masks.addAll(0, it) }
+        page.loaded = true
+        if (!page.settleLayers(document.layers)) dry.adoptStrokeIndex(page, item.grid)
+        page.tessellatedFor = item.scale
+        page.renderState = RenderState.ViewportCached
+        latency.record(PerformanceMetric.PAGE_APPLY, System.nanoTime() - started)
+        // Off screen, as a prefetch is meant to be, there is nothing to redraw.
+        if (visiblePages().any { it === page }) dry.postInvalidateOnAnimation()
+    }
+
+    /** Puts in at once any prefetched page among [pages], which the screen now wants. */
+    private fun takePrefetched(pages: List<Page>) {
+        if (prefetchedPending.isEmpty()) return
+        for (page in pages) prefetchedPending.remove(page)?.let(::applyPrefetched)
     }
 
     private fun scheduleStoppedPrefetch() {
@@ -5345,28 +5608,37 @@ class InkCanvasView @JvmOverloads constructor(
         postDelayed(prefetchRunnable, PREFETCH_SETTLE_MS)
     }
 
-    private fun scheduleRefine() {
+    /**
+     * Drops the refine waiting to start or running for the viewport being
+     * left. Not interrupted: a job reading a page finishes that page and
+     * hands it over (see refineVisiblePages), and a job rebuilding meshes
+     * stops at its next stroke when it sees the serial has moved on.
+     */
+    private fun cancelDetailWork() {
         if (disposed) return
-        if (holdingDetail() && (refineRunnablePosted || refineFuture?.isDone == false)) return
         removeCallbacks(refineRunnable)
         refineRunnablePosted = false
         refineRequestSerial++
-        // Not interrupted: a job reading a page finishes that page and hands it
-        // over (see refineVisiblePages), and a job rebuilding meshes stops at
-        // its next stroke when it sees the serial has moved on.
         refineFuture?.cancel(false)
         refineFuture = null
         for (page in refiningPages) {
             if (page.renderState == RenderState.Rendering) page.renderState = RenderState.Dirty
         }
         refiningPages = emptyList()
+    }
+
+    private fun scheduleRefine() {
+        if (disposed) return
+        if (holdingDetail() && (refineRunnablePosted || refineFuture?.isDone == false)) return
+        cancelDetailWork()
         // Keep loading newly exposed pages during movement. Mesh refinement
         // still waits until the gesture ends.
-        if (holdingDetail() && visiblePages().all { it.loaded }) return
+        val missing = anyVisibleUnloaded()
+        if (holdingDetail() && !missing) return
         // A page with nothing on it yet should not wait out the settle delay -
         // that delay exists to avoid rebuilding mid-pinch, not to hold up the
         // first paint of a note.
-        val delay = if (visiblePages().any { !it.loaded }) 0L else REFINE_DEBOUNCE_MS
+        val delay = if (missing) 0L else REFINE_DEBOUNCE_MS
         refineRunnablePosted = true
         postDelayed(refineRunnable, delay)
     }
@@ -8106,6 +8378,11 @@ class InkCanvasView @JvmOverloads constructor(
             strokeIndexes.remove(page)
         }
 
+        /** An index built off the UI thread for what [page] now holds; dropped if it no longer matches. */
+        fun adoptStrokeIndex(page: Page, grid: StrokeGrid?) {
+            if (grid != null && grid.adopt(page)) strokeIndexes[page] = grid
+        }
+
         /** Everything cached for a page that has been unloaded. It is off screen, so nothing drawn needs it. */
         fun forgetPage(page: Page) {
             inkTiles.forgetPage(page)
@@ -8220,7 +8497,13 @@ class InkCanvasView @JvmOverloads constructor(
             // out - the renderer then draws a stroke magnified 8x as though it
             // were at 1:1, which is exactly what made zoomed-in ink look soft and
             // bend its corners.
-            inkTiles.beginFrame()
+            // Tiles with nothing recorded yet - a new zoom, rebuilt meshes, a
+            // page just read in - take at most this much of the frame; the
+            // rest follow in the frames after (see InkTileCache.backlog).
+            // Tiles are only drawn on a hardware canvas; a software capture of
+            // this view must not end a frame the screen's recording still uses.
+            val tileFrame = canvas.isHardwareAccelerated
+            if (tileFrame) inkTiles.beginFrame(tileRecordBudgetNanos(InteractionGovernor.frameMs, InteractionGovernor.state))
             // Null unless some layer is translucent: then each such layer's
             // ink is composited once at its opacity (see drawLayered), and
             // every path below - tiles, page node, direct - does the same.
@@ -8364,7 +8647,11 @@ class InkCanvasView @JvmOverloads constructor(
                     scoped.restore()
                 }
             }
-            inkTiles.endFrame()
+            if (tileFrame) {
+                inkTiles.endFrame()
+                // Ends by itself: once every tile on screen is recorded, nothing asks again.
+                if (inkTiles.backlog) postInvalidateOnAnimation()
+            }
             if (started != 0L) {
                 lastVisibleStrokes = visibleCount
                 lastDrawMs = (System.nanoTime() - started) / 1e6
@@ -8894,8 +9181,6 @@ class InkCanvasView @JvmOverloads constructor(
         const val IMAGE_CULL_MARGIN = 24f
         const val EPSILON_SLOP = 0.00001f
         const val PREFETCH_SETTLE_MS = 280L
-        const val PREFETCH_SLOW_RADIUS = 1
-        const val PREFETCH_STOP_RADIUS = 3
         const val FAST_VIEWPORT_PX_PER_SECOND = 2200f
         const val PDF_PREFETCH_MIN_WIDTH = 1024
         const val LONG_PRESS_MS = 350L

@@ -121,9 +121,36 @@ class PdfSource private constructor(
     var penActive: Boolean
         get() = penDeferral.penDown
         set(value) {
-            val resumed = synchronized(stateLock) { penDeferral.setPen(value) }
+            // Lifted, the renders put aside wait until the hands are off
+            // altogether rather than all going back at once into the gap
+            // before the next stroke; see [PenDeferral.lift]. Each one checks
+            // the pen again as it reaches the worker, so a pen landing while
+            // they run puts the rest aside again.
+            val quiet = !value && InteractionGovernor.state == Interaction.IDLE
+            val (resumed, waiting) = synchronized(stateLock) {
+                val jobs = if (value) penDeferral.setPen(true) else penDeferral.lift(quiet)
+                jobs to penDeferral.waitingForQuiet
+            }
+            if (waiting) awaitQuiet()
             for (job in resumed) runCatching { worker.execute(job) }
         }
+
+    /** Registered only while renders wait for the hands to come off; main thread. */
+    @Volatile private var quietListener: ((Interaction) -> Unit)? = null
+
+    private fun awaitQuiet() {
+        if (quietListener != null) return
+        val listener: (Interaction) -> Unit = { state -> if (state == Interaction.IDLE) releaseAfterQuiet() }
+        quietListener = listener
+        InteractionGovernor.addListener(listener)
+    }
+
+    private fun releaseAfterQuiet() {
+        quietListener?.let(InteractionGovernor::removeListener)
+        quietListener = null
+        val resumed = synchronized(stateLock) { if (closed) emptyList() else penDeferral.quiet() }
+        for (job in resumed) runCatching { worker.execute(job) }
+    }
 
     @Volatile
     private var closed = false
@@ -572,7 +599,9 @@ class PdfSource private constructor(
                                     true
                                 } else false
                             }
-                            if (!keep) offerToPool(bitmap)
+                            // Uploaded to the GPU now, from here, rather than
+                            // inside the first frame that draws it.
+                            if (keep) bitmap.prepareToDraw() else offerToPool(bitmap)
                         }
                     }
                 }
@@ -785,7 +814,11 @@ class PdfSource private constructor(
                             true
                         } else false
                     }
-                    if (keep) onReady?.invoke(page) else bitmap.recycle()
+                    if (keep) {
+                        // The texture upload starts now, not in the frame that first draws the page.
+                        bitmap.prepareToDraw()
+                        onReady?.invoke(page)
+                    } else bitmap.recycle()
                 }
             }
         }
@@ -982,6 +1015,8 @@ class PdfSource private constructor(
             pendingTiles.clear()
             penDeferral.clear()
         }
+        quietListener?.let(InteractionGovernor::removeListener)
+        quietListener = null
         onReady = null
         // PdfRenderer.render() cannot be interrupted. Do not make navigation
         // wait on its lock; discard queued tiles and finish native cleanup on a
@@ -1121,6 +1156,15 @@ internal class PenDeferral<K, J> {
     @Volatile var penDown: Boolean = false
         private set
 
+    /**
+     * Lifted, but the hands are not off yet: the next stroke usually follows
+     * within a few hundred milliseconds, and every render put aside going back
+     * on the queue at each lift filled exactly those gaps. Until [quiet] the
+     * prefetch keeps waiting as though the pen were still down.
+     */
+    var waitingForQuiet: Boolean = false
+        private set
+
     private val onScreen = HashSet<K>()
     private val deferred = LinkedHashMap<K, J>()
 
@@ -1138,7 +1182,7 @@ internal class PenDeferral<K, J> {
 
     /** True, keeping [job], when it should wait for the pen to lift. */
     fun deferIfWriting(key: K, job: J): Boolean {
-        if (!penDown || key in onScreen) return false
+        if ((!penDown && !waitingForQuiet) || key in onScreen) return false
         deferred[key] = job
         return true
     }
@@ -1152,7 +1196,31 @@ internal class PenDeferral<K, J> {
     /** On lifting, everything put aside, in the order it was put aside. */
     fun setPen(down: Boolean): List<J> {
         penDown = down
-        if (down || deferred.isEmpty()) return emptyList()
+        if (down) return emptyList()
+        return release()
+    }
+
+    /**
+     * The pen lifted. With [quiet] - nothing else is being touched - what was
+     * put aside comes back now, as [setPen] does; otherwise it keeps waiting
+     * for [quiet] to be called.
+     */
+    fun lift(quiet: Boolean): List<J> {
+        penDown = false
+        if (quiet) return release()
+        waitingForQuiet = true
+        return emptyList()
+    }
+
+    /** The hands are off: what waited comes back, oldest first. Nothing while the pen is down again. */
+    fun quiet(): List<J> {
+        if (penDown) return emptyList()
+        return release()
+    }
+
+    private fun release(): List<J> {
+        waitingForQuiet = false
+        if (deferred.isEmpty()) return emptyList()
         return deferred.values.toList().also { deferred.clear() }
     }
 

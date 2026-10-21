@@ -61,6 +61,50 @@ class PenDeferralTest {
     }
 
     @Test
+    fun `a lift before the hands are off keeps prefetch waiting until quiet`() {
+        val gate = PenDeferral<Long, String>()
+        gate.setPen(true)
+        assertTrue(gate.deferIfWriting(1L, "a"))
+        assertTrue(gate.deferIfWriting(2L, "b"))
+        // Lifted between strokes: nothing comes back yet, and a prefetch
+        // reaching the worker in the gap waits too.
+        assertTrue(gate.lift(quiet = false).isEmpty())
+        assertFalse(gate.penDown)
+        assertTrue(gate.waitingForQuiet)
+        assertTrue(gate.deferIfWriting(3L, "c"))
+        // A page on screen still never waits.
+        assertNull(gate.markOnScreen(4L))
+        assertFalse(gate.deferIfWriting(4L, "visible"))
+        // The hands come off: everything, oldest first, and no more waiting.
+        assertEquals(listOf("a", "b", "c"), gate.quiet())
+        assertFalse(gate.waitingForQuiet)
+        assertFalse(gate.deferIfWriting(5L, "later"))
+    }
+
+    @Test
+    fun `the next stroke landing before quiet keeps the queue put aside`() {
+        val gate = PenDeferral<Long, String>()
+        gate.setPen(true)
+        assertTrue(gate.deferIfWriting(1L, "a"))
+        gate.lift(quiet = false)
+        gate.setPen(true)
+        // Quiet cannot be reached with a pen down; nothing is let out.
+        assertTrue(gate.quiet().isEmpty())
+        assertEquals(1, gate.deferredCount)
+        gate.lift(quiet = false)
+        assertEquals(listOf("a"), gate.quiet())
+    }
+
+    @Test
+    fun `a lift when already quiet resumes at once`() {
+        val gate = PenDeferral<Long, String>()
+        gate.setPen(true)
+        assertTrue(gate.deferIfWriting(1L, "a"))
+        assertEquals(listOf("a"), gate.lift(quiet = true))
+        assertFalse(gate.waitingForQuiet)
+    }
+
+    @Test
     fun `clearing drops what was put aside and every on-screen mark`() {
         val gate = PenDeferral<Long, String>()
         gate.setPen(true)

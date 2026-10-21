@@ -43,6 +43,8 @@ internal class InkTileCache(
     }
 
     private class PageState {
+        /** Every tile this page showed last frame was recorded; nothing waited on the budget. */
+        var complete = false
         var scale = 0f
         var revision = Long.MIN_VALUE
         var meshRevision = Long.MIN_VALUE
@@ -64,6 +66,34 @@ internal class InkTileCache(
     private val pages = LinkedHashMap<Page, PageState>(8, 0.75f, true)
     private val frameTiles = HashSet<Key>()
     private val framePages = HashSet<Page>()
+
+    /**
+     * A page's last complete set of tiles, kept for a few frames after a new
+     * zoom or rebuilt meshes made them out of date. The new tiles are
+     * recorded a frame's budget at a time, and until each one is, this older
+     * picture of the same ink is drawn in its place - slightly soft for a
+     * frame or two, instead of every tile on screen recorded in one frame
+     * right after the fingers lift. Only for changes of resolution or mesh:
+     * an edit, a lifted lasso or a layer's opacity is a different picture.
+     */
+    private class StaleTiles(val scale: Float, val revision: Long, val size: Int, val tiles: HashMap<Key, Tile>)
+
+    private val stale = IdentityHashMap<Page, StaleTiles>()
+    /** Pages whose stale tiles were drawn this frame; those stay until a frame no longer needs them. */
+    private val staleDrawn = HashSet<Page>()
+
+    /** Recording time this frame may still take; see [beginFrame]. */
+    private var recordBudgetNanos = Long.MAX_VALUE
+    private var recordSpentNanos = 0L
+    private var recordedThisFrame = 0
+
+    /**
+     * True after a frame left tiles unrecorded for want of budget: the caller
+     * asks for another frame, and the backlog is worked off one frame's share
+     * at a time. False once nothing waits, so an idle canvas draws nothing.
+     */
+    var backlog = false
+        private set
     private val renderer = CanvasStrokeRenderer.create(PencilTextureStore)
     private val transform = Matrix()
     private val bounds = RectF()
@@ -86,15 +116,43 @@ internal class InkTileCache(
         pages.clear()
         frameTiles.clear()
         framePages.clear()
+        for (old in stale.values) old.tiles.values.forEach(::discard)
+        stale.clear()
+        staleDrawn.clear()
+        backlog = false
     }
 
-    fun beginFrame() {
+    /**
+     * [recordBudget]: nanoseconds this frame may spend recording tiles that
+     * have nothing recorded yet. A tile an edit changed is always recorded at
+     * once - it is what the pen just did - and one tile always goes ahead.
+     */
+    fun beginFrame(recordBudget: Long = Long.MAX_VALUE) {
         frameTiles.clear()
         framePages.clear()
+        staleDrawn.clear()
+        recordBudgetNanos = recordBudget
+        recordSpentNanos = 0L
+        recordedThisFrame = 0
+        backlog = false
     }
+
+    private fun mayRecord(): Boolean = recordedThisFrame == 0 || recordSpentNanos < recordBudgetNanos
 
     /** Recorded canvas commands still reference these nodes until GPU playback. */
     fun endFrame() {
+        // Stale tiles go once a frame has drawn without them: the page is
+        // complete again, or no longer on screen. Never in a frame that drew
+        // them - their nodes are in this frame's recording.
+        if (stale.isNotEmpty()) {
+            val olds = stale.entries.iterator()
+            while (olds.hasNext()) {
+                val entry = olds.next()
+                if (entry.key in staleDrawn) continue
+                entry.value.tiles.values.forEach(::discard)
+                olds.remove()
+            }
+        }
         val oldPages = pages.entries.iterator()
         while (pages.size > 6 && oldPages.hasNext()) {
             val page = oldPages.next().key
@@ -132,7 +190,79 @@ internal class InkTileCache(
     /** Drops a page's tiles and its stroke list; it is read in again from scratch if it comes back. */
     fun forgetPage(page: Page) {
         discardPage(page)
+        dropStale(page)
         pages.remove(page)
+    }
+
+    private fun dropStale(page: Page) {
+        // Not while this frame still draws them; endFrame lets them go after.
+        if (page in staleDrawn) return
+        stale.remove(page)?.tiles?.values?.forEach(::discard)
+    }
+
+    /**
+     * The page's tiles are about to be replaced by ones at a new resolution
+     * or from rebuilt meshes. A complete set is set aside to stand in while
+     * the new tiles are recorded; a set that was itself still filling in is
+     * dropped in favour of the complete one already aside.
+     */
+    private fun retire(page: Page, state: PageState) {
+        if ((tilesPerPage[page] ?: 0) == 0 || (!state.complete && stale[page] != null)) {
+            discardPage(page)
+            return
+        }
+        dropStale(page)
+        if (stale[page] != null) {
+            discardPage(page)
+            return
+        }
+        val moved = HashMap<Key, Tile>()
+        val iterator = tiles.entries.iterator()
+        while (iterator.hasNext()) {
+            val entry = iterator.next()
+            if (entry.key.page === page) {
+                moved[entry.key] = entry.value
+                iterator.remove()
+            }
+        }
+        tilesPerPage.remove(page)
+        stale[page] = StaleTiles(state.scale, state.revision, state.strokes.size, moved)
+    }
+
+    /**
+     * Draws the stale picture over the area of the tile at ([x], [y]) of a
+     * grid at [scale], for a tile not recorded yet. The canvas is in page units.
+     */
+    private fun drawStale(canvas: Canvas, page: Page, x: Int, y: Int, scale: Float, highlight: Boolean) {
+        val old = stale[page] ?: return
+        // Only while it is still the same ink: an edit since makes it wrong.
+        if (old.revision != page.revision || old.size != page.strokes.size) return
+        val left = x * TILE_PX / scale
+        val top = y * TILE_PX / scale
+        val right = (x + 1) * TILE_PX / scale
+        val bottom = (y + 1) * TILE_PX / scale
+        val firstX = floor(left * old.scale / TILE_PX).toInt()
+        val firstY = floor(top * old.scale / TILE_PX).toInt()
+        val lastX = ceil(right * old.scale / TILE_PX).toInt() - 1
+        val lastY = ceil(bottom * old.scale / TILE_PX).toInt() - 1
+        canvas.save()
+        canvas.clipRect(left, top, right, bottom)
+        for (sy in firstY..lastY) for (sx in firstX..lastX) {
+            val tile = old.tiles[Key(page, sx, sy, highlight)] ?: continue
+            val hasBase = tile.hasInk && tile.base.hasDisplayList()
+            val hasDelta = tile.delta.hasDisplayList()
+            if (!hasBase && !hasDelta) continue
+            canvas.save()
+            canvas.scale(1f / old.scale, 1f / old.scale)
+            canvas.clipRect((sx * TILE_PX).toFloat(), (sy * TILE_PX).toFloat(),
+                ((sx + 1) * TILE_PX).toFloat(), ((sy + 1) * TILE_PX).toFloat())
+            canvas.translate((sx * TILE_PX - GUTTER_PX).toFloat(), (sy * TILE_PX - GUTTER_PX).toFloat())
+            if (hasBase) canvas.drawRenderNode(tile.base)
+            if (hasDelta) canvas.drawRenderNode(tile.delta)
+            canvas.restore()
+        }
+        canvas.restore()
+        staleDrawn += page
     }
 
     private fun discardPage(page: Page) {
@@ -195,9 +325,18 @@ internal class InkTileCache(
         // difference was a full redraw after nearly every gesture.
         val nearlySame = state.scale > 0f && abs(state.scale / requestedScale - 1f) < SETTLED_SCALE_SLACK
         val scale = if (keepScale || nearlySame) state.scale else requestedScale
+        val newPicture = state.excluded !== excluded || !sameLook(state.look, look)
         if (state.scale == 0f || abs(state.scale / scale - 1f) >= 0.001f ||
-            state.meshRevision != page.meshRevision || state.excluded !== excluded || !sameLook(state.look, look)) {
-            discardPage(page)
+            state.meshRevision != page.meshRevision || newPicture) {
+            // Same ink at another resolution, or the same strokes with finer
+            // meshes: the old tiles can stand in while the new ones come.
+            val sameInk = !newPicture && state.scale > 0f && state.revision == page.revision &&
+                state.strokes.size == page.strokes.size
+            if (sameInk) retire(page, state) else {
+                discardPage(page)
+                dropStale(page)
+            }
+            state.complete = false
             state.scale = scale
             state.excluded = excluded
             state.look = look
@@ -279,7 +418,8 @@ internal class InkTileCache(
         return hasInk
     }
 
-    private fun tileFor(key: Key, state: PageState, consolidate: Boolean): Tile {
+    /** The tile for [key], recorded if it needs to be; null when it has nothing yet and the frame's budget is spent. */
+    private fun tileFor(key: Key, state: PageState, consolidate: Boolean): Tile? {
         val scale = state.scale
         val tile = tiles.getOrPut(key) {
             tilesPerPage[key.page] = (tilesPerPage[key.page] ?: 0) + 1
@@ -289,11 +429,23 @@ internal class InkTileCache(
         // tree. A Java cache entry can therefore outlive the GPU recording.
         if (tile.hasInk && !tile.base.hasDisplayList()) tile.dirty = true
         if (tile.appended.isNotEmpty() && !tile.delta.hasDisplayList()) tile.deltaDirty = true
-        if (tile.dirty || tile.appended.isNotEmpty() && (consolidate || tile.appended.size >= 32)) {
+        // A tile never recorded is the burst after a zoom or a page coming
+        // in: it waits its turn. One an edit made dirty still has its old
+        // recording and is the change just made, and one whose recording the
+        // system let go was showing ink a moment ago; neither is held back.
+        if (tile.dirty && !tile.hasInk && !tile.base.hasDisplayList() && !mayRecord()) return null
+        // Folding the delta into the base is tidying, and waits for room;
+        // past 32 strokes it is due regardless.
+        val fold = tile.appended.isNotEmpty() &&
+            (tile.appended.size >= 32 || consolidate && mayRecord())
+        if (tile.dirty || fold) {
+            val started = System.nanoTime()
             val left = (key.x * TILE_PX - GUTTER_PX) / scale
             val top = (key.y * TILE_PX - GUTTER_PX) / scale
             val strokes = query(key.page, left, top, left + EXTENT_PX / scale, top + EXTENT_PX / scale)
             val hasInk = record(tile.base, tile, strokes)
+            recordSpentNanos += System.nanoTime() - started
+            recordedThisFrame++
             if (tile.hasInk != hasInk) layerBytes += if (hasInk) TILE_BYTES else -TILE_BYTES
             tile.hasInk = hasInk
             tile.base.setUseCompositingLayer(hasInk, null)
@@ -316,6 +468,7 @@ internal class InkTileCache(
         val passes = if (hasHighlighter) 2 else 1
         val state = sync(page, scale, interacting, excluded, viewport, passes, look)
         val recordedScale = state.scale
+        var complete = true
         val firstX = floor(viewport.left * recordedScale / TILE_PX).toInt()
         val firstY = floor(viewport.top * recordedScale / TILE_PX).toInt()
         val lastX = ceil(viewport.right * recordedScale / TILE_PX).toInt() - 1
@@ -329,6 +482,12 @@ internal class InkTileCache(
                 val key = Key(page, x, y, highlight)
                 frameTiles += key
                 val tile = tileFor(key, state, consolidate)
+                if (tile == null) {
+                    WorkStats.tilesDeferred.incrementAndGet()
+                    complete = false
+                    drawStale(canvas, page, x, y, recordedScale, highlight)
+                    continue
+                }
                 if (!tile.hasInk && !tile.delta.hasDisplayList()) continue
                 canvas.save()
                 canvas.scale(1f / recordedScale, 1f / recordedScale)
@@ -343,6 +502,8 @@ internal class InkTileCache(
             }
             if (layer >= 0) canvas.restoreToCount(layer)
         }
+        state.complete = complete
+        if (!complete) backlog = true
     }
 
     companion object {
