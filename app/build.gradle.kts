@@ -89,4 +89,7 @@ dependencies {
     // tool and has no business in a release APK.
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
+    // The real org.json for JVM tests: android.jar only has stubs that throw,
+    // and the layer list is saved as JSON.
+    testImplementation("org.json:json:20231013")
 }

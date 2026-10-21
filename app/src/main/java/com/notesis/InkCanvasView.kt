@@ -154,6 +154,8 @@ private class InkNode(val node: android.graphics.RenderNode) {
     var meshRevision = Long.MIN_VALUE
     var meshInk = false
     var highlighterAbove = false
+    /** The translucent layer look it was recorded under, or null for all opaque. */
+    var look: LayerLook? = null
 }
 
 /** Whether a page held highlighter ink, as of the stroke list it was computed for. */
@@ -1069,9 +1071,16 @@ class InkCanvasView @JvmOverloads constructor(
             if (field == value) return
             field = value
             pageTonePaint.colorFilter = pageToneFilter(value)
+            wetToneMatrix = pageToneMatrix(value)
             dry.invalidate()
         }
     private val pageTonePaint = Paint()
+    /**
+     * The same tone as a matrix, for ink that is not drawn inside the page:
+     * wet ink lives on a front-buffered surface the page's colour filter never
+     * reaches, so its brush colour is put through this instead; see [wetInkArgb].
+     */
+    private var wetToneMatrix: FloatArray? = null
     /** An eraser gesture with the eraser tool has ended. */
     var onEraseFinished: (() -> Unit)? = null
 
@@ -2020,6 +2029,29 @@ class InkCanvasView @JvmOverloads constructor(
         ) : Edit
         /** A quarter turn of everything on a page; undone by the opposite turn. */
         class PageRotated(override val page: Page, val clockwise: Boolean) : Edit
+
+        /**
+         * A layer's ink on one page, taken away with the layer ([gone]) or
+         * brought by a copy of it. Shown or hidden alike, unlike [Erased].
+         */
+        class LayerInk(
+            override val page: Page,
+            var strokes: List<Stroke>,
+            val gone: Boolean,
+            val group: Long,
+        ) : Edit
+
+        /**
+         * A layer taken out of the note's list ([gone]) or put in as a copy.
+         * Note-wide; [page] is only where history files it. Its ink rides in
+         * [LayerInk] steps of the same group.
+         */
+        class LayerEntry(
+            override val page: Page,
+            val removed: NoteLayers.Removed,
+            val gone: Boolean,
+            val group: Long,
+        ) : Edit
     }
 
     private data class PaperState(
@@ -2195,6 +2227,8 @@ class InkCanvasView @JvmOverloads constructor(
         }
         undoStack.clear()
         redoStack.clear()
+        lockedNoticeLayer = -1
+        layersRevision.intValue++
         fitted = false
         pageToRestore = initialPage.coerceIn(document.pages.indices)
         requestLayout()
@@ -2481,6 +2515,7 @@ class InkCanvasView @JvmOverloads constructor(
         } else null
         // Snapshot on the UI thread; the drawing happens on the worker.
         val strokes = if (page.loaded) page.strokes.toList() else emptyList()
+        val look = document.layers.translucentLook()
         val pageWidth = page.width
         val pageHeight = page.height
         thumbnailsPending += key
@@ -2497,7 +2532,9 @@ class InkCanvasView @JvmOverloads constructor(
                     val scale = widthPx / pageWidth
                     val transform = Matrix().apply { setScale(scale, scale) }
                     canvas.scale(scale, scale)
-                    for (stroke in strokes) runCatching { thumbnailRenderer.draw(canvas, stroke, transform) }
+                    drawLayered(canvas, strokes, look, null) { stroke ->
+                        runCatching { thumbnailRenderer.draw(canvas, stroke, transform) }
+                    }
                     picture
                 }.getOrNull()
                 post {
@@ -2557,13 +2594,19 @@ class InkCanvasView @JvmOverloads constructor(
         clearImageSelection()
         applyInverse(edit)
         redoStack += edit
+        val touched = arrayListOf(edit.page)
+        var layerStep = edit is Edit.LayerEntry
         val group = edit.groupId()
         if (group != 0L) while (undoStack.lastOrNull()?.groupId() == group) {
             val part = undoStack.removeAt(undoStack.lastIndex)
             applyInverse(part)
             redoStack += part
+            // A layer step spans pages; each one it touched is settled, not only the first.
+            if (touched.none { it === part.page }) touched += part.page
+            if (part is Edit.LayerEntry) layerStep = true
         }
-        afterEdit(edit.page)
+        afterEdit(*touched.toTypedArray())
+        if (layerStep) layersChanged()
         showPageEdit(edit)
     }
 
@@ -2584,11 +2627,14 @@ class InkCanvasView @JvmOverloads constructor(
         if (group != 0L) while (redoStack.lastOrNull()?.groupId() == group) {
             parts += redoStack.removeAt(redoStack.lastIndex)
         }
+        val touched = ArrayList<Page>()
         for (part in parts) {
             applyForward(part)
             undoStack += part
+            if (touched.none { it === part.page }) touched += part.page
         }
-        afterEdit(edit.page)
+        afterEdit(*touched.toTypedArray())
+        if (parts.any { it is Edit.LayerEntry }) layersChanged()
         showPageEdit(edit)
     }
 
@@ -2609,6 +2655,8 @@ class InkCanvasView @JvmOverloads constructor(
         is Edit.ImageReplaced -> group
         is Edit.ImageRemoved -> group
         is Edit.ImageAddedInGroup -> group
+        is Edit.LayerInk -> group
+        is Edit.LayerEntry -> group
         else -> 0L
     }
 
@@ -2628,6 +2676,8 @@ class InkCanvasView @JvmOverloads constructor(
             is Edit.PageMoved -> movePageObject(edit.page, edit.to)
             is Edit.PagePaper -> { edit.page.setPaper(edit.after); document.invalidateLayout() }
             is Edit.PageRotated -> turnPage(edit.page, edit.clockwise)
+            is Edit.LayerInk -> applyLayerInk(edit, forward = true)
+            is Edit.LayerEntry -> applyLayerEntry(edit, forward = true)
         }
     }
 
@@ -2672,6 +2722,8 @@ class InkCanvasView @JvmOverloads constructor(
             is Edit.PageMoved -> movePageObject(edit.page, edit.from)
             is Edit.PagePaper -> { edit.page.setPaper(edit.before); document.invalidateLayout() }
             is Edit.PageRotated -> turnPage(edit.page, !edit.clockwise)
+            is Edit.LayerInk -> applyLayerInk(edit, forward = false)
+            is Edit.LayerEntry -> applyLayerEntry(edit, forward = false)
         }
     }
 
@@ -2965,6 +3017,8 @@ class InkCanvasView @JvmOverloads constructor(
         fun turned(stroke: Stroke): Stroke =
             replacements.getOrPut(stroke) { mapInputs(stroke, ::turn).also { StrokeTags.carry(stroke, it) } }
         for (i in page.strokes.indices) page.strokes[i] = turned(page.strokes[i])
+        // Ink on hidden layers turns too, or showing the layer brings it back sideways.
+        for (i in page.hiddenStrokes.indices) page.hiddenStrokes[i] = turned(page.hiddenStrokes[i])
         val masks = Collections.newSetFromMap(IdentityHashMap<PageMask, Boolean>())
         val images = Collections.newSetFromMap(IdentityHashMap<PageImage, Boolean>())
         masks += page.masks
@@ -2974,6 +3028,7 @@ class InkCanvasView @JvmOverloads constructor(
             when (edit) {
                 is Edit.Drawn -> turned(edit.stroke)
                 is Edit.Erased -> edit.strokes.forEach { turned(it) }
+                is Edit.LayerInk -> edit.strokes.forEach { turned(it) }
                 is Edit.Moved -> { edit.before.forEach { turned(it) }; edit.after.forEach { turned(it) } }
                 is Edit.MaskAdded -> masks += edit.mask
                 is Edit.MaskRemoved -> masks += edit.mask
@@ -3410,6 +3465,12 @@ class InkCanvasView @JvmOverloads constructor(
                 if (!eraserGesture && tool != Tool.ERASER &&
                     toggleCheckboxAt(event.getX(event.actionIndex), event.getY(event.actionIndex), index)
                 ) return true
+                // Ink - pen, shape, ruler line, polygon - on a locked or hidden
+                // layer is refused before any of it is drawn. Tape is not on a
+                // layer, and the eraser only ever skips what it may not touch.
+                if (!readMode && !eraserGesture && tool != Tool.ERASER && !maskMode && refuseLockedTarget()) {
+                    return true
+                }
                 if (rulerKind != null && !readMode && !eraserGesture && tool != Tool.ERASER) {
                     val edge = ruler.edgeAt(event.x, event.y)
                     if (edge != null) {
@@ -3496,7 +3557,12 @@ class InkCanvasView @JvmOverloads constructor(
                     // Keep front-buffer authoring on the stable path renderer.
                     // Mesh twins are used by the committed-ink RenderNodes;
                     // asynchronous mesh draws must not outlive the wet surface.
-                    val brush = currentBrush()
+                    // Shown in the colour the committed stroke will have (layer
+                    // opacity, page tone); its own colour is put back at pen-up.
+                    val stored = currentBrush()
+                    val brush = wetBrushFor(stored)
+                    wetColorArgb = brush.colorIntArgb
+                    if (pendingStrokeCommits.isEmpty()) wetTrueColors.clear()
                     // "World" here is the page, so the finished stroke comes
                     // back in page-local coordinates and stays with its page.
                     val toPage = screenToPage(index)
@@ -3508,6 +3574,7 @@ class InkCanvasView @JvmOverloads constructor(
                             motionEventToWorldTransform = wetTransformOf(toPage),
                         )
                     }
+                    if (brush !== stored) activeStrokeId?.let { wetTrueColors[it] = stored.colorIntArgb }
                     if (compatWetInk) {
                         activeStrokeId?.let { id ->
                             compatWet.start(id, event, pointerId, brush, toPage)
@@ -4098,7 +4165,7 @@ class InkCanvasView @JvmOverloads constructor(
         val pressureScale = if (tool == Tool.PRESSURE_PEN || tool == Tool.VANISHING_PEN) {
             0.35f + real.getPressure(index).coerceIn(0f, 1f) * 0.65f
         } else 1f
-        subframe.show(real.getX(index), real.getY(index), lead[0], lead[1], colorArgb,
+        subframe.show(real.getX(index), real.getY(index), lead[0], lead[1], wetColorArgb,
             strokeWidth * currentScale() * pressureScale)
     }
 
@@ -4128,7 +4195,7 @@ class InkCanvasView @JvmOverloads constructor(
             real.getY(realIndex),
             predicted.getX(predictedIndex),
             predicted.getY(predictedIndex),
-            colorArgb,
+            wetColorArgb,
             strokeWidth * currentScale() * pressureScale,
         )
     }
@@ -5139,7 +5206,8 @@ class InkCanvasView @JvmOverloads constructor(
                 is Edit.ImageAdded, is Edit.ImageRemoved, is Edit.ImageReplaced, is Edit.ImageAddedInGroup -> Unit
                 is Edit.MaskAdded, is Edit.MaskRemoved -> Unit
                 is Edit.PageInserted, is Edit.PageRemoved, is Edit.PageMoved, is Edit.PagePaper,
-                is Edit.PageRotated -> Unit
+                is Edit.PageRotated, is Edit.LayerEntry -> Unit
+                is Edit.LayerInk -> edit.strokes = edit.strokes.map { replacements[it] ?: it }
                 is Edit.Moved -> {
                     edit.before = edit.before.map { replacements[it] ?: it }
                     edit.after = edit.after.map { replacements[it] ?: it }
@@ -5409,6 +5477,7 @@ class InkCanvasView @JvmOverloads constructor(
     fun highlightSelection(color: Int = 0x66F9A825) {
         val found = selection ?: return
         val page = document.pages.getOrNull(selectingPage) ?: return
+        if (refuseLockedTarget()) return
         val brush = Brush.createWithColorIntArgb(
             family = Tool.HIGHLIGHTER.brushFamily(),
             colorIntArgb = color,
@@ -5437,6 +5506,7 @@ class InkCanvasView @JvmOverloads constructor(
     fun strikeSelection(color: Int = 0xFFE53935.toInt()) {
         val found = selection ?: return
         val page = document.pages.getOrNull(selectingPage) ?: return
+        if (refuseLockedTarget()) return
         val group = nextEditGroup++
         for (box in found.boxes) {
             if (box.width() <= 0f || box.height() <= 0f) continue
@@ -6101,54 +6171,326 @@ class InkCanvasView @JvmOverloads constructor(
     /** Whether the pen's layer allows editing [stroke]: always, on every layer at once. */
     private fun onActiveLayer(stroke: Stroke): Boolean = document.layers.editable(StrokeLayers.of(stroke))
 
-    /** The note's layers, for the layer panel; call [layersChanged] after changing them. */
+    /** The note's layers, for the layer panel. Change them through the functions below, which save. */
     val layers: NoteLayers get() = document.layers
 
     /**
+     * Bumped on every change to the layers made through this view, undo
+     * included. Compose state, so the layer panel and the toolbar's layer chip
+     * follow without polling; the layers themselves are plain objects.
+     */
+    val layersRevision = androidx.compose.runtime.mutableIntStateOf(0)
+
+    /**
+     * The lock and opacity tables the dry ink was last drawn with, when some
+     * layer is translucent. Volatile: [renderRegion] reads it on a worker.
+     */
+    @Volatile private var drawnLook: LayerLook? = null
+
+    /** Saved, shared, announced: the end of every layer change. */
+    private fun layersSaved() {
+        document.markEdited()
+        document.notifyOtherCanvases(sharedInkChanged)
+        onStrokesChanged?.invoke()
+        layersRevision.intValue++
+    }
+
+    /**
      * Applies an edit of the layer list: what is shown, the order, and which
-     * layer edits are held to. Selections that the new layer does not allow are dropped.
+     * layer edits are held to. Selections that the new layer does not allow are
+     * dropped. Only pages already in memory are settled; the rest are when read.
      */
     fun layersChanged() {
         clearLassoSelection()
         for (page in document.pages) if (page.loaded) {
             if (page.settleLayers(document.layers)) page.renderState = RenderState.Dirty
         }
-        document.markEdited()
         dry.invalidate()
-        document.notifyOtherCanvases(sharedInkChanged)
-        onStrokesChanged?.invoke()
         invalidate()
+        layersSaved()
     }
 
     /**
-     * Removes a layer and its ink from every page, reading in pages not yet
-     * loaded so nothing of it is left on disk. History is cleared, since undo
-     * could otherwise bring back ink of a layer that no longer exists.
+     * Where new ink goes. Editing one layer, that layer becomes the one edits
+     * are held to as well; editing all, only the target moves. A hidden layer
+     * picked to write on is shown: ink vanishing as it is drawn helps no one.
+     * A locked one stays locked - picking is not unlocking.
      */
-    fun deleteLayer(id: Int) {
+    fun setWriteLayer(id: Int) {
         val layers = document.layers
-        if (layers.list.size <= 1) return
+        val layer = layers.layer(id) ?: return
+        layers.writeTo = id
+        if (layers.active != NoteLayers.ALL) layers.active = id
+        layer.visible = true
+        layersChanged()
+    }
+
+    /** Erase and select on every unlocked layer, or only on the target. */
+    fun setEditAllLayers(all: Boolean) {
+        val layers = document.layers
+        if ((layers.active == NoteLayers.ALL) == all) return
+        layers.active = if (all) NoteLayers.ALL else layers.target
+        layersChanged()
+    }
+
+    fun setLayerVisible(id: Int, visible: Boolean) {
+        val layer = document.layers.layer(id) ?: return
+        if (layer.visible == visible) return
+        layer.visible = visible
+        layersChanged()
+    }
+
+    /**
+     * Locks or unlocks a layer's ink against writing, erasing and selecting.
+     * Neither the stroke lists nor their order change, so no page is settled
+     * and none is read in; a selection that holds the layer's ink is let go.
+     */
+    fun setLayerLocked(id: Int, locked: Boolean) {
+        if (!document.layers.setLocked(id, locked)) return
+        if (locked && lassoStrokes.any { StrokeLayers.of(it) == id }) clearLassoSelection()
+        lockedNoticeLayer = -1
+        dry.invalidate()
+        layersSaved()
+    }
+
+    /**
+     * Shows a layer at [opacity] while a slider moves: the ink is composited
+     * again, nothing is rebuilt, and nothing is saved until [commitLayerOpacity].
+     */
+    fun previewLayerOpacity(id: Int, opacity: Float) {
+        if (!document.layers.setOpacity(id, opacity)) return
+        dry.invalidate()
+    }
+
+    /** Saves what [previewLayerOpacity] showed. */
+    fun commitLayerOpacity() {
+        layersSaved()
+    }
+
+    fun renameLayer(id: Int, name: String) {
+        val layer = document.layers.layer(id) ?: return
+        val trimmed = name.trim().take(NoteLayers.MAX_NAME)
+        if (trimmed.isEmpty() || trimmed == layer.name) return
+        layer.name = trimmed
+        layersSaved()
+    }
+
+    /** A new empty layer on top, which new ink then goes to. */
+    fun addLayer(): NoteLayer? {
+        val layers = document.layers
+        val layer = layers.addOrNull() ?: return null
+        layers.writeTo = layer.id
+        if (layers.active != NoteLayers.ALL) layers.active = layer.id
+        layersChanged()
+        return layer
+    }
+
+    /**
+     * Moves layer [id] to [to] in the drawing order, bottom first. Strokes keep
+     * their layer id; only the rank changes, and loaded pages are re-sorted once.
+     */
+    fun moveLayer(id: Int, to: Int) {
+        if (!document.layers.move(id, to)) return
+        layersChanged()
+    }
+
+    /**
+     * How many strokes layer [id] holds across the note, for the question
+     * before deleting it. Pages not read in yet are read now: deleting has to
+     * reach them anyway, and an estimate is no answer to "how much will I lose".
+     */
+    fun layerInkCount(id: Int): Int {
+        var count = 0
+        for (page in document.pages) {
+            if (!ensureLoaded(page)) continue
+            for (stroke in page.strokes) if (StrokeLayers.of(stroke) == id) count++
+            for (stroke in page.hiddenStrokes) if (StrokeLayers.of(stroke) == id) count++
+        }
+        return count
+    }
+
+    /**
+     * Removes a layer and its ink from every page, as one undo step: the
+     * strokes and the layer are kept in history, so undo puts both back with
+     * the layer at its old place. The rest of history is left as it is.
+     */
+    fun deleteLayer(id: Int): Boolean {
+        val layers = document.layers
+        if (layers.list.size <= 1 || layers.layer(id) == null) return false
         clearLassoSelection()
+        val group = nextEditGroup++
         val changed = ArrayList<Page>()
         for (page in document.pages) {
             if (!ensureLoaded(page)) continue
             val doomed = page.allStrokes.filter { StrokeLayers.of(it) == id }
             if (doomed.isEmpty()) continue
-            val gone: MutableSet<Stroke> = Collections.newSetFromMap(IdentityHashMap())
-            gone.addAll(doomed)
-            page.strokes.removeAll(gone::contains)
-            page.hiddenStrokes.removeAll(gone::contains)
-            dry.dropStrokeIndex(page)
-            page.savedOnDisk = 0
+            takeOut(page, doomed)
+            undoStack += Edit.LayerInk(page, doomed, gone = true, group = group)
             changed += page
         }
-        layers.list.removeAll { it.id == id }
-        if (layers.active == id) layers.active = NoteLayers.ALL
-        if (layers.writeTo == id) layers.writeTo = layers.list.first().id
-        undoStack.clear()
+        val removed = layers.remove(id) ?: return false
+        undoStack += Edit.LayerEntry(historyPage(), removed, gone = true, group = group)
         redoStack.clear()
         afterEdit(*changed.toTypedArray())
         layersChanged()
+        return true
+    }
+
+    /** Whether the newest step in history is a layer deletion, for the panel's undo offer. */
+    fun canUndoLayerDelete(): Boolean = (undoStack.lastOrNull() as? Edit.LayerEntry)?.gone == true
+
+    fun undoLayerDelete(): Boolean {
+        if (!canUndoLayerDelete()) return false
+        undo()
+        return true
+    }
+
+    /**
+     * Copies layer [id] and its ink on every page under a new id, placed
+     * directly above it, as one undo step. The copies share the originals'
+     * geometry, so nothing is rebuilt. Lock and group tags are carried, with
+     * groups renumbered so a copy does not join its original's group.
+     */
+    fun duplicateLayer(id: Int): NoteLayer? {
+        val layers = document.layers
+        val at = layers.list.indexOfFirst { it.id == id }
+        if (at < 0 || !layers.canAdd()) return null
+        clearLassoSelection()
+        // Read everything in before the list changes, so loading settles under the old layers.
+        for (page in document.pages) ensureLoaded(page)
+        val copy = layers.duplicate(id) ?: return null
+        val group = nextEditGroup++
+        val entry = NoteLayers.Removed(copy, at + 1, layers.active, layers.writeTo)
+        undoStack += Edit.LayerEntry(historyPage(), entry, gone = false, group = group)
+        val changed = ArrayList<Page>()
+        val groups = HashMap<Int, Int>()
+        for (page in document.pages) {
+            if (!page.loaded) continue
+            val source = page.allStrokes.filter { StrokeLayers.of(it) == id }
+            if (source.isEmpty()) continue
+            val copies = source.map { stroke ->
+                val twin = runCatching { Stroke(stroke.brush, stroke.inputs, stroke.shape) }
+                    .getOrElse { Stroke(stroke.brush, stroke.inputs) }
+                val tagGroup = StrokeTags.group(stroke)
+                val newGroup = if (tagGroup == 0) 0 else groups.getOrPut(tagGroup) { StrokeTags.newGroup() }
+                StrokeTags.set(twin, StrokeTags.tag(StrokeTags.locked(stroke), newGroup))
+                StrokeLayers.set(twin, copy.id)
+                twin
+            }
+            page.strokes += copies
+            undoStack += Edit.LayerInk(page, copies, gone = false, group = group)
+            changed += page
+        }
+        redoStack.clear()
+        afterEdit(*changed.toTypedArray())
+        layersChanged()
+        return copy
+    }
+
+    /** The page a note-wide history step is filed under; any page will do, the one in view reads best. */
+    private fun historyPage(): Page = document.pages[currentPage.coerceIn(document.pages.indices)]
+
+    /** Takes [strokes] off [page], shown or hidden, in one pass over each list. */
+    private fun takeOut(page: Page, strokes: List<Stroke>) {
+        val gone: MutableSet<Stroke> = Collections.newSetFromMap(IdentityHashMap())
+        gone.addAll(strokes)
+        page.strokes.removeAll(gone::contains)
+        if (page.hiddenStrokes.isNotEmpty()) page.hiddenStrokes.removeAll(gone::contains)
+        dry.dropStrokeIndex(page)
+        page.savedOnDisk = 0
+    }
+
+    /** Applies a layer step of history forward ([forward]) or back. */
+    private fun applyLayerEntry(edit: Edit.LayerEntry, forward: Boolean) {
+        val layers = document.layers
+        val step = edit.removed
+        if (forward == edit.gone) {
+            // A deletion redone, or a duplicate undone: the layer goes.
+            layers.remove(step.layer.id)
+            if (!edit.gone) {
+                // Undoing a duplicate puts the pen and the edit mode back where they were.
+                layers.active = step.active.takeIf { a -> a == NoteLayers.ALL || layers.layer(a) != null }
+                    ?: NoteLayers.ALL
+                layers.writeTo = step.writeTo
+            }
+        } else if (edit.gone) {
+            layers.restore(step)
+        } else {
+            layers.insert(step.layer, step.at)
+        }
+    }
+
+    /** Applies a layer's ink step forward ([forward]) or back. */
+    private fun applyLayerInk(edit: Edit.LayerInk, forward: Boolean) {
+        if (forward == edit.gone) takeOut(edit.page, edit.strokes)
+        else {
+            // Back at the end; settling puts them in layer order, or with the hidden ones.
+            edit.page.strokes += edit.strokes
+            dry.dropStrokeIndex(edit.page)
+            edit.page.savedOnDisk = 0
+        }
+    }
+
+    /** Layer [lockedNoticeLayer] was last said to be unwritable at [lockedNoticeAt]; see [refuseLockedTarget]. */
+    private var lockedNoticeLayer = -1
+    private var lockedNoticeAt = 0L
+
+    /**
+     * True when new ink would land on a layer that cannot take it - locked, or
+     * hidden - and then nothing is drawn. Says why, once: again only for
+     * another layer, after the lock is touched, or after a while, so a pen
+     * tapping away at a locked layer does not stack up a message per stroke.
+     */
+    private fun refuseLockedTarget(): Boolean {
+        val layers = document.layers
+        val target = layers.target
+        val locked = layers.isLocked(target)
+        if (!locked && layers.isVisible(target)) return false
+        val now = SystemClock.uptimeMillis()
+        if (target != lockedNoticeLayer || now - lockedNoticeAt > LOCKED_NOTICE_MS) {
+            lockedNoticeLayer = target
+            lockedNoticeAt = now
+            val name = layers.layer(target)?.name ?: "This layer"
+            val message = if (locked) "Layer '$name' is locked. Unlock it in Layers to write."
+                else "Layer '$name' is hidden. Show it in Layers to write."
+            android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_SHORT).show()
+        }
+        return true
+    }
+
+    /**
+     * The brush wet ink is shown with for [brush]: the target layer's opacity
+     * and the page tone, as the committed stroke will look; see [wetInkArgb].
+     * Tape is not on a layer and takes the tone alone. The same brush object
+     * when neither applies, so the default path allocates nothing.
+     */
+    private fun wetBrushFor(brush: Brush): Brush {
+        val opacity = if (strokeIsMask) 1f else document.layers.opacityOf(document.layers.target)
+        val shown = wetInkArgb(brush.colorIntArgb, opacity, wetToneMatrix)
+        if (shown == brush.colorIntArgb) return brush
+        wetBrushCache?.takeIf { wetBrushSource === brush && it.colorIntArgb == shown }?.let { return it }
+        return brush.copyWithColorIntArgb(colorIntArgb = shown).also {
+            wetBrushSource = brush
+            wetBrushCache = it
+        }
+    }
+    private var wetBrushSource: Brush? = null
+    private var wetBrushCache: Brush? = null
+
+    /**
+     * Wet strokes started in a display colour, and the colour each really is.
+     * The finished stroke gets its own colour back before it is kept, so the
+     * note and its exports never see the display one.
+     */
+    private val wetTrueColors = HashMap<InProgressStrokeId, Int>()
+
+    /** The display colour of the stroke being written, for the prediction head and the afterimage. */
+    private var wetColorArgb = 0
+
+    /** [colorArgb] at the target layer's opacity, for previews drawn inside the page (shapes, polygons). */
+    private fun previewArgb(colorArgb: Int): Int {
+        val opacity = document.layers.opacityOf(document.layers.target)
+        return if (opacity >= 1f) colorArgb else wetInkArgb(colorArgb, opacity, null)
     }
 
     /** Everything that can be erased on page [index] goes, in one undo step. Locked objects stay unless erasable. */
@@ -6407,7 +6749,8 @@ class InkCanvasView @JvmOverloads constructor(
         val page = document.pages.getOrNull(lassoPage) ?: return
         if (!hasLassoSelection()) return
         val offset = LASSO_DUPLICATE_OFFSET
-        val copies = lassoStrokes.map { translate(it, offset, offset) }
+        // Copies stay on their originals' layers, which the selection says are editable.
+        val copies = lassoStrokes.map { stroke -> translate(stroke, offset, offset).also { StrokeLayers.carry(stroke, it) } }
         val group = nextEditGroup++
         for (copy in copies) {
             page.strokes += copy
@@ -6463,10 +6806,15 @@ class InkCanvasView @JvmOverloads constructor(
         val page = document.pages[index]
         // Ink added to a page not read in yet would be skipped by the next save.
         if (!ensureLoaded(page)) return
+        // Pasted ink goes where new ink goes, which a locked layer refuses.
+        if (clip.strokes.isNotEmpty() && refuseLockedTarget()) return
         pageLocalInto(width / 2f, height / 2f, index, shapeEnd)
         val dx = shapeEnd[0].coerceIn(0f, page.width) - clip.bounds.centerX()
         val dy = shapeEnd[1].coerceIn(0f, page.height) - clip.bounds.centerY()
-        val copies = clip.strokes.map { translate(it, dx, dy) }
+        val target = document.layers.target
+        // On the target layer, not the one it was copied from: that may be
+        // locked or hidden by now, or belong to another note altogether.
+        val copies = clip.strokes.map { translate(it, dx, dy).also { copy -> StrokeLayers.set(copy, target) } }
         val group = nextEditGroup++
         for (copy in copies) {
             page.strokes += copy
@@ -7078,10 +7426,11 @@ class InkCanvasView @JvmOverloads constructor(
         // inside the region and coarser than this scale needs is rebuilt from
         // its inputs, so a 4x capture is sharp ink rather than magnified facets.
         val epsilon = epsilonFor(scale)
-        for (stroke in strokes) {
+        drawLayered(canvas, strokes, drawnLook, null, include = { stroke ->
             val box = stroke.shape.computeBoundingBox()
-            if (box != null && (box.xMax < rect.left || box.xMin > rect.right ||
-                    box.yMax < rect.top || box.yMin > rect.bottom)) continue
+            box == null || !(box.xMax < rect.left || box.xMin > rect.right ||
+                box.yMax < rect.top || box.yMin > rect.bottom)
+        }) { stroke ->
             val fine = inkEpsilon(stroke.brush.family, stroke.brush.size, epsilon)
             val drawn = if (stroke.brush.epsilon > fine + EPSILON_SLOP) {
                 runCatching { Stroke(stroke.brush.copy(epsilon = fine), stroke.inputs) }.getOrDefault(stroke)
@@ -7348,11 +7697,17 @@ class InkCanvasView @JvmOverloads constructor(
         val committed = ArrayList<Stroke>(finished.size)
         if (page != null) {
             val group = nextEditGroup++
-            for (wetStroke in finished.values) {
-                // Back to the saved family; the tip is unchanged, so the mesh is reused.
+            for ((wetId, wetStroke) in finished) {
+                // Back to the saved family and the stroke's own colour if it was
+                // shown in another; the tip is unchanged, so the mesh is reused.
                 val storedFamily = Tool.storedFamilyOf(wetStroke.brush.family)
-                val finishedStroke = if (storedFamily === wetStroke.brush.family) wetStroke
-                    else wetStroke.copy(wetStroke.brush.copy(family = storedFamily))
+                val trueColor = wetTrueColors.remove(wetId)
+                val familyBrush = if (storedFamily === wetStroke.brush.family) wetStroke.brush
+                    else wetStroke.brush.copy(family = storedFamily)
+                val storedBrush = if (trueColor == null || trueColor == familyBrush.colorIntArgb) familyBrush
+                    else familyBrush.copyWithColorIntArgb(colorIntArgb = trueColor)
+                val finishedStroke = if (storedBrush === wetStroke.brush) wetStroke
+                    else wetStroke.copy(storedBrush)
                 val finishedTool = Tool.ofBrushFamily(finishedStroke.brush.family)
                 val stroke = when {
                     // One pass, one rebuild at most: the spur and the dwell tidying
@@ -7636,13 +7991,14 @@ class InkCanvasView @JvmOverloads constructor(
          * until writing pauses. During a pinch or fling a recording made at the
          * previous zoom is replayed scaled rather than re-recorded every frame.
          */
-        private fun inkNodeFor(page: Page, scale: Float): InkNode {
+        private fun inkNodeFor(page: Page, scale: Float, look: LayerLook?): InkNode {
             val ink = inkNodes.getOrPut(page) { InkNode(android.graphics.RenderNode("ink")) }
             val strokes = page.strokes
             val prefix = ink.prefix
+            // Re-recorded when a layer's opacity changes: a display list, no geometry.
             val sameContent = ink.node.hasDisplayList() && prefix != null && ink.meshRevision == page.meshRevision &&
                 ink.meshInk == meshInk && ink.highlighterAbove == highlighterAboveInk &&
-                prefix.matches(strokes, page.revision)
+                sameLook(ink.look, look) && prefix.matches(strokes, page.revision)
             var record = !sameContent
             if (!record) {
                 val recorded = prefix!!.strokes.size
@@ -7653,18 +8009,20 @@ class InkCanvasView @JvmOverloads constructor(
                     val family = Tool.HIGHLIGHTER.brushFamily()
                     // Appended highlighter would land on the wrong side of the
                     // recorded ink and miss its multiply layer; record it in.
-                    record = idle || appended > MAX_NODE_APPENDED ||
+                    // So would ink on a translucent layer, drawn at full strength
+                    // outside its layer's composite.
+                    record = idle || appended > MAX_NODE_APPENDED || look != null ||
                         (recorded until strokes.size).any { strokes[it].brush.family == family }
                 }
             }
             if (!record && abs(ink.scale / scale - 1f) >= 0.001f && !zooming && !viewportInteracting && !flinging) {
                 record = true
             }
-            if (record) recordInk(ink, page, scale)
+            if (record) recordInk(ink, page, scale, look)
             return ink
         }
 
-        private fun recordInk(ink: InkNode, page: Page, scale: Float) {
+        private fun recordInk(ink: InkNode, page: Page, scale: Float, look: LayerLook?) {
             val snapshot = page.strokes.toList()
             val width = kotlin.math.ceil(page.width * scale).toInt().coerceAtLeast(1)
             val height = kotlin.math.ceil(page.height * scale).toInt().coerceAtLeast(1)
@@ -7674,7 +8032,7 @@ class InkCanvasView @JvmOverloads constructor(
                 canvas.scale(scale, scale)
                 nodeTransform.setScale(scale, scale)
                 if (!pageHasHighlighter(page)) {
-                    for (stroke in snapshot) nodeRenderer.draw(canvas, onScreen(stroke), nodeTransform)
+                    drawLayered(canvas, snapshot, look, null) { nodeRenderer.draw(canvas, onScreen(it), nodeTransform) }
                 } else {
                     val family = Tool.HIGHLIGHTER.brushFamily()
                     for (pass in 0..1) {
@@ -7682,10 +8040,9 @@ class InkCanvasView @JvmOverloads constructor(
                         val layer = if (highlightPass) {
                             canvas.saveLayer(0f, 0f, page.width, page.height, highlighterMultiply)
                         } else -1
-                        for (stroke in snapshot) {
-                            if ((stroke.brush.family == family) == highlightPass) {
-                                nodeRenderer.draw(canvas, onScreen(stroke), nodeTransform)
-                            }
+                        drawLayered(canvas, snapshot, look, null,
+                            include = { (it.brush.family == family) == highlightPass }) {
+                            nodeRenderer.draw(canvas, onScreen(it), nodeTransform)
                         }
                         if (layer >= 0) canvas.restoreToCount(layer)
                     }
@@ -7698,6 +8055,7 @@ class InkCanvasView @JvmOverloads constructor(
             ink.meshRevision = page.meshRevision
             ink.meshInk = meshInk
             ink.highlighterAbove = highlighterAboveInk
+            ink.look = look
         }
 
         /** The stroke as it should be drawn on screen; see [meshInk]. */
@@ -7850,6 +8208,11 @@ class InkCanvasView @JvmOverloads constructor(
             // were at 1:1, which is exactly what made zoomed-in ink look soft and
             // bend its corners.
             inkTiles.beginFrame()
+            // Null unless some layer is translucent: then each such layer's
+            // ink is composited once at its opacity (see drawLayered), and
+            // every path below - tiles, page node, direct - does the same.
+            val look = document.layers.translucentLook()
+            drawnLook = look
             visiblePdfPages = 0
             for (i in document.pagesIntersecting(viewport[1], viewport[3])) {
                 val page = document.pages.getOrNull(i) ?: continue
@@ -7907,8 +8270,9 @@ class InkCanvasView @JvmOverloads constructor(
                         it.brush.family == Tool.HIGHLIGHTER.brushFamily()
                     })
                     val inkNode = if (!tiledInk && scoped.isHardwareAccelerated && !lifted && playbackStrokeCount == null)
-                        inkNodeFor(page, currentScale()) else null
-                    val inkBitmap = if (!tiledInk && inkNode == null && !hasHighlighter && !lifted &&
+                        inkNodeFor(page, currentScale(), look) else null
+                    // The bitmap is drawn flat; translucent layers take the direct path instead.
+                    val inkBitmap = if (look == null && !tiledInk && inkNode == null && !hasHighlighter && !lifted &&
                         playbackStrokeCount == null) cachedInk(page, visibleStrokes.size) else null
                     // Put highlighter ink on the chosen side of handwriting.
                     // Keep the source list in its original order within each
@@ -7920,7 +8284,7 @@ class InkCanvasView @JvmOverloads constructor(
                             SystemClock.uptimeMillis() - lastInkEditMillis >= INK_CACHE_IDLE_MS
                         inkTiles.draw(scoped, page, currentScale(), inkTileViewport,
                             interacting, idle, hasHighlighter, highlighterAboveInk, highlighterMultiply,
-                            if (lifted) liftedLassoStrokes else null)
+                            if (lifted) liftedLassoStrokes else null, look)
                     } else if (inkNode != null) {
                         // Recorded in pixels at its own zoom; undo that scale so
                         // it lands on the page exactly at the zoom in use.
@@ -7941,25 +8305,24 @@ class InkCanvasView @JvmOverloads constructor(
                             if (!inkBitmap.prefix.contains(stroke)) scope.drawStroke(onScreen(stroke))
                         }
                     } else if (!hasHighlighter) {
-                        for (stroke in visibleStrokes) {
-                            if (lifted && stroke in lassoStrokes) continue
-                            scope.drawStroke(onScreen(stroke))
-                        }
+                        drawLayered(scoped, visibleStrokes, look, pageRect,
+                            include = { !(lifted && it in lassoStrokes) }) { scope.drawStroke(onScreen(it)) }
                     } else for (pass in 0..1) {
                         val highlightPass = if (pass == 0) !highlighterAboveInk else highlighterAboveInk
+                        // A translucent layer's highlighter is composited inside
+                        // the multiply layer, so it keeps its blend with the page.
                         val layer = if (highlightPass)
                             scoped.saveLayer(pageRect, highlighterMultiply) else -1
-                        for (stroke in visibleStrokes) {
-                            if (lifted && stroke in lassoStrokes) continue
-                            val highlight = stroke.brush.family == Tool.HIGHLIGHTER.brushFamily()
-                            if (highlight == highlightPass) scope.drawStroke(onScreen(stroke))
-                        }
+                        drawLayered(scoped, visibleStrokes, look, pageRect, include = { stroke ->
+                            !(lifted && stroke in lassoStrokes) &&
+                                (stroke.brush.family == Tool.HIGHLIGHTER.brushFamily()) == highlightPass
+                        }) { scope.drawStroke(onScreen(it)) }
                         if (layer >= 0) scoped.restoreToCount(layer)
                     }
                     if (lifted) {
                         scoped.save()
                         scoped.translate(lassoDx, lassoDy)
-                        for (stroke in lassoStrokes) scope.drawStroke(onScreen(stroke))
+                        drawLayered(scoped, lassoStrokes, look, null) { scope.drawStroke(onScreen(it)) }
                         scoped.restore()
                     }
                     if (showLinkOverlay && page.links.isNotEmpty()) drawLinks(scoped, page)
@@ -7969,7 +8332,7 @@ class InkCanvasView @JvmOverloads constructor(
                     }
                     if (i == shapePage && drawingShape) drawShapePreview(scoped)
                     if (i == polyPage && polyPoints.isNotEmpty()) {
-                        overlay.color = colorArgb
+                        overlay.color = previewArgb(colorArgb)
                         overlay.strokeWidth = strokeWidth
                         for (k in 1 until polyPoints.size) {
                             scoped.drawLine(polyPoints[k - 1][0], polyPoints[k - 1][1], polyPoints[k][0], polyPoints[k][1], overlay)
@@ -8298,7 +8661,8 @@ class InkCanvasView @JvmOverloads constructor(
                     max(shapeStart[0], end[0]), max(shapeStart[1], end[1]), overlay)
                 overlay.pathEffect = null
             }
-            overlay.color = colorArgb
+            // At the target layer's opacity, as the shape will be; the tone comes with the page.
+            overlay.color = previewArgb(colorArgb)
             overlay.strokeWidth = strokeWidth
             overlay.strokeCap = Paint.Cap.ROUND
             overlay.strokeJoin = Paint.Join.ROUND
@@ -8596,6 +8960,8 @@ class InkCanvasView @JvmOverloads constructor(
         const val TRACE_STYLUS_OTHER = "Notesis stylus other"
         const val TRACE_MESH_REFINE = "Notesis mesh/refine"
         const val TRACE_LAYER_SETTLE = "Notesis layers/settle"
+        /** How long one "this layer is locked" message holds for the same layer. */
+        const val LOCKED_NOTICE_MS = 6_000L
         const val TRACE_REFINE_APPLY = "Notesis refine/apply"
 
         /** A tap this fast, moved this little, is a tap and not the start of a pan. */
