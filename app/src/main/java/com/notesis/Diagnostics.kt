@@ -1,3 +1,111 @@
+package com.notesis
+
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import android.os.PowerManager
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import java.io.File
+import java.util.Locale
+import java.util.UUID
+import kotlinx.coroutines.delay
+
+/**
+ * What a bug report needs from this app, and nothing from the notes: a stable
+ * random id to quote, the build and device, and the tail of the crash log.
+ */
+internal object Diagnostics {
+    fun id(context: Context): String {
+        val prefs = context.getSharedPreferences("pens", Context.MODE_PRIVATE)
+        return prefs.getString("diagnosticId", null) ?: UUID.randomUUID().toString().take(8).uppercase()
+            .also { prefs.edit().putString("diagnosticId", it).apply() }
+    }
+
+    fun report(context: Context): String {
+        val info = runCatching { context.packageManager.getPackageInfo(context.packageName, 0) }.getOrNull()
+        val crash = File(context.getExternalFilesDir(null) ?: context.filesDir, "crash.log")
+        val tail = if (crash.isFile) crash.readText().takeLast(MAX_LOG_CHARS) else "(no crash log)"
+        return buildString {
+            appendLine("Diagnostic ID: ${id(context)}")
+            appendLine("App: ${info?.versionName} (${info?.longVersionCode})")
+            appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
+            appendLine()
+            appendLine("---- Recent crash log ----")
+            append(tail)
+        }
+    }
+
+    fun share(context: Context) {
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "Notesis diagnostics ${id(context)}")
+            putExtra(Intent.EXTRA_TEXT, report(context))
+        }
+        runCatching { context.startActivity(Intent.createChooser(intent, "Share diagnostics")) }
+    }
+
+    private const val MAX_LOG_CHARS = 20_000
+}
+
+/** The version and updates, then diagnostics to share, the id to quote, how to take the system's own report, and a short guide. */
+@Composable
+internal fun HelpDialog(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val id = remember { Diagnostics.id(context) }
+    var licenses by remember { mutableStateOf(false) }
+    if (licenses) OpenSourceLicensesDialog(onDismiss = { licenses = false })
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("About & help") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                AppVersionSection(onLicenses = { licenses = true })
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                Text("Diagnostic ID $id", style = MaterialTheme.typography.titleSmall)
+                Row {
+                    TextButton(onClick = { clipboard.setText(AnnotatedString(id)) }) { Text("Copy ID") }
+                    TextButton(onClick = { Diagnostics.share(context) }) { Text("Share diagnostics") }
+                }
+                Text("Diagnostics contain only the app version, the device and the recent crash log, never note content.",
+                    style = MaterialTheme.typography.bodySmall)
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                Text("System bug report", style = MaterialTheme.typography.titleSmall)
+                Text("For a full device log, tap Build number seven times in Settings › About phone › Software information " +
+                    "to turn on Developer options, then use Developer options › Take bug report.", style = MaterialTheme.typography.bodySmall)
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                Text("Common actions", style = MaterialTheme.typography.titleSmall)
+                Text(HELP_TEXT, style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+    )
+}
+
+private val HELP_TEXT = """
+• Double-tap with two fingers: undo · with three fingers: redo (change in Touch & gestures)
+• Three fingers up: reference panel · down: close it
+• Lasso: move, resize, rotate, copy, cut, paste, group, lock, link, add to library
+• Draw a circle and hold: switch to lasso (turn on in Pen settings)
+• Hold at the end of a stroke: snap to a shape (turn on in Pen settings)
+• Pull past the last page: new page
+• Ctrl+Z / Ctrl+Shift+Z undo and redo, Ctrl+1–9 tools, Ctrl+Alt+G go to page, Ctrl+F search
+• Home: Ctrl+N new note, Ctrl+Shift+N new folder
+""".trim()
+
 
 /** One look at the numbers, taken once a second while the diagnostics screen is open. */
 private class DiagnosticSnapshot(

@@ -134,6 +134,8 @@ private const val PREDICTION_CORNER_COSINE = 0.57f
 /** Fidelity for a stroke that has no zoom context yet, such as one just loaded. */
 const val STROKE_EPSILON = TESSELLATION_TARGET_PX
 
+/** Long edge of the picture a selection keeps in the library. */
+private const val LIBRARY_PREVIEW_PX = 512f
 private const val STROKE_GRID_CELL = 256f
 private const val MAX_GRID_CELLS_PER_STROKE = 64
 /** Below this fraction of the tip width, the previous eraser tip still covers the move. */
@@ -6787,7 +6789,9 @@ class InkCanvasView @JvmOverloads constructor(
         val pictures = lassoImages.map { it.copy() to imageLoader?.invoke(it.id) }
         val clip = InkClipboard.Clip(lassoStrokes.toList(), RectF(lassoBounds), pictures)
         val preview = renderRegion(RectF(lassoBounds).apply { inset(-8f, -8f) }, page.width, page.height, -1,
-            lassoStrokes.toList(), pictures)
+            lassoStrokes.toList(), pictures,
+            // A library thumbnail, not a capture: about 512 px on its long edge.
+            minOf(1f, LIBRARY_PREVIEW_PX / maxOf(lassoBounds.width(), lassoBounds.height(), 1f)))
         return clip to preview
     }
 
