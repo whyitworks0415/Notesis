@@ -734,7 +734,7 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
         for (wet in strokes) {
             flush(wet)
             // Keeps a dab stroke's outlines current; the whole view is drawn here.
-            if (wet.changed) updatedRegion(wet, region)
+            if (wet.changed && wet.dabs) updatedRegion(wet, region)
             wet.changed = false
         }
         drawContent(canvas, null)
