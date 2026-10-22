@@ -698,16 +698,18 @@ internal class PopupGrowth(shown: Boolean) {
     }
 }
 
-// Overshoots by about 5%: lively, and settled within a quarter second.
-private val POPUP_OPEN_WIDTH = spring<Float>(dampingRatio = 0.7f, stiffness = 520f)
-// Softer, so the height arrives after the width; about 1.5% over.
-private val POPUP_OPEN_HEIGHT = spring<Float>(dampingRatio = 0.8f, stiffness = 300f)
+// Overshoots by about 4%: lively, and settled in well under a quarter second.
+// Stiffness goes with the square of speed, so these are about half again as
+// quick as the first ones (520 and 300), which felt slow to open.
+private val POPUP_OPEN_WIDTH = spring<Float>(dampingRatio = 0.72f, stiffness = 1150f)
+// Softer, so the height still arrives just after the width; about 1% over.
+private val POPUP_OPEN_HEIGHT = spring<Float>(dampingRatio = 0.82f, stiffness = 700f)
 // Material's emphasized accelerate: leaves slowly and is gone quickly.
 internal val EmphasizedAccelerateEasing = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)
 // Material's emphasized decelerate: arrives quickly and lands softly.
 internal val EmphasizedDecelerateEasing = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
-private val POPUP_CLOSE_WIDTH = tween<Float>(170, easing = EmphasizedAccelerateEasing)
-private val POPUP_CLOSE_HEIGHT = tween<Float>(130, easing = EmphasizedAccelerateEasing)
+private val POPUP_CLOSE_WIDTH = tween<Float>(120, easing = EmphasizedAccelerateEasing)
+private val POPUP_CLOSE_HEIGHT = tween<Float>(90, easing = EmphasizedAccelerateEasing)
 
 /**
  * Grows a popup out of [anchor], a point on screen - the button or the tool
