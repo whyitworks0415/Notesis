@@ -215,6 +215,102 @@ internal fun roundCorners(points: List<FloatArray>, radius: Float): List<FloatAr
     return out
 }
 
+/** One input of a generated shape stroke: where it is, and when, in milliseconds from the stroke's start. */
+internal class ShapeInput(val x: Float, val y: Float, val timeMs: Long)
+
+/**
+ * The inputs that make the brush trace [points] faithfully. Ink does not draw
+ * a stroke through its inputs: its input modeler pulls a spring-like pen
+ * after them, which trails some 25 milliseconds of travel behind and needs
+ * about a tenth of a second to settle once they stop. Inputs a few milliseconds apart -
+ * the way a whole rectangle used to be written in 32ms - leave it no time to
+ * reach any corner, so the shape came out as a lumpy loop with whatever corners
+ * the lag happened to make. So the outline is "drawn" at a steady hand speed,
+ * slower where it bends, and the pen rests on every sharp corner (by repeating
+ * that corner's input at later times) until the model has caught up with it;
+ * the next side then sets off from the corner itself and runs straight.
+ *
+ * [corners] are indices that must stay sharp, on top of any point where the
+ * outline turns by [CORNER_TURN] or more; the last point always rests, so the
+ * stroke ends where it should. A corner's repeats sit at its exact coordinates,
+ * so dragging that corner on a selected shape moves them all together. They
+ * are kept to what fits in [budget] inputs when the outline itself does, so a
+ * polygon stays editable corner by corner.
+ */
+internal fun shapeInputs(
+    points: List<FloatArray>,
+    corners: Collection<Int>? = null,
+    budget: Int = SHAPE_EDITABLE_INPUTS,
+): List<ShapeInput> {
+    if (points.isEmpty()) return emptyList()
+    // Repeated points add nothing to an outline and would read as a turn of
+    // zero length; each index is remembered as the point it repeats.
+    val kept = ArrayList<FloatArray>(points.size)
+    val keptIndex = IntArray(points.size)
+    for ((i, p) in points.withIndex()) {
+        val last = kept.lastOrNull()
+        if (last == null || last[0] != p[0] || last[1] != p[1]) kept += p
+        keptIndex[i] = kept.size - 1
+    }
+    if (kept.size == 1) {
+        // A dot: still two inputs, the way a tap is.
+        val p = kept[0]
+        return listOf(ShapeInput(p[0], p[1], 0L), ShapeInput(p[0], p[1], CORNER_DWELL_MS.toLong()))
+    }
+    val n = kept.size
+    val turns = FloatArray(n)
+    for (i in 1 until n - 1) turns[i] = turnBetween(kept[i - 1], kept[i], kept[i + 1])
+    val sharp = BooleanArray(n)
+    for (i in 1 until n) if (turns[i] >= CORNER_TURN) sharp[i] = true
+    corners?.forEach { index -> if (index in points.indices && keptIndex[index] > 0) sharp[keptIndex[index]] = true }
+    sharp[n - 1] = true
+    val restCount = sharp.count { it }
+    // Two repeats settle the model a touch closer than one; either is far
+    // better than none, so one is what an outline with many corners gets.
+    val repeats = if (n + 2 * restCount <= budget || n > budget) 2 else 1
+    val out = ArrayList<ShapeInput>(n + repeats * restCount)
+    var time = 0.0
+    var lastMs = 0L
+    fun emit(p: FloatArray) {
+        // Ink wants time to move on between inputs, and to the millisecond.
+        val ms = max(time.toLong(), if (out.isEmpty()) 0L else lastMs + 1)
+        out += ShapeInput(p[0], p[1], ms)
+        lastMs = ms
+        time = max(time, ms.toDouble())
+    }
+    emit(kept[0])
+    for (i in 1 until n) {
+        val from = kept[i - 1]
+        val to = kept[i]
+        val length = hypot(to[0] - from[0], to[1] - from[1])
+        var step = length / SHAPE_SPEED
+        // Through a smooth bend, slow enough that the model keeps to the curve
+        // instead of cutting inside it.
+        if (!sharp[i - 1]) step = max(step, turns[i - 1] / SHAPE_TURN_RATE)
+        // A side from corner to corner takes long enough that the model sees
+        // it as one movement, not as a jump.
+        if ((i == 1 || sharp[i - 1]) && sharp[i]) step = max(step, MIN_SIDE_MS)
+        // Above this the model takes coarser steps, which can ring; a long side
+        // is drawn a little faster instead.
+        time += step.coerceIn(1f, MAX_STEP_MS)
+        emit(to)
+        if (sharp[i]) repeat(repeats) {
+            time += CORNER_DWELL_MS / repeats
+            emit(to)
+        }
+    }
+    return out
+}
+
+/** How far the direction of travel turns at [b], from a-to-b to b-to-c, in radians (0 to pi). */
+private fun turnBetween(a: FloatArray, b: FloatArray, c: FloatArray): Float {
+    val h1 = atan2(b[1] - a[1], b[0] - a[0])
+    val h2 = atan2(c[1] - b[1], c[0] - b[0])
+    var d = abs(h2 - h1)
+    if (d > PI.toFloat()) d = 2 * PI.toFloat() - d
+    return d
+}
+
 /** A regular polygon of [corners] points; every other point pulled in to [inner] makes a star. */
 private fun polygon(cx: Float, cy: Float, rx: Float, ry: Float, corners: Int, inner: Float): List<FloatArray> =
     (0..corners).map {
@@ -236,3 +332,16 @@ private const val CURVE_STEPS = 10
 private const val STAR_INNER = 0.42f
 private const val ARROW_SPREAD = 0.5f
 internal const val SQUARE_TOLERANCE = 0.08f
+
+/** At most this many inputs and a selected shape's corners can be dragged one by one. */
+internal const val SHAPE_EDITABLE_INPUTS = 24
+/** A turn of this much, in radians, is a corner to rest on rather than part of a curve. */
+private const val CORNER_TURN = 0.52f
+/** A steady hand: page units per millisecond along a generated outline. */
+private const val SHAPE_SPEED = 1.2f
+/** How quickly a generated outline may turn while it curves, in radians per millisecond. */
+private const val SHAPE_TURN_RATE = 0.008f
+/** How long the pen rests on a corner, which the input model needs to settle on it. */
+private const val CORNER_DWELL_MS = 120f
+private const val MIN_SIDE_MS = 40f
+private const val MAX_STEP_MS = 300f

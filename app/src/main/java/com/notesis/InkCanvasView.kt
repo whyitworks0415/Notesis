@@ -6123,18 +6123,29 @@ class InkCanvasView @JvmOverloads constructor(
     private fun shapeStrokes(kind: ShapeKind, from: FloatArray, to: FloatArray, brush: Brush): List<Stroke> =
         strokesThrough(shapePoints(kind, from, to), brush)
 
-    private fun strokesThrough(points: List<FloatArray>, brush: Brush): List<Stroke> {
+    /**
+     * One stroke along [points], written so the brush passes through every
+     * corner and runs straight between them - see [shapeInputs]. [corners] are
+     * indices that must stay sharp beyond those the outline's own turns show.
+     */
+    private fun strokesThrough(points: List<FloatArray>, brush: Brush, corners: Collection<Int>? = null): List<Stroke> {
         if (points.size < 2) return emptyList()
         val inputs = MutableStrokeInputBatch()
-        points.forEachIndexed { index, point ->
-            inputs.add(
-                InputToolType.STYLUS,
-                point[0],
-                point[1],
-                index * SHAPE_STEP_MS,
-            )
+        for (input in shapeInputs(points, corners, MAX_EDITABLE_INPUTS)) {
+            inputs.add(InputToolType.STYLUS, input.x, input.y, input.timeMs)
         }
         return listOf(Stroke(brush, inputs.toImmutable()))
+    }
+
+    /**
+     * A recognised shape that carries its own outline. A closed one has its
+     * corners rounded like any polygon shape's when that is set; rounding
+     * replaces the corners, so the builder then finds the sharp points itself.
+     */
+    private fun recognizedStrokes(shape: RecognizedShape, outline: List<FloatArray>, brush: Brush): List<Stroke> {
+        val closed = outline.size > 3 && outline.first()[0] == outline.last()[0] && outline.first()[1] == outline.last()[1]
+        return if (closed && shapeCornerRadius > 0f) strokesThrough(roundCorners(outline, shapeCornerRadius), brush)
+            else strokesThrough(outline, brush, shape.corners)
     }
 
     /** The outline of [kind]; a nearly square box is made square. See [squaredEnd]. */
@@ -8209,12 +8220,14 @@ class InkCanvasView @JvmOverloads constructor(
                         val last = stroke.inputs.get(stroke.inputs.size - 1)
                         RecognizedShape(ShapeKind.LINE, first.x, first.y, last.x, last.y)
                     }
+                    // Unheld, only the few shapes writing is unlikely to look
+                    // like; held, every shape the recogniser knows.
                     (autoShapeRecognitionEnabled || recognize) &&
-                        Tool.ofBrushFamily(stroke.brush.family).isFreehandPen() -> recognizeStroke(stroke)
+                        Tool.ofBrushFamily(stroke.brush.family).isFreehandPen() -> recognizeStroke(stroke, held = recognize)
                     else -> null
                 }
                 if (shape != null) {
-                    val parts = shapeStrokes(
+                    val parts = shape.outline?.let { recognizedStrokes(shape, it, stroke.brush) } ?: shapeStrokes(
                         shape.kind, floatArrayOf(shape.fromX, shape.fromY),
                         floatArrayOf(shape.toX, shape.toY), stroke.brush,
                     )
@@ -8306,13 +8319,14 @@ class InkCanvasView @JvmOverloads constructor(
     /** Snapshot of handwriting enclosed by the current lasso for region OCR. */
     fun selectedLassoStrokes(): List<Stroke> = lassoStrokes.toList()
 
-    private fun recognizeStroke(stroke: Stroke): RecognizedShape? {
+    /** What [stroke] looks like as a shape; [held] strokes asked to be one, so more shapes qualify. */
+    private fun recognizeStroke(stroke: Stroke, held: Boolean): RecognizedShape? {
         val sample = StrokeInput()
         val points = (0 until stroke.inputs.size).map { index ->
             stroke.inputs.populate(index, sample)
             floatArrayOf(sample.x, sample.y)
         }
-        return recognizeShape(points)
+        return recognizeShape(points, held, axisSnapEnabled)
     }
 
     /** Committed ink and paper. Wet ink keeps its own front buffer above this. */
@@ -9402,12 +9416,11 @@ class InkCanvasView @JvmOverloads constructor(
         const val FLING_FRICTION = 3.2f
         const val DETAIL_THRESHOLD_PX = 2048
         const val SHADOW = 4f
-        const val SHAPE_STEP_MS = 8L
         const val RULER_GAP_PX = 1.5f
         const val SNAP_ALIGN_PX = 10f
         const val PULL_FOR_PAGE_PX = 90f
         const val VERTEX_HANDLE_PX = 9f
-        const val MAX_EDITABLE_INPUTS = 24
+        const val MAX_EDITABLE_INPUTS = SHAPE_EDITABLE_INPUTS
         const val EDGE_EXCLUSION_DP = 32f
         const val DOUBLE_TAP_ZOOM = 2f
         const val STRIKE_HEIGHT = 0.08f
