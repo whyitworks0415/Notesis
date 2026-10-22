@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -72,28 +73,25 @@ import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import kotlin.math.abs
+import androidx.compose.foundation.IndicationNodeFactory
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.FocusInteraction
+import androidx.compose.foundation.interaction.InteractionSource
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.LocalRippleConfiguration
+import androidx.compose.runtime.ProvidedValue
+import androidx.compose.ui.graphics.drawscope.ContentDrawScope
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.positionOnScreen
+import androidx.compose.ui.node.CompositionLocalConsumerModifierNode
+import androidx.compose.ui.node.DelegatableNode
+import androidx.compose.ui.node.DrawModifierNode
+import androidx.compose.ui.node.currentValueOf
+import androidx.compose.ui.node.invalidateDraw
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
-
-/**
- * How the app's chrome is dressed. The note itself never changes - paper is
- * paper - so this only reaches the bars, panels and dialogs floating over it.
- */
-enum class Skin(val label: String, val blurb: String) {
-    MATERIAL("Material", "Android default. Opaque and crisp."),
-    GLASSMORPHISM("Glassmorphism", "Frosted glass. Blurs what is behind it, evenly translucent."),
-    LIQUID_GLASS(
-        "Liquid glass",
-        "A thin lens that bends light. Shape and sheen come alive as you press and move.",
-    ),
-    SPOTIGLASS(
-        "Glass bar",
-        "On a rounded glass bar, the selection lens glides after your fingertip.",
-    ),
-}
-
-val Skin.isRefractive: Boolean
-    get() = this == Skin.LIQUID_GLASS || this == Skin.SPOTIGLASS
 
 /**
  * What a skin actually changes. Plain numbers rather than a pile of composables,
@@ -119,18 +117,71 @@ class SkinTokens(
 val LocalSkin = compositionLocalOf { Skin.MATERIAL }
 val LocalSkinSettings = compositionLocalOf { SkinSettings() }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProvideSkin(skin: Skin, settings: SkinSettings, content: @Composable () -> Unit) {
     // 앱 전역 설정 감시는 여기에서 한 번만 만들고 모든 Liquid Glass 컨트롤이 공유합니다.
     val inheritedEffectsAllowed = LocalLiquidGlassEffectsAllowed.current
     val effectsAllowed = inheritedEffectsAllowed ?: rememberSystemLiquidGlassEffectsAllowed()
-    CompositionLocalProvider(
+    val values = mutableListOf<ProvidedValue<*>>(
         LocalSkin provides skin,
         LocalSkinSettings provides settings,
         LocalLiquidGlassEffectsAllowed provides effectsAllowed,
-        content = content,
     )
+    if (!skin.animatesChrome) {
+        // Still chrome: no ripple and no hover or press wash, in Material's
+        // own components (the ripple configuration) and in every plain
+        // clickable (the indication). Keyboard focus still shows, or a
+        // keyboard user would have no idea where they are.
+        values += LocalRippleConfiguration provides null
+        values += LocalIndication provides FocusOnlyIndication
+    }
+    CompositionLocalProvider(*values.toTypedArray(), content = content)
 }
+
+/**
+ * An indication that answers focus and nothing else: no ripple on a press,
+ * no wash on hover. A quiet veil while the element holds keyboard focus.
+ */
+private object FocusOnlyIndication : IndicationNodeFactory {
+    override fun create(interactionSource: InteractionSource): DelegatableNode =
+        FocusOnlyIndicationNode(interactionSource)
+
+    override fun equals(other: Any?): Boolean = other === this
+    override fun hashCode(): Int = System.identityHashCode(this)
+}
+
+private class FocusOnlyIndicationNode(
+    private val source: InteractionSource,
+) : Modifier.Node(), DrawModifierNode, CompositionLocalConsumerModifierNode {
+    private var focused = false
+
+    override fun onAttach() {
+        // Undispatched: a clickable may create this only as focus arrives,
+        // and a collector that starts a frame later would miss that focus.
+        coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            val held = mutableListOf<FocusInteraction.Focus>()
+            source.interactions.collect { interaction ->
+                when (interaction) {
+                    is FocusInteraction.Focus -> held += interaction
+                    is FocusInteraction.Unfocus -> held -= interaction.focus
+                }
+                val now = held.isNotEmpty()
+                if (now != focused) {
+                    focused = now
+                    invalidateDraw()
+                }
+            }
+        }
+    }
+
+    override fun ContentDrawScope.draw() {
+        drawContent()
+        if (focused) drawRect(currentValueOf(LocalContentColor).copy(alpha = FOCUS_VEIL_ALPHA))
+    }
+}
+
+private const val FOCUS_VEIL_ALPHA = 0.12f
 
 @Composable
 fun Skin.tokens(): SkinTokens = when (this) {
@@ -179,61 +230,6 @@ fun Skin.tokens(): SkinTokens = when (this) {
             bevel = null,
             glows = emptyList(),
             shadow = 12.dp,
-            tonalElevation = 0.dp,
-        )
-    }
-
-    // Apple's material is not simply a blur with a white coat. It is a thin,
-    // mostly colourless lens: the content beneath supplies the colour, one side
-    // catches the light, the far side gets a quiet bevel, and the shadow grows
-    // enough to keep the control legible when the background gets busy.
-    Skin.LIQUID_GLASS -> LocalSkinSettings.current.let { look ->
-        val dark = look.themeMode == AppThemeMode.DARK
-        val tint = darkAwareTint(Color(look.tint), dark)
-        // On a dark theme a near-white rim and glow read as a lit outline round
-        // every panel; they keep their shape at a fraction of the light.
-        val light = if (dark) 0.4f else 1f
-        val border = Color(look.border)
-        val ink = if (look.themeMode == AppThemeMode.DARK) {
-            MaterialTheme.colorScheme.onSurface
-        } else {
-            Color(look.content)
-        }
-        val accent = Color(look.accent)
-        SkinTokens(
-            corner = look.corner.dp,
-            fillAlpha = 1f,
-            fill = if (look.highContrast) {
-                tint.copy(alpha = maxOf(tint.alpha, 0.90f))
-            } else {
-                // Keep user hue, but let the backdrop be the body of the glass.
-                tint.copy(alpha = (tint.alpha * 0.58f).coerceIn(0.08f, 0.32f))
-            },
-            rim = Brush.linearGradient(
-                listOf(
-                    Color.White.copy(alpha = (if (look.highContrast) 1f else 0.96f) * light),
-                    border.copy(alpha = maxOf(border.alpha, 0.74f) * light),
-                    Color.White.copy(alpha = 0.24f * light),
-                    ink.copy(alpha = if (look.highContrast) 0.70f else 0.22f),
-                ),
-            ),
-            rimWidth = if (look.highContrast) 2.dp else 1.dp,
-            bevel = Brush.linearGradient(
-                listOf(
-                    Color.White.copy(alpha = 0.12f * light),
-                    accent.copy(alpha = 0.16f),
-                    ink.copy(alpha = if (look.highContrast) 0.34f else 0.16f),
-                ),
-            ),
-            glows = if (look.highContrast) {
-                listOf(4.dp to Color.White.copy(alpha = 0.16f * light))
-            } else {
-                listOf(
-                    12.dp to Color.White.copy(alpha = 0.12f * light),
-                    5.dp to accent.copy(alpha = 0.08f),
-                )
-            },
-            shadow = if (look.highContrast) 12.dp else 18.dp,
             tonalElevation = 0.dp,
         )
     }
@@ -316,7 +312,10 @@ fun Modifier.recordBackdrop(
 ): Modifier {
     val layer = backdrop.layer ?: return this
     return this
-        .onGloballyPositioned { backdrop.origin = it.positionInRoot() }
+        // On screen rather than in the window: a popup or a dialog is a window
+        // of its own, and a pane in it measured against this window's corner
+        // drew the page from the wrong place.
+        .onGloballyPositioned { backdrop.origin = it.positionOnScreen() }
         .drawWithContent {
             // Read here rather than in composition, so putting the pen down
             // invalidates one draw instead of recomposing the screen. The
@@ -377,29 +376,9 @@ fun SkinSurface(
             elevation = if (flush) 0.dp else tokens.shadow, rim = !flush,
             exportedBackdrop = spotiHost,
         ).then(if (flush) Modifier.flushEdge(tokens) else Modifier)
-    } else if (skin.isRefractive) {
-        // API 33+에서는 Kyant Backdrop의 실제 AGSL 렌즈를 사용합니다. 고정 바도
-        // 같은 경로를 타므로 유리 효과가 빠지지 않고, 창 가장자리에는 불필요한
-        // 외곽 그림자/테두리를 그리지 않아 위아래 회색 틈이 생기지 않습니다.
-        modifier
-            .liquidGlass(
-                intensity = 1f,
-                shape = shape,
-                surfaceColor = tokens.fill
-                    ?: MaterialTheme.colorScheme.surface.copy(alpha = tokens.fillAlpha),
-                shadowElevation = if (flush) 0.dp else tokens.shadow,
-                drawBorder = !flush,
-            )
-            .then(if (flush) Modifier.flushEdge(tokens) else Modifier)
     } else {
-        val fill = tokens.fill ?: MaterialTheme.colorScheme.surface.copy(alpha = tokens.fillAlpha)
         modifier
-            .shadow(tokens.shadow, shape, clip = false)
-            .clip(shape)
-            .frost()
-            // Battery saver stops the frost; a pane that stays see-through
-            // without it puts its labels straight over the ink.
-            .background(if (InteractionGovernor.observedPowerSave) fill.copy(alpha = maxOf(fill.alpha, 0.92f)) else fill)
+            .frostedGlass(tokens, shape)
             .then(if (flush) Modifier.flushEdge(tokens) else Modifier.glassEdge(tokens, shape))
     }
     Box(surfaceModifier) {
@@ -407,6 +386,48 @@ fun SkinSurface(
             CompositionLocalProvider(LocalSpotiGlassHostBackdrop provides spotiHost) { content() }
         } else content()
     }
+}
+
+/**
+ * The skin's material on an outline the caller chooses, for chrome built
+ * from the toolbar's shapes rather than from [SkinSurface]'s rounded panel:
+ * solid under Material, frosted under Glassmorphism, and under Liquid glass
+ * the refractive lens the bar itself is made of. A [panel] carries text, so
+ * it is more solid than a bar that only carries icons.
+ */
+@Composable
+internal fun Modifier.skinMaterial(shape: Shape, panel: Boolean = false): Modifier {
+    val skin = LocalSkin.current
+    val tokens = skin.tokens()
+    return when (skin) {
+        Skin.MATERIAL -> {
+            val scheme = MaterialTheme.colorScheme
+            this
+                .shadow(if (panel) 6.dp else 3.dp, shape, clip = false)
+                .clip(shape)
+                .background(if (panel) scheme.surfaceContainerHigh else scheme.surfaceContainer)
+        }
+        Skin.GLASSMORPHISM -> this
+            .frostedGlass(tokens, shape, fill = if (panel) MaterialTheme.colorScheme.surfaceContainerHigh else null)
+            .glassEdge(tokens, shape)
+        Skin.SPOTIGLASS -> liquidGlassPane(shape, panel = panel)
+    }
+}
+
+/**
+ * Frost: a shadow, the page behind blurred, and the body colour over it -
+ * [fill], or the skin's own when null.
+ */
+@Composable
+private fun Modifier.frostedGlass(tokens: SkinTokens, shape: Shape, shadow: Boolean = true, fill: Color? = null): Modifier {
+    val body = fill ?: tokens.fill ?: MaterialTheme.colorScheme.surface.copy(alpha = tokens.fillAlpha)
+    return this
+        .then(if (shadow) Modifier.shadow(tokens.shadow, shape, clip = false) else Modifier)
+        .clip(shape)
+        .frost()
+        // Battery saver stops the frost; a pane that stays see-through
+        // without it puts its labels straight over the ink.
+        .background(if (InteractionGovernor.observedPowerSave) body.copy(alpha = maxOf(body.alpha, 0.92f)) else body)
 }
 
 /** The one edge a window-wide bar has: the line where it lets the page go. */
@@ -435,69 +456,41 @@ private fun Modifier.frost(): Modifier {
     val backdrop = LocalBackdrop.current
     val layer = backdrop.layer ?: return this
     val settings = LocalSkinSettings.current
-    val liquid = LocalSkin.current.isRefractive
     // The pane's own layer, and the reason it exists: a RenderEffect belongs to
     // the layer it is set on, and the backdrop layer is also what draws the page
-    // itself. Hanging the blur and the bend on it put them on the page - the PDF
-    // came out softened and over-saturated, which is the effect meant for the
-    // half-inch of glass sitting on top of it. This one holds the effect; the
-    // backdrop stays clean.
+    // itself. Hanging the blur on it put it on the page - the PDF came out
+    // softened and over-saturated, which is the effect meant for the half-inch
+    // of glass sitting on top of it. This one holds the effect; the backdrop
+    // stays clean.
     val pane = rememberGraphicsLayer()
     // Built when the numbers change and not once per pane per frame. This is a
     // native RenderEffect: it was being allocated inside the draw of every pane
     // on screen, every frame the page moved under them.
     val density = LocalDensity.current
-    var paneSize by remember { mutableStateOf(IntSize.Zero) }
-    val effect = remember(settings.blur, settings.vibrancy, settings.highContrast, density, liquid, paneSize) {
-        val blurPx = with(density) { settings.blur.dp.toPx() }
-        if (liquid) {
-            liquidGlassEffect(
-                // Liquid Glass stays clearer than frosted glass; the lens and
-                // edge do the separation instead of scattering everything.
-                blurPx = blurPx * if (settings.highContrast) 0.82f else 0.58f,
-                vibrancy = (settings.vibrancy + 0.18f).coerceAtMost(1.2f),
-                widthPx = paneSize.width,
-                heightPx = paneSize.height,
-                bendPx = with(density) { (if (settings.highContrast) 4.dp else 8.dp).toPx() },
-            )
-        } else {
-            frostEffect(blurPx = blurPx, vibrancy = settings.vibrancy)
-        }
+    val effect = remember(settings.blur, settings.vibrancy, density) {
+        frostEffect(blurPx = with(density) { settings.blur.dp.toPx() }, vibrancy = settings.vibrancy)
     }
+    // Set while a popup this pane belongs to is growing; reading it redraws
+    // the pane each frame of that, so the page under it keeps its place.
+    val motion = LocalBackdropMotion.current
+    val placed = remember { arrayOfNulls<LayoutCoordinates>(1) }
     var here by remember { mutableStateOf(Offset.Zero) }
     return this
-        .onSizeChanged { paneSize = it }
-        .onGloballyPositioned { here = it.positionInRoot() }
+        .onGloballyPositioned {
+            placed[0] = it
+            here = it.positionOnScreen()
+        }
         .drawBehind {
-            val at = here - backdrop.origin
+            here
+            motion?.invoke()
             pane.renderEffect = effect
-            // The pane is already clipped to its shape, so translating the
-            // whole backdrop back by this pane's offset lands the right part of
+            // The pane is already clipped to its shape, so drawing the whole
+            // backdrop back by this pane's place on screen - and at the
+            // inverse of any scale it is drawn at - lands the right part of
             // the page underneath it.
-            pane.record { translate(-at.x, -at.y) { drawLayer(layer) } }
+            pane.record { drawBackdropAligned(layer, backdrop.origin, placed[0]) }
             drawLayer(pane)
         }
-}
-
-/** Ambient colour and a moving-looking highlight inside the clear lens body. */
-private fun Modifier.liquidLight(accent: Color): Modifier = drawWithContent {
-    // Applied after the translucent body and before child content. The two
-    // fields therefore light the material without washing out its labels.
-    drawRect(
-        Brush.radialGradient(
-            colors = listOf(Color.White.copy(alpha = 0.30f), Color.Transparent),
-            center = Offset(size.width * 0.16f, -size.height * 0.08f),
-            radius = maxOf(size.width, size.height) * 0.92f,
-        ),
-    )
-    drawRect(
-        Brush.radialGradient(
-            colors = listOf(accent.copy(alpha = 0.10f), Color.Transparent),
-            center = Offset(size.width * 0.84f, size.height * 1.05f),
-            radius = maxOf(size.width, size.height) * 0.76f,
-        ),
-    )
-    drawContent()
 }
 
 /**
@@ -590,12 +583,12 @@ fun skinBorder(): BorderStroke? {
  * Material's slider is a hairline with a disc on it; this one is the shape in
  * the file - a rounded upright pane, taller than the track and wide enough to
  * have a face, translucent so the filled part of the track carries on through
- * it instead of being cut in half by the handle. It swells while it is held,
- * which is the whole of how the control tells you it has you.
+ * it instead of being cut in half by the handle. Under glassmorphism it swells
+ * while it is held, which is the whole of how the control tells you it has you.
  *
  * Both skins get the shape. The skin decides what the lens is made of: the
- * tunable glass and its lit rim under glassmorphism, plain white under
- * Material, where the tokens name no fill and no edge.
+ * tunable glass and its lit rim under glassmorphism; under Material a solid
+ * white handle that holds still, since Material's chrome does not move.
  */
 @Composable
 fun SkinSlider(
@@ -624,23 +617,17 @@ fun SkinSlider(
         return
     }
     val tokens = skin.tokens()
-    val liquid = skin.isRefractive
+    val still = skin == Skin.MATERIAL
     val scheme = MaterialTheme.colorScheme
     val trackAlpha = if (LocalSkinSettings.current.highContrast) 0.34f else 0.14f
     val density = LocalDensity.current
     var held by remember { mutableStateOf(false) }
-    // Fast movement pulls the lens wider. It springs home on release, which is
-    // the small, tactile deformation Apple gives its new slider thumbs.
-    var motionStretch by remember { mutableFloatStateOf(0f) }
     val span = (valueRange.endInclusive - valueRange.start).takeIf { it > 0f } ?: 1f
     val fraction = ((value - valueRange.start) / span).coerceIn(0f, 1f)
     var width by remember { mutableFloatStateOf(0f) }
+    val swell = held && !still
     val thumbWidth by animateDpAsState(
-        targetValue = when {
-            liquid && held -> SLIDER_THUMB_W + (LIQUID_SLIDER_PRESS_STRETCH + motionStretch).dp
-            held -> SLIDER_THUMB_W_HELD
-            else -> SLIDER_THUMB_W
-        },
+        targetValue = if (swell) SLIDER_THUMB_W_HELD else SLIDER_THUMB_W,
         animationSpec = spring(
             dampingRatio = Spring.DampingRatioMediumBouncy,
             stiffness = Spring.StiffnessMediumLow,
@@ -648,11 +635,7 @@ fun SkinSlider(
         label = "slider thumb width",
     )
     val thumbHeight by animateDpAsState(
-        targetValue = when {
-            liquid && held -> LIQUID_SLIDER_THUMB_H_HELD
-            held -> SLIDER_THUMB_H_HELD
-            else -> SLIDER_THUMB_H
-        },
+        targetValue = if (swell) SLIDER_THUMB_H_HELD else SLIDER_THUMB_H,
         animationSpec = spring(
             dampingRatio = Spring.DampingRatioMediumBouncy,
             stiffness = Spring.StiffnessMediumLow,
@@ -668,7 +651,7 @@ fun SkinSlider(
     // Held, the handle follows the finger itself, not the stepped value under
     // it; let go, it eases onto the value it chose. See [sliderShownFraction].
     var dragFraction by remember { mutableFloatStateOf(NOT_DRAGGING) }
-    val shown = sliderShownFraction(fraction, dragFraction)
+    val shown = sliderShownFraction(fraction, dragFraction, animate = !still)
     val centre = half + shown * ((width - 2f * half).coerceAtLeast(1f))
 
     // A gesture block outlives the composition that started it, so both the
@@ -690,26 +673,17 @@ fun SkinSlider(
             .onSizeChanged { width = it.width.toFloat() }
             .pointerInput(valueRange) {
                 detectDragGestures(
-                    onDragStart = {
-                        held = true
-                        motionStretch = 0f
-                    },
+                    onDragStart = { held = true },
                     onDragEnd = {
                         held = false
-                        motionStretch = 0f
                         dragFraction = NOT_DRAGGING
                     },
                     onDragCancel = {
                         held = false
-                        motionStretch = 0f
                         dragFraction = NOT_DRAGGING
                     },
-                ) { change, dragAmount ->
+                ) { change, _ ->
                     change.consume()
-                    if (liquid) {
-                        motionStretch = (abs(dragAmount.x) / density.density * 0.72f)
-                            .coerceAtMost(LIQUID_SLIDER_MAX_STRETCH)
-                    }
                     report(change.position.x)
                 }
             }
@@ -717,11 +691,9 @@ fun SkinSlider(
                 detectTapGestures(
                     onPress = {
                         held = true
-                        if (liquid) motionStretch = LIQUID_SLIDER_TAP_STRETCH
                         report(it.x)
                         tryAwaitRelease()
                         held = false
-                        motionStretch = 0f
                         dragFraction = NOT_DRAGGING
                     },
                 )
@@ -733,32 +705,7 @@ fun SkinSlider(
                 .fillMaxWidth()
                 .height(SLIDER_TRACK_H)
                 .clip(CircleShape)
-                .then(
-                    if (liquid) {
-                        Modifier
-                            .background(
-                                Brush.verticalGradient(
-                                    listOf(
-                                        Color.White.copy(alpha = 0.24f),
-                                        scheme.onSurface.copy(alpha = trackAlpha * 0.72f),
-                                        scheme.onSurface.copy(alpha = trackAlpha * 1.35f),
-                                    ),
-                                ),
-                            )
-                            .border(
-                                0.75.dp,
-                                Brush.verticalGradient(
-                                    listOf(
-                                        Color.White.copy(alpha = 0.72f),
-                                        scheme.onSurface.copy(alpha = 0.16f),
-                                    ),
-                                ),
-                                CircleShape,
-                            )
-                    } else {
-                        Modifier.background(scheme.onSurface.copy(alpha = trackAlpha))
-                    },
-                ),
+                .background(scheme.onSurface.copy(alpha = trackAlpha)),
         ) {
             // Filled to the middle of the thumb, not to its near edge: the
             // reading is where the lens is centred, so that is where the colour
@@ -772,19 +719,7 @@ fun SkinSlider(
                     // wherever the thumb was short of the end. Its own capsule
                     // rounds that edge too.
                     .clip(CircleShape)
-                    .background(
-                        if (liquid) {
-                            Brush.verticalGradient(
-                                listOf(
-                                    scheme.primary.copy(alpha = 0.78f),
-                                    scheme.primary,
-                                    scheme.primary.copy(alpha = 0.82f),
-                                ),
-                            )
-                        } else {
-                            SolidColor(scheme.primary)
-                        },
-                    ),
+                    .background(scheme.primary),
             )
         }
         Thumb(
@@ -797,8 +732,8 @@ fun SkinSlider(
             tokens = tokens,
             // The shadow is ordinary until the thumb is taken hold of, and then
             // it picks up the accent - the same swell said in light.
-            glow = if (held) scheme.primary else Color.Black,
-            energized = held,
+            glow = if (swell) scheme.primary else Color.Black,
+            solid = still,
         )
     }
 }
@@ -811,6 +746,7 @@ fun SkinSlider(
  * on, so it stands proud of it, and translucent enough that the colour beneath
  * carries through the glass rather than being hidden by it. On, then, is a
  * capsule of accent seen twice: once beside the lens and once through it.
+ * Under Material the lens is solid white and changes sides at once.
  */
 @Composable
 fun SkinSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
@@ -820,44 +756,31 @@ fun SkinSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     }
     val skin = LocalSkin.current
     val tokens = skin.tokens()
-    val liquid = skin.isRefractive
+    val still = skin == Skin.MATERIAL
     val scheme = MaterialTheme.colorScheme
     val trackAlpha = if (LocalSkinSettings.current.highContrast) 0.34f else 0.14f
     val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
-    val thumbWidth by animateDpAsState(
-        targetValue = if (liquid && pressed) LIQUID_SWITCH_THUMB_W_HELD else SWITCH_THUMB_W,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessMedium,
-        ),
-        label = "switch lens width",
-    )
-    val thumbHeight by animateDpAsState(
-        targetValue = if (liquid && pressed) LIQUID_SWITCH_THUMB_H_HELD else SWITCH_THUMB_H,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessMedium,
-        ),
-        label = "switch lens height",
-    )
-    // Animate the centre, then subtract half the live width. The lens can widen
-    // under a finger without shifting the value it is pointing at.
+    // Animate the centre: the lens slides from one end to the other.
     val centre by animateDpAsState(
         targetValue = if (checked) {
             SWITCH_W - SWITCH_THUMB_INSET - SWITCH_THUMB_W / 2f
         } else {
             SWITCH_THUMB_INSET + SWITCH_THUMB_W / 2f
         },
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessMedium,
-        ),
+        animationSpec = if (still) {
+            snap()
+        } else {
+            spring(
+                dampingRatio = Spring.DampingRatioMediumBouncy,
+                stiffness = Spring.StiffnessMedium,
+            )
+        },
         label = "switch lens centre",
     )
-    val shift = centre - thumbWidth / 2f
+    val shift = centre - SWITCH_THUMB_W / 2f
     val track by animateColorAsState(
         if (checked) scheme.primary else scheme.onSurface.copy(alpha = trackAlpha),
+        animationSpec = if (still) snap() else spring(),
         label = "switch track",
     )
     Box(
@@ -879,43 +802,18 @@ fun SkinSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
                 .fillMaxWidth()
                 .height(SWITCH_TRACK)
                 .clip(CircleShape)
-                .then(
-                    if (liquid) {
-                        Modifier
-                            .background(
-                                Brush.verticalGradient(
-                                    listOf(
-                                        track.copy(alpha = if (checked) 0.80f else 0.20f),
-                                        track,
-                                        track.copy(alpha = if (checked) 0.84f else 0.36f),
-                                    ),
-                                ),
-                            )
-                            .border(
-                                0.75.dp,
-                                Brush.verticalGradient(
-                                    listOf(
-                                        Color.White.copy(alpha = 0.78f),
-                                        scheme.onSurface.copy(alpha = 0.18f),
-                                    ),
-                                ),
-                                CircleShape,
-                            )
-                    } else {
-                        Modifier.background(track)
-                    },
-                ),
+                .background(track),
         )
         Thumb(
             Modifier
                 .offset(x = shift)
-                .size(thumbWidth, thumbHeight),
+                .size(SWITCH_THUMB_W, SWITCH_THUMB_H),
             shape = RoundedCornerShape(percent = 50),
             tokens = tokens,
             // A lit handle on a lit track: the glow is the accent while the
             // switch is on, and an ordinary shadow while it is off.
-            glow = if (checked) scheme.primary else Color.Black,
-            energized = checked || pressed,
+            glow = if (checked && !still) scheme.primary else Color.Black,
+            solid = still,
         )
     }
 }
@@ -925,7 +823,8 @@ fun SkinSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
  *
  * A body, two bright edges, and whatever rim the skin draws. The middle is left
  * clear on purpose - that is the part the track shows through, and it is the
- * difference between a piece of glass and a white knob.
+ * difference between a piece of glass and a white knob. A [solid] thumb is the
+ * white knob: Material's, one colour with a hairline to find it on white.
  */
 @Composable
 private fun Thumb(
@@ -933,35 +832,20 @@ private fun Thumb(
     shape: Shape,
     tokens: SkinTokens,
     glow: Color,
-    energized: Boolean = false,
+    solid: Boolean = false,
 ) {
-    val liquid = LocalSkin.current.isRefractive
-    val shadow = if (liquid) {
-        if (energized) LIQUID_THUMB_SHADOW_HELD else LIQUID_THUMB_SHADOW
-    } else {
-        THUMB_SHADOW
-    }
-    var coat = modifier
-        .shadow(shadow, shape, clip = false, ambientColor = glow, spotColor = glow)
+    val coat = modifier
+        .shadow(THUMB_SHADOW, shape, clip = false, ambientColor = glow, spotColor = glow)
         .clip(shape)
-    coat = if (liquid) {
-        coat
-            // Clear enough that the track keeps running through the lens. The
-            // opposing gradients make the top edge catch and the lower face
-            // retain weight against a white page.
-            .background(Color.White.copy(alpha = 0.36f))
-            .background(tokens.fill ?: Color.Transparent)
-            .background(
-                Brush.verticalGradient(
-                    0f to Color.White.copy(alpha = 0.86f),
-                    0.18f to Color.White.copy(alpha = 0.22f),
-                    0.58f to Color.White.copy(alpha = 0.08f),
-                    1f to Color.White.copy(alpha = 0.50f),
-                ),
-            )
-            .liquidLight(if (energized) glow else Color.White)
-            .glassEdge(tokens, shape)
-    } else {
+    if (solid) {
+        Box(
+            coat
+                .background(Color.White)
+                .border(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.16f), shape),
+        )
+        return
+    }
+    Box(
         coat
             // Two coats. The skin's own glass is thin enough to vanish against
             // a white settings page, where the rim is white too and the only
@@ -983,9 +867,8 @@ private fun Thumb(
                 brush = tokens.rim
                     ?: SolidColor(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.22f)),
                 shape = shape,
-            )
-    }
-    Box(coat)
+            ),
+    )
 }
 
 // Measured off the reference prototype rather than guessed at, and the ratios
@@ -1004,10 +887,6 @@ private val SLIDER_THUMB_W = 36.dp
 private val SLIDER_THUMB_H = 25.dp
 private val SLIDER_THUMB_W_HELD = 40.dp
 private val SLIDER_THUMB_H_HELD = 28.dp
-private val LIQUID_SLIDER_THUMB_H_HELD = 26.dp
-private const val LIQUID_SLIDER_PRESS_STRETCH = 7f
-private const val LIQUID_SLIDER_TAP_STRETCH = 3f
-private const val LIQUID_SLIDER_MAX_STRETCH = 12f
 
 // Switch: the reference file's own proportions. The control is intentionally
 // long and its knob intentionally lozenge-shaped; shortening it to a conventional
@@ -1018,12 +897,8 @@ private val SWITCH_TRACK = 32.dp
 private val SWITCH_THUMB_W = 47.dp
 private val SWITCH_THUMB_H = 28.dp
 private val SWITCH_THUMB_INSET = 2.dp
-private val LIQUID_SWITCH_THUMB_W_HELD = 52.dp
-private val LIQUID_SWITCH_THUMB_H_HELD = 29.dp
 
 private val THUMB_SHADOW = 6.dp
-private val LIQUID_THUMB_SHADOW = 8.dp
-private val LIQUID_THUMB_SHADOW_HELD = 12.dp
 
 /**
  * The shapes Material's own components reach for. Overriding these is how the
@@ -1075,7 +950,7 @@ fun skinColors(base: ColorScheme, skin: Skin, look: SkinSettings): ColorScheme {
     // chrome without looking like a Material slab dropped in.
     val alpha = when {
         look.highContrast -> 0.98f
-        skin.isRefractive -> LIQUID_POPUP_ALPHA
+        skin.isRefractive -> REFRACTIVE_POPUP_ALPHA
         else -> POPUP_ALPHA
     }
     val tint = darkAwareTint(Color(look.tint), look.themeMode == AppThemeMode.DARK)
@@ -1098,7 +973,7 @@ internal fun darkAwareTint(tint: Color, dark: Boolean): Color =
     if (dark && tint.luminance() > 0.5f) tint.copy(alpha = (tint.alpha * 0.25f).coerceAtMost(0.08f)) else tint
 
 /** Clearer than frost, still solid enough for a popup window with no backdrop capture. */
-private const val LIQUID_POPUP_ALPHA = 0.80f
+private const val REFRACTIVE_POPUP_ALPHA = 0.80f
 
 /**
  * Stops between the ends of a slider for values every [step] across
@@ -1119,14 +994,20 @@ internal const val NOT_DRAGGING = -1f
  * Where a slider's handle is drawn. While held ([dragFraction] at or above 0)
  * it stays under the finger, moving as smoothly as the finger does, whatever
  * stepped value that lands on. Released, it settles onto [valueFraction] - the
- * stop it chose - with a short spring rather than a jump.
+ * stop it chose - with a short spring rather than a jump, unless [animate]
+ * is off.
  */
 @Composable
-internal fun sliderShownFraction(valueFraction: Float, dragFraction: Float): Float {
+internal fun sliderShownFraction(
+    valueFraction: Float,
+    dragFraction: Float,
+    /** False lands it on the stop at once, for chrome that does not move. */
+    animate: Boolean = true,
+): Float {
     val dragging = dragFraction >= 0f
     val shown by androidx.compose.animation.core.animateFloatAsState(
         targetValue = if (dragging) dragFraction else valueFraction,
-        animationSpec = if (dragging) androidx.compose.animation.core.snap() else spring(
+        animationSpec = if (dragging || !animate) snap() else spring(
             dampingRatio = Spring.DampingRatioNoBouncy,
             stiffness = Spring.StiffnessMediumLow,
         ),

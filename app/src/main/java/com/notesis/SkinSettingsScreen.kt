@@ -67,6 +67,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -86,8 +88,7 @@ internal val Skin.displayName: String
     get() = when (this) {
         Skin.MATERIAL -> "Material"
         Skin.GLASSMORPHISM -> "Frosted glass"
-        Skin.LIQUID_GLASS -> "Liquid glass"
-        Skin.SPOTIGLASS -> "Glass bar"
+        Skin.SPOTIGLASS -> "Liquid glass"
     }
 
 private val RefractionDirection.displayName: String
@@ -129,19 +130,24 @@ internal fun ToolbarPreviewStage(
 ) {
     val backdrop = rememberBackdrop(active = true)
     val liquid = rememberLiquidGlassBackdrop()
+    // The bar is drawn shrunk to fit the stage, so its glass reads the stage
+    // by screen position and undoes that scale, as a popup's glass does.
+    val stageOrigin = remember { mutableStateOf(Offset.Zero) }
+    val aligned = remember(liquid) { SpotiPopupBackdrop(liquid) { stageOrigin.value } }
     Box(modifier.clip(Ui.Shape.card)) {
         // The background goes inside the recording; the bar is outside it,
         // or the glass would be looking at itself.
         Box(
             Modifier
                 .matchParentSize()
+                .onGloballyPositioned { stageOrigin.value = it.positionOnScreen() }
                 .recordBackdrop(backdrop)
                 .captureLiquidGlassBackdrop(liquid)
                 .previewBackdrop(background, photo),
         )
         CompositionLocalProvider(
             LocalBackdrop provides backdrop,
-            LocalLiquidGlassBackdrop provides liquid,
+            LocalLiquidGlassBackdrop provides aligned,
             LocalSpotiGlassHostBackdrop provides null,
             LocalSpotiPopupBackdrop provides null,
         ) {
@@ -475,10 +481,15 @@ private fun IconsGroup() {
         modifier = Modifier.fillMaxWidth(),
         useLiquidGlass = false,
     )
+    val skin = LocalSkin.current
     SettingsToggle(
         "Icon animation", AppIconStyle.animate, { AppIconStyle.setAnimate(context, it) },
         hint = "Icons move once when tapped or chosen. Off keeps them still.",
-        disabledReason = if (AppIconStyle.animated) null else "Only the AnimateIcons set moves",
+        disabledReason = when {
+            !skin.animatesChrome -> "${skin.displayName} keeps its icons still"
+            AppIconStyle.animated -> null
+            else -> "Only the AnimateIcons set moves"
+        },
     )
 }
 
@@ -489,7 +500,8 @@ private fun BackgroundGroup(skin: Skin, settings: SkinSettings, onChange: (SkinS
         AppearanceSlider(
             "Toolbar background opacity", "%.0f%%".format(settings.spotiglassToolbarOpacity * 100),
             settings.spotiglassToolbarOpacity, 0f..1f,
-            note = "0% is clear, 100% solid. The icons and the lens on press stay as they are.",
+            note = "0% is clear, 100% solid. The bar and its tool strip are one surface at this opacity; " +
+                "menus and the pen panel stay at least 55% solid so their text reads.",
         ) { onChange(settings.copy(spotiglassToolbarOpacity = it)) }
     }
     AppearanceSlider("Blur radius", "%.0f dp".format(settings.blur), settings.blur, SkinSettings.BLUR_RANGE,
@@ -509,19 +521,14 @@ private fun BackgroundGroup(skin: Skin, settings: SkinSettings, onChange: (SkinS
 @Composable
 private fun GlassGroup(skin: Skin, settings: SkinSettings, onChange: (SkinSettings) -> Unit, onSkin: (Skin) -> Unit) {
     if (!skin.isRefractive) {
-        SettingsNote("Glass optics belong to the Liquid glass and Glass bar styles; ${skin.displayName} has none.")
-        Row(horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
-            OutlinedButton(onClick = { onSkin(Skin.LIQUID_GLASS) }, modifier = Modifier.heightIn(min = 48.dp)) {
-                Text("Use Liquid glass")
-            }
-            OutlinedButton(onClick = { onSkin(Skin.SPOTIGLASS) }, modifier = Modifier.heightIn(min = 48.dp)) {
-                Text("Use Glass bar")
-            }
+        SettingsNote("Glass optics belong to the Liquid glass style; ${skin.displayName} has none.")
+        OutlinedButton(onClick = { onSkin(Skin.SPOTIGLASS) }, modifier = Modifier.heightIn(min = 48.dp)) {
+            Text("Use Liquid glass")
         }
         return
     }
     if (skin == Skin.SPOTIGLASS) {
-        SettingsSectionHeader("Glass bar")
+        SettingsSectionHeader("Liquid glass")
         AppearanceSlider("Glass clarity", "%.0f%%".format(settings.spotiglassClarity * 100),
             settings.spotiglassClarity, 0f..1f, note = "0% is frosted solid, 100% clear glass.",
         ) { onChange(settings.copy(spotiglassClarity = it)) }

@@ -2,6 +2,7 @@ package com.notesis
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -204,7 +205,11 @@ internal fun SettingsSidebarFrame(
                 ) {
                     SidebarHeader(title, canGoBack, onBack, onClose)
                     HorizontalDivider(color = scheme.outlineVariant)
-                    Box(Modifier.weight(1f).fillMaxWidth()) { body() }
+                    // The pages pad their content by [SIDEBAR_INSET], so the
+                    // cards and rows on them are concentric with the panel.
+                    Box(Modifier.weight(1f).fillMaxWidth()) {
+                        NestedCorners(if (full) 0.dp else Ui.Corner.sheet, SIDEBAR_INSET) { body() }
+                    }
                 }
             }
         }
@@ -290,7 +295,10 @@ internal fun NoteSettingsSidebar(
         onWidthChange = onWidthChange,
         modifier = modifier,
     ) {
-        Crossfade(targetState = nav.current, animationSpec = tween(160), label = "settings page") { page ->
+        // Material and Glassmorphism turn the page at once; their chrome does not move.
+        Crossfade(targetState = nav.current,
+            animationSpec = if (LocalSkin.current.animatesChrome) tween(160) else snap(),
+            label = "settings page") { page ->
             val content: @Composable () -> Unit = {
                 when (page) {
                     SettingsPage.ROOT -> SettingsRoot(quickActions) { onNav(latestNav.open(it)) }
@@ -308,7 +316,7 @@ internal fun NoteSettingsSidebar(
             }
             if (page.scrolls) {
                 Column(
-                    Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(Ui.Space.l),
+                    Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(SIDEBAR_INSET),
                     verticalArrangement = Arrangement.spacedBy(Ui.Space.m),
                 ) { content() }
             } else {
@@ -350,7 +358,7 @@ private fun SettingsNavRow(page: SettingsPage, onClick: () -> Unit) {
         Modifier
             .fillMaxWidth()
             .heightIn(min = 60.dp)
-            .clip(Ui.Shape.control)
+            .clip(RoundedCornerShape(nestedCorner(Ui.Corner.control)))
             .background(scheme.onSurface.copy(alpha = 0.05f))
             .clickable(role = Role.Button, onClick = onClick)
             .semantics(mergeDescendants = true) {}
@@ -388,16 +396,25 @@ internal fun SettingsNote(text: String, modifier: Modifier = Modifier) {
 /** A rounded block that groups related settings. */
 @Composable
 internal fun SettingsCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    // Concentric with whatever holds it - the sidebar, a dialog - and the
+    // card in turn hands its own corner, one padding in, to what it holds.
+    val corner = nestedCorner(Ui.Corner.card)
     Column(
         modifier
             .fillMaxWidth()
-            .clip(Ui.Shape.card)
+            .clip(RoundedCornerShape(corner))
             .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
             .padding(Ui.Space.l),
         verticalArrangement = Arrangement.spacedBy(Ui.Space.s),
-        content = content,
-    )
+    ) {
+        NestedCorners(corner, Ui.Space.l) {
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Ui.Space.s), content = content)
+        }
+    }
 }
+
+/** How far the sidebar's pages are padded in from its edge. */
+private val SIDEBAR_INSET = Ui.Space.l
 
 /**
  * On or off, with the whole row as the target. A row that cannot be changed

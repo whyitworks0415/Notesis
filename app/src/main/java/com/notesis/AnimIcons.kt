@@ -253,9 +253,11 @@ internal fun AnimIconImage(
 ) {
     val time = remember(icon) { Animatable(0f) }
     var first by remember { mutableStateOf(true) }
+    // Material and Glassmorphism hold their icons still, whatever the icon set.
+    val skinMoves = LocalSkin.current.animatesChrome
     LaunchedEffect(icon, play) {
         if (first) { first = false; return@LaunchedEffect }
-        if (!AppIconStyle.animate) return@LaunchedEffect
+        if (!AppIconStyle.animate || !skinMoves) return@LaunchedEffect
         time.snapTo(0f)
         time.animateTo(icon.length, tween((icon.length * 1000).toInt().coerceAtLeast(1), easing = LinearEasing))
         time.snapTo(0f)

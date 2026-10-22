@@ -1,6 +1,8 @@
 package com.notesis
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -138,11 +140,32 @@ internal class PenColorState(argb: Int) {
 }
 
 /**
- * Where the toolbar sits on screen, the point the pen panel grows out of and
- * folds back into. Written by the bar as it is laid out; null before then.
+ * Where a popup opened from the toolbar grows out of and folds back into: the
+ * point on screen that was just tapped - the pen tapped again, the Functions
+ * button - or, for one opened some other way, the middle of the bar's lower
+ * edge ([screen]), which the bar writes as it is laid out.
  */
 internal object PenPopupAnchor {
+    /** The middle of the bar's lower edge on screen; null before it is laid out. */
     @Volatile var screen: Offset? = null
+    @Volatile private var tap: Offset? = null
+    @Volatile private var tapAt = 0L
+
+    /** Called for every touch that lands on the bar, before anything handles it. */
+    fun tapped(at: Offset) {
+        tap = at
+        tapAt = android.os.SystemClock.uptimeMillis()
+    }
+
+    /** The bar's last touch, if it was recent enough to be what opened a popup. */
+    fun recentTap(): Offset? =
+        tap?.takeIf { android.os.SystemClock.uptimeMillis() - tapAt <= TAP_OPENS_WITHIN_MS }
+
+    /** Where the pen panel grows from. */
+    fun point(): Offset? = recentTap() ?: screen
+
+    /** Longer than any tap and the frame it takes to open what it opened. */
+    private const val TAP_OPENS_WITHIN_MS = 1500L
 }
 
 /** The pen panel's title for each tool. */
@@ -223,7 +246,9 @@ internal fun PenDialog(
 
     // Open: grow from the bar. Close: fold back, and only then hand the
     // result over, since the host takes the panel away the moment it has it.
-    val animate = rememberLiquidGlassEffectsAllowed()
+    // Material has no motion: the panel is simply there, and simply gone.
+    val skin = LocalSkin.current
+    val animate = skin.animatesPopups && rememberLiquidGlassEffectsAllowed()
     val progress = remember { Animatable(if (animate) 0f else 1f) }
     var closing by remember { mutableStateOf<(() -> Unit)?>(null) }
     LaunchedEffect(closing) {
@@ -241,50 +266,37 @@ internal fun PenDialog(
     }
     fun keep() = close { onConfirm(current()) }
     fun cancel() = close(onDismiss)
-    var origin by remember { mutableStateOf(TransformOrigin(0.5f, 0f)) }
+    val anchor = remember { PenPopupAnchor.point() }
     val wide = LocalConfiguration.current.screenWidthDp >= 720
 
     Dialog(onDismissRequest = ::keep, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         // A light dim: the page should still show through the glass.
         (LocalView.current.parent as? DialogWindowProvider)?.window?.setDimAmount(0.12f)
-        val shape = Ui.Shape.sheet
+        // The panel's own corner is the one fixed radius - the skin's, under
+        // glass - and everything inside follows it, one inset in.
+        val corner = if (skin == Skin.MATERIAL) Ui.Corner.sheet else skin.tokens().corner
+        val shape = if (skin == Skin.SPOTIGLASS) SpotiGlassShape(corner) else RoundedCornerShape(corner)
         val tallest = LocalConfiguration.current.screenHeightDp.dp * 0.9f
+        ProvideMovingBackdrops({ progress.value }) {
+        NestedCorners(corner, PANEL_INSET) {
         Column(
             Modifier
                 .padding(Ui.Space.l)
                 .widthIn(max = if (wide) 880.dp else 600.dp)
                 .fillMaxWidth()
                 .heightIn(max = tallest)
-                // Before the layer, so the bounds are the panel's own, unscaled.
-                .onGloballyPositioned { coordinates ->
-                    val anchor = PenPopupAnchor.screen ?: return@onGloballyPositioned
-                    val at = coordinates.positionOnScreen()
-                    val w = coordinates.size.width.toFloat()
-                    val h = coordinates.size.height.toFloat()
-                    if (w > 0f && h > 0f) {
-                        origin = TransformOrigin(((anchor.x - at.x) / w).coerceIn(0f, 1f), ((anchor.y - at.y) / h).coerceIn(0f, 1f))
-                    }
-                }
-                .graphicsLayer {
-                    val t = progress.value
-                    alpha = t.coerceIn(0f, 1f)
-                    scaleX = 0.82f + 0.18f * t
-                    scaleY = 0.82f + 0.18f * t
-                    transformOrigin = origin
-                }
-                .liquidGlass(
-                    shape = shape,
-                    surfaceColor = MaterialTheme.colorScheme.surface,
-                    surfaceOpacity = 0.86f,
-                    useSpotiStyle = false,
-                )
+                .growOutOf({ anchor }) { progress.value }
+                // Liquid glass under the glass skin, the same lens as the bar
+                // it came from; frost or a solid panel under the others.
+                .skinMaterial(shape, panel = true)
                 .clip(shape)
                 // Outside the scroll, so the panel's own height follows its
                 // content as the detail opens and closes.
-                .animateContentSize()
+                .then(if (animate) Modifier.animateContentSize() else Modifier)
                 .verticalScroll(rememberScrollState())
-                // A dialog's own inset, the one Material's dialogs use.
-                .padding(horizontal = Ui.Space.xl, vertical = Ui.Space.l),
+                // One inset all round, so the rows and chips inside are
+                // concentric with the panel's corner.
+                .padding(PANEL_INSET),
             verticalArrangement = Arrangement.spacedBy(GAP),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -401,8 +413,8 @@ internal fun PenDialog(
             }
             AnimatedVisibility(
                 visible = details,
-                enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
-                exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(),
+                enter = if (animate) expandVertically(expandFrom = Alignment.Top) + fadeIn() else EnterTransition.None,
+                exit = if (animate) shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut() else ExitTransition.None,
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(GAP)) {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -468,8 +480,13 @@ internal fun PenDialog(
                 }
             }
         }
+        }
+        }
     }
 }
+
+/** The pen panel's padding, all round; its rows' corners follow from it. */
+private val PANEL_INSET = Ui.Space.l
 
 /**
  * The writing settings every pen shares, for the settings sidebar. The
@@ -679,7 +696,9 @@ private val BAR_WIDTH = 34.dp
 private val LABEL_HEIGHT = 18.dp
 private val FIELD_HEIGHT = 56.dp
 private val PALETTE_WIDTH = 96.dp
-private val PICKER_SHAPE = Ui.Shape.control
+/** The colour fields' corner: concentric with the panel they sit in. */
+private val pickerShape: androidx.compose.ui.graphics.Shape
+    @Composable get() = RoundedCornerShape(nestedCorner(Ui.Corner.control))
 
 /** A section's name with a hairline running out to the right edge. */
 @Composable
@@ -806,13 +825,13 @@ private fun PaletteBeside(main: @Composable () -> Unit, palette: @Composable () 
 @Composable
 private fun SquarePicker(color: PenColorState, joined: Boolean) {
     Column(
-        Modifier.fillMaxWidth().height(PICKER_HEIGHT).then(if (joined) Modifier.clip(PICKER_SHAPE) else Modifier),
+        Modifier.fillMaxWidth().height(PICKER_HEIGHT).then(if (joined) Modifier.clip(pickerShape) else Modifier),
         verticalArrangement = Arrangement.spacedBy(if (joined) 0.dp else GAP),
     ) {
         SaturationValueField(
             color.hue, color.saturation, color.value,
             modifier = Modifier.fillMaxWidth().weight(1f),
-            shape = if (joined) RectangleShape else PICKER_SHAPE,
+            shape = if (joined) RectangleShape else pickerShape,
         ) { s, v ->
             color.saturation = s
             color.value = v
@@ -830,7 +849,7 @@ private fun SquarePicker(color: PenColorState, joined: Boolean) {
 @Composable
 private fun BarsPicker(color: PenColorState, joined: Boolean) {
     Row(
-        Modifier.fillMaxWidth().height(PICKER_HEIGHT).then(if (joined) Modifier.clip(PICKER_SHAPE) else Modifier),
+        Modifier.fillMaxWidth().height(PICKER_HEIGHT).then(if (joined) Modifier.clip(pickerShape) else Modifier),
         horizontalArrangement = Arrangement.spacedBy(if (joined) 0.dp else GAP),
     ) {
         VerticalStrip(HUES, color.hue / 360f, "H", joined) { color.hue = it * 360f }
@@ -850,7 +869,7 @@ private fun BarsPicker(color: PenColorState, joined: Boolean) {
                 Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .then(if (joined) Modifier else Modifier.clip(PICKER_SHAPE))
+                    .then(if (joined) Modifier else Modifier.clip(pickerShape))
                     .background(Color.White)
                     .background(Color(color.argb())),
                 contentAlignment = if (joined) Alignment.TopStart else Alignment.BottomStart,
@@ -950,7 +969,7 @@ private fun RgbPicker(color: PenColorState, joined: Boolean) {
     }
     Row(Modifier.fillMaxWidth().height(PICKER_HEIGHT), horizontalArrangement = Arrangement.spacedBy(GAP)) {
         Column(
-            Modifier.weight(1f).fillMaxHeight().then(if (joined) Modifier.clip(PICKER_SHAPE) else Modifier),
+            Modifier.weight(1f).fillMaxHeight().then(if (joined) Modifier.clip(pickerShape) else Modifier),
             verticalArrangement = Arrangement.spacedBy(if (joined) 0.dp else GAP),
         ) {
             channels.forEach { (label, channel, ramp) ->
@@ -959,7 +978,7 @@ private fun RgbPicker(color: PenColorState, joined: Boolean) {
                         colors = ramp,
                         position = channel / 255f,
                         modifier = Modifier.fillMaxSize(),
-                        shape = if (joined) RectangleShape else PICKER_SHAPE,
+                        shape = if (joined) RectangleShape else pickerShape,
                     ) { set(label, (it * 255f).roundToInt()) }
                     Text(
                         label,
@@ -1050,7 +1069,7 @@ private fun PalettePanel(color: PenColorState, opacity: Boolean) {
     Column(
         Modifier
             .fillMaxSize()
-            .clip(PICKER_SHAPE)
+            .clip(pickerShape)
             .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
             .verticalScroll(rememberScrollState())
             .padding(GAP),
@@ -1250,9 +1269,9 @@ private fun StrokePreview(width: Float, color: Color?, linePattern: Int, modifie
     val outline = MaterialTheme.colorScheme.outline
     Canvas(
         modifier
-            .clip(PICKER_SHAPE)
+            .clip(pickerShape)
             .background(Color.White)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, PICKER_SHAPE),
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, pickerShape),
     ) {
         val stroke = width.dp.toPx().coerceIn(1f, size.height * 0.45f)
         if (color == null) {

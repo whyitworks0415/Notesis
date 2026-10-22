@@ -52,13 +52,9 @@ private fun PreviewGlass() = ChromeSample(Skin.GLASSMORPHISM, SkinSettings())
 
 @Preview(name = "Controls · Liquid glass", widthDp = 420, heightDp = 340)
 @Composable
-private fun PreviewLiquidGlass() = ChromeSample(Skin.LIQUID_GLASS, SkinSettings())
-
-@Preview(name = "Controls · Glass bar", widthDp = 420, heightDp = 340)
-@Composable
 private fun PreviewSpotiGlass() = ChromeSample(Skin.SPOTIGLASS, SkinSettings())
 
-@Preview(name = "Controls · Glass bar dark", widthDp = 420, heightDp = 340)
+@Preview(name = "Controls · Liquid glass dark", widthDp = 420, heightDp = 340)
 @Composable
 private fun PreviewSpotiGlassDark() = ChromeSample(Skin.SPOTIGLASS, SkinSettings(themeMode = AppThemeMode.DARK))
 
@@ -82,7 +78,7 @@ private fun PreviewInk() = ChromeSample(
 @Preview(name = "Controls · Dark mode", widthDp = 420, heightDp = 340)
 @Composable
 private fun PreviewDark() = ChromeSample(
-    Skin.LIQUID_GLASS,
+    Skin.GLASSMORPHISM,
     SkinSettings(themeMode = AppThemeMode.DARK),
 )
 

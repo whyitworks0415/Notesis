@@ -259,10 +259,13 @@ class PenStore(context: Context) {
         prefs.edit().putString("colorTemplates", array.toString()).apply()
     }
 
-    /** How the chrome is dressed. Material until someone says otherwise. */
+    /**
+     * How the chrome is dressed. Material until someone says otherwise. Read
+     * through [Skin.fromName], so the retired lens skin - here or in an
+     * imported settings file - comes back as Liquid glass.
+     */
     var skin: Skin
-        get() = runCatching { Skin.valueOf(prefs.getString(SKIN, "")!!) }
-            .getOrDefault(Skin.MATERIAL)
+        get() = Skin.fromName(prefs.getString(SKIN, null))
         set(value) = prefs.edit().putString(SKIN, value.name).apply()
 
     /** Whether the toolbar sits flush along the top edge rather than floating. */

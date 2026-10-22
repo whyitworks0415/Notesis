@@ -58,6 +58,9 @@ fun LiquidSegmentedControl(
     val selected = selectedIndex.coerceIn(segments.indices)
     val latestSelect by rememberUpdatedState(onSelected)
     val effectsAllowed = rememberLiquidGlassEffectsAllowed()
+    // Still skins keep one motion: the selection slides across without
+    // stretching, as the toolbar's highlight does.
+    val still = !LocalSkin.current.animatesChrome
     val morph = remember { Animatable(0f) }
     var previous by remember { mutableIntStateOf(selected) }
 
@@ -65,7 +68,7 @@ fun LiquidSegmentedControl(
         if (previous != selected) {
             previous = selected
             morph.snapTo(0f)
-            if (!effectsAllowed) return@LaunchedEffect
+            if (!effectsAllowed || still) return@LaunchedEffect
             // 이동 초반에는 캡슐이 늘어나고, 도착하면서 spring으로 돌아옵니다.
             morph.animateTo(1f, tween(90))
             morph.animateTo(
@@ -103,13 +106,13 @@ fun LiquidSegmentedControl(
         val targetX = segmentWidth * selected
         val indicatorX by animateDpAsState(
             targetValue = targetX,
-            animationSpec = if (effectsAllowed) {
-                spring(
+            animationSpec = when {
+                !effectsAllowed -> snap()
+                still -> tween(SEGMENT_SLIDE_MS, easing = SineInOutEasing)
+                else -> spring(
                     dampingRatio = LiquidGlassTokens.segmentDampingRatio,
                     stiffness = 420f,
                 )
-            } else {
-                snap()
             },
             label = "Segment indicator position",
         )
@@ -195,3 +198,6 @@ private fun LiquidSegmentedControlPreview() {
         }
     }
 }
+
+/** How long a still skin's segment highlight takes to slide across. */
+private const val SEGMENT_SLIDE_MS = 260

@@ -35,6 +35,7 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -45,6 +46,21 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 data class SpotiGlassItem(val label: String, val icon: ImageVector? = null, val color: Color? = null)
+
+/** What a [SpotiGlassBar] is drawn on. */
+enum class SpotiBarSurface {
+    /** Its own frosted capsule: a bar standing alone inside a panel. */
+    FROST,
+    /** Its own capsule of the liquid glass the toolbar is made of. */
+    LIQUID,
+    /**
+     * Nothing of its own: the bar is content on a surface that is already
+     * there, as the tool strip is on the full toolbar. A second translucent
+     * layer over the first showed the page through both, darker and blurred
+     * twice inside the strip, with a step in colour at its edge.
+     */
+    NONE,
+}
 
 /** x = centre, y = width, z = height of a lens body kept inside the bar. */
 internal data class SpotiGlassLensBody(val x: Float, val y: Float, val z: Float)
@@ -112,6 +128,9 @@ fun SpotiGlassBar(
     items: List<SpotiGlassItem>, selectedIndex: Int, onSelected: (Int) -> Unit,
     modifier: Modifier = Modifier,
     showLabels: Boolean = true, compact: Boolean = false,
+    /** The capsule's own radius; the resting pill inside it is concentric with it. */
+    corner: Dp = LocalSkinSettings.current.spotiglassCorner.dp,
+    surface: SpotiBarSurface = SpotiBarSurface.FROST,
 ) {
     require(items.isNotEmpty())
     val look = LocalSkinSettings.current
@@ -143,6 +162,10 @@ fun SpotiGlassBar(
     val padding = 6.dp
     val cellHeight = barHeight - padding * 2
     val fill = scheme.onSurface.copy(alpha = if (dark) 0.12f else 0.08f)
+    // The pill sits [padding] inside the capsule, so its curve is the
+    // capsule's moved in by that much - measured from the radius the capsule
+    // can actually draw at this height, not from the setting.
+    val restRadius = Ui.concentric(drawnRadius(corner.value, Float.MAX_VALUE, barHeight.value).dp, padding)
     BoxWithConstraints(modifier.height(barHeight + 16.dp).selectableGroup()) {
         val cell = (maxWidth - padding * 2).coerceAtLeast(1.dp) / items.size
         val widthPx = with(density) { cell.toPx() * items.size }
@@ -187,7 +210,9 @@ fun SpotiGlassBar(
             return SpotiGlassLensFrame(
                 center = with(density) { Offset(body.x, (8.dp + barHeight / 2).toPx()) },
                 size = Size(body.y, body.z),
-                radius = with(density) { (h / 2).toPx() } * (look.spotiglassCorner / 32f).coerceIn(0f, 1.5f),
+                // The lens grows out of the resting pill, so its curve grows
+                // with it from the same radius.
+                radius = with(density) { restRadius.toPx() * (h / cellHeight) },
                 scale = Offset(sx, sy), progress = motion.progress, presence = motion.presence, fill = fill,
                 distortion = 0.04f * (look.refraction / 24f), band = look.depth,
                 dispersion = 0.002f * (look.dispersion / 0.35f), borderWidth = 1.2f)
@@ -215,8 +240,12 @@ fun SpotiGlassBar(
             }
         @Composable
         fun Frost() {
-            Box(Modifier.fillMaxWidth().height(barHeight).align(Alignment.Center)
-                .spotiGlassSurface(SpotiGlassShape(look.spotiglassCorner.dp), look, navigation = true))
+            val capsule = Modifier.fillMaxWidth().height(barHeight).align(Alignment.Center)
+            when (surface) {
+                SpotiBarSurface.FROST -> Box(capsule.spotiGlassSurface(SpotiGlassShape(corner), look, navigation = true))
+                SpotiBarSurface.LIQUID -> Box(capsule.liquidGlassPane(SpotiGlassShape(corner)))
+                SpotiBarSurface.NONE -> Unit
+            }
         }
         // The same frosted capsule remains in the source at rest and on press.
         // Refract the capsule and both icon shells in the same optical scene.
@@ -229,7 +258,7 @@ fun SpotiGlassBar(
                 if (showPill()) {
                     val frame = lensFrame()
                     val body = if (moving()) frame.size else Size(cell.toPx(), cellHeight.toPx())
-                    val radius = if (moving()) frame.radius else body.height / 2 * (look.spotiglassCorner / 32f)
+                    val radius = if (moving()) frame.radius else restRadius.toPx()
                     val path = spotiGlassPath(body, radius).apply {
                         translate(frame.center - Offset(body.width / 2, body.height / 2))
                     }
@@ -278,7 +307,7 @@ fun SpotiGlassBar(
                 val sy = if (raised) frame.scale.y else 1f
                 val restSize = if (raised) Size(frame.size.width / sx, frame.size.height / sy)
                     else with(density) { Size(cell.toPx(), cellHeight.toPx()) }
-                val radius = if (raised) frame.radius else with(density) { cellHeight.toPx() / 2 * (look.spotiglassCorner / 32f) }
+                val radius = if (raised) frame.radius else with(density) { restRadius.toPx() }
                 val path = spotiGlassPath(restSize, radius)
                 path.translate(Offset(-restSize.width / 2, -restSize.height / 2))
                 withTransform({ translate(cx, cy); scale(sx, sy, pivot = Offset.Zero) }) {

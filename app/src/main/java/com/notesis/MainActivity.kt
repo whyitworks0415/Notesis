@@ -3777,7 +3777,8 @@ private fun NoteScreen(
     val toolbarEffects = rememberLiquidGlassEffectsAllowed() && !LocalSkinSettings.current.highContrast
     val floatingBarWidth = animateDpAsState(
         minOf(maxBarWidth, spotiToolbarWidth(toolbarSize)),
-        if (skin != Skin.MATERIAL && toolbarEffects) ToolbarMotion.spec() else tween(0),
+        // Material and Glassmorphism switch sizes at once; only Liquid glass morphs.
+        if (skin.animatesChrome && toolbarEffects) ToolbarMotion.spec() else tween(0),
         label = "Top bar mode width",
     )
     var showLatency by remember { mutableStateOf(false) }
@@ -6924,7 +6925,7 @@ private fun PageScrubber(
     val density = LocalDensity.current
     val scheme = MaterialTheme.colorScheme
     val liquid = LocalSkin.current.isRefractive
-    // Glass bar mode draws the horizontal slider stood on end, whose lens
+    // Liquid glass draws the horizontal slider stood on end, whose lens
     // centre stops [SPOTI_SLIDER_START] short of each end. The page mapping
     // uses the same reach so the finger and the lens stay on one line.
     val spoti = LocalSkin.current == Skin.SPOTIGLASS
@@ -6942,7 +6943,7 @@ private fun PageScrubber(
     // it eases onto that page's place on the track.
     var dragFraction by remember { mutableFloatStateOf(NOT_DRAGGING) }
     var pressed by remember { mutableStateOf(false) }
-    val shown = sliderShownFraction(fraction, dragFraction)
+    val shown = sliderShownFraction(fraction, dragFraction, animate = LocalSkin.current.animatesChrome)
     val thumbY = (shown * travel).roundToInt()
 
     fun jumpAt(y: Float) {
@@ -7075,7 +7076,7 @@ private fun PageScrubber(
                 }
             }
         }
-        // Glass bar mode drew its own lens with the rail above: solid at rest,
+        // Liquid glass drew its own lens with the rail above: solid at rest,
         // glass only while held, exactly as the horizontal slider does.
         if (!spoti) {
             SkinSurface(modifier = thumbPlace, corner = 100.dp) { pageLabel() }

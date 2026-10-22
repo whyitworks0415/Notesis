@@ -57,7 +57,9 @@ fun AlertDialog(
         dismissButton = dismissButton,
         icon = icon,
         title = title,
-        text = text,
+        // A dialog's fields and cards sit one dialog padding in from its
+        // corner, so their corners are the dialog's moved in by that.
+        text = if (text == null) null else { { NestedCorners(Ui.Corner.sheet, DIALOG_INSET) { text() } } },
         shape = shape,
         containerColor = containerColor,
         tonalElevation = tonalElevation,
@@ -144,6 +146,9 @@ fun BlurBehind() {
 }
 
 private const val DIM = 0.18f
+
+/** Material's dialog padding: how far a dialog's content sits from its edge. */
+private val DIALOG_INSET = 24.dp
 
 /** The compositor's own ceiling; past this it clamps and costs more anyway. */
 private const val MAX_BLUR_PX = 150

@@ -212,6 +212,34 @@ fun Modifier.liquidGlass(
     return result
 }
 
+/**
+ * Liquid glass's own material, the one the toolbar, its tool strip, its
+ * button and the popups opened from it are all made of: the page behind,
+ * blurred and bent at the edge by the lens, under a thin coat of the surface
+ * colour. The coat is the toolbar opacity the person set; a [panel] carries
+ * text and keeps at least [LIQUID_PANEL_MIN_OPACITY] of it, so a paragraph
+ * over handwriting stays readable. The lens bends only the backdrop, never the
+ * icons and text drawn on top, so those stay sharp.
+ */
+@Composable
+internal fun Modifier.liquidGlassPane(shape: Shape, panel: Boolean = false): Modifier {
+    val look = LocalSkinSettings.current
+    val opacity = look.spotiglassToolbarOpacity.coerceIn(0f, 1f).let {
+        if (panel) maxOf(it, LIQUID_PANEL_MIN_OPACITY) else it
+    }
+    return liquidGlass(
+        shape = shape,
+        settings = look,
+        surfaceColor = MaterialTheme.colorScheme.surface.copy(alpha = opacity),
+        shadowElevation = if (panel) 8.dp else 3.dp,
+        useSpotiStyle = false,
+        surfaceOpacity = opacity,
+    )
+}
+
+/** The least a liquid glass panel with text on it is coated. */
+private const val LIQUID_PANEL_MIN_OPACITY = 0.55f
+
 /** 기기별 셰이더 컴파일 차이가 없는 Backdrop 기본 렌즈를 사용하는 안전 경로입니다. */
 private fun com.kyant.backdrop.BackdropEffectScope.directionalLens(
     refractionHeight: Float,

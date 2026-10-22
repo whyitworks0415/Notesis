@@ -1,8 +1,14 @@
 package com.notesis
 
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
@@ -44,7 +50,21 @@ object Ui {
         val card = 20.dp
         /** Dialogs and sheets: the outermost container on screen. */
         val sheet = 28.dp
+        /**
+         * The least a nested element is rounded, however deep it sits: below
+         * this a tile in a round panel reads as square.
+         */
+        val nestedMin = 6.dp
     }
+
+    /**
+     * The radius for an element [inset] inside a container rounded at
+     * [outer], so the two curves run parallel - iOS's concentric corners.
+     * The container's radius is the one fixed number; everything inside it
+     * is derived from it, never chosen on its own.
+     */
+    fun concentric(outer: Dp, inset: Dp, min: Dp = Corner.nestedMin): Dp =
+        concentricRadius(outer.value, inset.value, min.value).dp
 
     object Shape {
         val badge = RoundedCornerShape(Corner.badge)
@@ -100,3 +120,41 @@ object Ui {
         extraLarge = Shape.sheet,
     )
 }
+
+/**
+ * The corner an element should take where it is: set by a rounded container
+ * for what sits inside it (see [NestedCorners]), null where nothing has said.
+ */
+internal val LocalNestedCorner = staticCompositionLocalOf<Dp?> { null }
+
+/**
+ * Tells everything in [content] that it sits [inset] inside a container
+ * rounded at [outer]. Elements that read [nestedCorner] - menu buttons,
+ * cards, rows, a dialog's fields - then take the concentric radius instead of
+ * a fixed one. A square container ([outer] of zero, a panel flush with the
+ * window) has no curve to follow, so it leaves its content as it was.
+ */
+@Composable
+internal fun NestedCorners(outer: Dp, inset: Dp, content: @Composable () -> Unit) {
+    if (outer <= 0.dp) {
+        CompositionLocalProvider(LocalNestedCorner provides null, content = content)
+        return
+    }
+    val corner = Ui.concentric(outer, inset)
+    val nested = RoundedCornerShape(corner)
+    // A theme hands out its own indication, so the skin's is carried in.
+    val indication = LocalIndication.current
+    // Material's own fields, menus and chips ask the theme for their corner,
+    // so the theme's small shapes follow the container too.
+    MaterialTheme(shapes = MaterialTheme.shapes.copy(extraSmall = nested, small = nested)) {
+        CompositionLocalProvider(
+            LocalNestedCorner provides corner,
+            LocalIndication provides indication,
+            content = content,
+        )
+    }
+}
+
+/** The concentric corner [NestedCorners] set here, or [fallback] outside one. */
+@Composable
+internal fun nestedCorner(fallback: Dp): Dp = LocalNestedCorner.current ?: fallback

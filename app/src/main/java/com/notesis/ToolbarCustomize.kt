@@ -267,10 +267,13 @@ internal fun currentToolbarConfig(): ToolbarConfig = LocalToolbarConfig.current 
 @Composable
 internal fun ToolbarStageSelector(selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifier) {
     val scheme = MaterialTheme.colorScheme
+    // Concentric with the menu or page it sits in, and each size's cell with it.
+    val outer = nestedCorner(Ui.Corner.control)
+    val cell = RoundedCornerShape(Ui.concentric(outer, Ui.Space.xs))
     Row(
         modifier
             .fillMaxWidth()
-            .clip(Ui.Shape.control)
+            .clip(RoundedCornerShape(outer))
             .background(scheme.onSurface.copy(alpha = 0.06f))
             .padding(Ui.Space.xs),
         horizontalArrangement = Arrangement.spacedBy(Ui.Space.xs),
@@ -282,7 +285,7 @@ internal fun ToolbarStageSelector(selected: Int, onSelect: (Int) -> Unit, modifi
                 Modifier
                     .weight(1f)
                     .heightIn(min = 52.dp)
-                    .clip(Ui.Shape.chip)
+                    .clip(cell)
                     .background(if (on) scheme.primaryContainer else Color.Transparent)
                     .semantics(mergeDescendants = true) {
                         contentDescription = "Toolbar size ${level + 1} of 4, ${ToolbarConfig.STAGE_NAMES[level]}"
