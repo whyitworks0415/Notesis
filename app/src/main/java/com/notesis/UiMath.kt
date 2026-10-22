@@ -187,7 +187,7 @@ internal fun popupGrowScale(progress: Float, start: Float): Float = start + (1f 
 internal fun popupGrowAlpha(width: Float, height: Float): Float =
     (minOf(width, height) / POPUP_OPAQUE_AT).coerceIn(0f, 1f)
 
-internal const val POPUP_OPAQUE_AT = 0.45f
+internal const val POPUP_OPAQUE_AT = 0.3f
 
 /**
  * The settings sidebar's content opacity as the panel slides in, [progress]

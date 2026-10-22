@@ -553,7 +553,9 @@ internal fun SpotiGlassToolbar(
                                         // is cast outside the morph, whose lens layer would cut
                                         // it off at the panel's edge while it plays.
                                         Box(paneModifier.skinShadow(outline, panel = true)
-                                            .spotiGlassMorph(page to open, enter = true)
+                                            // Only between the menu's pages: on top of coming out of
+                                            // the point, a lens ripple was one motion too many.
+                                            .spotiGlassMorph(page)
                                             .skinMaterial(outline, panel = true, shadow = false)) { menuBody() }
                                     } else {
                                         SkinSurface(paneModifier) {
@@ -659,12 +661,13 @@ private fun ToolbarMenuContent(
 }
 
 /**
- * How a popup opened from the toolbar grows and folds away: its [width] and
- * its [height], each from 0 to 1 on a curve of its own. Opening, the width
- * leads on a quick spring that just overshoots and the height follows on a
- * softer one, so the popup unfolds out of the button rather than swelling as
- * a fixed-ratio rectangle; closing, both fall away on an accelerating curve,
- * the height first. Material snaps.
+ * How a popup opened from the toolbar comes out of the point that was tapped
+ * and goes back into it: [width] and [height] run 0 to 1 together, on one
+ * curve, with no overshoot. Two axes on two springs, one of them bouncing,
+ * made the popup wobble as it arrived, and that was tiring to watch; one
+ * shape drawn out of a point and drawn back in reads as a single motion.
+ * Opening it shoots out and settles softly; closing it gathers speed into the
+ * point. Material snaps.
  */
 @Stable
 internal class PopupGrowth(shown: Boolean) {
@@ -677,39 +680,35 @@ internal class PopupGrowth(shown: Boolean) {
      */
     val motion: () -> Float = { width.value + height.value }
 
-    suspend fun open(animate: Boolean) = move(1f, animate, POPUP_OPEN_WIDTH, POPUP_OPEN_HEIGHT)
+    suspend fun open(animate: Boolean) = move(1f, animate, POPUP_OPEN)
 
-    suspend fun close(animate: Boolean) = move(0f, animate, POPUP_CLOSE_WIDTH, POPUP_CLOSE_HEIGHT)
+    suspend fun close(animate: Boolean) = move(0f, animate, POPUP_CLOSE)
 
     private suspend fun move(
         target: Float, animate: Boolean,
-        widthSpec: androidx.compose.animation.core.AnimationSpec<Float>,
-        heightSpec: androidx.compose.animation.core.AnimationSpec<Float>,
+        spec: androidx.compose.animation.core.AnimationSpec<Float>,
     ) {
         if (!animate) {
             width.snapTo(target)
             height.snapTo(target)
             return
         }
+        // The same curve on both, so the shape never changes proportion on the way.
         coroutineScope {
-            launch { width.animateTo(target, widthSpec) }
-            launch { height.animateTo(target, heightSpec) }
+            launch { width.animateTo(target, spec) }
+            launch { height.animateTo(target, spec) }
         }
     }
 }
 
-// Overshoots by about 4%: lively, and settled in well under a quarter second.
-// Stiffness goes with the square of speed, so these are about half again as
-// quick as the first ones (520 and 300), which felt slow to open.
-private val POPUP_OPEN_WIDTH = spring<Float>(dampingRatio = 0.72f, stiffness = 1150f)
-// Softer, so the height still arrives just after the width; about 1% over.
-private val POPUP_OPEN_HEIGHT = spring<Float>(dampingRatio = 0.82f, stiffness = 700f)
 // Material's emphasized accelerate: leaves slowly and is gone quickly.
 internal val EmphasizedAccelerateEasing = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)
 // Material's emphasized decelerate: arrives quickly and lands softly.
 internal val EmphasizedDecelerateEasing = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
-private val POPUP_CLOSE_WIDTH = tween<Float>(120, easing = EmphasizedAccelerateEasing)
-private val POPUP_CLOSE_HEIGHT = tween<Float>(90, easing = EmphasizedAccelerateEasing)
+// Out of the point: fast at first, then a soft landing at full size.
+private val POPUP_OPEN = tween<Float>(240, easing = EmphasizedDecelerateEasing)
+// Back into it: slow to leave, then drawn in quickly.
+private val POPUP_CLOSE = tween<Float>(180, easing = EmphasizedAccelerateEasing)
 
 /**
  * Grows a popup out of [anchor], a point on screen - the button or the tool
@@ -744,9 +743,12 @@ internal fun Modifier.growOutOf(anchor: () -> Offset?, growth: PopupGrowth): Mod
         }
 }
 
-/** How small a popup starts as it grows out of its button: narrower, and much shorter. */
-private const val POPUP_START_SCALE_X = 0.84f
-private const val POPUP_START_SCALE_Y = 0.55f
+/**
+ * How small a popup is at the point it comes out of: nearly nothing, so it is
+ * seen to come from where the finger was, the same on both axes.
+ */
+private const val POPUP_START_SCALE_X = 0.06f
+private const val POPUP_START_SCALE_Y = 0.06f
 
 /** The bar's switch between sizes: its length, and the curve it moves on. */
 @Composable

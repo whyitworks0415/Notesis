@@ -246,7 +246,7 @@ internal fun PenDialog(
     // Material has no motion: the panel is simply there, and simply gone.
     val skin = LocalSkin.current
     val animate = skin.animatesPopups && rememberLiquidGlassEffectsAllowed()
-    // Width first, then height, out of the bar (see [PopupGrowth]).
+    // Out of the point that was tapped, and back into it (see [PopupGrowth]).
     val growth = remember { PopupGrowth(shown = !animate) }
     var closing by remember { mutableStateOf<(() -> Unit)?>(null) }
     LaunchedEffect(closing) {
