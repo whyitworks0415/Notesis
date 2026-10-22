@@ -677,11 +677,11 @@ internal class PopupGrowth(shown: Boolean) {
      */
     val motion: () -> Float = { width.value + height.value }
 
-    suspend fun open(animate: Boolean) = to(1f, animate, POPUP_OPEN_WIDTH, POPUP_OPEN_HEIGHT)
+    suspend fun open(animate: Boolean) = move(1f, animate, POPUP_OPEN_WIDTH, POPUP_OPEN_HEIGHT)
 
-    suspend fun close(animate: Boolean) = to(0f, animate, POPUP_CLOSE_WIDTH, POPUP_CLOSE_HEIGHT)
+    suspend fun close(animate: Boolean) = move(0f, animate, POPUP_CLOSE_WIDTH, POPUP_CLOSE_HEIGHT)
 
-    private suspend fun to(
+    private suspend fun move(
         target: Float, animate: Boolean,
         widthSpec: androidx.compose.animation.core.AnimationSpec<Float>,
         heightSpec: androidx.compose.animation.core.AnimationSpec<Float>,
