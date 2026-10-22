@@ -4155,7 +4155,15 @@ private fun NoteScreen(
         // and a surface drawn into a recording moves to wherever the glass
         // draws that recording - the ink then showed beside the pen until it
         // lifted. Turned with the note, as the view is below.
+        // The turn each recording was made at. Pausing the glass while the page
+        // is busy is right for ink and scrolling, whose frost a moment late
+        // nobody sees; a turned note is the whole picture at a new angle, and
+        // the glass showed the old one until the screen went idle, or kept it
+        // when nothing else came along to ask for a redraw.
+        val recordedTurn = remember { floatArrayOf(Float.NaN) }
+        val turnStale: () -> Boolean = { recordedTurn[0] != noteRotation }
         val pageBackdrop: DrawScope.() -> Unit = {
+            recordedTurn[0] = noteRotation
             drawRect(desk)
             val view = canvas
             if (view != null) {
@@ -4174,7 +4182,7 @@ private fun NoteScreen(
                 // redraw anywhere (a clock tick, a spinner) re-ran both page
                 // recordings and every pane of glass sampling them.
                 .graphicsLayer()
-                .recordBackdrop(backdrop, pageBackdrop)
+                .recordBackdrop(backdrop, pageBackdrop, stale = turnStale)
                 .onGloballyPositioned { pageLayerOrigin = it.positionOnScreen() }
                 .then(
                     if (skin.isRefractive) {
@@ -4183,7 +4191,8 @@ private fun NoteScreen(
                             // Any canvas busy - this one, or the reference panel's -
                             // and through the short settle after: the panes keep the
                             // last recording until the screen is idle again.
-                            paused = { drawingPage || movingPage || InteractionGovernor.observed != Interaction.IDLE },
+                            paused = { !turnStale() &&
+                                (drawingPage || movingPage || InteractionGovernor.observed != Interaction.IDLE) },
                             source = pageBackdrop,
                         )
                     } else {

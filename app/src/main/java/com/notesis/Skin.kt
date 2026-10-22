@@ -308,7 +308,12 @@ fun rememberBackdrop(active: Boolean): Backdrop {
  * drawn as usual. A source is how a screen keeps a view that holds surfaces
  * out of the recording.
  */
-fun Modifier.recordBackdrop(backdrop: Backdrop, source: (DrawScope.() -> Unit)? = null): Modifier {
+fun Modifier.recordBackdrop(
+    backdrop: Backdrop,
+    source: (DrawScope.() -> Unit)? = null,
+    /** True when the last recording no longer matches the page and must be redone even while paused. */
+    stale: (() -> Boolean)? = null,
+): Modifier {
     val layer = backdrop.layer ?: return this
     return this
         .onGloballyPositioned { backdrop.origin = it.positionInRoot() }
@@ -318,7 +323,7 @@ fun Modifier.recordBackdrop(backdrop: Backdrop, source: (DrawScope.() -> Unit)? 
             // governor covers every canvas, the reference panel's too, and
             // the settle after a stroke, so strokes in quick succession do not
             // re-record the page in each gap between them.
-            if (backdrop.paused || InteractionGovernor.observed != Interaction.IDLE) {
+            if (stale?.invoke() != true && (backdrop.paused || InteractionGovernor.observed != Interaction.IDLE)) {
                 drawContent()
                 return@drawWithContent
             }
