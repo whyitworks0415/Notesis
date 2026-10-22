@@ -358,7 +358,7 @@ internal fun DiagnosticsSettings(
             WORK_COUNTERS.forEach { it.set(0L) }
             view?.latency?.reset()
             tick++
-        }, modifier = Modifier.heightIn(min = 44.dp)) { Text("Reset counters") }
+        }, modifier = Modifier.heightIn(min = Ui.Size.touchCompact)) { Text("Reset counters") }
     }
     SettingsCard {
         SettingsSectionHeader("Compare conditions")
@@ -367,7 +367,7 @@ internal fun DiagnosticsSettings(
             "highest refresh rate, then paste the four side by side.")
         TextButton(onClick = {
             clipboard.setText(AnnotatedString(Measurements.report(context, view, zoomPercent)))
-        }, modifier = Modifier.heightIn(min = 44.dp)) { Text("Copy measurements") }
+        }, modifier = Modifier.heightIn(min = Ui.Size.touchCompact)) { Text("Copy measurements") }
     }
     SettingsCard {
         SettingsSectionHeader("Device")
@@ -387,11 +387,11 @@ internal fun DiagnosticsSettings(
         DiagnosticRow("Diagnostic ID", id)
         DiagnosticRow("App", version)
         DiagnosticRow("Device", "${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE}")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick = { clipboard.setText(AnnotatedString(id)) }, modifier = Modifier.heightIn(min = 44.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+            TextButton(onClick = { clipboard.setText(AnnotatedString(id)) }, modifier = Modifier.heightIn(min = Ui.Size.touchCompact)) {
                 Text("Copy ID")
             }
-            TextButton(onClick = { Diagnostics.share(context) }, modifier = Modifier.heightIn(min = 44.dp)) {
+            TextButton(onClick = { Diagnostics.share(context) }, modifier = Modifier.heightIn(min = Ui.Size.touchCompact)) {
                 Text("Share diagnostics")
             }
         }

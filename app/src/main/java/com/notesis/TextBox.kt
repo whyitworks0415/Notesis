@@ -233,7 +233,7 @@ internal fun TextBoxDialog(initial: TextBoxContent?, onDismiss: () -> Unit, onSa
             Row(Modifier.horizontalScroll(rememberScrollState())) {
                 TEXT_FONTS.forEach { (family, label) ->
                     SettingsChoiceChip(selected = font == family, onClick = { font = family }, label = label,
-                        modifier = Modifier.padding(end = 6.dp))
+                        modifier = Modifier.padding(end = Ui.Space.s))
                 }
             }
             Text("Text color", style = MaterialTheme.typography.bodyMedium)
@@ -241,7 +241,7 @@ internal fun TextBoxDialog(initial: TextBoxContent?, onDismiss: () -> Unit, onSa
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 SkinSwitch(checked = background != 0,
                     onCheckedChange = { background = if (it) 0xFFFFF59D.toInt() else 0 })
-                Spacer(Modifier.width(10.dp))
+                Spacer(Modifier.width(Ui.Space.m))
                 Text("Background")
             }
             if (background != 0) {

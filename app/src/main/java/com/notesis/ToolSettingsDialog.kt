@@ -247,11 +247,11 @@ internal fun PenDialog(
     Dialog(onDismissRequest = ::keep, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         // A light dim: the page should still show through the glass.
         (LocalView.current.parent as? DialogWindowProvider)?.window?.setDimAmount(0.12f)
-        val shape = RoundedCornerShape(28.dp)
+        val shape = Ui.Shape.sheet
         val tallest = LocalConfiguration.current.screenHeightDp.dp * 0.9f
         Column(
             Modifier
-                .padding(16.dp)
+                .padding(Ui.Space.l)
                 .widthIn(max = if (wide) 880.dp else 600.dp)
                 .fillMaxWidth()
                 .heightIn(max = tallest)
@@ -283,13 +283,14 @@ internal fun PenDialog(
                 // content as the detail opens and closes.
                 .animateContentSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 18.dp, vertical = 14.dp),
+                // A dialog's own inset, the one Material's dialogs use.
+                .padding(horizontal = Ui.Space.xl, vertical = Ui.Space.l),
             verticalArrangement = Arrangement.spacedBy(GAP),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(penPanelTitle(mode), style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-                TextButton(onClick = ::cancel, modifier = Modifier.heightIn(min = 44.dp)) { Text("Cancel") }
-                TextButton(onClick = ::keep, modifier = Modifier.heightIn(min = 44.dp)) { Text("Save") }
+                TextButton(onClick = ::cancel, modifier = Modifier.heightIn(min = Ui.Size.touchCompact)) { Text("Cancel") }
+                TextButton(onClick = ::keep, modifier = Modifier.heightIn(min = Ui.Size.touchCompact)) { Text("Save") }
             }
 
             val colorPart: @Composable () -> Unit = {
@@ -332,13 +333,13 @@ internal fun PenDialog(
                                     selected = if (mode == EditMode.PENCIL) drawing == tool else nib == tool,
                                     onClick = { nib = tool },
                                     label = label,
-                                    modifier = Modifier.padding(end = 6.dp),
+                                    modifier = Modifier.padding(end = Ui.Space.s),
                                 )
                             }
                         }
                         if (mode == EditMode.PEN) {
                             Text("Pressure", style = MaterialTheme.typography.bodyMedium)
-                            Spacer(Modifier.width(8.dp))
+                            Spacer(Modifier.width(Ui.Space.s))
                             SkinSwitch(checked = pressure, onCheckedChange = { pressure = it })
                         }
                     }
@@ -352,7 +353,7 @@ internal fun PenDialog(
                                 selected = linePattern == index,
                                 onClick = { linePattern = index },
                                 label = label,
-                                modifier = Modifier.padding(end = 6.dp),
+                                modifier = Modifier.padding(end = Ui.Space.s),
                             )
                         }
                     }
@@ -367,7 +368,7 @@ internal fun PenDialog(
                 }
             }
             if (wide) {
-                Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(Ui.Space.l)) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(GAP)) { colorPart() }
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(GAP)) { strokePart() }
                 }
@@ -379,10 +380,10 @@ internal fun PenDialog(
             // The rest of this tool's settings, opened downward on demand.
             Row(
                 Modifier
-                    .clip(RoundedCornerShape(18.dp))
+                    .clip(Ui.Shape.pill)
                     .clickable { details = !details }
-                    .heightIn(min = 44.dp)
-                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                    .heightIn(min = Ui.Size.touchCompact)
+                    .padding(Ui.Space.xs),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(
@@ -392,9 +393,9 @@ internal fun PenDialog(
                         .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(Reicons.Tune, contentDescription = null, modifier = Modifier.size(20.dp))
+                    Icon(Reicons.Tune, contentDescription = null, modifier = Modifier.size(Ui.Icon.small))
                 }
-                Spacer(Modifier.width(10.dp))
+                Spacer(Modifier.width(Ui.Space.m))
                 Text(if (details) "Fewer settings" else "More for this ${penPanelTitle(mode).lowercase()}",
                     style = MaterialTheme.typography.bodyMedium)
             }
@@ -632,7 +633,7 @@ private fun EraserSection(
 ) {
     Row {
         SettingsChoiceChip(selected = !partialEraser, onClick = { onPartialEraser(false) },
-            label = "Whole strokes", modifier = Modifier.padding(end = 8.dp))
+            label = "Whole strokes", modifier = Modifier.padding(end = Ui.Space.s))
         SettingsChoiceChip(selected = partialEraser, onClick = { onPartialEraser(true) }, label = "Partial")
     }
     Text(if (partialEraser) "Erases only where it passes" else "Erases every stroke it touches, whole",
@@ -644,7 +645,7 @@ private fun EraserSection(
             EraseTarget.TAPE to gestures.eraseTape, EraseTarget.IMAGES to gestures.eraseImages,
             EraseTarget.TEXT to gestures.eraseText, EraseTarget.LOCKED to gestures.eraseLocked,
         ).forEach { (target, on) ->
-            SettingsChoiceChip(selected = on, label = target.label, modifier = Modifier.padding(end = 6.dp), onClick = {
+            SettingsChoiceChip(selected = on, label = target.label, modifier = Modifier.padding(end = Ui.Space.s), onClick = {
                 onGestures(when (target) {
                     EraseTarget.INK -> gestures.copy(eraseInk = !on)
                     EraseTarget.HIGHLIGHTER -> gestures.copy(eraseHighlighter = !on)
@@ -670,7 +671,7 @@ private enum class EraseTarget(val label: String) {
 // ---- colour ----------------------------------------------------------------
 
 /** The one gap the panel uses everywhere, so every edge lines up with every other. */
-internal val GAP = 10.dp
+internal val GAP = Ui.Space.m
 
 private val PICKER_HEIGHT = 190.dp
 private val STRIP_HEIGHT = 30.dp
@@ -678,12 +679,12 @@ private val BAR_WIDTH = 34.dp
 private val LABEL_HEIGHT = 18.dp
 private val FIELD_HEIGHT = 56.dp
 private val PALETTE_WIDTH = 96.dp
-private val PICKER_SHAPE = RoundedCornerShape(16.dp)
+private val PICKER_SHAPE = Ui.Shape.control
 
 /** A section's name with a hairline running out to the right edge. */
 @Composable
 private fun SectionHeader(label: String) {
-    Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().padding(top = Ui.Space.xs), verticalAlignment = Alignment.CenterVertically) {
         Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.width(GAP))
         HorizontalDivider(Modifier.weight(1f), color = MaterialTheme.colorScheme.outlineVariant)
@@ -770,7 +771,7 @@ private fun ColorSection(
                                 .clickable(onClick = onEyedropper),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Icon(Reicons.Colorize, contentDescription = "Eyedropper", modifier = Modifier.size(22.dp))
+                            Icon(Reicons.Colorize, contentDescription = "Eyedropper", modifier = Modifier.size(Ui.Icon.regular))
                         }
                     }
                 }
@@ -1053,7 +1054,7 @@ private fun PalettePanel(color: PenColorState, opacity: Boolean) {
             .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
             .verticalScroll(rememberScrollState())
             .padding(GAP),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(Ui.Space.s),
     ) {
         Text("Palette", style = MaterialTheme.typography.labelMedium)
         for ((name, colors) in COLOR_TEMPLATES + custom) {
@@ -1233,7 +1234,7 @@ private fun WidthSection(
                         selected = kotlin.math.abs(favorite - shown) < 0.005f,
                         onClick = { onWidth(favorite.coerceIn(range)) },
                         label = widthLabel(favorite),
-                        modifier = Modifier.padding(end = 6.dp),
+                        modifier = Modifier.padding(end = Ui.Space.s),
                     )
                 }
             }
@@ -1249,9 +1250,9 @@ private fun StrokePreview(width: Float, color: Color?, linePattern: Int, modifie
     val outline = MaterialTheme.colorScheme.outline
     Canvas(
         modifier
-            .clip(RoundedCornerShape(14.dp))
+            .clip(PICKER_SHAPE)
             .background(Color.White)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp)),
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, PICKER_SHAPE),
     ) {
         val stroke = width.dp.toPx().coerceIn(1f, size.height * 0.45f)
         if (color == null) {
@@ -1293,7 +1294,7 @@ private fun WidthCeilings(mode: EditMode, range: ClosedFloatingPointRange<Float>
                 selected = kotlin.math.abs(range.endInclusive - ceiling) < 0.01f,
                 onClick = { onCeiling(ceiling) },
                 label = label,
-                modifier = Modifier.padding(start = 6.dp),
+                modifier = Modifier.padding(start = Ui.Space.s),
             )
         }
     }

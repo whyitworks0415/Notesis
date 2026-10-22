@@ -61,7 +61,7 @@ internal fun ZoomPresetDialog(current: Float, onPick: (Int) -> Unit, onDismiss: 
                             selected = percent == currentPercent,
                             onClick = { onPick(percent) },
                             label = "$percent%",
-                            modifier = Modifier.padding(end = 6.dp),
+                            modifier = Modifier.padding(end = Ui.Space.s),
                         )
                     }
                 }

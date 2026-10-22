@@ -132,6 +132,9 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
@@ -1092,8 +1095,8 @@ private fun NoteListScreen(
                     top = padding.calculateTopPadding() + 16.dp,
                     bottom = padding.calculateBottomPadding() + 16.dp,
                 ),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(Ui.Space.m),
+                verticalArrangement = Arrangement.spacedBy(Ui.Space.m),
                 modifier = Modifier.fillMaxSize(),
             ) {
                 // Folders sit above the notes rather than beside them: they
@@ -1112,7 +1115,7 @@ private fun NoteListScreen(
                                     selected = tagFilter == tag,
                                     onClick = { tagFilter = if (tagFilter == tag) null else tag },
                                     label = { Text("#$tag") },
-                                    modifier = Modifier.padding(end = 6.dp),
+                                    modifier = Modifier.padding(end = Ui.Space.s),
                                 )
                             }
                         }
@@ -1221,13 +1224,14 @@ private fun NoteListScreen(
                 }
             }
         }
+        // Floating bars take the skin's own corner, the toolbar's, so every
+        // bar over the page or the list is the same shape.
         if (selectionMode) SkinSurface(
             modifier = Modifier.align(Alignment.BottomCenter)
-                .padding(bottom = padding.calculateBottomPadding() + 16.dp),
-            corner = 16.dp,
+                .padding(bottom = padding.calculateBottomPadding() + Ui.Space.l),
         ) {
-            Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("${selectedIds.size} selected", modifier = Modifier.padding(horizontal = 8.dp))
+            Row(Modifier.padding(horizontal = Ui.Space.s, vertical = Ui.Space.xs), verticalAlignment = Alignment.CenterVertically) {
+                Text("${selectedIds.size} selected", modifier = Modifier.padding(horizontal = Ui.Space.s))
                 TextButton(onClick = { bulkFolder = true }, enabled = selectedIds.isNotEmpty()) {
                     Text("Move")
                 }
@@ -1421,7 +1425,7 @@ private fun NoteListScreen(
                             SuggestionChip(onClick = {
                                 val current = text.split(',').map { it.trim() }.filter { it.isNotEmpty() }
                                 if (tag !in current) text = (current + tag).joinToString(", ")
-                            }, label = { Text("#$tag") }, modifier = Modifier.padding(end = 6.dp))
+                            }, label = { Text("#$tag") }, modifier = Modifier.padding(end = Ui.Space.s))
                         }
                     }
                 }
@@ -1520,9 +1524,9 @@ private const val MAX_HITS_PER_NOTE = 5
 /** One page a search matched: which note, which page, and the words around the match. */
 @Composable
 private fun SearchHitRow(note: NoteMeta, hit: PageHit, onOpen: () -> Unit) {
-    SkinSurface(corner = 12.dp, modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen)) {
+    SkinSurface(corner = Ui.Corner.control, modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen)) {
         Row(
-            Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            Modifier.padding(horizontal = Ui.Space.l, vertical = Ui.Space.m),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
@@ -1564,7 +1568,7 @@ internal fun InputSettingsDialog(gestures: CanvasGestures, onGestures: (CanvasGe
         Row(Modifier.horizontalScroll(rememberScrollState())) {
             options.forEach { (value, label) ->
                 SettingsChoiceChip(selected = selected == value, onClick = { onPick(value) }, label = label,
-                    modifier = Modifier.padding(end = 6.dp))
+                    modifier = Modifier.padding(end = Ui.Space.s))
             }
         }
     }
@@ -1639,7 +1643,7 @@ internal fun LinkDialog(
                 Row {
                     listOf("Page in this note", "Another note", "Web address").forEachIndexed { i, label ->
                         SettingsChoiceChip(selected = kind == i, onClick = { kind = i }, label = label,
-                            modifier = Modifier.padding(end = 6.dp))
+                            modifier = Modifier.padding(end = Ui.Space.s))
                     }
                 }
                 when (kind) {
@@ -1683,10 +1687,13 @@ internal fun LibraryDialog(store: NoteStore, onPaste: (InkClipboard.Clip) -> Uni
         title = { Text("Library") },
         text = {
             Column {
-                if (tags.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState())) {
+                if (tags.isNotEmpty()) Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(Ui.Space.s),
+                ) {
                     tags.forEach { tag ->
                         FilterChip(selected = filter == tag, onClick = { filter = if (filter == tag) null else tag },
-                            label = { Text("#$tag") }, modifier = Modifier.padding(end = 6.dp))
+                            label = { Text("#$tag") })
                     }
                 }
                 if (items.isEmpty()) Text("Select with the lasso and tap 'Add to library' to keep it here.",
@@ -1704,7 +1711,7 @@ internal fun LibraryDialog(store: NoteStore, onPaste: (InkClipboard.Clip) -> Uni
                                     onLongClick = { editing = item },
                                 ),
                         ) {
-                            Box(Modifier.size(88.dp).background(Color.White), contentAlignment = Alignment.Center) {
+                            Box(Modifier.size(88.dp).clip(Ui.Shape.preview).background(Color.White), contentAlignment = Alignment.Center) {
                                 if (preview != null) Image(preview.asImageBitmap(), null, contentScale = ContentScale.Fit)
                             }
                             if (item.tags.isNotEmpty()) Text(item.tags.joinToString(" ") { "#$it" },
@@ -1925,7 +1932,7 @@ private fun NoteCard(
         }
     }
     val skin = LocalSkin.current
-    val cardShape = RoundedCornerShape(20.dp)
+    val cardShape = Ui.Shape.card
     Card(
         modifier = if (selected) Modifier.border(3.dp, MaterialTheme.colorScheme.primary, cardShape)
             else Modifier,
@@ -2179,7 +2186,7 @@ private fun SkinButton(skin: Skin, onSkin: (Skin) -> Unit) {
                         // Each row shows the skin it names, so the choice is
                         // made by looking rather than by reading.
                         ProvideSkin(option, LocalSkinSettings.current) {
-                            SkinSurface(Modifier.size(30.dp), corner = 9.dp) {}
+                            SkinSurface(Modifier.size(30.dp), corner = Ui.Corner.preview) {}
                         }
                     },
                     trailingIcon = {
@@ -2224,18 +2231,20 @@ private fun indexNote(store: NoteStore, indexer: InkIndexer, id: String): Int {
 private fun FolderRow(folders: List<String>, onOpen: (String) -> Unit) {
     Row(
         Modifier.horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(Ui.Space.s),
     ) {
         for (name in folders) {
-            SkinSurface(corner = 14.dp) {
+            // The same tile as a search hit: a control-sized corner, and
+            // padding that makes the row a full touch target.
+            SkinSurface(corner = Ui.Corner.control) {
                 Row(
                     Modifier
                         .clickable { onOpen(name) }
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                        .padding(horizontal = Ui.Space.l, vertical = Ui.Space.m),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Icon(Reicons.Folder, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.width(Ui.Space.s))
                     Text(name, style = MaterialTheme.typography.bodyLarge)
                 }
             }
@@ -2269,13 +2278,13 @@ private fun FolderDialog(
                     placeholder = { Text("Leave blank for the top level") },
                 )
                 if (folders.isNotEmpty()) {
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(Ui.Space.m))
                     Text(
                         "Existing folders",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.outline,
                     )
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(Ui.Space.xs))
                     Row(Modifier.horizontalScroll(rememberScrollState())) {
                         for (option in folders) {
                             TextButton(onClick = { name = option }) { Text(option) }
@@ -2334,7 +2343,9 @@ private fun GlassFab(
             AppIcon(icon, contentDescription = contentDescription, modifier = iconModifier, play = iconRotation > 0f)
         }
     } else {
-        SkinSurface(modifier = modifier.size(side), corner = 16.dp) {
+        // The theme's FAB corners: card for the big one, control for the
+        // small, so glass and Material buttons have the same outline.
+        SkinSurface(modifier = modifier.size(side), corner = if (small) Ui.Corner.control else Ui.Corner.card) {
             // Clickable inside the surface, so the ripple is clipped to the corner.
             Box(
                 Modifier.fillMaxSize().clickable(onClick = onClick),
@@ -2359,7 +2370,7 @@ private fun NewNoteDial(options: List<DialOption>) {
     androidx.activity.compose.BackHandler(enabled = open) { open = false }
     val turn by androidx.compose.animation.core.animateFloatAsState(if (open) 45f else 0f,
         androidx.compose.animation.core.spring(dampingRatio = 0.6f, stiffness = 500f), label = "dialTurn")
-    Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(Ui.Space.m)) {
         options.forEachIndexed { index, option ->
             // The nearest choice comes first and leaves last.
             val fromButton = options.lastIndex - index
@@ -2372,11 +2383,11 @@ private fun NewNoteDial(options: List<DialOption>) {
                     androidx.compose.animation.slideOutVertically(tween(160, delayMillis = index * 20)) { it / 2 } +
                     androidx.compose.animation.scaleOut(tween(160, delayMillis = index * 20), targetScale = 0.7f),
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SkinSurface(corner = 12.dp) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Ui.Space.m)) {
+                    SkinSurface(corner = Ui.Corner.chip) {
                         Text(option.label, style = MaterialTheme.typography.labelLarge,
                             modifier = Modifier.clickable { open = false; option.onClick() }
-                                .padding(horizontal = 12.dp, vertical = 8.dp))
+                                .padding(horizontal = Ui.Space.m, vertical = Ui.Space.s))
                     }
                     GlassFab(onClick = { open = false; option.onClick() }, icon = option.icon,
                         contentDescription = option.label, small = true, modifier = Modifier.padding(end = 8.dp))
@@ -2462,7 +2473,7 @@ private fun PenChip(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
-    val shape = if (pen.tool == Tool.HIGHLIGHTER) RoundedCornerShape(6.dp) else CircleShape
+    val shape = if (pen.tool == Tool.HIGHLIGHTER) Ui.Shape.badge else CircleShape
     Box(
         Modifier
             .padding(horizontal = 3.dp)
@@ -2525,7 +2536,7 @@ internal fun SaturationValueField(
     saturation: Float,
     value: Float,
     modifier: Modifier = Modifier.fillMaxWidth().height(150.dp),
-    shape: Shape = RoundedCornerShape(10.dp),
+    shape: Shape = Ui.Shape.chip,
     onChange: (Float, Float) -> Unit,
 ) {
     val currentOnChange by rememberUpdatedState(onChange)
@@ -2564,7 +2575,7 @@ internal fun GradientStrip(
     colors: List<Color>,
     position: Float,
     modifier: Modifier = Modifier.fillMaxWidth().height(26.dp),
-    shape: Shape = RoundedCornerShape(13.dp),
+    shape: Shape = Ui.Shape.pill,
     onChange: (Float) -> Unit,
 ) {
     val currentOnChange by rememberUpdatedState(onChange)
@@ -2756,12 +2767,14 @@ private fun PaletteDialog(onDismiss: () -> Unit, onPick: (Int) -> Unit) {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 for ((name, colors) in COLOR_TEMPLATES + custom) {
                     Text(name, style = MaterialTheme.typography.labelMedium)
-                    Spacer(Modifier.height(6.dp))
-                    Row(Modifier.horizontalScroll(rememberScrollState())) {
+                    Spacer(Modifier.height(Ui.Space.s))
+                    Row(
+                        Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(Ui.Space.s),
+                    ) {
                         for (rgb in colors) {
                             Box(
                                 Modifier
-                                    .padding(end = 8.dp)
                                     .size(34.dp)
                                     .clip(CircleShape)
                                     .background(Color(rgb))
@@ -2775,7 +2788,7 @@ private fun PaletteDialog(onDismiss: () -> Unit, onPick: (Int) -> Unit) {
                         custom = custom - (name to colors)
                         store.saveColorTemplates(custom)
                     }) { Text("Delete template") }
-                    Spacer(Modifier.height(14.dp))
+                    Spacer(Modifier.height(Ui.Space.l))
                 }
             }
         },
@@ -2842,30 +2855,38 @@ private fun CaptureDialog(
                     contentScale = ContentScale.Fit,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 260.dp),
+                        .heightIn(max = 260.dp)
+                        .clip(Ui.Shape.preview),
                 )
+                // Each option group is a label and a row of chips, a section
+                // gap apart, the same rhythm as the tool settings.
                 if (region != null) {
-                    Spacer(Modifier.height(10.dp))
+                    Spacer(Modifier.height(Ui.Space.m))
                     Text("Size", style = MaterialTheme.typography.labelMedium)
-                    Row(Modifier.horizontalScroll(rememberScrollState())) {
+                    Row(
+                        Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(Ui.Space.s),
+                    ) {
                         for (size in CaptureSize.entries) {
                             SettingsChoiceChip(
                                 selected = options.size == size,
                                 onClick = { onOptions(options.copy(size = size)) },
                                 label = size.label,
-                                modifier = Modifier.padding(end = 6.dp),
                             )
                         }
                     }
                 }
+                Spacer(Modifier.height(Ui.Space.s))
                 Text("Format", style = MaterialTheme.typography.labelMedium)
-                Row(Modifier.horizontalScroll(rememberScrollState())) {
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(Ui.Space.s),
+                ) {
                     for (format in CaptureFormat.entries) {
                         SettingsChoiceChip(
                             selected = options.format == format,
                             onClick = { onOptions(options.copy(format = format)) },
                             label = format.label,
-                            modifier = Modifier.padding(end = 6.dp),
                         )
                     }
                     if (options.format == CaptureFormat.JPEG) {
@@ -2874,7 +2895,6 @@ private fun CaptureDialog(
                                 selected = options.jpegQuality == quality,
                                 onClick = { onOptions(options.copy(jpegQuality = quality)) },
                                 label = "Quality $quality",
-                                modifier = Modifier.padding(end = 6.dp),
                             )
                         }
                     }
@@ -2883,7 +2903,7 @@ private fun CaptureDialog(
                     Text(
                         "${it.width} × ${it.height} px",
                         style = MaterialTheme.typography.titleSmall,
-                        modifier = Modifier.padding(top = 6.dp),
+                        modifier = Modifier.padding(top = Ui.Space.s),
                     )
                     captureLimitMessage(it.limit, BitmapBudget.MAX_SIDE, PdfSource.cropSideLimit())?.let { note ->
                         Text(note, style = MaterialTheme.typography.bodySmall,
@@ -2892,7 +2912,7 @@ private fun CaptureDialog(
                 }
                 if (busy) {
                     androidx.compose.material3.LinearProgressIndicator(
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        modifier = Modifier.fillMaxWidth().padding(top = Ui.Space.s),
                     )
                 }
             }
@@ -3236,19 +3256,19 @@ private fun PageExportDialog(
         title = { Text("Export pages") },
         text = { Column {
             Text("Format")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
                 FilterChip(selected = !png, onClick = { png = false }, label = { Text("PDF") })
                 FilterChip(selected = png, onClick = { png = true }, label = { Text("PNG") })
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
                 OutlinedTextField(first, { first = it.filter(Char::isDigit) },
                     label = { Text("From page") }, singleLine = true, modifier = Modifier.weight(1f))
                 OutlinedTextField(last, { last = it.filter(Char::isDigit) },
                     label = { Text("To page") }, singleLine = true, modifier = Modifier.weight(1f))
             }
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(Ui.Space.s))
             Text("Size")
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
                 listOf(
                     ExportPageSize.ORIGINAL to "Original", ExportPageSize.A4 to "A4",
                     ExportPageSize.LETTER to "Letter",
@@ -3258,13 +3278,13 @@ private fun PageExportDialog(
                 }
             }
             Text("Rotation")
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
                 listOf(0, 90, 180, 270).forEach { value ->
                     FilterChip(selected = rotation == value, onClick = { rotation = value },
                         label = { Text("${value}°") })
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
                 if (!png) FilterChip(selected = raster, onClick = { raster = !raster }, label = { Text("Image PDF") })
                 FilterChip(selected = invert, onClick = { invert = !invert }, label = { Text("Invert colors") })
             }
@@ -3322,7 +3342,7 @@ private fun NameDialog(
                     )
                     Column {
                         labels.chunked(3).forEach { row ->
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
                                 row.forEach { (choice, label) ->
                                     FilterChip(
                                         selected = background == choice && templateId == null,
@@ -4676,7 +4696,7 @@ private fun NoteScreen(
                     var filing by remember { mutableStateOf(false) }
                     SettingsCard {
                         SettingsSectionHeader("Page layout")
-                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
                             listOf(PageLayoutMode.VERTICAL to "Vertical scroll", PageLayoutMode.HORIZONTAL to "Horizontal scroll",
                                 PageLayoutMode.SPREAD_2X1 to "Two pages", PageLayoutMode.SPREAD_COVER to "Two pages, cover alone",
                                 PageLayoutMode.GRID_2X2 to "Four pages").forEach { (layout, label) ->
@@ -4740,7 +4760,7 @@ private fun NoteScreen(
                         SettingsSectionHeader("Handwriting recognition")
                         SettingsNote("The languages handwriting is read in for search; the first is tried first.")
                         var languages by remember { mutableStateOf(InkIndexer.languages(context)) }
-                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
                             InkIndexer.OFFERED.forEach { (tag, label) ->
                                 SettingsChoiceChip(selected = tag in languages, onClick = {
                                     val next = if (tag in languages) languages - tag else languages + tag
@@ -4827,7 +4847,7 @@ private fun NoteScreen(
                                     playMode = mode
                                     penStore.playMode = mode
                                     voicePlayer?.isLooping = mode == PLAY_LOOP_ONE
-                                }, label = label, modifier = Modifier.padding(end = 6.dp))
+                                }, label = label, modifier = Modifier.padding(end = Ui.Space.s))
                             }
                         }
                         for (file in recordings) Row(verticalAlignment = Alignment.CenterVertically) {
@@ -5018,12 +5038,11 @@ private fun NoteScreen(
                     .align(Alignment.TopCenter)
                     .windowInsetsPadding(ChromeInsets)
                     .padding(top = 150.dp),
-                corner = 16.dp,
             ) {
-                Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.padding(horizontal = Ui.Space.s, vertical = Ui.Space.xs), verticalAlignment = Alignment.CenterVertically) {
                     Image(
                         snip.bitmap.asImageBitmap(), contentDescription = null,
-                        modifier = Modifier.padding(vertical = 6.dp).size(40.dp).clip(RoundedCornerShape(6.dp)),
+                        modifier = Modifier.size(40.dp).clip(Ui.Shape.preview),
                         contentScale = ContentScale.Crop,
                     )
                     Text(
@@ -5139,9 +5158,8 @@ private fun NoteScreen(
         }
         if (canGoBack) SkinSurface(
             modifier = Modifier.align(Alignment.TopCenter).windowInsetsPadding(ChromeInsets).padding(top = 72.dp),
-            corner = 16.dp,
         ) {
-            TextButton(onClick = { canvas?.goBack() }) {
+            TextButton(onClick = { canvas?.goBack() }, modifier = Modifier.padding(horizontal = Ui.Space.s, vertical = Ui.Space.xs)) {
                 Icon(Reicons.ArrowBack, contentDescription = null)
                 Text(" Back to previous spot")
             }
@@ -5236,10 +5254,9 @@ private fun NoteScreen(
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .windowInsetsPadding(ChromeInsets)
-                .padding(16.dp),
-            corner = 16.dp,
+                .padding(Ui.Space.l),
         ) {
-            Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.padding(horizontal = Ui.Space.s, vertical = Ui.Space.xs), verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     if (playingTimeline.isEmpty()) "Playing recording"
                     else "Playing recording · In read mode, tap ink to jump to that moment",
@@ -5896,11 +5913,10 @@ private fun StudyBar(
     SkinSurface(
         modifier = modifier
             .windowInsetsPadding(ChromeInsets)
-            .padding(16.dp),
-        corner = 16.dp,
+            .padding(Ui.Space.l),
     ) {
         Row(
-            Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+            Modifier.padding(horizontal = Ui.Space.s, vertical = Ui.Space.xs),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (session.done) {
@@ -5961,13 +5977,12 @@ private fun LassoActions(
     SkinSurface(
         modifier = modifier
             .windowInsetsPadding(ChromeInsets)
-            .padding(16.dp),
-        corner = 16.dp,
+            .padding(Ui.Space.l),
     ) {
         Row(
             Modifier
                 .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 8.dp, vertical = 4.dp),
+                .padding(horizontal = Ui.Space.s, vertical = Ui.Space.xs),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("${countNoun(count, "item")} · Drag to move", style = MaterialTheme.typography.bodyMedium)
@@ -6053,22 +6068,21 @@ private fun PasteBar(
     SkinSurface(
         modifier = modifier
             .windowInsetsPadding(ChromeInsets)
-            .padding(16.dp),
-        corner = 16.dp,
+            .padding(Ui.Space.l),
     ) {
         Row(
             Modifier
                 .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 8.dp, vertical = 4.dp),
+                .padding(horizontal = Ui.Space.s, vertical = Ui.Space.xs),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             TextButton(onClick = onLibrary) { Text("Library") }
             SettingsChoiceChip(selected = !gestures.lassoRect,
                 onClick = { onGestures(gestures.copy(lassoRect = false)) },
-                label = "Freeform", modifier = Modifier.padding(end = 6.dp))
+                label = "Freeform", modifier = Modifier.padding(end = Ui.Space.s))
             SettingsChoiceChip(selected = gestures.lassoRect,
                 onClick = { onGestures(gestures.copy(lassoRect = true)) },
-                label = "Rectangle", modifier = Modifier.padding(end = 6.dp))
+                label = "Rectangle", modifier = Modifier.padding(end = Ui.Space.s))
             SettingsChoiceChip(selected = wholeOnly, onClick = { onWholeOnly(!wholeOnly) },
                 label = "Fully enclosed only")
             SettingsChoiceChip(selected = gestures.snapToAlign,
@@ -6140,11 +6154,10 @@ private fun ImageActions(
     SkinSurface(
         modifier = modifier
             .windowInsetsPadding(ChromeInsets)
-            .padding(16.dp),
-        corner = 16.dp,
+            .padding(Ui.Space.l),
     ) {
         Row(
-            Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            Modifier.padding(horizontal = Ui.Space.s, vertical = Ui.Space.xs),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(when (box) {
@@ -6452,7 +6465,7 @@ private fun ReferencePanel(
     }
 
     val pageCount = opened?.first?.pages?.size ?: 0
-    val panelShape = RoundedCornerShape(16.dp)
+    val panelShape = Ui.Shape.card
     val rimLight = if (isDarkTheme()) 0.35f else 1f
     val panelBorder = Brush.linearGradient(
         listOf(
@@ -6505,7 +6518,7 @@ private fun ReferencePanel(
             // 유리 표면이 밝은 페이지와 겹쳐도 팝업 외곽을 잃지 않도록 밝은 림과
             // 테마 윤곽색을 함께 사용합니다.
             .border(1.5.dp, panelBorder, panelShape),
-        corner = 16.dp,
+        corner = Ui.Corner.card,
     ) {
         Column(Modifier.fillMaxSize()) {
             Row(
@@ -6850,10 +6863,10 @@ private fun SelectionActions(
     SkinSurface(
         modifier = modifier
             .windowInsetsPadding(ChromeInsets)
-            .padding(20.dp),
+            .padding(Ui.Space.l),
     ) {
         Row(
-            Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp),
+            Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = Ui.Space.s, vertical = Ui.Space.xs),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (preview != null) Image(preview.asImageBitmap(), "Original selection",
@@ -6911,7 +6924,11 @@ private fun PageScrubber(
     val density = LocalDensity.current
     val scheme = MaterialTheme.colorScheme
     val liquid = LocalSkin.current.isRefractive
-    val thumbHeight = 52.dp
+    // Glass bar mode draws the horizontal slider stood on end, whose lens
+    // centre stops [SPOTI_SLIDER_START] short of each end. The page mapping
+    // uses the same reach so the finger and the lens stay on one line.
+    val spoti = LocalSkin.current == Skin.SPOTIGLASS
+    val thumbHeight = if (spoti) SPOTI_SLIDER_START * 2 else 52.dp
     val thumbHeightPx = with(density) { thumbHeight.toPx() }
     var trackHeight by remember { mutableIntStateOf(0) }
     var dragging by remember { mutableStateOf(false) }
@@ -6937,6 +6954,18 @@ private fun PageScrubber(
         modifier
             .width(52.dp)
             .onSizeChanged { trackHeight = it.height }
+            // A screen reader gets the rail as what it is: a page position
+            // that can be read and set, rather than an unlabelled strip.
+            .semantics {
+                contentDescription = "Page ${page + 1} of $pageCount"
+                progressBarRangeInfo = ProgressBarRangeInfo(
+                    page.toFloat(), 0f..(pageCount - 1).toFloat(), (pageCount - 2).coerceAtLeast(0),
+                )
+                setProgress { target ->
+                    onJump(target.roundToInt().coerceIn(0, pageCount - 1))
+                    true
+                }
+            }
             .pointerInput(pageCount, trackHeight, onJump) {
                 detectDragGestures(
                     onDragStart = {
@@ -6962,7 +6991,14 @@ private fun PageScrubber(
             },
         contentAlignment = Alignment.TopCenter,
     ) {
-        Box(
+        if (spoti) {
+            SpotiGlassPageRail(
+                target = if (dragging && dragFraction >= 0f) dragFraction else fraction,
+                held = dragging || pressed,
+                label = "${page + 1}",
+                modifier = Modifier.matchParentSize(),
+            )
+        } else Box(
             Modifier
                 .align(Alignment.Center)
                 .width(if (liquid) 6.dp else 4.dp)
@@ -7019,10 +7055,10 @@ private fun PageScrubber(
                         .align(Alignment.TopEnd)
                         .offset { IntOffset(-(52.dp + 8.dp).roundToPx(), previewY) }
                         .requiredSize(previewWidth, previewHeight)
-                        .shadow(6.dp, RoundedCornerShape(8.dp))
-                        .clip(RoundedCornerShape(8.dp))
+                        .shadow(6.dp, Ui.Shape.preview)
+                        .clip(Ui.Shape.preview)
                         .background(Color.White)
-                        .border(0.5.dp, scheme.outlineVariant, RoundedCornerShape(8.dp)),
+                        .border(0.5.dp, scheme.outlineVariant, Ui.Shape.preview),
                 ) {
                     Image(bitmap.asImageBitmap(), contentDescription = "Page ${page + 1} preview",
                         modifier = Modifier.fillMaxSize())
@@ -7032,24 +7068,16 @@ private fun PageScrubber(
                         color = Color.White,
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
-                            .padding(4.dp)
-                            .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(6.dp))
+                            .padding(Ui.Space.xs)
+                            .background(Color.Black.copy(alpha = 0.55f), Ui.Shape.badge)
                             .padding(horizontal = 6.dp, vertical = 1.dp),
                     )
                 }
             }
         }
-        // Spoti glass: a plain solid handle at rest, turning to liquid glass
-        // only while it is held - glass where the finger is, quiet otherwise.
-        if (LocalSkin.current == Skin.SPOTIGLASS && !dragging && !pressed) {
-            Box(
-                thumbPlace
-                    .shadow(2.dp, CircleShape, clip = false)
-                    .clip(CircleShape)
-                    .background(scheme.surfaceContainerHighest)
-                    .border(0.5.dp, scheme.outlineVariant, CircleShape),
-            ) { pageLabel() }
-        } else {
+        // Glass bar mode drew its own lens with the rail above: solid at rest,
+        // glass only while held, exactly as the horizontal slider does.
+        if (!spoti) {
             SkinSurface(modifier = thumbPlace, corner = 100.dp) { pageLabel() }
         }
     }
@@ -7184,8 +7212,8 @@ private fun PageSidebar(
             ) else LazyColumn(
                 Modifier.weight(1f).glassEdges(listState),
                 state = listState,
-                contentPadding = PaddingValues(10.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(Ui.Space.m),
+                verticalArrangement = Arrangement.spacedBy(Ui.Space.s),
             ) {
                 if (tab == 1 && pages.any { it.tocTitle != null }) {
                     item {
@@ -7494,12 +7522,12 @@ private fun TocChip(
         modifier = Modifier
             .padding(start = (page.tocLevel.coerceAtMost(4) * 14).dp)
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
+            .clip(Ui.Shape.chip)
             .background(if (highlighted) colors.tertiaryContainer else chipFill(selected))
             .border(
                 if (selected) 2.dp else 1.dp,
                 if (selected) colors.primary else colors.outlineVariant,
-                RoundedCornerShape(8.dp),
+                Ui.Shape.chip,
             )
             .clickable(onClick = onJump)
             .padding(start = 10.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
@@ -7572,7 +7600,7 @@ private fun MaskChip(
     Column(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
+            .clip(Ui.Shape.chip)
             .background(chipFill(selected))
             .border(
                 width = if (selected) 2.dp else 1.dp,
@@ -7581,7 +7609,7 @@ private fun MaskChip(
                 } else {
                     MaterialTheme.colorScheme.outlineVariant
                 },
-                shape = RoundedCornerShape(8.dp),
+                shape = Ui.Shape.chip,
             ),
     ) {
         Row(
@@ -7703,7 +7731,7 @@ private fun PageChip(
         Column(
             Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
+                .clip(Ui.Shape.chip)
                 .background(chipFill(selected))
                 .border(
                     width = if (selected) 2.dp else 1.dp,
@@ -7712,7 +7740,7 @@ private fun PageChip(
                     } else {
                         MaterialTheme.colorScheme.outlineVariant
                     },
-                    shape = RoundedCornerShape(8.dp),
+                    shape = Ui.Shape.chip,
                 )
                 .combinedClickable(
                     onClick = onJump,
@@ -7954,7 +7982,7 @@ private fun Toolbar(
                         style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum"),
                         textAlign = TextAlign.Center,
                         modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
+                            .clip(Ui.Shape.chip)
                             .clickable(onClickLabel = "Zoom presets", onClick = onZoomLabel)
                             .widthIn(min = 52.dp)
                             .padding(horizontal = 6.dp, vertical = 10.dp),
@@ -8144,7 +8172,7 @@ private fun ToolButton(
     if (selected && LocalSkin.current.isRefractive) {
         LiquidGlassButton(
             onClick = onClick,
-            modifier = Modifier.size(40.dp),
+            modifier = Modifier.size(Ui.Size.button),
             contentPadding = PaddingValues(0.dp),
             containerColor = Color.Transparent,
             contentColor = contentColor,
@@ -8177,7 +8205,7 @@ private fun ToolButton(
 private fun ToolbarDivider() {
     Spacer(
         Modifier
-            .padding(horizontal = 6.dp)
+            .padding(horizontal = Ui.Space.s)
             .width(1.dp)
             .height(24.dp)
             .background(MaterialTheme.colorScheme.outlineVariant),

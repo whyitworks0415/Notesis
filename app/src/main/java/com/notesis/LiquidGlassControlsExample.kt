@@ -32,7 +32,7 @@ fun LiquidGlassControlsExample() {
                 .align(Alignment.Center)
                 .fillMaxWidth(0.84f)
                 .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp),
+            verticalArrangement = Arrangement.spacedBy(Ui.Space.l),
         ) {
             LiquidSegmentedControl(
                 segments = listOf("For you", "Library", "Recent"),

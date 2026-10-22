@@ -22,7 +22,7 @@ object LiquidGlassTokens {
     const val dispersion = 0.35f
 
     /** 패널과 일반 컨트롤의 기본 모서리 반경입니다. */
-    val cornerRadius = 22.dp
+    val cornerRadius = Ui.Corner.card
 
     /** API 32 이하 폴백에서 사용하는 가벼운 그림자입니다. */
     val fallbackShadow = 5.dp

@@ -282,7 +282,7 @@ private fun DocumentSection(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f)),
         contentPadding = PaddingValues(20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(Ui.Space.m),
     ) {
         item {
             SectionHeader(section.title, document.notice)
@@ -316,7 +316,7 @@ private fun ParagraphBlock(block: PreviewBlock.Paragraph, kind: PreviewKind) {
         in 4..6 -> 17.sp
         else -> 16.sp
     }
-    val shape = RoundedCornerShape(if (kind == PreviewKind.PRESENTATION) 18.dp else 10.dp)
+    val shape = if (kind == PreviewKind.PRESENTATION) Ui.Shape.card else Ui.Shape.chip
     val modifier = if (kind == PreviewKind.PRESENTATION || block.monospace) {
         Modifier.fillMaxWidth()
     } else Modifier.fillMaxWidth()

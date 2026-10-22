@@ -266,7 +266,7 @@ internal fun UpdateDialog(release: AppRelease, onDismiss: () -> Unit, onSkip: ((
         onDismissRequest = { if (!downloading) onDismiss() },
         title = { Text("New version ${release.versionName}") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
                 Text(
                     "Installed ${AppUpdate.installedName(context)} · New ${release.versionName} (${release.versionCode})" +
                         if (release.apkSize > 0) " · %.1fMB".format(release.apkSize / 1_048_576f) else "",

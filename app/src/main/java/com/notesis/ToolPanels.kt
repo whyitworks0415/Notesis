@@ -117,7 +117,7 @@ private object CalcState {
 @Composable
 private fun CalculatorPanel() {
     val s = CalcState
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
         CalcMode.entries.forEach { mode ->
             ClockChip(mode.label, s.mode == mode, Modifier.weight(1f)) { s.mode = mode; s.field = 0 }
         }
@@ -130,12 +130,12 @@ private fun CalculatorPanel() {
     Keypad(onKey = ::press)
     if (s.mode == CalcMode.CALC && s.history.isNotEmpty()) {
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(Ui.Space.xs)) {
             for ((expr, result) in s.history.asReversed()) {
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
+                        .clip(Ui.Shape.chip)
                         .clickable { s.expression += result.takeIf { it.first().isDigit() || it.first() == '-' } ?: "" }
                         .padding(horizontal = 6.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -157,7 +157,7 @@ private fun CalcDisplay() {
             formatNumber(MathExpr.eval(MathExpr.parse(s.expression), s.degrees, ans = s.ans))
         }.getOrDefault("")
     }
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
         ClockChip(if (s.degrees) "DEG" else "RAD", selected = false) { s.degrees = !s.degrees }
         Text(
             if (s.degrees) "Angles: degrees (°)" else "Angles: radians",
@@ -202,7 +202,7 @@ private fun IntegrateDisplay() {
     val s = CalcState
     val result = remember(s.function, s.lower, s.upper) { integrateText(s.function, s.lower, s.upper) }
     Field("f(x) =", s.function, focused = s.field == 0) { s.field = 0 }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
         Box(Modifier.weight(1f)) { Field("Lower a", s.lower, focused = s.field == 1) { s.field = 1 } }
         Box(Modifier.weight(1f)) { Field("Upper b", s.upper, focused = s.field == 2) { s.field = 2 } }
     }
@@ -253,20 +253,20 @@ private fun DisplayBox(focused: Boolean, content: @Composable () -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(Ui.Shape.control)
             .background(scheme.onSurface.copy(alpha = 0.05f))
             .border(
                 width = if (focused) 1.5.dp else 0.dp,
                 color = if (focused) scheme.primary.copy(alpha = 0.6f) else Color.Transparent,
-                shape = RoundedCornerShape(16.dp),
+                shape = Ui.Shape.control,
             )
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .padding(horizontal = Ui.Space.l, vertical = Ui.Space.m),
     ) { content() }
 }
 
 @Composable
 private fun Field(label: String, value: String, focused: Boolean, hint: String = "", onFocus: () -> Unit) {
-    Box(Modifier.clip(RoundedCornerShape(16.dp)).clickable(onClick = onFocus)) {
+    Box(Modifier.clip(Ui.Shape.control).clickable(onClick = onFocus)) {
         DisplayBox(focused) {
             Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.outline)
             Text(
@@ -284,10 +284,10 @@ private fun ResultBox(lines: List<String>) {
     Column(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(Ui.Shape.control)
             .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f))
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
+            .padding(horizontal = Ui.Space.l, vertical = Ui.Space.m),
+        verticalArrangement = Arrangement.spacedBy(Ui.Space.hair),
     ) {
         lines.forEach { line ->
             Text(line, style = MaterialTheme.typography.titleMedium.merge(TabularDigits),
@@ -329,9 +329,9 @@ private val SECOND_KEYS = listOf(
 @Composable
 private fun Keypad(onKey: (Key) -> Unit) {
     val rows = if (CalcState.second) SECOND_KEYS else FIRST_KEYS
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
         rows.forEach { row ->
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
                 row.forEach { key -> KeyButton(key, Modifier.weight(1f)) { onKey(key) } }
             }
         }
@@ -358,13 +358,13 @@ private fun KeyButton(key: Key, modifier: Modifier, onClick: () -> Unit) {
     Box(
         modifier
             .height(46.dp)
-            .clip(RoundedCornerShape(14.dp))
+            .clip(Ui.Shape.control)
             .background(background)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         if (key.label == "⌫") {
-            Icon(Reicons.Backspace, contentDescription = "Backspace", tint = content, modifier = Modifier.size(20.dp))
+            Icon(Reicons.Backspace, contentDescription = "Backspace", tint = content, modifier = Modifier.size(Ui.Icon.small))
         } else {
             Text(
                 key.label,
@@ -492,9 +492,9 @@ private fun AddRow(placeholder: String, onAdd: (String) -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(Ui.Shape.control)
             .background(scheme.onSurface.copy(alpha = 0.05f))
-            .padding(start = 14.dp, end = 6.dp),
+            .padding(start = Ui.Space.l, end = Ui.Space.xs),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.weight(1f).padding(vertical = 12.dp)) {
@@ -529,7 +529,7 @@ private fun Checklist(
 ) {
     var editing by remember { mutableStateOf<Long?>(null) }
     val ordered = items.filter { !it.done } + items.filter { it.done }
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(Ui.Space.hair)) {
         ordered.forEach { item ->
             CheckRow(
                 item = item,
@@ -557,12 +557,12 @@ private fun CheckRow(
         Modifier
             .fillMaxWidth()
             .heightIn(min = 44.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .clip(Ui.Shape.chip)
             .padding(horizontal = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         CheckMark(item.done, onToggle)
-        Spacer(Modifier.width(10.dp))
+        Spacer(Modifier.width(Ui.Space.m))
         if (editing) {
             var text by remember(item.id) { mutableStateOf(item.text) }
             val focus = remember { FocusRequester() }
@@ -591,7 +591,7 @@ private fun CheckRow(
                     .padding(vertical = 10.dp),
             )
             IconButton(onClick = onRemove) {
-                Icon(Reicons.Close, contentDescription = "Delete", tint = scheme.outline, modifier = Modifier.size(18.dp))
+                Icon(Reicons.Close, contentDescription = "Delete", tint = scheme.outline, modifier = Modifier.size(Ui.Icon.small))
             }
         }
     }
@@ -654,9 +654,9 @@ private fun CalendarPanel() {
     val grid = monthGrid(c.month)
     // Five rows when the month fits in five; six only when it needs them.
     val rows = if (grid[35].month != c.month.month) 5 else 6
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(Ui.Space.hair)) {
         for (week in 0 until rows) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Ui.Space.hair)) {
                 for (dayIndex in 0 until 7) {
                     val date = grid[week * 7 + dayIndex]
                     DayCell(
@@ -720,7 +720,7 @@ private fun DayCell(
     Column(
         modifier
             .aspectRatio(1f)
-            .clip(RoundedCornerShape(12.dp))
+            .clip(Ui.Shape.chip)
             .background(
                 when {
                     isSelected -> scheme.primary

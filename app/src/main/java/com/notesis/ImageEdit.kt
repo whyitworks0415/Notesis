@@ -119,12 +119,12 @@ internal fun ImageCropDialog(
                     listOf(CropShape.RECT to "Rectangle", CropShape.OVAL to "Ellipse", CropShape.FREE to "Freeform").forEach { (s, label) ->
                         SettingsChoiceChip(selected = shape == s, onClick = {
                             shape = s; start = null; end = null; outline.clear()
-                        }, label = label, modifier = Modifier.padding(end = 6.dp))
+                        }, label = label, modifier = Modifier.padding(end = Ui.Space.s))
                     }
                 }
                 Box(
                     Modifier
-                        .padding(top = 8.dp)
+                        .padding(top = Ui.Space.s)
                         .fillMaxWidth()
                         .height(360.dp)
                         .onSizeChanged { box = it }

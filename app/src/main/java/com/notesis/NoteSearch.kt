@@ -30,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
@@ -292,13 +293,13 @@ internal fun NoteSearchPanel(
             } else null,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp),
+                .padding(horizontal = Ui.Space.m),
         )
         val count = state.hits.size
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(start = 14.dp, end = 4.dp),
+                .padding(start = Ui.Space.l, end = Ui.Space.xs),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
@@ -326,21 +327,22 @@ internal fun NoteSearchPanel(
         LazyColumn(
             state = listState,
             modifier = Modifier.weight(1f).glassEdges(listState),
-            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            contentPadding = PaddingValues(horizontal = Ui.Space.m, vertical = Ui.Space.s),
+            verticalArrangement = Arrangement.spacedBy(Ui.Space.s),
         ) {
             itemsIndexed(state.hits) { index, hit ->
                 val selected = index == state.selected
                 Column(
                     Modifier
                         .fillMaxWidth()
+                        // Clipped too, so the press ripple keeps the row's corners.
+                        .clip(Ui.Shape.chip)
                         .background(
                             if (selected) MaterialTheme.colorScheme.primaryContainer
                             else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
-                            RoundedCornerShape(10.dp),
                         )
                         .clickable { open(index) }
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                        .padding(horizontal = Ui.Space.m, vertical = Ui.Space.s),
                 ) {
                     Text(
                         "Page ${hit.pageIndex + 1} · ${hit.source.label}",
@@ -355,7 +357,7 @@ internal fun NoteSearchPanel(
                     )
                 }
             }
-            if (state.hits.isNotEmpty()) item { Spacer(Modifier.padding(4.dp)) }
+            if (state.hits.isNotEmpty()) item { Spacer(Modifier.padding(Ui.Space.xs)) }
         }
     }
 }

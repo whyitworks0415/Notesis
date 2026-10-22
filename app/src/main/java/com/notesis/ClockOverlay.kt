@@ -142,7 +142,7 @@ private fun BoxWithConstraintsScope.ClockPill(kind: PillKind) {
     val freeHeight = (constraints.maxHeight - size.height - 2 * margin).coerceAtLeast(1f)
     val free by rememberUpdatedState(Offset(freeWidth, freeHeight))
     val alert = kind == PillKind.ALARM || kind == PillKind.TIMER_DONE
-    val shape = RoundedCornerShape(50)
+    val shape = Ui.Shape.pill
     Row(
         Modifier
             // Read while placing, so dragging moves the pill without recomposing it.
@@ -171,7 +171,7 @@ private fun BoxWithConstraintsScope.ClockPill(kind: PillKind) {
             .height(44.dp)
             .then(if (kind == PillKind.IDLE) Modifier.width(44.dp) else Modifier.padding(start = 14.dp, end = if (alert) 6.dp else 16.dp)),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+        horizontalArrangement = Arrangement.spacedBy(Ui.Space.s, Alignment.CenterHorizontally),
     ) {
         CompositionLocalProvider(LocalContentColor provides if (alert) scheme.onPrimaryContainer else scheme.onSurface) {
             PillContent(kind)
@@ -204,26 +204,26 @@ private fun PillContent(kind: PillKind) {
         }
     }
     when (kind) {
-        PillKind.IDLE -> Icon(Reicons.Clock, contentDescription = "Clock", modifier = Modifier.size(22.dp))
+        PillKind.IDLE -> Icon(Reicons.Clock, contentDescription = "Clock", modifier = Modifier.size(Ui.Icon.regular))
         PillKind.STUDY -> {
             Box(Modifier.size(8.dp).clip(CircleShape).background(StudyGreen))
             Text(label, style = style)
         }
         PillKind.STOPWATCH -> {
-            Icon(Reicons.Timer, contentDescription = null, modifier = Modifier.size(18.dp))
+            Icon(Reicons.Timer, contentDescription = null, modifier = Modifier.size(Ui.Icon.small))
             Text(label, style = style)
         }
         PillKind.TIMER -> {
-            Icon(Reicons.Timer, contentDescription = null, modifier = Modifier.size(18.dp))
+            Icon(Reicons.Timer, contentDescription = null, modifier = Modifier.size(Ui.Icon.small))
             Text(label, style = style, modifier = Modifier.alpha(if (clock.timerPaused) 0.55f else 1f))
         }
         PillKind.TIMER_DONE -> {
-            Icon(Reicons.Timer, contentDescription = null, modifier = Modifier.size(18.dp))
+            Icon(Reicons.Timer, contentDescription = null, modifier = Modifier.size(Ui.Icon.small))
             Text(label, style = style)
             ConfirmChip { clock.resetTimer() }
         }
         PillKind.ALARM -> {
-            Icon(Reicons.Alarm, contentDescription = null, modifier = Modifier.size(18.dp))
+            Icon(Reicons.Alarm, contentDescription = null, modifier = Modifier.size(Ui.Icon.small))
             Text(label, style = style)
             ConfirmChip { clock.dismissRinging() }
         }
@@ -272,10 +272,10 @@ private fun ConfirmChip(onClick: () -> Unit) {
     Box(
         Modifier
             .height(32.dp)
-            .clip(RoundedCornerShape(16.dp))
+            .clip(Ui.Shape.pill)
             .background(scheme.primary)
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp),
+            .padding(horizontal = Ui.Space.m),
         contentAlignment = Alignment.Center,
     ) {
         Text("OK", style = MaterialTheme.typography.labelLarge, color = scheme.onPrimary)
@@ -288,7 +288,7 @@ private fun ConfirmChip(onClick: () -> Unit) {
 private fun ClockPanel() {
     val clock = StudyClock
     GlassSheet(title = "Clock", onClose = { clock.panelOpen = false }) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
             ClockTab.entries.forEach { option ->
                 ClockChip(option.label, clock.tab == option, Modifier.weight(1f)) { clock.tab = option }
             }
@@ -331,11 +331,12 @@ internal fun GlassSheet(
     )
     // Kept above the keyboard, which a text field brings up.
     Box(Modifier.fillMaxSize().windowInsetsPadding(ChromeInsets).imePadding()) {
-        val shape = RoundedCornerShape(28.dp)
+        // The same sheet as the pen settings: corner, margin and inset.
+        val shape = Ui.Shape.sheet
         Column(
             Modifier
                 .align(Alignment.Center)
-                .padding(16.dp)
+                .padding(Ui.Space.l)
                 .widthIn(max = maxWidth)
                 .fillMaxWidth()
                 .liquidGlass(
@@ -349,8 +350,8 @@ internal fun GlassSheet(
                 .pointerInput(Unit) { detectTapGestures { } }
                 .verticalScroll(rememberScrollState())
                 .animateContentSize()
-                .padding(horizontal = 18.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+                .padding(horizontal = Ui.Space.xl, vertical = Ui.Space.l),
+            verticalArrangement = Arrangement.spacedBy(Ui.Space.m),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
@@ -398,14 +399,14 @@ private fun TimerTab() {
         }
     }
     if (idle) {
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
             listOf(1, 3, 5, 10, 15, 25, 30, 45, 60).forEach { minutes ->
                 ClockChip("${minutes} min", duration == minutes * StudyClock.MINUTE) {
                     clock.setTimerDuration(minutes * StudyClock.MINUTE)
                 }
             }
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
             listOf(-5 to "−5 min", -1 to "−1 min", 1 to "+1 min", 5 to "+5 min").forEach { (minutes, label) ->
                 ClockChip(label, false, Modifier.weight(1f)) {
                     clock.setTimerDuration(duration + minutes * StudyClock.MINUTE)
@@ -413,7 +414,7 @@ private fun TimerTab() {
             }
         }
     }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Ui.Space.m)) {
         ClockButton("Reset", primary = false, enabled = !idle, modifier = Modifier.weight(1f)) { clock.resetTimer() }
         when {
             clock.timerDone -> ClockButton("OK", primary = true, modifier = Modifier.weight(1f)) { clock.resetTimer() }
@@ -461,7 +462,7 @@ private fun StopwatchTab() {
     Box(Modifier.fillMaxWidth().height(140.dp), contentAlignment = Alignment.Center) {
         Text(formatStopwatch(elapsed), style = MaterialTheme.typography.displayMedium.merge(TabularDigits))
     }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Ui.Space.m)) {
         if (running) {
             ClockButton("Lap", primary = false, modifier = Modifier.weight(1f)) { clock.lap() }
             ClockButton("Stop", primary = true, modifier = Modifier.weight(1f)) { clock.pauseStopwatch() }
@@ -471,7 +472,7 @@ private fun StopwatchTab() {
         }
     }
     if (clock.laps.isNotEmpty()) {
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
             val laps = clock.laps
             for (index in laps.indices.reversed()) {
                 val split = laps[index] - (laps.getOrNull(index - 1) ?: 0L)
@@ -515,7 +516,7 @@ private fun AlarmTab() {
 @Composable
 private fun AlarmRow(alarm: ClockAlarm, now: Long) {
     val clock = StudyClock
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
         Column(Modifier.weight(1f).alpha(if (alarm.enabled) 1f else 0.45f)) {
             Text("%02d:%02d".format(alarm.hour, alarm.minute), style = MaterialTheme.typography.headlineMedium.merge(TabularDigits))
             Text(
@@ -528,7 +529,7 @@ private fun AlarmRow(alarm: ClockAlarm, now: Long) {
         ClockChip("Daily", alarm.daily) { clock.setAlarmDaily(alarm.id, !alarm.daily) }
         SkinSwitch(checked = alarm.enabled, onCheckedChange = { clock.setAlarmEnabled(alarm.id, it) })
         IconButton(onClick = { clock.removeAlarm(alarm.id) }) {
-            Icon(Reicons.Delete, contentDescription = "Delete alarm", modifier = Modifier.size(20.dp))
+            Icon(Reicons.Delete, contentDescription = "Delete alarm", modifier = Modifier.size(Ui.Icon.small))
         }
     }
 }
@@ -542,18 +543,18 @@ private fun AlarmEditor(onAdd: (Int, Int, Boolean) -> Unit, onCancel: () -> Unit
     Column(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
+            .clip(Ui.Shape.card)
             .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
-            .padding(14.dp),
+            .padding(Ui.Space.l),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(Ui.Space.m),
     ) {
         TimeInput(state = state)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
             ClockChip("Once", !daily) { daily = false }
             ClockChip("Daily", daily) { daily = true }
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Ui.Space.m)) {
             ClockButton("Cancel", primary = false, modifier = Modifier.weight(1f), onClick = onCancel)
             ClockButton("Add", primary = true, modifier = Modifier.weight(1f)) { onAdd(state.hour, state.minute, daily) }
         }
@@ -654,7 +655,7 @@ private fun WeekBars(days: Map<String, Long>, now: Long) {
     val values = week.map { days[it.toString()] ?: 0L }
     val most = values.maxOrNull()?.coerceAtLeast(StudyClock.HOUR) ?: StudyClock.HOUR
     val primary = MaterialTheme.colorScheme.primary
-    Row(Modifier.fillMaxWidth().height(116.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(Modifier.fillMaxWidth().height(116.dp), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
         week.forEachIndexed { index, day ->
             val value = values[index]
             Column(
@@ -672,7 +673,7 @@ private fun WeekBars(days: Map<String, Long>, now: Long) {
                     Modifier
                         .fillMaxWidth(0.62f)
                         .height((64f * value / most).coerceAtLeast(3f).dp)
-                        .clip(RoundedCornerShape(6.dp))
+                        .clip(Ui.Shape.badge)
                         .background(if (day == today) primary else primary.copy(alpha = 0.32f)),
                 )
                 Spacer(Modifier.height(4.dp))
@@ -707,9 +708,9 @@ internal fun ClockButton(
     val scheme = MaterialTheme.colorScheme
     Box(
         modifier
-            .height(48.dp)
+            .height(Ui.Size.touch)
             .alpha(if (enabled) 1f else 0.4f)
-            .clip(RoundedCornerShape(24.dp))
+            .clip(Ui.Shape.pill)
             .background(if (primary) scheme.primary else scheme.onSurface.copy(alpha = 0.07f))
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
@@ -724,7 +725,8 @@ internal fun ClockChip(label: String, selected: Boolean, modifier: Modifier = Mo
     Box(
         modifier
             .height(36.dp)
-            .clip(CircleShape)
+            // The chip corner every other chip in the app has.
+            .clip(Ui.Shape.chip)
             .background(if (selected) scheme.secondaryContainer else scheme.onSurface.copy(alpha = 0.05f))
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp),

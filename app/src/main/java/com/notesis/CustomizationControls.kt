@@ -104,7 +104,7 @@ internal fun ColorInput(color: Int, onColor: (Int) -> Unit) {
         SaturationValueField(hsv[0], hsv[1], hsv[2]) { saturation, brightness ->
             onColor(android.graphics.Color.HSVToColor(floatArrayOf(hsv[0], saturation, brightness)))
         }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(Ui.Space.s))
         GradientStrip((0..6).map { Color.hsv(it * 60f % 360f, 1f, 1f) }, hsv[0] / 360f) {
             onColor(android.graphics.Color.HSVToColor(floatArrayOf(it * 360f, hsv[1], hsv[2])))
         }
@@ -115,14 +115,15 @@ internal fun ColorInput(color: Int, onColor: (Int) -> Unit) {
         label = { Text("Color #RRGGBB") },
         singleLine = true,
         isError = parseColor(value) == null,
-        leadingIcon = { Box(Modifier.size(24.dp).background(Color(color))) },
+        leadingIcon = { Box(Modifier.size(Ui.Icon.regular).background(Color(color), Ui.Shape.pill)) },
         modifier = Modifier.fillMaxWidth(),
     )
     Row(Modifier.horizontalScroll(rememberScrollState())) {
         listOf(0xFF000000, 0xFFFFFFFF, 0xFFF44336, 0xFFFFC107, 0xFF4CAF50,
             0xFF2196F3, 0xFFB8A6E8, 0xFFE9E7E2).forEach { swatch ->
             TextButton(onClick = { onColor(swatch.toInt()) }) {
-                Box(Modifier.size(26.dp).background(Color(swatch)))
+                // Round, like every other colour swatch in the app.
+                Box(Modifier.size(26.dp).background(Color(swatch), Ui.Shape.pill))
             }
         }
     }
@@ -145,7 +146,7 @@ internal fun TemplateEditor(onDismiss: () -> Unit, onSave: (String, List<Int>) -
                 Row(Modifier.horizontalScroll(rememberScrollState())) {
                     colors.forEach { saved ->
                         TextButton(onClick = { colors = colors - saved }) {
-                            Box(Modifier.size(30.dp).background(Color(saved)))
+                            Box(Modifier.size(30.dp).background(Color(saved), Ui.Shape.pill))
                             Text("×")
                         }
                     }

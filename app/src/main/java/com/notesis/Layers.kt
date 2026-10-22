@@ -574,8 +574,8 @@ internal val Page.allStrokes: List<Stroke> get() = if (hiddenStrokes.isEmpty()) 
 
 // ---- the layer panel ----------------------------------------------------------
 
-private val ROW_GAP = 6.dp
-private val LIST_PADDING = 10.dp
+private val ROW_GAP = Ui.Space.s
+private val LIST_PADDING = Ui.Space.m
 private const val DELETE_UNDO_MS = 8_000L
 
 /** The eye, open: Lucide has no open eye among this app's icons, so both sets use Reicon's. */
@@ -603,15 +603,15 @@ internal fun LayerTargetChip(view: InkCanvasView?, onClick: () -> Unit) {
         Modifier
             .heightIn(min = 40.dp)
             .widthIn(max = 160.dp)
-            .clip(RoundedCornerShape(20.dp))
+            .clip(Ui.Shape.pill)
             .background(scheme.surfaceContainerHighest.copy(alpha = 0.72f))
             .clickable(onClickLabel = "Open layers", onClick = onClick)
             .semantics { contentDescription = description }
-            .padding(horizontal = 10.dp),
+            .padding(horizontal = Ui.Space.m),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AppIcon(AppIcons.layers, null, Modifier.size(18.dp))
-        Spacer(Modifier.width(6.dp))
+        AppIcon(AppIcons.layers, null, Modifier.size(Ui.Icon.small))
+        Spacer(Modifier.width(Ui.Space.s))
         Text(
             target.name,
             style = MaterialTheme.typography.labelLarge,
@@ -798,17 +798,17 @@ internal fun LayerPanel(view: InkCanvasView, onClose: () -> Unit, modifier: Modi
     SkinSurface(
         modifier = modifier
             .windowInsetsPadding(ChromeInsets)
-            .padding(12.dp)
+            .padding(Ui.Space.m)
             .widthIn(max = 320.dp)
             .fillMaxWidth()
             .fillMaxHeight(0.86f),
     ) {
         Column {
             // ---- header: fixed, only the list below scrolls ----
-            Column(Modifier.padding(start = 14.dp, end = 4.dp, top = 6.dp)) {
+            Column(Modifier.padding(start = Ui.Space.l, end = Ui.Space.xs, top = Ui.Space.s)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    AppIcon(AppIcons.layers, null, Modifier.size(20.dp))
-                    Spacer(Modifier.width(8.dp))
+                    AppIcon(AppIcons.layers, null, Modifier.size(Ui.Icon.small))
+                    Spacer(Modifier.width(Ui.Space.s))
                     Text("Layers", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                     AppIconButton(
                         onClick = {
@@ -852,9 +852,9 @@ internal fun LayerPanel(view: InkCanvasView, onClose: () -> Unit, modifier: Modi
                         Modifier
                             .fillMaxWidth()
                             .padding(end = 10.dp, bottom = 4.dp)
-                            .clip(RoundedCornerShape(12.dp))
+                            .clip(Ui.Shape.chip)
                             .background(scheme.inverseSurface)
-                            .padding(start = 12.dp),
+                            .padding(start = Ui.Space.m),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
@@ -985,7 +985,7 @@ private fun LayerRow(
             }
             .onSizeChanged { onMeasured(it.height) }
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
+            .clip(Ui.Shape.chip)
             .background(background),
     ) {
         Row(Modifier.heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1012,7 +1012,7 @@ private fun LayerRow(
                     .semantics { contentDescription = "Drag to reorder ${layer.name}" },
                 contentAlignment = Alignment.Center,
             ) {
-                AppIcon(gripIcon, null, Modifier.size(18.dp), tint = onBackground.copy(alpha = 0.6f))
+                AppIcon(gripIcon, null, Modifier.size(Ui.Icon.small), tint = onBackground.copy(alpha = 0.6f))
             }
             Column(
                 Modifier

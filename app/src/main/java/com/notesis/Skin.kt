@@ -135,7 +135,7 @@ fun ProvideSkin(skin: Skin, settings: SkinSettings, content: @Composable () -> U
 @Composable
 fun Skin.tokens(): SkinTokens = when (this) {
     Skin.MATERIAL -> SkinTokens(
-        corner = 20.dp,
+        corner = Ui.Corner.card,
         fillAlpha = 1f,
         rim = null,
         rimWidth = 0.dp,
@@ -1030,29 +1030,15 @@ private val LIQUID_THUMB_SHADOW_HELD = 12.dp
  * dialogs, menus and cards take the skin without every call site being edited:
  * AlertDialog asks the theme for `extraLarge`, DropdownMenu for `extraSmall`,
  * and so on, so replacing the set replaces all of them at once.
+ *
+ * One set for every skin. Each skin used to carry its own ladder (Material's
+ * 4dp menus, glass's 17dp chips and 36dp dialogs) beside panels hand-drawn at
+ * yet other radii, so a menu never matched the bar it dropped from. The skin
+ * still decides what a surface is made of; [Ui.shapes] decides its outline.
  */
+@Suppress("UNUSED_PARAMETER")
 @Composable
-fun skinShapes(skin: Skin): Shapes = if (skin == Skin.MATERIAL) {
-    Shapes()
-} else if (skin.isRefractive) {
-    // Concentric, generous curves: controls nest rather than presenting a
-    // stack of unrelated corner radii.
-    Shapes(
-        extraSmall = RoundedCornerShape(12.dp),
-        small = RoundedCornerShape(17.dp),
-        medium = RoundedCornerShape(22.dp),
-        large = RoundedCornerShape(28.dp),
-        extraLarge = RoundedCornerShape(36.dp),
-    )
-} else {
-    Shapes(
-        extraSmall = RoundedCornerShape(10.dp),
-        small = RoundedCornerShape(14.dp),
-        medium = RoundedCornerShape(18.dp),
-        large = RoundedCornerShape(22.dp),
-        extraLarge = RoundedCornerShape(30.dp),
-    )
-}
+fun skinShapes(skin: Skin): Shapes = Ui.shapes
 
 /** How solid a popup's own surface is. The platform blurs what is behind it. */
 private const val POPUP_ALPHA = 0.86f

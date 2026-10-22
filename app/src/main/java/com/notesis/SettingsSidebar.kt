@@ -193,7 +193,7 @@ internal fun SettingsSidebarFrame(
                     )
                 }
             }
-            SkinSurface(Modifier.weight(1f).fillMaxHeight(), corner = if (full) 0.dp else 24.dp) {
+            SkinSurface(Modifier.weight(1f).fillMaxHeight(), corner = if (full) 0.dp else Ui.Corner.sheet) {
                 // A veil over the glass: a column of settings has to be read,
                 // and the page behind it should only be a hint.
                 Column(
@@ -215,43 +215,43 @@ internal fun SettingsSidebarFrame(
 private fun SidebarHeader(title: String, canGoBack: Boolean, onBack: () -> Unit, onClose: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     Row(
-        Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 8.dp, vertical = 8.dp),
+        Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(Ui.Space.s),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (canGoBack) {
             Row(
                 Modifier
-                    .heightIn(min = 48.dp)
-                    .clip(RoundedCornerShape(24.dp))
+                    .heightIn(min = Ui.Size.touch)
+                    .clip(Ui.Shape.pill)
                     .background(scheme.surfaceContainerHigh)
                     .clickable(role = Role.Button, onClickLabel = "Back", onClick = onBack)
                     .semantics(mergeDescendants = true) { contentDescription = "Back" }
-                    .padding(start = 12.dp, end = 16.dp),
+                    .padding(start = Ui.Space.m, end = Ui.Space.l),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                AppIcon(AppIcons.back, null, Modifier.size(24.dp))
-                Spacer(Modifier.width(6.dp))
+                AppIcon(AppIcons.back, null, Modifier.size(Ui.Icon.regular))
+                Spacer(Modifier.width(Ui.Space.s))
                 Text("Back", style = MaterialTheme.typography.labelLarge, maxLines = 1)
             }
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(Ui.Space.s))
         }
         Text(
             title,
             style = MaterialTheme.typography.titleLarge,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f).padding(horizontal = 8.dp).semantics { heading() },
+            modifier = Modifier.weight(1f).padding(horizontal = Ui.Space.s).semantics { heading() },
         )
         Box(
             Modifier
-                .size(48.dp)
+                .size(Ui.Size.touch)
                 .clip(CircleShape)
                 .background(scheme.surfaceContainerHigh)
                 .clickable(role = Role.Button, onClick = onClose)
                 .semantics { contentDescription = "Close settings" },
             contentAlignment = Alignment.Center,
         ) {
-            AppIcon(AppIcons.close, null, Modifier.size(24.dp))
+            AppIcon(AppIcons.close, null, Modifier.size(Ui.Icon.regular))
         }
     }
 }
@@ -308,8 +308,8 @@ internal fun NoteSettingsSidebar(
             }
             if (page.scrolls) {
                 Column(
-                    Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(Ui.Space.l),
+                    verticalArrangement = Arrangement.spacedBy(Ui.Space.m),
                 ) { content() }
             } else {
                 Box(Modifier.fillMaxSize()) { content() }
@@ -327,7 +327,7 @@ private fun SettingsRoot(quickActions: List<SpotiToolbarAction>, onOpen: (Settin
         }
     }
     SettingsSectionHeader("Sections")
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
         SECTIONS.forEach { page -> SettingsNavRow(page) { onOpen(page) } }
     }
 }
@@ -350,21 +350,21 @@ private fun SettingsNavRow(page: SettingsPage, onClick: () -> Unit) {
         Modifier
             .fillMaxWidth()
             .heightIn(min = 60.dp)
-            .clip(RoundedCornerShape(16.dp))
+            .clip(Ui.Shape.control)
             .background(scheme.onSurface.copy(alpha = 0.05f))
             .clickable(role = Role.Button, onClick = onClick)
             .semantics(mergeDescendants = true) {}
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .padding(horizontal = Ui.Space.l, vertical = Ui.Space.m),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AppIcon(page.icon(), null, Modifier.size(24.dp))
-        Spacer(Modifier.width(14.dp))
+        AppIcon(page.icon(), null, Modifier.size(Ui.Icon.regular))
+        Spacer(Modifier.width(Ui.Space.m))
         Column(Modifier.weight(1f)) {
             Text(page.title, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (page.subtitle.isNotEmpty()) Text(page.subtitle, style = MaterialTheme.typography.bodySmall,
                 color = scheme.outline, maxLines = 3, overflow = TextOverflow.Ellipsis)
         }
-        Icon(Reicons.ChevronRight, contentDescription = null, modifier = Modifier.size(20.dp), tint = scheme.outline)
+        Icon(Reicons.ChevronRight, contentDescription = null, modifier = Modifier.size(Ui.Icon.small), tint = scheme.outline)
     }
 }
 
@@ -376,7 +376,7 @@ internal fun SettingsSectionHeader(text: String, modifier: Modifier = Modifier) 
         text,
         style = MaterialTheme.typography.titleSmall,
         color = MaterialTheme.colorScheme.primary,
-        modifier = modifier.padding(top = 4.dp).semantics { heading() },
+        modifier = modifier.padding(top = Ui.Space.xs).semantics { heading() },
     )
 }
 
@@ -391,10 +391,10 @@ internal fun SettingsCard(modifier: Modifier = Modifier, content: @Composable Co
     Column(
         modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
+            .clip(Ui.Shape.card)
             .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+            .padding(Ui.Space.l),
+        verticalArrangement = Arrangement.spacedBy(Ui.Space.s),
         content = content,
     )
 }
@@ -415,19 +415,19 @@ internal fun SettingsToggle(
     Row(
         Modifier
             .fillMaxWidth()
-            .heightIn(min = 48.dp)
+            .heightIn(min = Ui.Size.touch)
             .toggleable(value = checked, enabled = enabled, role = Role.Switch, onValueChange = onChange)
             .disabledReason(disabledReason),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(Modifier.weight(1f).padding(vertical = 4.dp)) {
+        Column(Modifier.weight(1f).padding(vertical = Ui.Space.xs)) {
             Text(label, style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else 0.5f))
             if (hint != null) SettingsNote(hint)
             if (disabledReason != null) Text(disabledReason, style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error)
         }
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(Ui.Space.m))
         Box(if (enabled) Modifier else Modifier.alpha(0.38f)) {
             SkinSwitch(checked = checked, onCheckedChange = { if (enabled) onChange(it) })
         }
@@ -443,9 +443,9 @@ internal fun SettingsChoices(
     hint: String? = null,
     onPick: (Int) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(Ui.Space.xs)) {
         Text(title, style = MaterialTheme.typography.bodyLarge)
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
             options.forEach { (value, label) ->
                 SettingsChoiceChip(selected = selected == value, onClick = { onPick(value) }, label = label)
             }
@@ -497,7 +497,7 @@ internal fun TouchGestureSettings(gestures: CanvasGestures, onGestures: (CanvasG
                 else "Off: three fingers on the page are ignored.",
         )
         val tapAction = taps.firstOrNull { it.first == gestures.threeFingerTap }?.second ?: "Nothing"
-        Column(Modifier.alpha(if (on) 1f else 0.5f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Column(Modifier.alpha(if (on) 1f else 0.5f), verticalArrangement = Arrangement.spacedBy(Ui.Space.hair)) {
             listOf(
                 "Double tap: $tapAction",
                 "Swipe up: open the reference panel",

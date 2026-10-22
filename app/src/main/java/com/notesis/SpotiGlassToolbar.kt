@@ -25,6 +25,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
@@ -268,16 +269,17 @@ private fun SpotiActionButton(
     }
     if (plain || LocalSkin.current != Skin.SPOTIGLASS) {
         val scheme = MaterialTheme.colorScheme
-        val shape = androidx.compose.foundation.shape.RoundedCornerShape(22.dp)
-        Box(modifier.sizeIn(minWidth = 44.dp, minHeight = 44.dp)
+        // A button: the control corner, whichever skin draws it.
+        val shape = Ui.Shape.control
+        Box(modifier.sizeIn(minWidth = Ui.Size.touchCompact, minHeight = Ui.Size.touchCompact)
             .background(if (selected) scheme.primaryContainer else scheme.surfaceContainerHigh, shape)
             .then(described)
             .clickable(enabled = enabled, role = Role.Button, onClick = tapped),
             contentAlignment = Alignment.Center) {
-            Column(Modifier.padding(horizontal = 8.dp, vertical = 5.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Column(Modifier.padding(horizontal = Ui.Space.s, vertical = Ui.Space.xs), horizontalAlignment = Alignment.CenterHorizontally) {
                 val color = (if (selected) scheme.onPrimaryContainer else scheme.onSurface)
                     .copy(alpha = if (enabled) 1f else 0.38f)
-                icon?.let { AppIcon(it, null, Modifier.size(20.dp), tint = color, play = taps) }
+                icon?.let { AppIcon(it, null, Modifier.size(Ui.Icon.small), tint = color, play = taps) }
                 if (!iconOnly) ActionLabels(label, reason, color)
             }
         }
@@ -286,7 +288,7 @@ private fun SpotiActionButton(
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val scheme = MaterialTheme.colorScheme
-    val shape = SpotiGlassShape(22.dp)
+    val shape = SpotiGlassShape(Ui.Corner.control)
     val look = LocalSkinSettings.current
     val effects = rememberLiquidGlassEffectsAllowed() && !look.highContrast && look.spotiglassResponse > 0f
     // Only a trigger lifts on press, in the same rest -> lifted -> rest cycle as
@@ -294,17 +296,17 @@ private fun SpotiActionButton(
     val grow by androidx.compose.animation.core.animateFloatAsState(
         if (pressed && effects && persistentGlass) 1f + 0.08f * look.spotiglassResponse else 1f,
         if (effects) spring(0.78f, 430f) else tween(0), label = "Action button lift")
-    Box(modifier.sizeIn(minWidth = 44.dp, minHeight = 44.dp)
+    Box(modifier.sizeIn(minWidth = Ui.Size.touchCompact, minHeight = Ui.Size.touchCompact)
         .then(described)
         .clickable(enabled = enabled, role = Role.Button, interactionSource = interaction, indication = null, onClick = tapped),
         contentAlignment = Alignment.Center) {
         val body = Modifier.matchParentSize().graphicsLayer { scaleX = grow; scaleY = grow }
         Box(if (persistentGlass) body.spotiToolbarGlass(circle = true)
             else body.background(if (selected) scheme.primary.copy(alpha = 0.12f) else scheme.onSurface.copy(alpha = 0.06f), shape))
-        Column(Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+        Column(Modifier.padding(horizontal = Ui.Space.s, vertical = Ui.Space.xs),
             horizontalAlignment = Alignment.CenterHorizontally) {
             val color = (if (selected) scheme.primary else scheme.onSurface).copy(alpha = if (enabled) 1f else 0.38f)
-            icon?.let { AppIcon(it, null, Modifier.size(20.dp), tint = color, play = taps) }
+            icon?.let { AppIcon(it, null, Modifier.size(Ui.Icon.small), tint = color, play = taps) }
             if (!iconOnly) ActionLabels(label, reason, color)
         }
     }
@@ -403,7 +405,7 @@ internal fun SpotiGlassToolbar(
                     } else {
                         Row(Modifier.fillMaxWidth().then(if (sizeLevel == 0) Modifier.spotiFitRow(800.dp) else Modifier),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(if (sizeLevel == 0) 4.dp else 8.dp)) {
+                            horizontalArrangement = Arrangement.spacedBy(if (sizeLevel == 0) Ui.Space.xs else Ui.Space.s)) {
                             Box(Modifier.weight(1f)) {
                               // Freeze wrapping at the destination width while the
                               // spring grows the bar; avoid 6 -> 3 -> 2 -> 1 rows.
@@ -424,14 +426,14 @@ internal fun SpotiGlassToolbar(
                             }
                             if (sizeLevel == 0) Box(Modifier.width(360.dp)) { penOptions(360.dp) }
                             SpotiActionButton("Functions", AppIcons.functions, selected = open,
-                                modifier = Modifier.size(if (sizeLevel == 0) 44.dp else 52.dp), iconOnly = true,
+                                modifier = Modifier.size(if (sizeLevel == 0) Ui.Size.touchCompact else 52.dp), iconOnly = true,
                                 persistentGlass = sizeLevel != 0, plain = sizeLevel == 0,
                                 onClick = { menu(ToolbarMenu.FUNCTIONS) })
                         }
                     }
                     if (visible.currentState || visible.targetState) {
                         val maxHeight = (LocalConfiguration.current.screenHeightDp - 140).coerceAtLeast(180).dp
-                        val gap = with(androidx.compose.ui.platform.LocalDensity.current) { 8.dp.roundToPx() }
+                        val gap = with(androidx.compose.ui.platform.LocalDensity.current) { Ui.Space.s.roundToPx() }
                         val position = remember(gap) { SpotiToolbarPopupPosition(false, gap) }
                         Popup(popupPositionProvider = position,
                             onDismissRequest = { open = false }, properties = PopupProperties(focusable = true)) {
@@ -447,15 +449,15 @@ internal fun SpotiGlassToolbar(
                                     .spotiGlassMorph(page to open, enter = true)
                                     .animateContentSize(if (effects) spring(0.86f, 430f) else tween(0))) {
                                     if (skin != Skin.MATERIAL) BlurBehind()
-                                    Column(Modifier.verticalScroll(rememberScrollState()).padding(12.dp),
-                                        verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Column(Modifier.verticalScroll(rememberScrollState()).padding(Ui.Space.m),
+                                        verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
                                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                             Text(when (page) {
                                                 ToolbarMenu.FUNCTIONS -> "Functions"
                                                 ToolbarMenu.NOTES -> "Notes"
                                                 ToolbarMenu.AI -> "AI"
                                             }, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                                            IconButton(onClick = { open = false }, Modifier.size(44.dp)) {
+                                            IconButton(onClick = { open = false }, Modifier.size(Ui.Size.touchCompact)) {
                                                 AppIcon(AppIcons.close, "Close menu")
                                             }
                                         }
@@ -493,7 +495,7 @@ internal fun SpotiGlassToolbar(
                                                     style = MaterialTheme.typography.bodyMedium)
                                                 SpotiMenuGrid(entries, onAction = { open = false; it.onClick() })
                                                 TextButton(onClick = { page = ToolbarMenu.FUNCTIONS },
-                                                    modifier = Modifier.heightIn(min = 44.dp)) { Text("Back to functions") }
+                                                    modifier = Modifier.heightIn(min = Ui.Size.touchCompact)) { Text("Back to functions") }
                                             }
                                         }
                                     }
@@ -511,7 +513,7 @@ internal fun SpotiGlassToolbar(
 /** The bar's switch between sizes: its length, and the curve it moves on. */
 @Composable
 internal fun ToolbarMotionSettings() {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(Ui.Space.xs)) {
         Text(
             if (ToolbarMotion.durationMs == 0) "Instant switch" else "Switch time ${ToolbarMotion.durationMs} ms",
             style = MaterialTheme.typography.bodyMedium,
@@ -522,7 +524,7 @@ internal fun ToolbarMotionSettings() {
             valueRange = 0f..ToolbarMotion.MAX_MS.toFloat(),
             step = 20f,
         )
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
             ToolbarMotion.EASINGS.forEachIndexed { index, label ->
                 SettingsChoiceChip(
                     selected = ToolbarMotion.easing == index,
@@ -537,10 +539,12 @@ internal fun ToolbarMotionSettings() {
 @Composable
 private fun ThemedToolbarFrame(skin: Skin, modifier: Modifier, content: @Composable BoxScope.() -> Unit) {
     if (skin == Skin.SPOTIGLASS) Box(modifier, content = content)
-    else if (skin == Skin.MATERIAL) Surface(modifier, shape = androidx.compose.foundation.shape.RoundedCornerShape(22.dp),
+    // The bar takes the floating-chrome corner: Material's card radius, and
+    // under glass the skin's own corner setting, like every other bar.
+    else if (skin == Skin.MATERIAL) Surface(modifier, shape = Ui.Shape.card,
         color = MaterialTheme.colorScheme.surfaceContainer, shadowElevation = 0.dp, tonalElevation = 0.dp) {
         Box(content = content)
-    } else SkinSurface(modifier, corner = 22.dp) { Box(content = content) }
+    } else SkinSurface(modifier) { Box(content = content) }
 }
 
 @Composable
@@ -548,19 +552,23 @@ private fun ThemedToolbarTools(tools: List<SpotiToolbarTool>, mode: EditMode,
     colors: Map<EditMode, Color>, compact: Boolean, onTool: (SpotiToolbarTool) -> Unit) {
     val scheme = MaterialTheme.colorScheme
     Row(Modifier.fillMaxWidth().height(if (compact) 56.dp else 64.dp)
-        .background(scheme.onSurface.copy(alpha = 0.06f), androidx.compose.foundation.shape.RoundedCornerShape(28.dp))
-        .padding(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        // Nested one step down from the bar, and the selected cell one step
+        // further: an inner radius larger than its container read as a
+        // second, unrelated shape inside the bar.
+        .background(scheme.onSurface.copy(alpha = 0.06f), Ui.Shape.control)
+        .padding(Ui.Space.xs), verticalAlignment = Alignment.CenterVertically) {
         for (tool in tools) {
             val chosen = tool.mode == mode
             Box(Modifier.weight(1f).fillMaxHeight()
+                .clip(Ui.Shape.chip)
                 .background(if (chosen) scheme.primaryContainer else Color.Transparent,
-                    androidx.compose.foundation.shape.RoundedCornerShape(22.dp))
+                    Ui.Shape.chip)
                 .clickable(role = Role.Tab, onClick = { onTool(tool) })
                 .semantics {
                     contentDescription = tool.label
                     selected = chosen
                 }, contentAlignment = Alignment.Center) {
-                AppIcon(tool.icon(), null, Modifier.size(20.dp), play = chosen,
+                AppIcon(tool.icon(), null, Modifier.size(Ui.Icon.small), play = chosen,
                     tint = colors[tool.mode] ?: if (chosen) scheme.onPrimaryContainer else scheme.onSurface)
             }
         }
@@ -575,9 +583,9 @@ internal fun SpotiMenuGrid(
     onAction: (SpotiToolbarAction) -> Unit = { it.onClick() },
 ) {
     val across = columns.coerceAtLeast(1)
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
         actions.chunked(across).forEach { row ->
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
                 row.forEach { action ->
                     SpotiActionButton(action.label, action.icon, Modifier.weight(1f), action.selected, action.enabled,
                         subtitle = action.disabledReason) { onAction(action) }

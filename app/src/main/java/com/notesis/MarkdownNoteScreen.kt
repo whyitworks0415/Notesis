@@ -116,7 +116,7 @@ internal fun MarkdownNoteScreen(store: NoteStore, note: NoteMeta, onBack: () -> 
 @Composable
 private fun MarkdownToolbar(onInsert: (String) -> Unit) {
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        horizontalArrangement = Arrangement.spacedBy(Ui.Space.xs)) {
         listOf("# " to "Heading", "**bold**" to "Bold", "- " to "List", "- [ ] " to "Checkbox", "```\n\n```" to "Code", "[link](url)" to "Link")
             .forEach { (syntax, label) -> TextButton(onClick = { onInsert("\n$syntax") }) { Text(label) } }
     }
@@ -124,7 +124,7 @@ private fun MarkdownToolbar(onInsert: (String) -> Unit) {
 
 @Composable
 private fun MarkdownPreview(text: String, modifier: Modifier = Modifier) {
-    Column(modifier.verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(modifier.verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
         markdownLines(text).forEach { line ->
             when {
                 line.startsWith("### ") -> Text(line.drop(4), fontSize = 20.sp, fontWeight = FontWeight.Bold)

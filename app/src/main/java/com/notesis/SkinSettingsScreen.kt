@@ -129,7 +129,7 @@ internal fun ToolbarPreviewStage(
 ) {
     val backdrop = rememberBackdrop(active = true)
     val liquid = rememberLiquidGlassBackdrop()
-    Box(modifier.clip(RoundedCornerShape(20.dp))) {
+    Box(modifier.clip(Ui.Shape.card)) {
         // The background goes inside the recording; the bar is outside it,
         // or the glass would be looking at itself.
         Box(
@@ -375,19 +375,19 @@ internal fun AppearanceSettings(
     var group by remember { mutableStateOf(AppearanceGroup.ICONS) }
 
     val upper: @Composable () -> Unit = {
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
             ToolbarPreviewStage(background, photo, Modifier.fillMaxWidth().height(140.dp)) {
                 // The preview shows the draft while the note behind keeps the
                 // committed look until the hand rests.
                 CompositionLocalProvider(LocalSkinSettings provides settings) {
-                    Box(Modifier.padding(10.dp).previewFit(spotiToolbarWidth(1))) {
+                    Box(Modifier.padding(Ui.Space.s).previewFit(spotiToolbarWidth(1))) {
                         if (preview != null) preview() else StandaloneToolbarPreview()
                     }
                 }
             }
             Row(
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(Ui.Space.s),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text("Preview on", style = MaterialTheme.typography.labelMedium,
@@ -418,12 +418,12 @@ internal fun AppearanceSettings(
             )
             Text("UI style", style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
                 Skin.entries.forEach { option ->
                     SettingsChoiceChip(selected = option == skin, onClick = { onSkin(option) }, label = option.displayName)
                 }
             }
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
                 AppearanceGroup.entries.forEach { option ->
                     SettingsChoiceChip(selected = group == option, onClick = { group = option }, label = option.label)
                 }
@@ -431,7 +431,7 @@ internal fun AppearanceSettings(
         }
     }
     val lower: @Composable () -> Unit = {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(Ui.Space.m)) {
             when (group) {
                 AppearanceGroup.ICONS -> IconsGroup()
                 AppearanceGroup.BACKGROUND -> BackgroundGroup(skin, settings, onChange)
@@ -510,7 +510,7 @@ private fun BackgroundGroup(skin: Skin, settings: SkinSettings, onChange: (SkinS
 private fun GlassGroup(skin: Skin, settings: SkinSettings, onChange: (SkinSettings) -> Unit, onSkin: (Skin) -> Unit) {
     if (!skin.isRefractive) {
         SettingsNote("Glass optics belong to the Liquid glass and Glass bar styles; ${skin.displayName} has none.")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
             OutlinedButton(onClick = { onSkin(Skin.LIQUID_GLASS) }, modifier = Modifier.heightIn(min = 48.dp)) {
                 Text("Use Liquid glass")
             }
@@ -607,7 +607,7 @@ enum class ColorSlot(val label: String) {
 private fun AccentPresets(current: Int, onPick: (Int) -> Unit) {
     Row(
         Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(Ui.Space.s),
     ) {
         for (argb in ACCENTS) {
             Box(
@@ -671,10 +671,10 @@ private fun ColorRow(label: String, argb: Int, selected: Boolean, note: String? 
         Modifier
             .fillMaxWidth()
             .heightIn(min = 52.dp)
-            .clip(RoundedCornerShape(14.dp))
+            .clip(Ui.Shape.control)
             .background(if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
             .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 8.dp),
+            .padding(Ui.Space.s),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
@@ -705,10 +705,10 @@ private fun InlineColorPicker(argb: Int, onPick: (Int) -> Unit, onCancel: () -> 
     Column(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(Ui.Shape.control)
             .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+            .padding(Ui.Space.m),
+        verticalArrangement = Arrangement.spacedBy(Ui.Space.m),
     ) {
         SaturationValueField(hue, saturation, value) { s, v ->
             saturation = s

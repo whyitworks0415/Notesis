@@ -270,10 +270,10 @@ internal fun ToolbarStageSelector(selected: Int, onSelect: (Int) -> Unit, modifi
     Row(
         modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(Ui.Shape.control)
             .background(scheme.onSurface.copy(alpha = 0.06f))
-            .padding(4.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+            .padding(Ui.Space.xs),
+        horizontalArrangement = Arrangement.spacedBy(Ui.Space.xs),
     ) {
         repeat(ToolbarConfig.STAGES) { level ->
             val on = level == selected
@@ -282,7 +282,7 @@ internal fun ToolbarStageSelector(selected: Int, onSelect: (Int) -> Unit, modifi
                 Modifier
                     .weight(1f)
                     .heightIn(min = 52.dp)
-                    .clip(RoundedCornerShape(12.dp))
+                    .clip(Ui.Shape.chip)
                     .background(if (on) scheme.primaryContainer else Color.Transparent)
                     .semantics(mergeDescendants = true) {
                         contentDescription = "Toolbar size ${level + 1} of 4, ${ToolbarConfig.STAGE_NAMES[level]}"
@@ -364,7 +364,7 @@ internal fun ToolbarCustomizeScreen(
     Column(modifier.fillMaxSize()) {
         Column(
             Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(Ui.Space.s),
         ) {
             Text("Toolbar size to edit", style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -378,7 +378,7 @@ internal fun ToolbarCustomizeScreen(
                 }
             }
             if (stage == 0) {
-                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
                     CustomizeList.entries.forEach { option ->
                         SettingsChoiceChip(selected = list == option, onClick = { list = option }, label = option.label)
                     }
@@ -465,7 +465,7 @@ internal fun ToolbarCustomizeScreen(
         }
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(Ui.Space.s),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             TextButton(
@@ -599,7 +599,7 @@ private fun <T> ReorderList(
         Text("Drag the handle to move an item.", style = MaterialTheme.typography.bodySmall,
             color = scheme.outline)
         Spacer(Modifier.height(8.dp))
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
             display.forEachIndexed { index, item ->
                 val id = idOf(item)
                 key(id) {
@@ -620,7 +620,7 @@ private fun <T> ReorderList(
                             }
                             .fillMaxWidth()
                             .heightIn(min = 52.dp)
-                            .clip(RoundedCornerShape(14.dp))
+                            .clip(Ui.Shape.control)
                             .background(if (lifted) scheme.surfaceContainerHighest else scheme.surfaceContainerHigh)
                             .semantics {
                                 customActions = listOf(
@@ -634,7 +634,7 @@ private fun <T> ReorderList(
                     ) {
                         Box(
                             Modifier
-                                .size(48.dp)
+                                .size(Ui.Size.touch)
                                 .pointerInput(id) {
                                     detectDragGestures(
                                         onDragStart = {
@@ -663,11 +663,11 @@ private fun <T> ReorderList(
                                 .semantics { contentDescription = "Drag to move $name" },
                             contentAlignment = Alignment.Center,
                         ) {
-                            AppIcon(AppIcons.dragHandle, null, Modifier.size(20.dp), tint = scheme.onSurfaceVariant)
+                            AppIcon(AppIcons.dragHandle, null, Modifier.size(Ui.Icon.small), tint = scheme.onSurfaceVariant)
                         }
                         icon(item)?.let {
-                            AppIcon(it, null, Modifier.size(20.dp))
-                            Spacer(Modifier.width(10.dp))
+                            AppIcon(it, null, Modifier.size(Ui.Icon.small))
+                            Spacer(Modifier.width(Ui.Space.m))
                         }
                         Column(Modifier.weight(1f).padding(vertical = 6.dp)) {
                             Text(name, style = MaterialTheme.typography.bodyLarge, maxLines = 2,
@@ -691,7 +691,7 @@ private fun <T> ReorderList(
         if (hidden.isEmpty()) {
             Text("Everything is shown.", style = MaterialTheme.typography.bodySmall, color = scheme.outline)
         }
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
             hidden.forEach { item ->
                 key(idOf(item)) {
                     val name = label(item)
@@ -699,14 +699,14 @@ private fun <T> ReorderList(
                         Modifier
                             .fillMaxWidth()
                             .heightIn(min = 52.dp)
-                            .clip(RoundedCornerShape(14.dp))
+                            .clip(Ui.Shape.control)
                             .background(scheme.onSurface.copy(alpha = 0.04f))
-                            .padding(start = 14.dp),
+                            .padding(start = Ui.Space.l),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         icon(item)?.let {
-                            AppIcon(it, null, Modifier.size(20.dp), tint = scheme.onSurfaceVariant)
-                            Spacer(Modifier.width(10.dp))
+                            AppIcon(it, null, Modifier.size(Ui.Icon.small), tint = scheme.onSurfaceVariant)
+                            Spacer(Modifier.width(Ui.Space.m))
                         }
                         Text(name, style = MaterialTheme.typography.bodyLarge, maxLines = 2,
                             overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
@@ -732,8 +732,8 @@ internal fun SmallActionButton(
     val enabled = disabledReason == null
     Box(
         Modifier
-            .size(48.dp)
-            .clip(RoundedCornerShape(24.dp))
+            .size(Ui.Size.touch)
+            .clip(Ui.Shape.pill)
             .semantics {
                 contentDescription = description
                 if (disabledReason != null) stateDescription = disabledReason
@@ -741,7 +741,7 @@ internal fun SmallActionButton(
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        AppIcon(icon, null, Modifier.size(20.dp),
+        AppIcon(icon, null, Modifier.size(Ui.Icon.small),
             tint = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else 0.38f))
     }
 }

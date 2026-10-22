@@ -68,9 +68,9 @@ internal fun ShapePickerDialog(
         onDismissRequest = onDismiss,
         title = { Text("Shapes") },
         text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
                 OFFERED_SHAPES.chunked(SHAPES_PER_ROW).forEach { row ->
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
                         row.forEach { kind ->
                             ShapeTile(kind, kind == current, Modifier.weight(1f)) { onPick(kind) }
                         }
@@ -102,12 +102,12 @@ private fun ShapeTile(kind: ShapeKind, chosen: Boolean, modifier: Modifier, onCl
     val ink = if (chosen) scheme.onPrimaryContainer else scheme.onSurface
     Column(
         modifier
-            .clip(RoundedCornerShape(14.dp))
+            .clip(Ui.Shape.chip)
             .background(if (chosen) scheme.primaryContainer else Color.Transparent)
             .clickable(role = Role.Button, onClick = onClick)
             .semantics { contentDescription = shapeLabel(kind); selected = chosen }
             .heightIn(min = 72.dp)
-            .padding(vertical = 6.dp, horizontal = 2.dp),
+            .padding(vertical = Ui.Space.s, horizontal = Ui.Space.hair),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Canvas(Modifier.size(40.dp)) {

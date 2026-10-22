@@ -96,7 +96,7 @@ internal fun DictationDialog(onInsert: (String) -> Unit, onCopy: (String) -> Uni
                 Row(Modifier.horizontalScroll(rememberScrollState())) {
                     DICTATION_LANGUAGES.forEach { (tag, label) ->
                         SettingsChoiceChip(selected = language == tag, onClick = { if (!listening) language = tag },
-                            label = label, modifier = Modifier.padding(end = 6.dp))
+                            label = label, modifier = Modifier.padding(end = Ui.Space.s))
                     }
                 }
                 Row {
