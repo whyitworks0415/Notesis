@@ -1,48 +1,60 @@
 package com.notesis
 
-import kotlin.math.abs
-
-/** Once a deliberate dismiss starts, grip noise must not turn it into a resize. */
-internal class ReferenceDismissGesture(private val slop: Float) {
-    private var tracking = false
-
-    fun reset() { tracking = false }
-
-    fun tracks(dx: Float, dy: Float, spreadFactor: Float): Boolean {
-        if (!tracking && dy > slop && dy > abs(dx) * 1.15f && abs(spreadFactor - 1f) < 0.12f) {
-            tracking = true
-        }
-        return tracking
-    }
+/** A floating panel's place and size, in the coordinates of what it floats over. */
+internal data class PanelBounds(val left: Float, val top: Float, val width: Float, val height: Float) {
+    val right: Float get() = left + width
+    val bottom: Float get() = top + height
 }
 
 /**
- * A panel of [width] x [height] after a resize handle has been dragged by
- * ([dragX], [dragY]) since the hand went down: each axis on its own, so the
- * shape follows the hand rather than keeping its ratio. The drag is the total
- * since the start, not this frame's step, so pushing past a limit and coming
- * back picks the edge up again exactly where the finger is.
+ * [start] after one of its corners has been dragged by ([dragX], [dragY])
+ * since the hand went down. The corner held follows the hand and the one
+ * opposite stays put, each axis on its own; [fromLeft] and [fromTop] say
+ * which corner it is. Never smaller than [minSize] and never past the
+ * container's edges. The drag is the total since the start, not this
+ * frame's step, so a corner pushed past a limit and brought back is picked
+ * up again exactly where the finger is.
  */
-internal fun freeResize(
-    width: Float,
-    height: Float,
+internal fun cornerResize(
+    start: PanelBounds,
+    fromLeft: Boolean,
+    fromTop: Boolean,
     dragX: Float,
     dragY: Float,
     minSize: Float,
-    maxWidth: Float,
-    maxHeight: Float,
-): Pair<Float, Float> = Pair(
-    (width + dragX).coerceIn(minSize, maxOf(minSize, maxWidth)),
-    (height + dragY).coerceIn(minSize, maxOf(minSize, maxHeight)),
-)
+    containerWidth: Float,
+    containerHeight: Float,
+): PanelBounds {
+    fun axis(near: Float, far: Float, drag: Float, movesNear: Boolean, limit: Float): Pair<Float, Float> =
+        if (movesNear) {
+            // The near edge moves; the far one is the anchor.
+            val lowest = minOf(0f, far - minSize)
+            val edge = (near + drag).coerceIn(lowest, far - minSize)
+            edge to far - edge
+        } else {
+            val reach = maxOf(minSize, limit - near)
+            near to (far - near + drag).coerceIn(minSize, reach)
+        }
+    val (left, width) = axis(start.left, start.right, dragX, fromLeft, containerWidth)
+    val (top, height) = axis(start.top, start.bottom, dragY, fromTop, containerHeight)
+    return PanelBounds(left, top, width, height)
+}
 
 /**
- * Where a dragged panel's top lands, clamped to [0, maxTop], and how far the
- * hand has carried it past the bottom edge. [overshoot] is what was already
- * past it, so the panel comes back up exactly with the hand.
+ * Where a panel of [width] x [height] lands when its top bar is dragged by
+ * ([dx], [dy]) from [left], [top]: inside the container, so its top bar can
+ * always be reached again.
  */
-internal fun panelTopWithOvershoot(top: Float, overshoot: Float, dy: Float, maxTop: Float): Pair<Float, Float> {
-    val wanted = top + overshoot + dy
-    val limit = maxTop.coerceAtLeast(0f)
-    return Pair(wanted.coerceIn(0f, limit), (wanted - limit).coerceAtLeast(0f))
-}
+internal fun movePanel(
+    left: Float,
+    top: Float,
+    width: Float,
+    height: Float,
+    dx: Float,
+    dy: Float,
+    containerWidth: Float,
+    containerHeight: Float,
+): Pair<Float, Float> = Pair(
+    (left + dx).coerceIn(0f, (containerWidth - width).coerceAtLeast(0f)),
+    (top + dy).coerceIn(0f, (containerHeight - height).coerceAtLeast(0f)),
+)

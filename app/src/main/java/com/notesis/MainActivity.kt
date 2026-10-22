@@ -114,7 +114,6 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -148,6 +147,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
@@ -3711,77 +3711,33 @@ private fun NoteScreen(
     // keeps whatever zoom it was put at.
     var referenceFit by remember { mutableStateOf(penStore.referenceFit) }
     var referenceOffset by remember { mutableStateOf(Offset.Zero) }
-    // The panel's laid-out size, and the amount it is being stretched by right
-    // now. Two of them, because a spread that re-lays-out the panel on every
-    // frame is a relayout of everything in it on every frame: that was the
-    // shake, and it was also why the page inside seemed to move on its own -
-    // the window grew and the page it held did not. Growing is a scale on the
-    // whole panel instead, one number on the render thread, so the page grows
-    // with its frame exactly. When the hand comes off, the stretch is folded
-    // into the size and the page is zoomed by the same amount, which puts the
-    // picture back where it was and redraws it sharp. See onReferenceDragEnd.
     var referenceSize by remember {
         mutableStateOf(with(density) { Size(340.dp.toPx(), 440.dp.toPx()) })
     }
-    var referenceStretch by remember { mutableFloatStateOf(1f) }
-    // How far the hand has carried the panel past the bottom edge in this
-    // drag. Let go far enough past it and the panel is put down (closed);
-    // short of that it stays exactly where it was let go. Dragging down
-    // used to be read as "close" from the first few pixels, so a panel could
-    // not be moved down at all - it froze, then vanished.
-    var referenceOvershoot by remember { mutableFloatStateOf(0f) }
-    // A free resize from one of the panel's handles: the outline of the size
-    // it will be, and the drag so far. Folded into the size when the hand
-    // lifts, so the page inside is laid out once, at its new size.
-    var referenceDraft by remember { mutableStateOf<Size?>(null) }
+    // A resize from one of the panel's four corners: the outline of where it
+    // will be, and the drag so far. Folded into the place and size when the
+    // hand lifts, so the page inside is laid out once, at its new size.
+    var referenceDraft by remember { mutableStateOf<PanelBounds?>(null) }
     var referenceResizeDrag by remember { mutableStateOf(Offset.Zero) }
-    fun resizeReference(dx: Float, dy: Float) {
+    fun resizeReference(fromLeft: Boolean, fromTop: Boolean, dx: Float, dy: Float) {
         val minSize = with(density) { REFERENCE_MIN_SIZE.toPx() }
         val drag = referenceResizeDrag + Offset(dx, dy)
         referenceResizeDrag = drag
-        val (w, h) = freeResize(
-            referenceSize.width, referenceSize.height, drag.x, drag.y, minSize,
-            containerSize.width - referenceOffset.x, containerSize.height - referenceOffset.y,
+        val start = PanelBounds(referenceOffset.x, referenceOffset.y, referenceSize.width, referenceSize.height)
+        referenceDraft = cornerResize(
+            start, fromLeft, fromTop, drag.x, drag.y, minSize,
+            containerSize.width.toFloat(), containerSize.height.toFloat(),
         )
-        referenceDraft = Size(w, h)
     }
-    // Three fingers on the panel itself, once it is open: the spread is how
-    // much it grows, the drag is where it goes. One function because the
-    // panel's own view and the gesture that opened it both end up calling it.
-    fun moveReference(panX: Float, panY: Float, spreadFactor: Float) {
-        val minSize = with(density) { REFERENCE_MIN_SIZE.toPx() }
-        val floor = minSize / minOf(referenceSize.width, referenceSize.height)
-        // Width only. Capping against the height too meant a panel whose height
-        // had already reached the screen could not be widened at all, however
-        // much narrower than the screen it still was - and width is the
-        // dimension a page is read across. Taller than the screen is allowed;
-        // it sits against the top and the rest is below the fold.
-        val ceiling = if (containerSize.width > 0) {
-            containerSize.width / referenceSize.width
-        } else {
-            floor
-        }
-        val oldStretch = referenceStretch
-        // Ignore sub-pixel resampling noise from a stationary three-finger grip.
-        val stableFactor = if (abs(spreadFactor - 1f) < REFERENCE_SCALE_DEAD_ZONE) {
-            1f
-        } else {
-            spreadFactor
-        }
-        referenceStretch = (oldStretch * stableFactor)
-            .coerceIn(floor, maxOf(floor, ceiling))
-        val w = referenceSize.width * referenceStretch
-        val h = referenceSize.height * referenceStretch
-        val oldW = referenceSize.width * oldStretch
-        val oldH = referenceSize.height * oldStretch
-        val maxX = (containerSize.width - w).coerceAtLeast(0f)
-        val maxY = (containerSize.height - h).coerceAtLeast(0f)
-        // 핀치 중심을 화면에 고정합니다. 좌상단 고정 확대는 손가락과
-        // 팝업이 서로 다른 방향으로 미끄러져 보였습니다.
-        val (top, overshoot) = panelTopWithOvershoot(
-            referenceOffset.y, referenceOvershoot, panY - (h - oldH) / 2f, maxY)
-        referenceOffset = Offset((referenceOffset.x + panX - (w - oldW) / 2f).coerceIn(0f, maxX), top)
-        referenceOvershoot = overshoot
+    // Its top bar, dragged: the panel goes where the hand takes it. Three
+    // fingers no longer move it; on the panel as on the page they only open
+    // and close it.
+    fun moveReference(dx: Float, dy: Float) {
+        val (x, y) = movePanel(
+            referenceOffset.x, referenceOffset.y, referenceSize.width, referenceSize.height, dx, dy,
+            containerSize.width.toFloat(), containerSize.height.toFloat(),
+        )
+        referenceOffset = Offset(x, y)
     }
     val maxBarWidth = with(density) {
         (containerSize.width.takeIf { it > 0 } ?: Int.MAX_VALUE).toDp()
@@ -4445,8 +4401,8 @@ private fun NoteScreen(
                         // at. Closing the panel is putting a book down, not
                         // throwing it away.
                         referenceOpen = true
-                        val w = referenceSize.width * referenceStretch
-                        val h = referenceSize.height * referenceStretch
+                        val w = referenceSize.width
+                        val h = referenceSize.height
                         val maxX = (containerSize.width - w).coerceAtLeast(0f)
                         val maxY = (containerSize.height - h).coerceAtLeast(0f)
                         referenceOffset = Offset(
@@ -4457,8 +4413,8 @@ private fun NoteScreen(
                     // Three fingers down the page, with the panel already open,
                     // put it away: the gesture that opened it, run backwards.
                     view.onCloseReference = { referenceOpen = false }
-                    // Moving and resizing the panel itself is handled on its own
-                    // view, not here; see ReferencePanel.
+                    // The panel is moved by its top bar and resized by its
+                    // corners; see ReferencePanel.
                 },
             )
         }
@@ -5797,45 +5753,21 @@ private fun NoteScreen(
                 dottedPattern = dottedPattern,
                 offset = { referenceOffset },
                 size = referenceSize,
-                stretch = { referenceStretch },
-                dismissProgress = {
-                    (referenceOvershoot / with(density) { REFERENCE_DISMISS_DRAG.toPx() }).coerceIn(0f, 1f)
-                },
                 draft = { referenceDraft },
-                onResize = { dx, dy -> resizeReference(dx, dy) },
+                onResize = { fromLeft, fromTop, dx, dy -> resizeReference(fromLeft, fromTop, dx, dy) },
                 onResizeEnd = { view ->
                     val draft = referenceDraft
                     referenceDraft = null
                     referenceResizeDrag = Offset.Zero
-                    if (draft != null && draft != referenceSize) {
+                    if (draft != null) {
                         val widthFactor = draft.width / referenceSize.width
-                        referenceSize = draft
-                        // Spent by the view when the new size arrives, as with a spread.
+                        referenceOffset = Offset(draft.left, draft.top)
+                        referenceSize = Size(draft.width, draft.height)
+                        // Spent by the view when the new size arrives.
                         if (abs(widthFactor - 1f) > 0.001f) view?.onNextResize(widthFactor, fitInstead = referenceFit)
                     }
                 },
-                onStretchEnd = { view ->
-                    // The stretch becomes the size. What happens to the page is
-                    // left with the view to do when the new size actually
-                    // arrives: either it fits the new width, which is how a
-                    // note is read, or it is zoomed by the same amount the
-                    // frame was, which leaves the picture exactly as it looked
-                    // being stretched. Done here it would be done against the
-                    // old size, and that was the lurch when the hand came off.
-                    val factor = referenceStretch
-                    if (factor != 1f) {
-                        referenceSize = Size(
-                            referenceSize.width * factor,
-                            referenceSize.height * factor,
-                        )
-                        referenceStretch = 1f
-                        view?.onNextResize(factor, fitInstead = false)
-                    }
-                    // Put down: let go well past the bottom edge.
-                    val dismiss = referenceOvershoot >= with(density) { REFERENCE_DISMISS_DRAG.toPx() }
-                    referenceOvershoot = 0f
-                    dismiss
-                },
+                onMove = { dx, dy -> moveReference(dx, dy) },
                 fit = referenceFit,
                 onFit = {
                     referenceFit = it
@@ -5854,10 +5786,7 @@ private fun NoteScreen(
                     // 일반 화면과 팝업 화면이 같은 마지막 페이지 값을 공유합니다.
                     penStore.setLastPage(activeReferenceNoteId, it)
                 },
-                onDrag = { x, y, spread -> moveReference(x, y, spread) },
                 onClose = {
-                    referenceStretch = 1f
-                    referenceOvershoot = 0f
                     referenceDraft = null
                     referenceResizeDrag = Offset.Zero
                     referenceOpen = false
@@ -6313,8 +6242,8 @@ private fun shareBitmap(
  * over the one being written on, pointed at any note and any page - not a
  * snapshot of one. Writable, with whatever tool is in hand on the toolbar,
  * because a reference worth keeping open is usually a reference worth adding
- * to; its own three fingers move and resize the panel itself, the same
- * gesture that opened it, now caught by this view instead of the one under it.
+ * to. Its top bar moves it and its four corners size it; three fingers
+ * down, on the panel or the page under it, put it away.
  */
 @Composable
 private fun ReferencePanel(
@@ -6347,22 +6276,14 @@ private fun ReferencePanel(
     // frame recomposed the whole panel around a page that had not changed.
     offset: () -> Offset,
     size: Size,
-    /** What the whole panel is scaled by while a spread is in progress. */
-    stretch: () -> Float,
-    /**
-     * The three-finger drag has ended: fold [stretch] into the size, given this
-     * panel's view. True means the panel was let go past the bottom edge, and
-     * is put down.
-     */
-    onStretchEnd: (InkCanvasView?) -> Boolean,
-    /** 0 to 1: how close the panel, dragged past the bottom edge, is to being put down on release. */
-    dismissProgress: () -> Float = { 0f },
-    /** The size a resize handle is being dragged to, drawn as an outline; null when none is held. */
-    draft: () -> Size? = { null },
-    /** A resize handle moved by this much (pixels, each axis free). */
-    onResize: (Float, Float) -> Unit = { _, _ -> },
-    /** The resize handle was let go: take the [draft] size, given this panel's view. */
+    /** Where a corner is being dragged to, drawn as an outline; null when none is held. */
+    draft: () -> PanelBounds? = { null },
+    /** A corner moved by this much (pixels, each axis free); which corner it is, first. */
+    onResize: (fromLeft: Boolean, fromTop: Boolean, dx: Float, dy: Float) -> Unit = { _, _, _, _ -> },
+    /** The corner was let go: take the [draft] place and size, given this panel's view. */
     onResizeEnd: (InkCanvasView?) -> Unit = {},
+    /** The top bar was dragged by this much. */
+    onMove: (Float, Float) -> Unit = { _, _ -> },
     /**
      * Whether the page is fitted to the panel's width - on opening a note, on
      * changing page, and after a resize. Off, it keeps whatever zoom it was put
@@ -6372,7 +6293,6 @@ private fun ReferencePanel(
     onFit: (Boolean) -> Unit,
     onNoteChange: (String) -> Unit,
     onPageChange: (Int) -> Unit,
-    onDrag: (panX: Float, panY: Float, spreadFactor: Float) -> Unit,
     onClose: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -6382,8 +6302,7 @@ private fun ReferencePanel(
     var view by remember { mutableStateOf<InkCanvasView?>(null) }
     var loadFailed by remember { mutableStateOf(false) }
     var loadAttempt by remember { mutableIntStateOf(0) }
-    val latestDrag by rememberUpdatedState(onDrag)
-    val latestStretchEnd by rememberUpdatedState(onStretchEnd)
+    val latestMove by rememberUpdatedState(onMove)
     val latestResize by rememberUpdatedState(onResize)
     val latestResizeEnd by rememberUpdatedState(onResizeEnd)
     val latestClose by rememberUpdatedState(onClose)
@@ -6497,51 +6416,52 @@ private fun ReferencePanel(
         Modifier
             .offset { offset().let { IntOffset(it.x.roundToInt(), it.y.roundToInt()) } }
             .size(with(density) { size.width.toDp() }, with(density) { size.height.toDp() })
-            // Carried past the bottom edge, the panel gives a little and fades:
-            // let go now and it is put down; bring it back and it is not.
-            .graphicsLayer {
-                val dismiss = dismissProgress()
-                translationY = dismiss * REFERENCE_DISMISS_SAG.toPx()
-                alpha = 1f - 0.45f * dismiss
-            }
             .drawWithContent {
                 drawContent()
-                val scale = stretch()
-                if (abs(scale - 1f) > 0.001f) {
-                    drawRect(
-                        color = Color(0xFF3B7DDD),
-                        size = Size(this.size.width * scale, this.size.height * scale),
-                        style = Stroke(width = 2.dp.toPx()),
-                    )
-                }
-                // A free resize in progress: the size it will be, outlined.
-                val outline = draft()
-                if (outline != null) {
-                    drawRect(
-                        color = Color(0xFF3B7DDD),
-                        size = outline,
-                        style = Stroke(width = 2.dp.toPx()),
-                    )
-                }
+                // A corner being dragged: where the panel will be, outlined.
+                val outline = draft() ?: return@drawWithContent
+                val at = offset()
+                drawRect(
+                    color = Color(0xFF3B7DDD),
+                    topLeft = Offset(outline.left - at.x, outline.top - at.y),
+                    size = Size(outline.width, outline.height),
+                    style = Stroke(width = 2.dp.toPx()),
+                )
             },
     ) {
     SkinSurface(
         modifier = Modifier.fillMaxSize()
-            .graphicsLayer {
-                val scale = stretch()
-                scaleX = scale; scaleY = scale
-                transformOrigin = TransformOrigin(0f, 0f)
-            }
             // 유리 표면이 밝은 페이지와 겹쳐도 팝업 외곽을 잃지 않도록 밝은 림과
             // 테마 윤곽색을 함께 사용합니다.
             .border(1.5.dp, panelBorder, panelShape),
         corner = Ui.Corner.card,
     ) {
         Column(Modifier.fillMaxSize()) {
+            // The top bar is the panel's handle: drag anywhere on it, its
+            // buttons included, and the panel follows. A tap is still a tap.
+            val grabColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(start = 4.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                    .pointerInput(Unit) {
+                        detectDragGestures { change, amount ->
+                            change.consume()
+                            latestMove(amount.x, amount.y)
+                        }
+                    }
+                    .drawBehind {
+                        val width = REFERENCE_GRAB_WIDTH.toPx()
+                        val thick = REFERENCE_GRAB_THICKNESS.toPx()
+                        drawRoundRect(
+                            grabColor,
+                            topLeft = Offset((size.width - width) / 2f, REFERENCE_GRAB_TOP.toPx()),
+                            size = Size(width, thick),
+                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(thick / 2f),
+                        )
+                    }
+                    .semantics { contentDescription = "Drag to move" }
+                    // Clear of the corner handles at either end.
+                    .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(Modifier.weight(1f)) {
@@ -6706,17 +6626,11 @@ private fun ReferencePanel(
                                 }
                                 onLassoSelected = { popupLassoCount = it }
                                 onCurrentPageChanged = { onPageChange(it) }
-                                // Already open by definition - three fingers on
-                                // this view only ever move or resize it, never
-                                // open a reference panel of its own.
+                                // Already open by definition: three fingers down
+                                // on this view put it away, and never open a
+                                // reference panel of its own.
                                 referenceOpen = true
-                                onReferenceDrag = { x, y, factor -> latestDrag(x, y, factor) }
-                                onReferenceDragEnd = { if (latestStretchEnd(this)) closePanel() }
                                 onCloseReference = { closePanel() }
-                                // Down is a direction like any other: the panel
-                                // follows the hand there too, and is put down only
-                                // when let go past the bottom edge (see onStretchEnd).
-                                closeReferenceOnDownwardDrag = false
                                 onUndo = { undo(); popupEdits++ }
                                 onRedo = { redo(); popupEdits++ }
                                 view = this
@@ -6771,34 +6685,38 @@ private fun ReferencePanel(
         }
 
     }
-    // Free resize: the right edge, the bottom edge and the corner between
-    // them, each axis on its own, so the panel takes whatever shape the hand
-    // drags it to. Hidden while a three-finger spread is scaling the panel;
-    // derived, so a spread recomposes this once as it starts and once as it ends.
-    val latestStretch by rememberUpdatedState(stretch)
-    val unstretched by remember { derivedStateOf { abs(latestStretch() - 1f) <= 0.001f } }
-    if (unstretched) {
-        val resize: (Float, Float) -> Unit = { dx, dy -> latestResize(dx, dy) }
-        val resizeEnd: () -> Unit = { latestResizeEnd(view) }
-        ReferenceResizeGrip(horizontal = true, vertical = false, onDrag = resize, onEnd = resizeEnd,
-            modifier = Modifier.align(Alignment.CenterEnd).size(18.dp, 64.dp))
-        ReferenceResizeGrip(horizontal = false, vertical = true, onDrag = resize, onEnd = resizeEnd,
-            modifier = Modifier.align(Alignment.BottomCenter).size(64.dp, 18.dp))
-        ReferenceResizeGrip(horizontal = true, vertical = true, onDrag = resize, onEnd = resizeEnd,
-            modifier = Modifier.align(Alignment.BottomEnd).size(30.dp))
+    // A handle in each corner: the corner held follows the hand, the one
+    // opposite stays where it is, each axis on its own.
+    val resizeEnd: () -> Unit = { latestResizeEnd(view) }
+    for ((fromLeft, fromTop) in REFERENCE_CORNERS) {
+        ReferenceResizeGrip(
+            fromLeft = fromLeft,
+            fromTop = fromTop,
+            onDrag = { dx, dy -> latestResize(fromLeft, fromTop, dx, dy) },
+            onEnd = resizeEnd,
+            modifier = Modifier
+                .align(
+                    when {
+                        fromLeft && fromTop -> Alignment.TopStart
+                        fromTop -> Alignment.TopEnd
+                        fromLeft -> Alignment.BottomStart
+                        else -> Alignment.BottomEnd
+                    },
+                )
+                .size(REFERENCE_GRIP_SIZE),
+        )
     }
     }
 }
 
 /**
- * One of the reference panel's resize handles: dragging it moves the panel's
- * right edge ([horizontal]), its bottom edge ([vertical]) or both. A small
- * mark rather than a bar, so it does not take a strip of the page.
+ * One of the reference panel's corner handles: a short arc along the panel's
+ * rounded corner, so it reads as the corner itself being picked up.
  */
 @Composable
 private fun ReferenceResizeGrip(
-    horizontal: Boolean,
-    vertical: Boolean,
+    fromLeft: Boolean,
+    fromTop: Boolean,
     onDrag: (Float, Float) -> Unit,
     onEnd: () -> Unit,
     modifier: Modifier = Modifier,
@@ -6807,31 +6725,33 @@ private fun ReferenceResizeGrip(
     Canvas(
         modifier
             .semantics { contentDescription = "Resize" }
-            .pointerInput(horizontal, vertical) {
+            .pointerInput(fromLeft, fromTop) {
                 detectDragGestures(onDragEnd = onEnd, onDragCancel = onEnd) { change, amount ->
                     change.consume()
-                    onDrag(if (horizontal) amount.x else 0f, if (vertical) amount.y else 0f)
+                    onDrag(amount.x, amount.y)
                 }
             },
     ) {
-        val thick = 3.dp.toPx()
-        val round = androidx.compose.ui.graphics.StrokeCap.Round
-        when {
-            horizontal && vertical -> {
-                // Two short diagonals tucked into the corner, as on a window.
-                val inset = 7.dp.toPx()
-                val right = size.width - inset
-                val bottom = size.height - inset
-                for (step in 1..2) {
-                    val reach = step * 6.dp.toPx()
-                    drawLine(color, Offset(right - reach, bottom), Offset(right, bottom - reach), thick, round)
-                }
-            }
-            horizontal -> drawLine(color, Offset(size.width / 2f, size.height * 0.25f),
-                Offset(size.width / 2f, size.height * 0.75f), thick, round)
-            else -> drawLine(color, Offset(size.width * 0.25f, size.height / 2f),
-                Offset(size.width * 0.75f, size.height / 2f), thick, round)
+        // Concentric with the panel's own corner, a little inside it.
+        val corner = Ui.Corner.card.toPx()
+        val radius = corner - 6.dp.toPx()
+        val cx = if (fromLeft) corner else size.width - corner
+        val cy = if (fromTop) corner else size.height - corner
+        val start = when {
+            fromLeft && fromTop -> 180f
+            fromTop -> 270f
+            fromLeft -> 90f
+            else -> 0f
         }
+        drawArc(
+            color,
+            startAngle = start,
+            sweepAngle = 90f,
+            useCenter = false,
+            topLeft = Offset(cx - radius, cy - radius),
+            size = Size(radius * 2f, radius * 2f),
+            style = Stroke(width = 3.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round),
+        )
     }
 }
 
@@ -8274,7 +8194,6 @@ private const val INK_INDEX_RECHECK_MS = 250L
 private const val SEARCH_DEBOUNCE_MS = 220L
 
 private const val PEN_SAVE_DELAY_MS = 400L
-private const val REFERENCE_SCALE_DEAD_ZONE = 0.0025f
 
 /** 페이지 이동이 끝난 뒤 스크러버가 화면에 남아 있는 시간입니다. */
 private const val PAGE_SCRUBBER_IDLE_MS = 1600L
@@ -8296,10 +8215,14 @@ private val WEB_PANEL_MAX = 1100.dp
 
 /** Below this the reference panel is too small to hold a readable page. */
 private val REFERENCE_MIN_SIZE = 220.dp
-/** How far past the bottom edge a reference panel has to be carried for letting go to close it. */
-private val REFERENCE_DISMISS_DRAG = 96.dp
-/** How far the panel sags towards the edge as that distance is reached. */
-private val REFERENCE_DISMISS_SAG = 28.dp
+/** The reference panel's corner handles: big enough for a fingertip, small enough to leave the page. */
+private val REFERENCE_GRIP_SIZE = 24.dp
+/** Each corner, as (from the left, from the top). */
+private val REFERENCE_CORNERS = listOf(true to true, false to true, true to false, false to false)
+/** The bar drawn at the top of the panel, saying it can be picked up there. */
+private val REFERENCE_GRAB_WIDTH = 32.dp
+private val REFERENCE_GRAB_THICKNESS = 4.dp
+private val REFERENCE_GRAB_TOP = 4.dp
 
 
 private const val SEARCH_HOME = "https://www.google.com/"

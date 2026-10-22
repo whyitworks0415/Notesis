@@ -121,8 +121,10 @@ internal object GuideNote {
         GuidePage("Fingers and gestures", listOf(
             Block.Body("One finger scrolls. Two fingers pinch to zoom.\n" +
                 "Two-finger double tap undoes; three-finger double tap redoes."),
-            Block.Body("Three fingers up open a second note in a popup beside this one.\n" +
-                "Turning three fingers rotates the note; near straight, it snaps."),
+            Block.Body("Three fingers up open a second note in a popup beside this one;\n" +
+                "three fingers down close it. Drag its top bar to move it,\n" +
+                "and a corner to resize it."),
+            Block.Body("Turning three fingers rotates the note; near straight, it snaps."),
             Block.Tip("Gesture mode (the Read tool) lets the pen select PDF text,\n" +
                 "follow links and lift masking tape without writing."),
             Block.Body("Everything here can be changed in\n" +

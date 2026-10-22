@@ -595,8 +595,7 @@ internal fun TouchGestureSettings(gestures: CanvasGestures, onGestures: (CanvasG
             listOf(
                 "Double tap: $tapAction",
                 "Swipe up: open the reference panel",
-                "Swipe down: close the reference panel",
-                "Drag or spread on the panel: move and resize it",
+                "Swipe down, on the page or the panel: close the reference panel",
                 "Twist: rotate the note",
             ).forEach { line -> Text("•  $line", style = MaterialTheme.typography.bodyMedium) }
         }

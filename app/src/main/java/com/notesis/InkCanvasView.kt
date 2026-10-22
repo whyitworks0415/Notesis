@@ -1257,21 +1257,6 @@ class InkCanvasView @JvmOverloads constructor(
     /** The same drag the other way up, on the page, while the panel is open. */
     var onCloseReference: (() -> Unit)? = null
 
-    /** 팝업 자체에서도 세 손가락 아래 스와이프로 닫을지 여부입니다. */
-    var closeReferenceOnDownwardDrag: Boolean = false
-
-    /** Three fingers moving once it is open: pan in each axis, then the ratio the spread grew by. */
-    var onReferenceDrag: ((Float, Float, Float) -> Unit)? = null
-
-    /**
-     * The hand has come off a panel drag. Growing a panel while it is being
-     * dragged is a picture being stretched; this is where the host turns that
-     * back into a panel of the new size with a page drawn for it.
-     */
-    var onReferenceDragEnd: (() -> Unit)? = null
-
-    /** Whether this gesture has actually moved the panel, so its end is worth reporting. */
-    private var draggedReference = false
 
     /** Fired when a picture is picked up or let go, so the host can offer actions. */
     var onImageSelected: ((Boolean) -> Unit)? = null
@@ -1366,7 +1351,7 @@ class InkCanvasView @JvmOverloads constructor(
     private var zooming = false
     /** True while fingers own the viewport, including a one-finger pan. */
     private var viewportInteracting = false
-    /** A three-finger panel gesture must never leak into the two-finger scaler. */
+    /** A three-finger gesture must never leak into the two-finger scaler. */
     private var suppressScaleUntilGestureEnd = false
 
     /** Whether detail work should be held off right now. */
@@ -1875,11 +1860,6 @@ class InkCanvasView @JvmOverloads constructor(
     private var opened3fThisGesture = false
     private var closed3fThisGesture = false
     private var gestureStart3fY = 0f
-    private var gestureStart3fX = 0f
-    private var gestureStart3fSpread = 0f
-    private var prev3fX = 0f
-    private var prev3fY = 0f
-    private var prev3fSpread = 0f
     // The other half of a double tap: what the last one looked like.
     private var lastTapFingers = 0
     private var lastTapTime = 0L
@@ -2378,7 +2358,6 @@ class InkCanvasView @JvmOverloads constructor(
         isQuickScaleEnabled = false
         isStylusScaleEnabled = false
     }
-    private val referenceDismissGesture = ReferenceDismissGesture(touchSlop * 2f)
 
     init {
         // A ViewGroup only gets onTouchEvent once no child has taken the event;
@@ -4703,11 +4682,10 @@ class InkCanvasView @JvmOverloads constructor(
     private fun onFingers(event: MotionEvent): Boolean {
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
             suppressScaleUntilGestureEnd = false
-            referenceDismissGesture.reset()
         }
         if (event.pointerCount >= 3 && !suppressScaleUntilGestureEnd) {
             // ScaleGestureDetector otherwise zooms the page with its first two
-            // pointers while all three are resizing the popup at the same time.
+            // pointers while all three are opening, closing or turning something else.
             val cancel = MotionEvent.obtain(event)
             cancel.action = MotionEvent.ACTION_CANCEL
             try {
@@ -4752,7 +4730,6 @@ class InkCanvasView @JvmOverloads constructor(
                 opened3fThisGesture = false
                 closed3fThisGesture = false
                 zooming = false
-                draggedReference = false
                 longPressFired = false
                 if (onLongPressCanvas != null) postDelayed(fingerLongPress, LONG_PRESS_MS)
                 return true
@@ -4808,55 +4785,22 @@ class InkCanvasView @JvmOverloads constructor(
                         return true
                     }
                     val rawFocus = rawFingerFocus(event)
-                    val spread = rawFingerSpread(event, rawFocus[0], rawFocus[1])
-                    // Turning the hand turns the note; sliding it still moves the panel.
+                    // Turning the hand turns the note; sliding it up or down opens or closes the panel.
                     if (have3Fingers && trackNoteTurn(event)) {
                         recordFingerAngles(event)
-                        prev3fX = rawFocus[0]
-                        prev3fY = rawFocus[1]
-                        prev3fSpread = spread
                         lastFocusX = focus[0]
                         lastFocusY = focus[1]
                         return true
                     }
                     if (!have3Fingers) {
                         have3Fingers = true
-                        referenceDismissGesture.reset()
-                        gestureStart3fX = rawFocus[0]
                         gestureStart3fY = rawFocus[1]
-                        gestureStart3fSpread = spread
-                    } else if (referenceOpen && onReferenceDrag != null) {
-                        val totalX = rawFocus[0] - gestureStart3fX
-                        val totalY = rawFocus[1] - gestureStart3fY
-                        val factor = if (prev3fSpread > MIN_SPREAD_PX) {
-                            spread / prev3fSpread
-                        } else {
-                            1f
-                        }
-                        val totalSpreadFactor = if (gestureStart3fSpread > MIN_SPREAD_PX) {
-                            spread / gestureStart3fSpread
-                        } else {
-                            1f
-                        }
-                        val tracksDismissDirection = closeReferenceOnDownwardDrag &&
-                            referenceDismissGesture.tracks(totalX, totalY, totalSpreadFactor)
-                        val isDownwardDismiss = tracksDismissDirection && totalY > OPEN_DRAG_PX
-                        if (isDownwardDismiss && !closed3fThisGesture) {
-                            onCloseReference?.invoke()
-                            closed3fThisGesture = true
-                        } else if (!closed3fThisGesture && !tracksDismissDirection) {
-                            onReferenceDrag?.invoke(
-                                rawFocus[0] - prev3fX,
-                                rawFocus[1] - prev3fY,
-                                factor,
-                            )
-                            draggedReference = true
-                        }
                     } else if (referenceOpen) {
-                        // On the page rather than on the panel, and the panel is
-                        // already open: the same drag that opened it, the other
-                        // way up, puts it away. Nothing else here has a use for
-                        // three fingers going down.
+                        // The panel is already open, and this is the page under
+                        // it or the panel itself: the same drag that opened it,
+                        // the other way up, puts it away. The panel is moved by
+                        // its top bar and sized by its corners, never by three
+                        // fingers, so nothing else here wants them going down.
                         if (!closed3fThisGesture && rawFocus[1] - gestureStart3fY > OPEN_DRAG_PX) {
                             onCloseReference?.invoke()
                             closed3fThisGesture = true
@@ -4866,9 +4810,6 @@ class InkCanvasView @JvmOverloads constructor(
                         opened3fThisGesture = true
                     }
                     recordFingerAngles(event)
-                    prev3fX = rawFocus[0]
-                    prev3fY = rawFocus[1]
-                    prev3fSpread = spread
                     lastFocusX = focus[0]
                     lastFocusY = focus[1]
                     return true
@@ -5052,10 +4993,6 @@ class InkCanvasView @JvmOverloads constructor(
      * length of the pinch happens here, once.
      */
     private fun endZoom() {
-        if (draggedReference) {
-            draggedReference = false
-            onReferenceDragEnd?.invoke()
-        }
         if (!zooming) return
         zooming = false
         // Run the work suppressed during the gesture once, from its final
@@ -5284,7 +5221,7 @@ class InkCanvasView @JvmOverloads constructor(
         if (counted == 0) return rotating3f
         val turn = Math.toDegrees((sum / counted).toDouble()).toFloat()
         if (!rotating3f) {
-            if (draggedReference || opened3fThisGesture || closed3fThisGesture) return false
+            if (opened3fThisGesture || closed3fThisGesture) return false
             turn3fSoFar += turn
             if (abs(turn3fSoFar) < ROTATE_START_DEGREES) return false
             rotating3f = true
@@ -5315,15 +5252,6 @@ class InkCanvasView @JvmOverloads constructor(
         rawFocus[0] = x / event.pointerCount
         rawFocus[1] = y / event.pointerCount
         return rawFocus
-    }
-
-    private fun rawFingerSpread(turned: MotionEvent, x: Float, y: Float): Float {
-        val event = screenEvent ?: turned
-        var total = 0f
-        for (i in 0 until event.pointerCount) {
-            total += hypot(event.getRawX(i) - x, event.getRawY(i) - y)
-        }
-        return total / event.pointerCount
     }
 
     private fun focusOf(event: MotionEvent, skipPointerIndex: Int): FloatArray {
