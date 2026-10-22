@@ -46,6 +46,11 @@ data class SkinSettings(
     val content: Int = DEFAULT_CONTENT,
     /** Drives the theme's primary, so it reaches Material too. */
     val accent: Int = DEFAULT_ACCENT,
+    /**
+     * Glassmorphism's own corner, from before every skin shared one. No
+     * longer read - the chrome takes [spotiglassCorner] in every skin - but
+     * kept so older settings and backups still parse as they were.
+     */
     val corner: Float = 26f,
     /** Spotiglass의 투명도. 0은 불투명, 1은 가장 맑은 유리입니다. */
     val spotiglassClarity: Float = 0.75f,
@@ -53,6 +58,7 @@ data class SkinSettings(
     val spotiglassToolbarOpacity: Float = 0.205f,
     /** 누름/슬라이드에 따른 렌즈의 늘어남과 들림 강도입니다. */
     val spotiglassResponse: Float = 1f,
+    /** The corner of every skin's chrome; the name is from when only Liquid glass had one. */
     val spotiglassCorner: Float = 32f,
     /**
      * Everything legible before everything pretty. Darkens the accent, makes

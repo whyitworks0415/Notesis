@@ -122,3 +122,79 @@ internal fun backdropAlignment(
     val sy = drawnScale(screenY, farY, height)
     return BackdropAlignment(sourceX - screenX, sourceY - screenY, 1f / sx, 1f / sy)
 }
+
+/**
+ * The radius of the selection pill inside a tool strip [barHeight] tall, whose
+ * own corner is [corner] and whose cells sit [inset] in from its edge: the
+ * strip's drawn curve moved in by the inset. Liquid glass's resting pill and
+ * lens and the still skins' highlight all take it from here, so the three
+ * skins round the selection the same.
+ */
+internal fun toolPillRadius(corner: Float, barHeight: Float, inset: Float, min: Float): Float =
+    concentricRadius(drawnRadius(corner, Float.MAX_VALUE, barHeight), inset, min)
+
+/**
+ * Where a popup [contentWidth] x [contentHeight] goes for an anchor from
+ * ([anchorLeft], [anchorTop]) to ([anchorRight], [anchorBottom]) in a window
+ * [windowWidth] x [windowHeight]: under the anchor, or over it when there is
+ * no room below, lined up with its [alignLeft] or right edge, and [gap] clear
+ * of the window's edges. [inset] is clear room the content keeps all round
+ * for its shadow; the panel inside it is what is placed, so the shadow can
+ * fall past the gap without moving the panel.
+ */
+internal fun popupPlacement(
+    anchorLeft: Int,
+    anchorTop: Int,
+    anchorRight: Int,
+    anchorBottom: Int,
+    windowWidth: Int,
+    windowHeight: Int,
+    contentWidth: Int,
+    contentHeight: Int,
+    gap: Int,
+    inset: Int,
+    alignLeft: Boolean,
+): Pair<Int, Int> {
+    val room = inset.coerceAtLeast(0)
+    val width = (contentWidth - 2 * room).coerceAtLeast(0)
+    val height = (contentHeight - 2 * room).coerceAtLeast(0)
+    val desiredX = if (alignLeft) anchorLeft else anchorRight - width
+    val maxX = (windowWidth - width - gap).coerceAtLeast(gap)
+    val below = anchorBottom + gap
+    val above = anchorTop - height - gap
+    val maxY = (windowHeight - height - gap).coerceAtLeast(gap)
+    val y = when {
+        below <= maxY -> below
+        above >= gap -> above
+        else -> below.coerceIn(gap, maxY)
+    }
+    return (desiredX.coerceIn(gap, maxX) - room) to (y - room)
+}
+
+/**
+ * The scale one axis of a popup is drawn at while it grows: [start] when
+ * [progress] is 0, its own size at 1, and a little past it when a spring
+ * overshoots. The two axes run on their own curves, so a popup does not grow
+ * as a fixed-ratio rectangle.
+ */
+internal fun popupGrowScale(progress: Float, start: Float): Float = start + (1f - start) * progress
+
+/**
+ * How opaque a growing popup is: fully once the slower of its two axes is
+ * [POPUP_OPAQUE_AT] of the way, so it is solid long before it lands and fades
+ * only at the very end of folding away.
+ */
+internal fun popupGrowAlpha(width: Float, height: Float): Float =
+    (minOf(width, height) / POPUP_OPAQUE_AT).coerceIn(0f, 1f)
+
+internal const val POPUP_OPAQUE_AT = 0.45f
+
+/**
+ * The settings sidebar's content opacity as the panel slides in, [progress]
+ * 0 to 1: none for the first quarter of the slide, then rising to full as the
+ * panel lands, so what it holds arrives a beat after the panel.
+ */
+internal fun sidebarContentAlpha(progress: Float): Float =
+    ((progress - SIDEBAR_CONTENT_DELAY) / (1f - SIDEBAR_CONTENT_DELAY)).coerceIn(0f, 1f)
+
+private const val SIDEBAR_CONTENT_DELAY = 0.25f

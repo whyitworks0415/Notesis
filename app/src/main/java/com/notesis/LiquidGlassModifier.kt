@@ -113,7 +113,9 @@ fun Modifier.liquidGlass(
     if (spoti) {
         val circle = shape == androidx.compose.foundation.shape.CircleShape
         val square = shape == RoundedCornerShape(0.dp)
-        val spotiShape = if (circle || square) shape else SpotiGlassShape(settings.spotiglassCorner.dp)
+        // A round corner, as the toolbar and every popup draw theirs: one
+        // shape family across the skins, and an outline Backdrop can take.
+        val spotiShape = if (circle || square) shape else RoundedCornerShape(settings.spotiglassCorner.dp)
         // No lens over a resting surface. The lens is a shader over the
         // element's whole drawing, so it ran every icon, line of text and
         // control on a panel through refraction and resampling, and they came
@@ -228,7 +230,7 @@ fun Modifier.liquidGlass(
  * icons and text drawn on top, so those stay sharp.
  */
 @Composable
-internal fun Modifier.liquidGlassPane(shape: Shape, panel: Boolean = false): Modifier {
+internal fun Modifier.liquidGlassPane(shape: Shape, panel: Boolean = false, shadow: Boolean = true): Modifier {
     val look = LocalSkinSettings.current
     val opacity = look.spotiglassToolbarOpacity.coerceIn(0f, 1f).let {
         if (panel) maxOf(it, LIQUID_PANEL_MIN_OPACITY) else it
@@ -237,10 +239,26 @@ internal fun Modifier.liquidGlassPane(shape: Shape, panel: Boolean = false): Mod
         shape = shape,
         settings = look,
         surfaceColor = MaterialTheme.colorScheme.surface.copy(alpha = opacity),
-        shadowElevation = if (panel) 8.dp else 3.dp,
+        // A zero elevation adds no shadow layer at all.
+        shadowElevation = if (shadow) liquidPaneElevation(panel) else 0.dp,
         useSpotiStyle = false,
         surfaceOpacity = opacity,
     )
+}
+
+private fun liquidPaneElevation(panel: Boolean): Dp = if (panel) 8.dp else 3.dp
+
+/**
+ * The shadow [liquidGlassPane] casts, for drawing it apart from the pane:
+ * the full elevation over the lens, and the lower one of the fallback, as
+ * [liquidGlass] chooses between them.
+ */
+@Composable
+internal fun liquidGlassPaneShadow(panel: Boolean): Dp {
+    val look = LocalSkinSettings.current
+    val lens = rememberLiquidGlassEffectsAllowed() && !look.highContrast && LocalLiquidGlassBackdrop.current != null
+    val elevation = liquidPaneElevation(panel)
+    return if (lens) elevation else elevation.coerceAtMost(LiquidGlassTokens.fallbackShadow)
 }
 
 /** The least a liquid glass panel with text on it is coated. */

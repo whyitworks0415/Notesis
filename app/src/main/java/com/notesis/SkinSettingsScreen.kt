@@ -512,10 +512,12 @@ private fun BackgroundGroup(skin: Skin, settings: SkinSettings, onChange: (SkinS
         SkinSettings.VIBRANCY_RANGE,
         disabledReason = if (skin == Skin.MATERIAL) "Material panels are solid" else null,
     ) { onChange(settings.copy(vibrancy = it)) }
-    val corner = if (skin == Skin.SPOTIGLASS) settings.spotiglassCorner else settings.corner
-    AppearanceSlider("Corner radius", "%.0f dp".format(corner), corner, SkinSettings.CORNER_RANGE) {
-        onChange(if (skin == Skin.SPOTIGLASS) settings.copy(spotiglassCorner = it) else settings.copy(corner = it))
-    }
+    // One corner for every style: the toolbar, its menus and the panels take
+    // the same curve whichever style is on (see [chromeCorner]).
+    val corner = settings.spotiglassCorner
+    AppearanceSlider("Corner radius", "%.0f dp".format(corner), corner, SkinSettings.CORNER_RANGE,
+        note = "Shared by every style: the toolbar, its menus and panels.",
+    ) { onChange(settings.copy(spotiglassCorner = it)) }
 }
 
 @Composable

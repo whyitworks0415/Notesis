@@ -51,9 +51,10 @@ val Skin.animatesChrome: Boolean
     get() = this == Skin.SPOTIGLASS
 
 /**
- * Whether a popup grows out of the button that opened it. Glassmorphism keeps
- * this one, since a panel appearing from nowhere over glass loses where it
- * came from; Material simply shows it.
+ * Whether a popup grows out of the button that opened it, and the settings
+ * sidebar slides in from its edge. Glassmorphism keeps this one, since a
+ * panel appearing from nowhere over glass loses where it came from; Material
+ * simply shows it.
  */
 val Skin.animatesPopups: Boolean
     get() = this != Skin.MATERIAL

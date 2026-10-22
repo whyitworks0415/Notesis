@@ -3,6 +3,7 @@ package com.notesis
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.sign
+import kotlin.math.sqrt
 
 // Kotlin port of liquid_glass_easy 4.3.2's animated nav-bar ticker,
 // liquidGlassSpringStep and LiquidGlassLensMotion. Copyright (c) 2025 Ahmed
@@ -81,8 +82,8 @@ internal class SpotiGlassMotion(initial: Float, private val control: Boolean = f
             else travel.x += (followTarget - travel.x) * (1 - exp(-step / 0.05))
             landed = false
         } else {
-            travel.step(target, step, 280.0, 31.4)
-            landed = travel.settle(target, 0.003, 0.05)
+            travel.step(target, step, SPOTIGLASS_TRAVEL_STIFFNESS, SPOTIGLASS_TRAVEL_DAMPING)
+            landed = travel.settle(target, SPOTIGLASS_TRAVEL_SETTLE, 0.05)
             val span = target - from
             val fraction = if (abs(span) < 1e-6) 1.0 else (travel.x - from) / span
             if (landed || (!control && fraction >= 0.92)) lifted = false
@@ -115,6 +116,22 @@ internal class SpotiGlassMotion(initial: Float, private val control: Boolean = f
         }
     }
 }
+
+/**
+ * The spring the lens travels from one tool to the next on: per unit mass, so
+ * it is the same spring as a Compose spring of this stiffness and of
+ * [SPOTIGLASS_TRAVEL_DAMPING_RATIO]. The still skins' highlight slides on it
+ * too, so a tap moves the selection at one speed whichever skin is on.
+ */
+internal const val SPOTIGLASS_TRAVEL_STIFFNESS = 280.0
+internal const val SPOTIGLASS_TRAVEL_DAMPING = 31.4
+
+/** [SPOTIGLASS_TRAVEL_DAMPING] as a damping ratio: c / (2 sqrt(k m)), m = 1. Just under critical. */
+internal val SPOTIGLASS_TRAVEL_DAMPING_RATIO: Float =
+    (SPOTIGLASS_TRAVEL_DAMPING / (2.0 * sqrt(SPOTIGLASS_TRAVEL_STIFFNESS))).toFloat()
+
+/** Where the lens counts as landed, in cells; the highlight settles at the same distance. */
+internal const val SPOTIGLASS_TRAVEL_SETTLE = 0.003
 
 /** Same 300ms derivative window, without Pair/list allocation on every frame. */
 internal class MotionSampleWindow {

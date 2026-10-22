@@ -3,10 +3,7 @@ package com.notesis
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -249,15 +246,15 @@ internal fun PenDialog(
     // Material has no motion: the panel is simply there, and simply gone.
     val skin = LocalSkin.current
     val animate = skin.animatesPopups && rememberLiquidGlassEffectsAllowed()
-    val progress = remember { Animatable(if (animate) 0f else 1f) }
+    // Width first, then height, out of the bar (see [PopupGrowth]).
+    val growth = remember { PopupGrowth(shown = !animate) }
     var closing by remember { mutableStateOf<(() -> Unit)?>(null) }
     LaunchedEffect(closing) {
         val after = closing
         if (after == null) {
-            if (animate) progress.animateTo(1f, spring(dampingRatio = 0.9f, stiffness = 520f))
-            else progress.snapTo(1f)
+            growth.open(animate)
         } else {
-            if (animate) progress.animateTo(0f, tween(150))
+            growth.close(animate)
             after()
         }
     }
@@ -272,27 +269,32 @@ internal fun PenDialog(
     Dialog(onDismissRequest = ::keep, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         // A light dim: the page should still show through the glass.
         (LocalView.current.parent as? DialogWindowProvider)?.window?.setDimAmount(0.12f)
-        // The panel's own corner is the one fixed radius - the skin's, under
-        // glass - and everything inside follows it, one inset in.
-        val corner = if (skin == Skin.MATERIAL) Ui.Corner.sheet else skin.tokens().corner
-        val shape = if (skin == Skin.SPOTIGLASS) SpotiGlassShape(corner) else RoundedCornerShape(corner)
+        // The panel's own corner is the one fixed radius, and everything
+        // inside follows it, one inset in. It is the toolbar's and its menu's,
+        // on the same round outline, in every skin (see [chromeCorner]).
+        val corner = skin.tokens().corner
+        val shape = RoundedCornerShape(corner)
         val tallest = LocalConfiguration.current.screenHeightDp.dp * 0.9f
-        ProvideMovingBackdrops({ progress.value }) {
+        ProvideMovingBackdrops(growth.motion) {
         NestedCorners(corner, PANEL_INSET) {
         Column(
             Modifier
+                // Outside the padding: while the panel fades, the growth's
+                // layer is drawn offscreen at its own bounds, and the padding
+                // is the room the panel's shadow falls in.
+                .growOutOf({ anchor }, growth)
                 .padding(Ui.Space.l)
                 .widthIn(max = if (wide) 880.dp else 600.dp)
                 .fillMaxWidth()
                 .heightIn(max = tallest)
-                .growOutOf({ anchor }) { progress.value }
                 // Liquid glass under the glass skin, the same lens as the bar
                 // it came from; frost or a solid panel under the others.
                 .skinMaterial(shape, panel = true)
                 .clip(shape)
-                // Outside the scroll, so the panel's own height follows its
-                // content as the detail opens and closes.
-                .then(if (animate) Modifier.animateContentSize() else Modifier)
+                // No size animation of its own: the detail below grows on one
+                // curve and the panel, measured round it, comes with it. An
+                // animateContentSize here ran a second, slower spring behind
+                // that one, so the background trailed the rows it held.
                 .verticalScroll(rememberScrollState())
                 // One inset all round, so the rows and chips inside are
                 // concentric with the panel's corner.
@@ -411,10 +413,18 @@ internal fun PenDialog(
                 Text(if (details) "Fewer settings" else "More for this ${penPanelTitle(mode).lowercase()}",
                     style = MaterialTheme.typography.bodyMedium)
             }
+            // Quick and eased out, rows and background together; Material
+            // opens and closes it at once.
             AnimatedVisibility(
                 visible = details,
-                enter = if (animate) expandVertically(expandFrom = Alignment.Top) + fadeIn() else EnterTransition.None,
-                exit = if (animate) shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut() else ExitTransition.None,
+                enter = if (animate) {
+                    expandVertically(tween(DETAIL_OPEN_MS, easing = EmphasizedDecelerateEasing), expandFrom = Alignment.Top) +
+                        fadeIn(tween(DETAIL_OPEN_MS / 2, delayMillis = DETAIL_OPEN_MS / 6))
+                } else EnterTransition.None,
+                exit = if (animate) {
+                    shrinkVertically(tween(DETAIL_CLOSE_MS, easing = DETAIL_CLOSE_EASING), shrinkTowards = Alignment.Top) +
+                        fadeOut(tween(DETAIL_CLOSE_MS / 2))
+                } else ExitTransition.None,
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(GAP)) {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -487,6 +497,13 @@ internal fun PenDialog(
 
 /** The pen panel's padding, all round; its rows' corners follow from it. */
 private val PANEL_INSET = Ui.Space.l
+
+/** How long "More for this pen" takes to open the rest of the panel, and to close it. */
+private const val DETAIL_OPEN_MS = 280
+private const val DETAIL_CLOSE_MS = 220
+// Material's standard curve: off quickly, landing softly, without the
+// emphasized curve's long tail - a collapse should be over when it looks over.
+private val DETAIL_CLOSE_EASING = androidx.compose.animation.core.CubicBezierEasing(0.2f, 0f, 0f, 1f)
 
 /**
  * The writing settings every pen shares, for the settings sidebar. The

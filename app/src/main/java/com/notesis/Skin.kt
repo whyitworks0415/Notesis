@@ -185,8 +185,11 @@ private const val FOCUS_VEIL_ALPHA = 0.12f
 
 @Composable
 fun Skin.tokens(): SkinTokens = when (this) {
+    // Every skin rounds its chrome by the one corner the person chose, so the
+    // toolbar, its popups and the panels have the same outline whichever skin
+    // is on; only what they are made of changes. See [chromeCorner].
     Skin.MATERIAL -> SkinTokens(
-        corner = Ui.Corner.card,
+        corner = chromeCorner(),
         fillAlpha = 1f,
         rim = null,
         rimWidth = 0.dp,
@@ -201,7 +204,7 @@ fun Skin.tokens(): SkinTokens = when (this) {
     Skin.GLASSMORPHISM -> LocalSkinSettings.current.let { look ->
         val body = darkAwareTint(Color(look.tint), look.themeMode == AppThemeMode.DARK)
         SkinTokens(
-            corner = look.corner.dp,
+            corner = chromeCorner(),
             fillAlpha = 1f,
             // Turned up, the glass stops being see-through: a panel you can
             // read is worth more than one you can look through, and this is
@@ -236,7 +239,7 @@ fun Skin.tokens(): SkinTokens = when (this) {
 
     Skin.SPOTIGLASS -> LocalSkinSettings.current.let { look ->
         SkinTokens(
-            corner = look.spotiglassCorner.dp,
+            corner = chromeCorner(),
             fillAlpha = 1f,
             fill = Color(look.tint).copy(alpha = Color(look.tint).alpha * 0.6f),
             rim = Brush.linearGradient(
@@ -251,6 +254,17 @@ fun Skin.tokens(): SkinTokens = when (this) {
         )
     }
 }
+
+/**
+ * The outer corner of every skin's chrome: the toolbar, the strip and pill
+ * concentric inside it, the function menu, the pen panel and the floating
+ * panels. One value - the corner setting, which once belonged to Liquid glass
+ * alone - so Material and Glassmorphism stop drawing their bars and popups on
+ * a different curve from Liquid glass's.
+ */
+@Composable
+internal fun chromeCorner(): Dp =
+    LocalSkinSettings.current.spotiglassCorner.coerceIn(SkinSettings.CORNER_RANGE).dp
 
 /**
  * What the glass has to look through.
@@ -371,8 +385,11 @@ fun SkinSurface(
     }
     val spotiHost = if (skin == Skin.SPOTIGLASS) rememberLiquidGlassBackdrop() else null
     val surfaceModifier = if (skin == Skin.SPOTIGLASS) {
+        // The same round corner the other skins draw, not the continuous
+        // curve: a popup or bar beside this panel is a round rectangle in
+        // every skin, and Backdrop's lens can take no other outline.
         modifier.spotiGlassSurface(
-            if (radius == 0.dp) shape else SpotiGlassShape(radius), LocalSkinSettings.current,
+            shape, LocalSkinSettings.current,
             elevation = if (flush) 0.dp else tokens.shadow, rim = !flush,
             exportedBackdrop = spotiHost,
         ).then(if (flush) Modifier.flushEdge(tokens) else Modifier)
@@ -396,22 +413,40 @@ fun SkinSurface(
  * it is more solid than a bar that only carries icons.
  */
 @Composable
-internal fun Modifier.skinMaterial(shape: Shape, panel: Boolean = false): Modifier {
+internal fun Modifier.skinMaterial(
+    shape: Shape,
+    panel: Boolean = false,
+    /**
+     * False leaves the shadow to [skinShadow] further out, for a surface
+     * drawn inside a layer of its own - the lens of a morph - which would cut
+     * the shadow off at its bounds.
+     */
+    shadow: Boolean = true,
+): Modifier {
     val skin = LocalSkin.current
     val tokens = skin.tokens()
     return when (skin) {
         Skin.MATERIAL -> {
             val scheme = MaterialTheme.colorScheme
             this
-                .shadow(if (panel) 6.dp else 3.dp, shape, clip = false)
+                .then(if (shadow) Modifier.skinShadow(shape, panel) else Modifier)
                 .clip(shape)
                 .background(if (panel) scheme.surfaceContainerHigh else scheme.surfaceContainer)
         }
         Skin.GLASSMORPHISM -> this
-            .frostedGlass(tokens, shape, fill = if (panel) MaterialTheme.colorScheme.surfaceContainerHigh else null)
+            .frostedGlass(tokens, shape, shadow = shadow,
+                fill = if (panel) MaterialTheme.colorScheme.surfaceContainerHigh else null)
             .glassEdge(tokens, shape)
-        Skin.SPOTIGLASS -> liquidGlassPane(shape, panel = panel)
+        Skin.SPOTIGLASS -> liquidGlassPane(shape, panel = panel, shadow = shadow)
     }
+}
+
+/** The shadow [skinMaterial] casts for this [shape], on its own. */
+@Composable
+internal fun Modifier.skinShadow(shape: Shape, panel: Boolean = false): Modifier = when (val skin = LocalSkin.current) {
+    Skin.MATERIAL -> shadow(if (panel) 6.dp else 3.dp, shape, clip = false)
+    Skin.GLASSMORPHISM -> shadow(skin.tokens().shadow, shape, clip = false)
+    Skin.SPOTIGLASS -> shadow(liquidGlassPaneShadow(panel), lensSafeShape(shape), clip = false)
 }
 
 /**

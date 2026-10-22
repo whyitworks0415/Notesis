@@ -71,7 +71,8 @@ fun LiquidGlassButton(
     val look = LocalSkinSettings.current
     val spoti = LocalSkin.current == Skin.SPOTIGLASS
     val response = if (spoti) look.spotiglassResponse else 1f
-    val shape = if (spoti) SpotiGlassShape(look.spotiglassCorner.coerceIn(SkinSettings.CORNER_RANGE).dp) else CircleShape
+    // The round corner every glass surface takes now, the outline Backdrop can use.
+    val shape = if (spoti) RoundedCornerShape(look.spotiglassCorner.coerceIn(SkinSettings.CORNER_RANGE).dp) else CircleShape
     var expanded by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(
         targetValue = if (pressed && enabled && effectsAllowed) 1f - 0.04f * response else 1f,

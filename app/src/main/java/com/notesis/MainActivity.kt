@@ -4626,8 +4626,12 @@ private fun NoteScreen(
         // actions read (zoom, rotation, the page panel) recompose the sidebar,
         // not the note behind it.
         Isolated {
-        settingsNav?.let { nav ->
+        // Kept on screen after it is closed, for as long as it takes to slide
+        // away; Material shows and removes it at once.
+        AnimatedSettingsSidebar(settingsNav) { nav, appear, closing ->
             NoteSettingsSidebar(
+                appear = appear,
+                closing = closing,
                 nav = nav,
                 onNav = { settingsNav = it },
                 onClose = { settingsNav = null },

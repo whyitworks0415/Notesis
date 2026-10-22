@@ -11,6 +11,7 @@ import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.clickable
@@ -66,6 +67,7 @@ import androidx.compose.ui.window.PopupPositionProvider
 import kotlin.math.PI
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.coroutineScope
 import kotlin.math.sin
 import com.kyant.backdrop.drawBackdrop
 
@@ -255,7 +257,9 @@ internal fun Modifier.spotiGlassMorph(key: Any, enter: Boolean = false): Modifie
         SpotiGlassLensFrame(center = Offset(size.width / 2, size.height / 2), size = size,
             radius = look.spotiglassCorner * density, progress = raised, presence = raised,
             distortion = 0.04f * (look.refraction / 24) * look.spotiglassResponse,
-            band = look.depth, dispersion = 0.002f * (look.dispersion / 0.35f))
+            band = look.depth, dispersion = 0.002f * (look.dispersion / 0.35f),
+            // The pane under it is a round rectangle; see [SpotiGlassLensFrame.continuous].
+            continuous = false)
     }
 }
 
@@ -294,7 +298,8 @@ private fun SpotiActionButton(
         if (pressed && lifts) 1f + 0.08f * look.spotiglassResponse else 1f,
         if (lifts) spring(0.78f, 430f) else snap(), label = "Action button lift")
     val radius = corner ?: nestedCorner(Ui.Corner.control)
-    val shape = if (glass) SpotiGlassShape(radius) else RoundedCornerShape(radius)
+    // One shape family in every skin: the round corner the bar and its strip draw.
+    val shape = RoundedCornerShape(radius)
     // Liquid glass tints its buttons into the glass they sit on; the other two
     // keep their own buttons, solid under Material and glassy under frost.
     val fill = when {
@@ -336,21 +341,23 @@ private fun ActionLabels(label: String, reason: String?, color: Color) {
 
 private enum class ToolbarMenu { FUNCTIONS, NOTES, AI }
 
-internal class SpotiToolbarPopupPosition(private val atStart: Boolean, private val gap: Int) : PopupPositionProvider {
+/**
+ * Places a toolbar popup by the panel inside it: the content keeps [inset]
+ * of clear room all round for the panel's shadow, and that room is let past
+ * the gap and the window's edge rather than pushing the panel inward. See
+ * [popupPlacement].
+ */
+internal class SpotiToolbarPopupPosition(
+    private val atStart: Boolean, private val gap: Int, private val inset: Int = 0,
+) : PopupPositionProvider {
     override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize,
         layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset {
-        val left = atStart == (layoutDirection == LayoutDirection.Ltr)
-        val desiredX = if (left) anchorBounds.left else anchorBounds.right - popupContentSize.width
-        val maxX = (windowSize.width - popupContentSize.width - gap).coerceAtLeast(gap)
-        val below = anchorBounds.bottom + gap
-        val above = anchorBounds.top - popupContentSize.height - gap
-        val maxY = (windowSize.height - popupContentSize.height - gap).coerceAtLeast(gap)
-        val y = when {
-            below <= maxY -> below
-            above >= gap -> above
-            else -> below.coerceIn(gap, maxY)
-        }
-        return IntOffset(desiredX.coerceIn(gap, maxX), y)
+        val (x, y) = popupPlacement(
+            anchorBounds.left, anchorBounds.top, anchorBounds.right, anchorBounds.bottom,
+            windowSize.width, windowSize.height, popupContentSize.width, popupContentSize.height,
+            gap, inset, alignLeft = atStart == (layoutDirection == LayoutDirection.Ltr),
+        )
+        return IntOffset(x, y)
     }
 }
 
@@ -393,7 +400,10 @@ internal fun SpotiGlassToolbar(
     val popupBackdrop = LocalSpotiPopupBackdrop.current ?: LocalLiquidGlassBackdrop.current
     // The one radius the bar is built from. Everything inside it - the strip,
     // its pill, the Functions button - is concentric with it.
+    // The same in every skin (see [chromeCorner]), and so is its shape: a
+    // round corner, the one outline Backdrop's lens takes.
     val outer = skin.tokens().corner
+    val outline = RoundedCornerShape(outer)
     val full = sizeLevel == 0
     // animateContentSize clips its layer, including stable corner shadows.
     // Width already has one animation clock in the host; do not animate twice.
@@ -410,15 +420,14 @@ internal fun SpotiGlassToolbar(
     }
     // Open grows the menu out of the button; close folds it back, and only
     // then is the popup taken away.
-    val menuProgress = remember { Animatable(0f) }
+    val menuGrowth = remember { PopupGrowth(shown = false) }
     var menuShown by remember { mutableStateOf(false) }
     LaunchedEffect(open) {
         if (open) {
             menuShown = true
-            if (popupMotion) menuProgress.animateTo(1f, spring(dampingRatio = 0.9f, stiffness = 520f))
-            else menuProgress.snapTo(1f)
+            menuGrowth.open(popupMotion)
         } else if (menuShown) {
-            if (popupMotion) menuProgress.animateTo(0f, tween(150)) else menuProgress.snapTo(0f)
+            menuGrowth.close(popupMotion)
             menuShown = false
         }
     }
@@ -438,7 +447,7 @@ internal fun SpotiGlassToolbar(
         }) {
         // The full bar is one surface. The strip on it is content, not a
         // second pane of glass, so the page shows through both the same way.
-        if (full) Box(Modifier.matchParentSize().skinMaterial(barShape(skin, outer)))
+        if (full) Box(Modifier.matchParentSize().skinMaterial(outline))
         CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides androidx.compose.ui.unit.Dp.Unspecified) {
             Column(Modifier.toolbarAnimatedHeight(effects && ToolbarMotion.durationMs > 0)
                 .graphicsLayer { alpha = fade.value }
@@ -483,7 +492,7 @@ internal fun SpotiGlassToolbar(
                                     showLabels = false, compact = full, corner = stripCorner,
                                     surface = if (full) SpotiBarSurface.NONE else SpotiBarSurface.LIQUID)
                                   else ToolStrip(tools, selected, compact = full, corner = stripCorner,
-                                    ownSurface = !full, onPick = ::pick)
+                                    ownSurface = !full, toolColors = toolColors, onPick = ::pick)
                                 }
                               }
                             }
@@ -499,40 +508,58 @@ internal fun SpotiGlassToolbar(
                     }
                     if (menuShown) {
                         val maxHeight = (LocalConfiguration.current.screenHeightDp - 140).coerceAtLeast(180).dp
-                        val gap = with(androidx.compose.ui.platform.LocalDensity.current) { Ui.Space.s.roundToPx() }
-                        val position = remember(gap) { SpotiToolbarPopupPosition(false, gap) }
+                        val density = androidx.compose.ui.platform.LocalDensity.current
+                        val gap = with(density) { Ui.Space.s.roundToPx() }
+                        val room = with(density) { POPUP_SHADOW_ROOM.roundToPx() }
+                        val position = remember(gap, room) { SpotiToolbarPopupPosition(false, gap, room) }
                         // The touch that opened it - the button, or the AI tool -
                         // or else the button. Kept for the fold back as well.
                         val anchor = remember { PenPopupAnchor.recentTap() ?: functionsAt[0] }
+                        // Not clipped to the screen: the clear room round the
+                        // panel may hang past the edge, where only shadow falls.
                         Popup(popupPositionProvider = position,
-                            onDismissRequest = { open = false }, properties = PopupProperties(focusable = true)) {
+                            onDismissRequest = { open = false },
+                            properties = PopupProperties(focusable = true, clippingEnabled = false)) {
                             // This surface has its own page capture; do not sample
                             // the parent toolbar's exported frost across windows.
                             CompositionLocalProvider(LocalSpotiGlassHostBackdrop provides null,
                                 LocalLiquidGlassBackdrop provides popupBackdrop) {
-                              ProvideMovingBackdrops({ menuProgress.value }) {
-                                val panelModifier = Modifier.width(minOf(340.dp,
+                              ProvideMovingBackdrops(menuGrowth.motion) {
+                                val paneModifier = Modifier.width(minOf(340.dp,
                                     (LocalConfiguration.current.screenWidthDp - 24).coerceAtLeast(140).dp)).heightIn(max = maxHeight)
-                                    .growOutOf({ anchor }) { menuProgress.value }
-                                    .spotiGlassMorph(page to open, enter = true)
-                                    .animateContentSize(if (effects) spring(0.86f, 430f) else tween(0))
                                 val menuBody: @Composable () -> Unit = {
                                     // The menu's buttons sit one padding inside it, so
                                     // their corners are its corner moved in by that.
                                     NestedCorners(outer, Ui.Space.m) {
-                                        ToolbarMenuContent(page, sizeLevel, mode, config, functions, notes, ai,
-                                            onPage = { page = it }, onClose = { open = false },
-                                            onSizeLevel = onSizeLevel, onPick = ::pick)
+                                        // Inside the surface: animateContentSize clips,
+                                        // and on the surface it took the shadow with it.
+                                        Box(Modifier.animateContentSize(if (effects) spring(0.86f, 430f) else tween(0))) {
+                                            ToolbarMenuContent(page, sizeLevel, mode, config, functions, notes, ai,
+                                                onPage = { page = it }, onClose = { open = false },
+                                                onSizeLevel = onSizeLevel, onPick = ::pick)
+                                        }
                                     }
                                 }
-                                if (skin == Skin.SPOTIGLASS) {
-                                    // The menu is the same liquid glass as the bar it came
-                                    // from, looking at the page through the lens.
-                                    Box(panelModifier.skinMaterial(barShape(skin, outer), panel = true)) { menuBody() }
-                                } else {
-                                    SkinSurface(panelModifier) {
-                                        if (skin != Skin.MATERIAL) BlurBehind()
-                                        menuBody()
+                                // The popup window ends where its content does, so the
+                                // content keeps clear room round the panel for the
+                                // shadow; the growth's layer holds that room too, so
+                                // its fade does not cut the shadow at the panel's edge.
+                                Box(Modifier.growOutOf({ anchor }, menuGrowth)
+                                    .dismissInRoom(POPUP_SHADOW_ROOM) { open = false }
+                                    .padding(POPUP_SHADOW_ROOM)) {
+                                    if (skin == Skin.SPOTIGLASS) {
+                                        // The menu is the same liquid glass as the bar it came
+                                        // from, looking at the page through the lens. Its shadow
+                                        // is cast outside the morph, whose lens layer would cut
+                                        // it off at the panel's edge while it plays.
+                                        Box(paneModifier.skinShadow(outline, panel = true)
+                                            .spotiGlassMorph(page to open, enter = true)
+                                            .skinMaterial(outline, panel = true, shadow = false)) { menuBody() }
+                                    } else {
+                                        SkinSurface(paneModifier) {
+                                            if (skin != Skin.MATERIAL) BlurBehind()
+                                            menuBody()
+                                        }
                                     }
                                 }
                               }
@@ -545,9 +572,24 @@ internal fun SpotiGlassToolbar(
     }
 }
 
-/** The bar's outline: the glass skin's continuous curve, or a plain round corner. */
-private fun barShape(skin: Skin, corner: Dp): androidx.compose.ui.graphics.Shape =
-    if (skin == Skin.SPOTIGLASS) SpotiGlassShape(corner) else RoundedCornerShape(corner)
+/**
+ * Clear room a toolbar popup keeps round its panel, so the panel's shadow
+ * falls inside the popup's window instead of being cut off at its edge.
+ */
+internal val POPUP_SHADOW_ROOM = 16.dp
+
+/**
+ * A touch in the clear room [room] wide round a popup's panel closes it, as a
+ * touch past the popup's window does: to the person the room is page.
+ */
+private fun Modifier.dismissInRoom(room: Dp, onDismiss: () -> Unit): Modifier = pointerInput(room) {
+    val inset = room.toPx()
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+        val at = down.position
+        if (at.x < inset || at.y < inset || at.x > size.width - inset || at.y > size.height - inset) onDismiss()
+    }
+}
 
 /** How far in from the full bar's edge its lower row sits, all round. */
 private val TOOLBAR_INSET = Ui.Space.s
@@ -617,14 +659,68 @@ private fun ToolbarMenuContent(
 }
 
 /**
+ * How a popup opened from the toolbar grows and folds away: its [width] and
+ * its [height], each from 0 to 1 on a curve of its own. Opening, the width
+ * leads on a quick spring that just overshoots and the height follows on a
+ * softer one, so the popup unfolds out of the button rather than swelling as
+ * a fixed-ratio rectangle; closing, both fall away on an accelerating curve,
+ * the height first. Material snaps.
+ */
+@Stable
+internal class PopupGrowth(shown: Boolean) {
+    val width = Animatable(if (shown) 1f else 0f)
+    val height = Animatable(if (shown) 1f else 0f)
+
+    /**
+     * Read in a draw: the glass inside the popup redraws, and looks at the
+     * page again from where it now is, on every frame either axis moves.
+     */
+    val motion: () -> Float = { width.value + height.value }
+
+    suspend fun open(animate: Boolean) = to(1f, animate, POPUP_OPEN_WIDTH, POPUP_OPEN_HEIGHT)
+
+    suspend fun close(animate: Boolean) = to(0f, animate, POPUP_CLOSE_WIDTH, POPUP_CLOSE_HEIGHT)
+
+    private suspend fun to(
+        target: Float, animate: Boolean,
+        widthSpec: androidx.compose.animation.core.AnimationSpec<Float>,
+        heightSpec: androidx.compose.animation.core.AnimationSpec<Float>,
+    ) {
+        if (!animate) {
+            width.snapTo(target)
+            height.snapTo(target)
+            return
+        }
+        coroutineScope {
+            launch { width.animateTo(target, widthSpec) }
+            launch { height.animateTo(target, heightSpec) }
+        }
+    }
+}
+
+// Overshoots by about 5%: lively, and settled within a quarter second.
+private val POPUP_OPEN_WIDTH = spring<Float>(dampingRatio = 0.7f, stiffness = 520f)
+// Softer, so the height arrives after the width; about 1.5% over.
+private val POPUP_OPEN_HEIGHT = spring<Float>(dampingRatio = 0.8f, stiffness = 300f)
+// Material's emphasized accelerate: leaves slowly and is gone quickly.
+internal val EmphasizedAccelerateEasing = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)
+// Material's emphasized decelerate: arrives quickly and lands softly.
+internal val EmphasizedDecelerateEasing = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
+private val POPUP_CLOSE_WIDTH = tween<Float>(170, easing = EmphasizedAccelerateEasing)
+private val POPUP_CLOSE_HEIGHT = tween<Float>(130, easing = EmphasizedAccelerateEasing)
+
+/**
  * Grows a popup out of [anchor], a point on screen - the button or the tool
- * that opened it - as [progress] goes from 0 to 1, and folds it back into
- * that point as it returns. The scale is a layer over the popup, so the glass
- * inside it has to be told to keep looking at the page from where it now is:
- * see [ProvideMovingBackdrops].
+ * that opened it - as [growth] runs from 0 to 1, and folds it back into that
+ * point as it returns, each axis on its own curve. The scale is a layer over
+ * the popup, so the glass inside it has to be told to keep looking at the
+ * page from where it now is: see [ProvideMovingBackdrops], whose alignment
+ * undoes the two scales separately. Put it outside any room kept for the
+ * shadow: while the popup fades this layer is drawn offscreen, and cuts off
+ * whatever lies past its own bounds.
  */
 @Composable
-internal fun Modifier.growOutOf(anchor: () -> Offset?, progress: () -> Float): Modifier {
+internal fun Modifier.growOutOf(anchor: () -> Offset?, growth: PopupGrowth): Modifier {
     var origin by remember { mutableStateOf(TransformOrigin(0.5f, 0f)) }
     return this
         // Before the layer, so the bounds are the popup's own, unscaled.
@@ -637,16 +733,18 @@ internal fun Modifier.growOutOf(anchor: () -> Offset?, progress: () -> Float): M
             if (next != origin) origin = next
         }
         .graphicsLayer {
-            val t = progress()
-            alpha = t.coerceIn(0f, 1f)
-            scaleX = POPUP_START_SCALE + (1f - POPUP_START_SCALE) * t
-            scaleY = POPUP_START_SCALE + (1f - POPUP_START_SCALE) * t
+            val w = growth.width.value
+            val h = growth.height.value
+            alpha = popupGrowAlpha(w, h)
+            scaleX = popupGrowScale(w, POPUP_START_SCALE_X)
+            scaleY = popupGrowScale(h, POPUP_START_SCALE_Y)
             transformOrigin = origin
         }
 }
 
-/** How small a popup starts as it grows out of its button. */
-private const val POPUP_START_SCALE = 0.82f
+/** How small a popup starts as it grows out of its button: narrower, and much shorter. */
+private const val POPUP_START_SCALE_X = 0.84f
+private const val POPUP_START_SCALE_Y = 0.55f
 
 /** The bar's switch between sizes: its length, and the curve it moves on. */
 @Composable
@@ -684,16 +782,17 @@ internal fun ToolbarMotionSettings() {
 /**
  * The tool strip of the still skins, cut to the glass bar's measure: the same
  * capsule, cells and resting pill as [SpotiGlassBar], so all three skins share
- * one toolbar. Every icon wears the same ink; the tool in hand turns the
- * accent, and its highlight slides over from the tool before it on an ease
- * in-out without changing size - the one motion Material and Glassmorphism
- * keep. [ownSurface] gives it a capsule of the skin's material; without one
- * it is content on the bar it sits in.
+ * one toolbar. Every other icon wears the same ink; the tool in hand wears its
+ * own colour - the pen's ink, as under Liquid glass - or the accent for a tool
+ * that has none, and its highlight slides over from the tool before it on the
+ * lens's own spring without changing size - the one motion Material and
+ * Glassmorphism keep. [ownSurface] gives it a capsule of the skin's material;
+ * without one it is content on the bar it sits in.
  */
 @Composable
 private fun ToolStrip(
     tools: List<SpotiToolbarTool>, selectedIndex: Int, compact: Boolean, corner: Dp,
-    ownSurface: Boolean, onPick: (SpotiToolbarTool) -> Unit,
+    ownSurface: Boolean, toolColors: Map<EditMode, Color>, onPick: (SpotiToolbarTool) -> Unit,
 ) {
     if (tools.isEmpty()) return
     val skin = LocalSkin.current
@@ -701,7 +800,8 @@ private fun ToolStrip(
     val barHeight = if (compact) 40.dp else 48.dp
     val padding = 6.dp
     val cellHeight = barHeight - padding * 2
-    val pill = RoundedCornerShape(Ui.concentric(drawnRadius(corner.value, Float.MAX_VALUE, barHeight.value).dp, padding))
+    // Liquid glass's resting pill and lens radius, from the same function.
+    val pill = RoundedCornerShape(toolPillRadius(corner, barHeight, padding))
     // Solid under Material, as every button there is; a wash of the accent on frost.
     val highlight = if (skin == Skin.MATERIAL) scheme.primaryContainer else scheme.primary.copy(alpha = 0.16f)
     val selected = selectedIndex.takeIf { it in tools.indices }
@@ -717,7 +817,10 @@ private fun ToolStrip(
             showing[0] = true
             slide.snapTo(selected.toFloat())
         } else {
-            slide.animateTo(selected.toFloat(), tween(TOOL_HIGHLIGHT_MS, easing = SineInOutEasing))
+            // The lens's travel spring, so a tap moves the selection as fast
+            // here as it does under Liquid glass; a new tap mid-slide keeps
+            // the velocity it has, as the lens does.
+            slide.animateTo(selected.toFloat(), TOOL_HIGHLIGHT_SPRING)
         }
     }
     BoxWithConstraints(Modifier.fillMaxWidth().height(barHeight + 16.dp).selectableGroup()) {
@@ -725,8 +828,9 @@ private fun ToolStrip(
         Box(Modifier.fillMaxWidth().height(barHeight).align(Alignment.Center)
             .then(if (ownSurface) Modifier.skinMaterial(RoundedCornerShape(corner)) else Modifier)) {
             if (selected != null) {
+                // Kept inside the strip if the spring runs a hair past the end.
                 Box(Modifier
-                    .offset { IntOffset((padding + cell * slide.value).roundToPx(), padding.roundToPx()) }
+                    .offset { IntOffset((padding + cell * slide.value.coerceIn(0f, tools.lastIndex.toFloat())).roundToPx(), padding.roundToPx()) }
                     .size(cell, cellHeight)
                     .background(highlight, pill))
             }
@@ -743,15 +847,19 @@ private fun ToolStrip(
                     .clickable(role = Role.Tab, onClick = { onPick(tool) }),
                     contentAlignment = Alignment.Center) {
                     AppIcon(tool.icon(), null, Modifier.size(if (compact) 20.dp else 25.dp),
-                        tint = if (chosen) scheme.primary else scheme.onSurface)
+                        tint = if (chosen) tool.mode?.let { toolColors[it] } ?: scheme.primary else scheme.onSurface)
                 }
             }
         }
     }
 }
 
-/** How long the still skins' tool highlight takes to slide to the next tool. */
-private const val TOOL_HIGHLIGHT_MS = 260
+/** The still skins' highlight slides on the lens's travel spring (see [SpotiGlassMotion]). */
+private val TOOL_HIGHLIGHT_SPRING = spring(
+    dampingRatio = SPOTIGLASS_TRAVEL_DAMPING_RATIO,
+    stiffness = SPOTIGLASS_TRAVEL_STIFFNESS.toFloat(),
+    visibilityThreshold = SPOTIGLASS_TRAVEL_SETTLE.toFloat(),
+)
 
 /** Buttons [columns] to a row, the last row padded so every button keeps one width. */
 @Composable

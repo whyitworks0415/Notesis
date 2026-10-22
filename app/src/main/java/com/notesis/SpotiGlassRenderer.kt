@@ -78,6 +78,16 @@ internal fun spotiGlassPath(size: Size, radius: Float): Path {
     }
 }
 
+/** A plain round rectangle as a path, the outline [SpotiGlassLensFrame.continuous] = false draws. */
+internal fun roundRectPath(size: Size, radius: Float): Path {
+    if (size.width <= 0f || size.height <= 0f) return Path()
+    val r = radius.coerceIn(0f, minOf(size.width, size.height) / 2)
+    return Path().apply {
+        addRoundRect(androidx.compose.ui.geometry.RoundRect(0f, 0f, size.width, size.height,
+            androidx.compose.ui.geometry.CornerRadius(r)))
+    }
+}
+
 internal class SpotiGlassShape(internal val radius: Dp) : Shape {
     override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline =
         Outline.Generic(spotiGlassPath(size, with(density) { radius.toPx() }))
@@ -95,6 +105,14 @@ internal data class SpotiGlassLensFrame(
     val band: Float = 12f,
     val dispersion: Float = 0.002f,
     val borderWidth: Float = 0.5f,
+    /**
+     * The continuous curve the upstream lens was drawn with, or false for a
+     * plain round corner. The toolbar and its popups are round rectangles in
+     * every skin - Backdrop's lens takes no other outline - so a lens over
+     * them takes the same corner, or it would land as a different shape from
+     * the pill it grows out of.
+     */
+    val continuous: Boolean = true,
 )
 
 /** Uniform packing follows packLiquidGlassUniforms, with pixel-space sampling. */
@@ -115,7 +133,8 @@ internal class SpotiGlassShader(context: Context) {
         val rim = ((presence - 0.45f) / 0.55f).coerceIn(0f, 1f)
         shader.setFloatUniform("u_resolution", resolution.width, resolution.height)
         shader.setFloatUniform("u_touch", frame.center.x - frame.size.width / 2, frame.center.y - frame.size.height / 2)
-        shader.setFloatUniform("u_lensGeom", frame.size.width, frame.size.height, frame.radius, 2f)
+        shader.setFloatUniform("u_lensGeom", frame.size.width, frame.size.height, frame.radius,
+            if (frame.continuous) 2f else 0f)
         shader.setFloatUniform("u_warp", 1f, frame.distortion * p, frame.band * density * p * presence / frame.scale.x, 0f)
         shader.setFloatUniform("u_diagonalFlip", 0f)
         shader.setFloatUniform("u_borderWidth", frame.borderWidth * 2 * density * p * rim)

@@ -20,6 +20,9 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ClipOp
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.luminance
@@ -165,12 +168,19 @@ fun SpotiGlassBar(
     // The pill sits [padding] inside the capsule, so its curve is the
     // capsule's moved in by that much - measured from the radius the capsule
     // can actually draw at this height, not from the setting.
-    val restRadius = Ui.concentric(drawnRadius(corner.value, Float.MAX_VALUE, barHeight.value).dp, padding)
+    val restRadius = toolPillRadius(corner, barHeight, padding)
+    // A capsule of its own casts a shadow, and while the lens moves the whole
+    // bar is drawn through one layer that cuts off anything past its edges -
+    // the capsule's shadow at its two ends with it. The layer reaches this far
+    // past the bar on either side so the shadow is inside it.
+    val room = if (surface == SpotiBarSurface.NONE) 0.dp else SPOTIGLASS_SHADOW_ROOM
     BoxWithConstraints(modifier.height(barHeight + 16.dp).selectableGroup()) {
         val cell = (maxWidth - padding * 2).coerceAtLeast(1.dp) / items.size
         val widthPx = with(density) { cell.toPx() * items.size }
         val barWidthPx = with(density) { maxWidth.toPx() }
         val paddingPx = with(density) { padding.toPx() }
+        // Whole pixels, as [spillOver] places it.
+        val roomPx = with(density) { room.roundToPx().toFloat() }
         // Retargeting a drag never cancels/restarts the frame clock. Frame state
         // is read in drawing only, so icons and touch targets keep their layout.
         val latestCell by rememberUpdatedState(cell.value)
@@ -215,7 +225,10 @@ fun SpotiGlassBar(
                 radius = with(density) { restRadius.toPx() * (h / cellHeight) },
                 scale = Offset(sx, sy), progress = motion.progress, presence = motion.presence, fill = fill,
                 distortion = 0.04f * (look.refraction / 24f), band = look.depth,
-                dispersion = 0.002f * (look.dispersion / 0.35f), borderWidth = 1.2f)
+                dispersion = 0.002f * (look.dispersion / 0.35f), borderWidth = 1.2f,
+                // The same round corner as the resting pill and the still
+                // skins' highlight, so the lens lands as the shape it left.
+                continuous = false)
         }
             @Composable
             fun IconShell(colored: Boolean, shellModifier: Modifier) {
@@ -242,16 +255,21 @@ fun SpotiGlassBar(
         fun Frost() {
             val capsule = Modifier.fillMaxWidth().height(barHeight).align(Alignment.Center)
             when (surface) {
-                SpotiBarSurface.FROST -> Box(capsule.spotiGlassSurface(SpotiGlassShape(corner), look, navigation = true))
-                SpotiBarSurface.LIQUID -> Box(capsule.liquidGlassPane(SpotiGlassShape(corner)))
+                // A round corner, as the toolbar and the other skins' strip draw
+                // theirs - and the only outline Backdrop's lens can take.
+                SpotiBarSurface.FROST -> Box(capsule.spotiGlassSurface(RoundedCornerShape(corner), look, navigation = true))
+                SpotiBarSurface.LIQUID -> Box(capsule.liquidGlassPane(RoundedCornerShape(corner)))
                 SpotiBarSurface.NONE -> Unit
             }
         }
         // The same frosted capsule remains in the source at rest and on press.
         // Refract the capsule and both icon shells in the same optical scene.
         // or swap between two backdrop surfaces during animation.
-        val scene = Modifier.fillMaxSize().spotiGlassLens(lensAllowed, active = { moving() }) { _, _ -> lensFrame() }
-        Box(scene) {
+        val scene = Modifier.spillOver(room).spotiGlassLens(lensAllowed, active = { moving() }) { _, _ ->
+            // The layer starts [room] before the bar; the frame is the bar's.
+            lensFrame().let { if (roomPx == 0f) it else it.copy(center = it.center + Offset(roomPx, 0f)) }
+        }
+        Box(scene) { Box(Modifier.fillMaxSize().padding(horizontal = room)) {
             Frost()
             Box(Modifier.matchParentSize().drawWithContent {
                 frameRevision
@@ -259,7 +277,7 @@ fun SpotiGlassBar(
                     val frame = lensFrame()
                     val body = if (moving()) frame.size else Size(cell.toPx(), cellHeight.toPx())
                     val radius = if (moving()) frame.radius else restRadius.toPx()
-                    val path = spotiGlassPath(body, radius).apply {
+                    val path = roundRectPath(body, radius).apply {
                         translate(frame.center - Offset(body.width / 2, body.height / 2))
                     }
                     // The ball keeps the bar's neutral fill while it travels;
@@ -308,7 +326,7 @@ fun SpotiGlassBar(
                 val restSize = if (raised) Size(frame.size.width / sx, frame.size.height / sy)
                     else with(density) { Size(cell.toPx(), cellHeight.toPx()) }
                 val radius = if (raised) frame.radius else with(density) { restRadius.toPx() }
-                val path = spotiGlassPath(restSize, radius)
+                val path = roundRectPath(restSize, radius)
                 path.translate(Offset(-restSize.width / 2, -restSize.height / 2))
                 withTransform({ translate(cx, cy); scale(sx, sy, pivot = Offset.Zero) }) {
                     clipPath(path) {
@@ -318,6 +336,33 @@ fun SpotiGlassBar(
                     }
                 }
             })
-        }
+        } }
     }
 }
+
+/** How far past a bar with a capsule of its own its lens layer reaches, for the capsule's shadow. */
+private val SPOTIGLASS_SHADOW_ROOM = 8.dp
+
+/**
+ * The parent's whole size, and [room] more on either side, placed so the
+ * parent's left edge is [room] in. What is drawn there is still the parent's
+ * content; only a layer set on this is wider.
+ */
+private fun Modifier.spillOver(room: Dp): Modifier {
+    if (room <= 0.dp) return fillMaxSize()
+    return layout { measurable, constraints ->
+        val extra = room.roundToPx()
+        val width = if (constraints.hasBoundedWidth) constraints.maxWidth else constraints.minWidth
+        val height = if (constraints.hasBoundedHeight) constraints.maxHeight else constraints.minHeight
+        val placeable = measurable.measure(Constraints.fixed(width + 2 * extra, height))
+        layout(width, height) { placeable.place(-extra, 0) }
+    }
+}
+
+/**
+ * The selection pill's radius in a tool strip [barHeight] tall whose own
+ * corner is [corner], its cells [inset] in: see [toolPillRadius]. Shared by
+ * Liquid glass's pill and lens and the still skins' highlight.
+ */
+internal fun toolPillRadius(corner: Dp, barHeight: Dp, inset: Dp): Dp =
+    toolPillRadius(corner.value, barHeight.value, inset.value, Ui.Corner.nestedMin.value).dp

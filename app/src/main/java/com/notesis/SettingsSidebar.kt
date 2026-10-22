@@ -2,6 +2,7 @@ package com.notesis
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -35,6 +36,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,6 +46,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -137,6 +140,8 @@ internal fun SettingsSidebarFrame(
     widthDp: Float,
     onWidthChange: (Float) -> Unit,
     modifier: Modifier = Modifier,
+    /** How far in the panel is, 0 off past its edge to 1 in place; see [AnimatedSettingsSidebar]. */
+    appear: () -> Float = { 1f },
     body: @Composable () -> Unit,
 ) {
     BoxWithConstraints(modifier.fillMaxSize()) {
@@ -149,7 +154,13 @@ internal fun SettingsSidebarFrame(
         val latestScreen by rememberUpdatedState(screen)
         val latestCommit by rememberUpdatedState(onWidthChange)
         val scheme = MaterialTheme.colorScheme
-        Row(Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(shown.dp)) {
+        Row(Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(shown.dp)
+            // Slides in from the end edge it stands on and back out past it.
+            // Read in the layer, so a frame of the slide is a redraw only.
+            .graphicsLayer {
+                val outside = 1f - appear().coerceIn(0f, 1f)
+                translationX = outside * size.width * (if (rtl) -1f else 1f)
+            }) {
             if (!full) {
                 Box(
                     Modifier
@@ -200,6 +211,14 @@ internal fun SettingsSidebarFrame(
                 Column(
                     Modifier
                         .fillMaxSize()
+                        // What it holds arrives a beat after the panel and a
+                        // little further, so it settles into the panel rather
+                        // than being carried in pasted to it.
+                        .graphicsLayer {
+                            val p = appear().coerceIn(0f, 1f)
+                            alpha = sidebarContentAlpha(p)
+                            translationX = (1f - p) * SIDEBAR_CONTENT_LEAD.toPx() * (if (rtl) -1f else 1f)
+                        }
                         .background(scheme.surface.copy(alpha = if (LocalSkin.current == Skin.MATERIAL) 0f else 0.72f))
                         .windowInsetsPadding(ChromeInsets.only(WindowInsetsSides.Bottom + WindowInsetsSides.End)),
                 ) {
@@ -262,6 +281,59 @@ private fun SidebarHeader(title: String, canGoBack: Boolean, onBack: () -> Unit,
 }
 
 /**
+ * Shows the sidebar for [nav] and slides it in from its edge, and when [nav]
+ * goes back to null slides it out again before taking it away - [content] is
+ * handed the last screen it was on, how far in it is, and whether it is on
+ * its way out. Liquid glass and Glassmorphism move; Material shows it and
+ * removes it at once, as it does every popup.
+ */
+@Composable
+internal fun AnimatedSettingsSidebar(
+    nav: SidebarNav?,
+    content: @Composable (nav: SidebarNav, appear: () -> Float, closing: Boolean) -> Unit,
+) {
+    val animate = LocalSkin.current.animatesPopups && rememberLiquidGlassEffectsAllowed() &&
+        !LocalSkinSettings.current.highContrast
+    // The screen it was on, kept for the slide out; not state, since [nav]
+    // itself is what recomposes this.
+    val last = remember { arrayOfNulls<SidebarNav>(1) }
+    if (nav != null) last[0] = nav
+    val progress = remember { Animatable(if (nav != null) 1f else 0f) }
+    var present by remember { mutableStateOf(nav != null) }
+    val open = nav != null
+    LaunchedEffect(open, animate) {
+        if (open) {
+            present = true
+            if (animate) progress.animateTo(1f, SIDEBAR_OPEN) else progress.snapTo(1f)
+        } else {
+            if (animate) progress.animateTo(0f, SIDEBAR_CLOSE) else progress.snapTo(0f)
+            present = false
+        }
+    }
+    // One reader, whichever skin is on, so switching skin with the sidebar
+    // open keeps its screens as they are; Material always reads it as in.
+    val moving by rememberUpdatedState(animate)
+    val appear = remember { { if (moving) progress.value else 1f } }
+    // Material takes it away the moment it closes; the others once it is out.
+    if (!open && !(animate && present)) return
+    val shown = nav ?: last[0] ?: return
+    // The glass in it looks at the page again on each frame of the slide.
+    ProvideMovingBackdrops(appear) {
+        content(shown, appear, !open)
+    }
+}
+
+/** How much further than the panel its content travels as it comes in. */
+private val SIDEBAR_CONTENT_LEAD = 24.dp
+
+// In on Material's emphasized decelerate - most of the way at once, then a
+// long soft landing - and no overshoot: a panel against the screen's edge
+// that springs past its place opens a gap along that edge.
+private val SIDEBAR_OPEN = tween<Float>(380, easing = EmphasizedDecelerateEasing)
+// Out quicker, and gathering speed as it goes.
+private val SIDEBAR_CLOSE = tween<Float>(220, easing = EmphasizedAccelerateEasing)
+
+/**
  * The note's settings sidebar. Each screen's content comes from the note,
  * which holds the state it sets; this decides where they go and how to get
  * between them.
@@ -283,9 +355,13 @@ internal fun NoteSettingsSidebar(
     noteView: @Composable () -> Unit,
     diagnostics: @Composable () -> Unit,
     modifier: Modifier = Modifier,
+    /** See [AnimatedSettingsSidebar]. */
+    appear: () -> Float = { 1f },
+    /** Set while it slides away after closing: Back is the page's again. */
+    closing: Boolean = false,
 ) {
     val latestNav by rememberUpdatedState(nav)
-    BackHandler { if (latestNav.canGoBack) onNav(latestNav.back()) else onClose() }
+    BackHandler(enabled = !closing) { if (latestNav.canGoBack) onNav(latestNav.back()) else onClose() }
     SettingsSidebarFrame(
         title = nav.current.title,
         canGoBack = nav.canGoBack,
@@ -294,6 +370,7 @@ internal fun NoteSettingsSidebar(
         widthDp = widthDp,
         onWidthChange = onWidthChange,
         modifier = modifier,
+        appear = appear,
     ) {
         // Material and Glassmorphism turn the page at once; their chrome does not move.
         Crossfade(targetState = nav.current,

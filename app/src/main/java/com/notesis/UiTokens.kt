@@ -20,9 +20,9 @@ import androidx.compose.ui.unit.dp
  * of element gets the same radius, and the same kind of neighbours the same
  * gap, wherever it appears.
  *
- * Skins that let the user choose a corner ([SkinSettings.corner],
- * [SkinSettings.spotiglassCorner]) still own their surfaces; these are for the
- * places that hard-coded a number instead.
+ * The chrome's own outer corner is the one the user chooses
+ * ([SkinSettings.spotiglassCorner], the same in every skin; see
+ * [chromeCorner]); these are for the places that hard-coded a number instead.
  */
 object Ui {
     /**
@@ -43,9 +43,9 @@ object Ui {
          */
         val control = 16.dp
         /**
-         * Cards and panels, and Material's floating bars. Under glass, bars
-         * use the skin's own corner setting instead (SkinSurface with no
-         * corner), so they follow what the user chose.
+         * Cards and panels. Floating bars in every skin use the corner
+         * setting instead (SkinSurface with no corner), so they follow what
+         * the user chose.
          */
         val card = 20.dp
         /** Dialogs and sheets: the outermost container on screen. */
