@@ -2019,15 +2019,143 @@ class InkCanvasView @JvmOverloads constructor(
      */
     private val holdReady: Runnable = object : Runnable {
         override fun run() {
-            if (!holdTracking) return
+            if (!holdTracking || activeStrokeId == null) return
             val waited = SystemClock.uptimeMillis() - holdSince
             if (waited >= CIRCLE_HOLD_MS && feltHold != holdSince) {
                 feltHold = holdSince
-                performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
-                laser.tapAt(holdX, holdY, SystemClock.uptimeMillis())
+                // Circle to lasso, when it is on, gets the first say: a loop
+                // round ink is a selection before it is a circle.
+                if (circleTracking) {
+                    convertCircleToLasso()
+                    if (activeStrokeId == null) return
+                }
+                if (beginHeldShape()) {
+                    performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+                    laser.tapAt(holdX, holdY, SystemClock.uptimeMillis())
+                    return
+                }
             }
             postDelayed(this, if (waited < CIRCLE_HOLD_MS) CIRCLE_HOLD_MS - waited else CIRCLE_HOLD_MS)
         }
+    }
+
+    /** The held stroke's own samples, on its page, while hold-to-shape watches it. */
+    private var holdXs = FloatArray(HOLD_POINTS_INITIAL)
+    private var holdYs = FloatArray(HOLD_POINTS_INITIAL)
+    private var holdCount = 0
+    private var holdPage = -1
+    private val holdLocal = FloatArray(2)
+
+    private fun recordHoldPoint(x: Float, y: Float) {
+        pageLocalInto(x, y, holdPage, holdLocal)
+        if (holdCount == holdXs.size) {
+            holdXs = holdXs.copyOf(holdCount * 2)
+            holdYs = holdYs.copyOf(holdCount * 2)
+        }
+        holdXs[holdCount] = holdLocal[0]
+        holdYs[holdCount] = holdLocal[1]
+        holdCount++
+    }
+
+    /**
+     * A held stroke already turned into its shape while the pen is still
+     * down. Moving on reshapes it - see [HeldReshape] - and the lift keeps it.
+     */
+    private class HeldShapeEdit(
+        val page: Page,
+        val pageIndex: Int,
+        val shape: RecognizedShape,
+        val reshape: HeldReshape,
+        val base: List<FloatArray>,
+        val pivot: FloatArray,
+        val grabX: Float,
+        val grabY: Float,
+    ) {
+        var outline: List<FloatArray> = base
+    }
+    private var heldShape: HeldShapeEdit? = null
+
+    /**
+     * The pen has rested long enough: if the stroke so far is a shape, it
+     * becomes that shape now, under the pen, instead of on the lift. Before,
+     * moving the pen again after the hold restarted the wait, and the stroke
+     * stayed ink.
+     */
+    private fun beginHeldShape(): Boolean {
+        val strokeId = activeStrokeId ?: return false
+        val page = document.pages.getOrNull(holdPage) ?: return false
+        if (holdCount < 2) return false
+        val points = ArrayList<FloatArray>(holdCount)
+        for (i in 0 until holdCount) points += floatArrayOf(holdXs[i], holdYs[i])
+        val shape = if (tool == Tool.HIGHLIGHTER) {
+            // A held highlighter only ever straightens: it marks lines of text.
+            val cleaned = forRecognition(points)
+            val a = cleaned.first()
+            val b = cleaned.last()
+            if (hypot(b[0] - a[0], b[1] - a[1]) < 1f) return false
+            RecognizedShape(ShapeKind.LINE, a[0], a[1], b[0], b[1])
+        } else {
+            recognizeShape(points, held = true, axisSnap = axisSnapEnabled) ?: return false
+        }
+        val base = shape.outline
+            ?: shapePoints(shape.kind, floatArrayOf(shape.fromX, shape.fromY), floatArrayOf(shape.toX, shape.toY))
+        if (base.size < 2) return false
+        pageLocalInto(holdX, holdY, holdPage, holdLocal)
+        heldShape = HeldShapeEdit(page, holdPage, shape, heldReshapeOf(shape), base,
+            reshapePivot(base), holdLocal[0], holdLocal[1])
+        wet.cancelStroke(strokeId)
+        cancelCompatWet(strokeId)
+        wetStarts.remove(strokeId)
+        wetTrueColors.remove(strokeId)
+        activeStrokeId = null
+        holdTracking = false
+        predictionHead.clear(); subframe.clear(); subframeTrack.reset()
+        dry.invalidate()
+        return true
+    }
+
+    /** The pen moved on after the hold: the shape follows it. */
+    private fun reshapeHeld(x: Float, y: Float) {
+        val held = heldShape ?: return
+        pageLocalInto(x, y, held.pageIndex, holdLocal)
+        val dx = holdLocal[0] - held.grabX
+        val dy = holdLocal[1] - held.grabY
+        val shape = held.shape
+        held.outline = when (held.reshape) {
+            HeldReshape.END -> shapePoints(ShapeKind.LINE, floatArrayOf(shape.fromX, shape.fromY),
+                floatArrayOf(shape.toX + dx, shape.toY + dy))
+            HeldReshape.BOX -> {
+                val box = boxDraggedFrom(shape.fromX, shape.fromY, shape.toX, shape.toY, held.grabX, held.grabY, dx, dy)
+                shapePoints(shape.kind, floatArrayOf(box[0], box[1]), floatArrayOf(box[2], box[3]))
+            }
+            HeldReshape.LAST_VERTEX -> withLastVertexMoved(held.base, dx, dy)
+            HeldReshape.SIMILAR -> similarTo(held.base, held.pivot[0], held.pivot[1],
+                held.grabX, held.grabY, holdLocal[0], holdLocal[1])
+        }
+        dry.postInvalidateOnAnimation()
+    }
+
+    /** The lift keeps the held shape as it stands, as one undoable edit. */
+    private fun finishHeldShape() {
+        val held = heldShape ?: return
+        heldShape = null
+        val brush = currentBrush()
+        val parts = when (held.reshape) {
+            HeldReshape.END, HeldReshape.BOX -> strokesThrough(held.outline, brush)
+            HeldReshape.LAST_VERTEX, HeldReshape.SIMILAR -> recognizedStrokes(held.shape, held.outline, brush)
+        }
+        if (parts.isEmpty()) {
+            dry.invalidate()
+            return
+        }
+        val group = nextEditGroup++
+        for (part in parts) {
+            held.page.strokes += part
+            undoStack += Edit.Drawn(held.page, part, group)
+        }
+        redoStack.clear()
+        afterEdit(held.page)
+        onStrokesCommitted?.invoke(held.pageIndex, parts)
     }
 
     private val circleHold: Runnable = object : Runnable {
@@ -2056,7 +2184,6 @@ class InkCanvasView @JvmOverloads constructor(
     private var stationaryStartX = 0f
     private var stationaryStartY = 0f
     private var stationaryStartTime = 0L
-    private val longPress = Runnable { beginTextSelection() }
 
     /**
      * Ticks once per display frame while diagnostics are visible, so the HUD
@@ -3848,6 +3975,9 @@ class InkCanvasView @JvmOverloads constructor(
                         holdX = stationaryStartX
                         holdY = stationaryStartY
                         holdSince = event.eventTime
+                        holdPage = index
+                        holdCount = 0
+                        recordHoldPoint(stationaryStartX, stationaryStartY)
                         removeCallbacks(holdReady)
                         postDelayed(holdReady, CIRCLE_HOLD_MS)
                     }
@@ -3864,16 +3994,9 @@ class InkCanvasView @JvmOverloads constructor(
                     // Put the first wet-ink mark on the front buffer before a
                     // Compose state write freezes the toolbar backdrop.
                     onDrawingChanged?.invoke(true)
-                    // Writing always moves the pen straight away, so a pen that
-                    // stays put is asking for the text underneath, not for ink.
-                    // The stroke starts anyway and is cancelled if the hold wins,
-                    // because waiting first would cost the latency this is about.
-                    if (document.pages[index].background == PageBackground.PDF) {
-                        pressX = event.x
-                        pressY = event.y
-                        selectingPage = index
-                        postDelayed(longPress, LONG_PRESS_MS)
-                    }
+                    // A pen held still while writing used to start selecting the
+                    // PDF text under it. Text is selected in gesture (read) mode
+                    // only now: a held pen while writing means hold-to-shape.
                 }
                 return true
             }
@@ -3944,8 +4067,15 @@ class InkCanvasView @JvmOverloads constructor(
                     extendTextSelection(event, index)
                     return true
                 }
-                if (hypot(event.getX(index) - pressX, event.getY(index) - pressY) > touchSlop) {
-                    removeCallbacks(longPress)
+                if (heldShape != null) {
+                    reshapeHeld(event.getX(index), event.getY(index))
+                    return true
+                }
+                if (holdTracking) {
+                    for (h in 0 until event.historySize) {
+                        recordHoldPoint(event.getHistoricalX(index, h), event.getHistoricalY(index, h))
+                    }
+                    recordHoldPoint(event.getX(index), event.getY(index))
                 }
                 if (circleTracking) trackCircle(event, index)
                 else if (holdTracking) trackHold(event.getX(index), event.getY(index), event.eventTime)
@@ -4057,6 +4187,11 @@ class InkCanvasView @JvmOverloads constructor(
                 if (event.getPointerId(event.actionIndex) != pointerId) return true
                 finishGestureTrail(event)
                 predictionHead.clear(); subframe.clear(); subframeTrack.reset()
+                if (heldShape != null) {
+                    finishHeldShape()
+                    endStylus()
+                    return true
+                }
                 if (readingWithButton) {
                     // Include the lift position even when no final MOVE was delivered.
                     updateReadButtonCapture(event, event.actionIndex)
@@ -4204,6 +4339,10 @@ class InkCanvasView @JvmOverloads constructor(
                     captureRect.setEmpty()
                 }
                 predictionHead.clear(); subframe.clear(); subframeTrack.reset()
+                if (heldShape != null) {
+                    heldShape = null
+                    dry.invalidate()
+                }
                 if (predictionEnabled && activeStrokeId != null) predictor.record(event)
                 activeStrokeId?.let { id -> withWetEvent(event) { wet.cancelStroke(id, it) } }
                 cancelCompatWet(activeStrokeId)
@@ -4525,7 +4664,6 @@ class InkCanvasView @JvmOverloads constructor(
         }
         readingWithButton = false
         pendingTextPlacement = null
-        removeCallbacks(longPress)
         if (circleTracking) {
             circleTracking = false
             removeCallbacks(circleHold)
@@ -6381,7 +6519,6 @@ class InkCanvasView @JvmOverloads constructor(
         if (!selectInsideLasso()) return
         circleTracking = false
         lassoPath.clear()
-        removeCallbacks(longPress)
         wet.cancelStroke(strokeId)
         cancelCompatWet(strokeId)
         activeStrokeId = null
@@ -8876,6 +9013,7 @@ class InkCanvasView @JvmOverloads constructor(
                         selection?.boxes?.forEach { scoped.drawRect(it, selectionPaint) }
                     }
                     if (i == shapePage && drawingShape) drawShapePreview(scoped)
+                    heldShape?.let { if (i == it.pageIndex) drawHeldShape(scoped, it) }
                     if (i == polyPage && polyPoints.isNotEmpty()) {
                         overlay.color = previewArgb(colorArgb)
                         overlay.strokeWidth = strokeWidth
@@ -9196,6 +9334,21 @@ class InkCanvasView @JvmOverloads constructor(
         }
 
         /** The shape as it is being dragged out, before it becomes a stroke. */
+        /** The shape a held stroke became, as it will be kept: corners rounded like the commit's. */
+        private fun drawHeldShape(canvas: Canvas, held: HeldShapeEdit) {
+            val drawn = held.outline
+            val points = if (held.reshape == HeldReshape.SIMILAR && shapeCornerRadius > 0f && isClosedOutline(drawn))
+                roundCorners(drawn, shapeCornerRadius) else drawn
+            if (points.size < 2) return
+            overlay.color = previewArgb(colorArgb)
+            overlay.strokeWidth = strokeWidth
+            overlay.strokeCap = Paint.Cap.ROUND
+            overlay.strokeJoin = Paint.Join.ROUND
+            for (i in 0 until points.size - 1) {
+                canvas.drawLine(points[i][0], points[i][1], points[i + 1][0], points[i + 1][1], overlay)
+            }
+        }
+
         private fun drawShapePreview(canvas: Canvas) {
             val kind = shapeKind
             if (kind == null && rulerEdge == null) return
@@ -9468,6 +9621,8 @@ class InkCanvasView @JvmOverloads constructor(
         const val LASSO_SAMPLE_DISTANCE_PX = 2f
         /** How long the pen rests at the end of a loop before it becomes a lasso. */
         const val CIRCLE_HOLD_MS = 500L
+        /** Room for a held stroke's samples before the buffer doubles: a few seconds of 240 Hz. */
+        const val HOLD_POINTS_INITIAL = 1024
         /** Of touch slop: a resting pen still shakes this much. */
         const val HOLD_SLOP_FRACTION = 0.5f
         /** On screen: a loop smaller than this both ways is a letter o, not a lasso. */
