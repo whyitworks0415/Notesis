@@ -78,7 +78,7 @@ internal fun spotiGlassPath(size: Size, radius: Float): Path {
     }
 }
 
-internal class SpotiGlassShape(private val radius: Dp) : Shape {
+internal class SpotiGlassShape(internal val radius: Dp) : Shape {
     override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline =
         Outline.Generic(spotiGlassPath(size, with(density) { radius.toPx() }))
 }

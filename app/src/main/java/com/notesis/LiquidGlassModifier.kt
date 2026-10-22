@@ -12,6 +12,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.shape.CornerBasedShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
@@ -122,6 +123,9 @@ fun Modifier.liquidGlass(
         return this.spotiGlassSurface(spotiShape, settings, elevation = shadowElevation, rim = drawBorder)
     }
     val amount = intensity.coerceIn(0f, 1f)
+    // Every layer of the pane - shadow, glass, edge - takes the same outline,
+    // one the lens can bend along.
+    val glassShape = lensSafeShape(shape)
     val backdrop = LocalLiquidGlassBackdrop.current
     val effectsAllowed = rememberLiquidGlassEffectsAllowed() && !settings.highContrast
     val density = LocalDensity.current
@@ -148,16 +152,18 @@ fun Modifier.liquidGlass(
 
     if (enabled && amount > 0.001f && effectsAllowed && backdrop != null) {
         var result = this
-            .shadow(shadowElevation, shape, clip = false)
+            .shadow(shadowElevation, glassShape, clip = false)
             .drawBackdrop(
                 backdrop = backdrop,
-                shape = { shape },
+                shape = { glassShape },
                 effects = {
                     // Backdrop의 vibrancy()는 고정 1.5배라서, 설정값을 그대로
                     // 반영할 수 있는 colorControls의 saturation을 사용합니다.
                     colorControls(saturation = 1f + settings.vibrancy * amount)
                     blur(blurPx)
-                    directionalLens(
+                    // Backdrop's lens refracts along a rounded-rectangle SDF
+                    // and throws for any other outline; see [lensSafeShape].
+                    if (glassShape is CornerBasedShape) directionalLens(
                         refractionHeight = depthPx,
                         refractionAmount = refractionPx,
                         direction = settings.refractionDirection,
@@ -190,7 +196,7 @@ fun Modifier.liquidGlass(
                     )
                 },
             )
-        if (drawBorder) result = result.border(1.dp, borderColor, shape)
+        if (drawBorder) result = result.border(1.dp, borderColor, glassShape)
         return result
     }
 
@@ -199,14 +205,14 @@ fun Modifier.liquidGlass(
     val fallbackAlpha = if (!effectsAllowed && Build.VERSION.SDK_INT >= 33) 0.96f else 0.84f
     val fallback = body.copy(alpha = maxOf(body.alpha, fallbackAlpha))
     var result = this
-        .shadow(shadowElevation.coerceAtMost(LiquidGlassTokens.fallbackShadow), shape, clip = false)
-        .clip(shape)
+        .shadow(shadowElevation.coerceAtMost(LiquidGlassTokens.fallbackShadow), glassShape, clip = false)
+        .clip(glassShape)
         .background(fallback)
     if (drawBorder) {
         result = result.border(
             1.dp,
             Color(settings.border).copy(alpha = if (settings.highContrast) 0.72f else 0.32f),
-            shape,
+            glassShape,
         )
     }
     return result
@@ -239,6 +245,22 @@ internal fun Modifier.liquidGlassPane(shape: Shape, panel: Boolean = false): Mod
 
 /** The least a liquid glass panel with text on it is coated. */
 private const val LIQUID_PANEL_MIN_OPACITY = 0.55f
+
+/**
+ * [shape] as an outline Backdrop's lens can work with. Its lens() computes the
+ * refraction from the four corner radii of a rounded rectangle and throws
+ * UnsupportedOperationException ("Only RoundedRectangularShape or
+ * CornerBasedShape is supported in lens effects") on the first draw of any
+ * other shape - which crashed the note screen and the appearance settings the
+ * moment the toolbar's liquid glass, drawn on a [SpotiGlassShape], appeared.
+ * The glass skin's continuous corner becomes a round corner of the same
+ * radius; any other unknown outline is kept, and drawn without the lens.
+ */
+internal fun lensSafeShape(shape: Shape): Shape = when (shape) {
+    is CornerBasedShape -> shape
+    is SpotiGlassShape -> RoundedCornerShape(shape.radius)
+    else -> shape
+}
 
 /** 기기별 셰이더 컴파일 차이가 없는 Backdrop 기본 렌즈를 사용하는 안전 경로입니다. */
 private fun com.kyant.backdrop.BackdropEffectScope.directionalLens(
