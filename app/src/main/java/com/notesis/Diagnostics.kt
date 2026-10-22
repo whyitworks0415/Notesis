@@ -63,7 +63,7 @@ internal object Diagnostics {
 
 /** The version and updates, then diagnostics to share, the id to quote, how to take the system's own report, and a short guide. */
 @Composable
-internal fun HelpDialog(onDismiss: () -> Unit) {
+internal fun HelpDialog(onDismiss: () -> Unit, onGuide: (() -> Unit)? = null) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val id = remember { Diagnostics.id(context) }
@@ -75,6 +75,9 @@ internal fun HelpDialog(onDismiss: () -> Unit) {
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 AppVersionSection(onLicenses = { licenses = true })
+                if (onGuide != null) {
+                    TextButton(onClick = onGuide) { Text("Open the guide note") }
+                }
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))
                 Text("Diagnostic ID $id", style = MaterialTheme.typography.titleSmall)
                 Row {

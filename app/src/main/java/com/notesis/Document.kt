@@ -851,6 +851,25 @@ class NoteStore(context: Context) {
         return readMeta(File(root, id))
     }
 
+    /**
+     * A note whose pages [build] lays out itself, given the new note's id to
+     * keep pictures under - the guide note's text boxes, for one. Nothing is
+     * left behind when it builds no pages or fails part-way.
+     */
+    fun createFromPages(title: String, build: (String) -> List<Page>): NoteMeta? {
+        val id = UUID.randomUUID().toString()
+        File(root, "$id/pages").mkdirs()
+        val pages = runCatching { build(id) }.getOrNull()
+        if (pages.isNullOrEmpty()) {
+            File(root, id).deleteRecursively()
+            return null
+        }
+        val document = Document(pages.toMutableList())
+        writeMeta(id, title, document)
+        writeAutoThumbnail(id, document)
+        return readMeta(File(root, id))
+    }
+
     fun createMarkdown(title: String, text: String = "", folder: String = ""): NoteMeta {
         val id = UUID.randomUUID().toString()
         val dir = File(root, id).apply { mkdirs() }

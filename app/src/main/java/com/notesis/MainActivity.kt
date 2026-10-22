@@ -524,8 +524,20 @@ private fun NoteListScreen(
     var sortMenu by remember { mutableStateOf(false) }
     var tagFilter by remember { mutableStateOf<String?>(null) }
     var showHelp by remember { mutableStateOf(false) }
-    if (showHelp) HelpDialog(onDismiss = { showHelp = false })
+    if (showHelp) HelpDialog(onDismiss = { showHelp = false }, onGuide = {
+        showHelp = false
+        scope.launch {
+            val guide = withContext(Dispatchers.IO) { GuideNote.create(store) }
+            revision++
+            guide?.let(onOpen)
+        }
+    })
     LaunchUpdateCheck()
+    // A fresh install starts with the guide among its notes - once, so a
+    // deleted guide stays deleted; About & help makes a new one on request.
+    LaunchedEffect(Unit) {
+        if (withContext(Dispatchers.IO) { GuideNote.seedOnce(context, store) }) revision++
+    }
     val allTags = remember(revision) { store.allTags() }
     var taggingNote by remember { mutableStateOf<NoteMeta?>(null) }
     var labelingNote by remember { mutableStateOf<NoteMeta?>(null) }
