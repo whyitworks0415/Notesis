@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.PorterDuff
 import android.graphics.Rect
@@ -19,6 +20,7 @@ import android.widget.FrameLayout
 import androidx.ink.brush.Brush
 import androidx.ink.brush.InputToolType
 import androidx.ink.geometry.BoxAccumulator
+import androidx.ink.geometry.MutableVec
 import androidx.ink.rendering.android.canvas.CanvasStrokeRenderer
 import androidx.ink.strokes.InProgressStroke
 import androidx.ink.strokes.MutableStrokeInputBatch
@@ -92,9 +94,21 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
         /** What this stroke covers on the surface right now. */
         val drawn = RectF()
 
+        /**
+         * A pencil dab look, drawn from [outlines] rather than by Ink; see
+         * [drawDabs]. Cleared for good if reading the outlines ever fails.
+         */
+        var dabs = false
+        var color = 0
+        val outlines = DabOutlineCache()
+        val outlineSource = InProgressOutlines(stroke)
+
         fun begin(id: Any, brush: Brush, transform: Matrix, startTime: Long) {
             this.id = id
             stroke.start(brush)
+            dabs = PencilBrushes.isDab(brush.family)
+            color = brush.colorIntArgb
+            outlines.clear()
             real.clear()
             predicted.clear()
             screenToPage.set(transform)
@@ -124,6 +138,17 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
     }
 
     private val renderer = CanvasStrokeRenderer.create(PencilTextureStore)
+
+    // For [drawDabs]: the same paint Ink's path renderer gives a dab coat,
+    // which has no texture and no colour function.
+    private val dabPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val dabPath = Path()
+    private val dabClip = RectF()
+    private val dabSink = OutlineSink { points, count ->
+        dabPath.moveTo(points[0], points[1])
+        for (v in 1 until count) dabPath.lineTo(points[v * 2], points[v * 2 + 1])
+        dabPath.close()
+    }
     private val strokes = ArrayList<Wet>()
     private val spare = ArrayList<Wet>()
     private val point = FloatArray(2)
@@ -566,7 +591,10 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
             // the rest of the stroke is still on the surface. Repainting the
             // whole extent re-rasterised every dab of a long pencil scatter
             // on the CPU every frame, slower the longer the stroke got.
-            if (!wet.drawn.isEmpty && updatedRegion(wet, region)) {
+            // Asked every frame the stroke changed, first one included: it
+            // also brings a dab stroke's outlines up to date.
+            val known = updatedRegion(wet, region)
+            if (!wet.drawn.isEmpty && known) {
                 dirtyF.union(region)
             } else {
                 dirtyF.union(wet.drawn)
@@ -621,7 +649,18 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
             wet.stroke.populateUpdatedRegion(updated.reset())
             wet.stroke.resetUpdatedRegion()
             updated.box
-        }.getOrElse { return false }
+        }.getOrElse {
+            if (wet.dabs) syncOutlines(wet) { wet.outlines.syncAll(wet.outlineSource) }
+            return false
+        }
+        if (wet.dabs) syncOutlines(wet) {
+            if (box == null) {
+                wet.outlines.sync(wet.outlineSource, Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY,
+                    Float.NEGATIVE_INFINITY, Float.NEGATIVE_INFINITY)
+            } else {
+                wet.outlines.sync(wet.outlineSource, box.xMin, box.yMin, box.xMax, box.yMax)
+            }
+        }
         if (box == null) {
             out.setEmpty()
             return true
@@ -630,6 +669,11 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
         wet.pageToScreen.mapRect(out)
         out.inset(-REGION_PAD_PX, -REGION_PAD_PX)
         return true
+    }
+
+    /** A failed read of the outlines hands the stroke back to Ink's own renderer. */
+    private inline fun syncOutlines(wet: Wet, sync: () -> Unit) {
+        if (runCatching(sync).isFailure) wet.dabs = false
     }
 
     private fun drawContent(canvas: Canvas, clip: Rect?) {
@@ -641,7 +685,11 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
                 // The renderer's matrix describes screen resolution for its
                 // shader; the canvas still needs the page-to-screen placement.
                 canvas.concat(wet.pageToScreen)
-                runCatching { renderer.draw(canvas, wet.stroke, wet.pageToScreen) }
+                if (wet.dabs) {
+                    runCatching { drawDabs(canvas, wet, if (clip != null) clipF else null) }
+                } else {
+                    runCatching { renderer.draw(canvas, wet.stroke, wet.pageToScreen) }
+                }
             } finally {
                 canvas.restoreToCount(saved)
             }
@@ -653,6 +701,31 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
         }
     }
 
+    /**
+     * A dab stroke as Ink's own renderer draws it on this CPU canvas - its
+     * outlines filled as one path, nonzero, in the stroke's colour - but only
+     * the outlines that reach [screenClip], from [Wet.outlines]. Ink rebuilt
+     * the whole stroke's path every frame, which is what made a long pencil
+     * line slow down as it grew; this is the dabs near the pen. The canvas
+     * is already in page units.
+     */
+    private fun drawDabs(canvas: Canvas, wet: Wet, screenClip: RectF?) {
+        if (screenClip != null) {
+            dabClip.set(screenClip)
+            dabClip.inset(-REGION_PAD_PX, -REGION_PAD_PX)
+            wet.screenToPage.mapRect(dabClip)
+        } else {
+            dabClip.set(Float.NEGATIVE_INFINITY, Float.NEGATIVE_INFINITY,
+                Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY)
+        }
+        dabPaint.color = wet.color
+        for (coat in 0 until wet.outlines.coatCount) {
+            dabPath.rewind()
+            wet.outlines.forEachMeeting(coat, dabClip.left, dabClip.top, dabClip.right, dabClip.bottom, dabSink)
+            if (!dabPath.isEmpty) canvas.drawPath(dabPath, dabPaint)
+        }
+    }
+
     override fun onDraw(canvas: Canvas) {
         if (usingSurface()) {
             viewHasContent = false
@@ -660,6 +733,8 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
         }
         for (wet in strokes) {
             flush(wet)
+            // Keeps a dab stroke's outlines current; the whole view is drawn here.
+            if (wet.changed) updatedRegion(wet, region)
             wet.changed = false
         }
         drawContent(canvas, null)
@@ -682,6 +757,19 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
         if (framePosted) {
             Choreographer.getInstance().removeFrameCallback(frameCallback)
             framePosted = false
+        }
+    }
+
+    /** [OutlineSource] over an in-progress stroke's outlines. */
+    private class InProgressOutlines(private val stroke: InProgressStroke) : OutlineSource {
+        private val vec = MutableVec()
+        override fun coatCount(): Int = stroke.getBrushCoatCount()
+        override fun outlineCount(coat: Int): Int = stroke.getOutlineCount(coat)
+        override fun vertexCount(coat: Int, outline: Int): Int = stroke.getOutlineVertexCount(coat, outline)
+        override fun position(coat: Int, outline: Int, vertex: Int, into: FloatArray, at: Int) {
+            stroke.populateOutlinePosition(coat, outline, vertex, vec)
+            into[at] = vec.x
+            into[at + 1] = vec.y
         }
     }
 

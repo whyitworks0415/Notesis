@@ -141,6 +141,9 @@ private const val MAX_GRID_CELLS_PER_STROKE = 64
 /** Below this fraction of the tip width, the previous eraser tip still covers the move. */
 private const val ERASER_SAMPLE_DISTANCE_FRACTION = 0.08f
 
+/** A page's ink draw weight, until its strokes or their meshes change; see DryLayer.inkDrawWeight. */
+private class InkWeight(val revision: Long, val meshRevision: Long, val size: Int, val weight: Int)
+
 /**
  * A page's committed ink recorded once into a hardware display list.
  *
@@ -8776,6 +8779,39 @@ class InkCanvasView @JvmOverloads constructor(
             linkBoxes.remove(page)
         }
 
+        private val inkWeights = java.util.WeakHashMap<Page, InkWeight>()
+
+        /**
+         * What a page's ink costs to draw, in written pen strokes. A page
+         * below [TILED_INK_WEIGHT] is drawn from a display list, every mesh
+         * submitted again on every frame; that is cheap for pen writing and
+         * was not for pencil. One dab stroke is hundreds or thousands of
+         * little outlines, so a page of a few dozen pencil lines replayed
+         * more geometry each frame - each pen-up, each scroll step - than
+         * the densest pen page that is cached in tiles, and stayed off the
+         * tiles because it had few strokes. Counted by weight, it is cached
+         * as pixels like any other heavy page.
+         */
+        private fun inkDrawWeight(page: Page): Int {
+            val strokes = page.strokes
+            // At the stroke count alone it is tiled already; nothing to add up.
+            if (strokes.size >= TILED_INK_WEIGHT) return strokes.size
+            inkWeights[page]?.takeIf {
+                it.revision == page.revision && it.meshRevision == page.meshRevision && it.size == strokes.size
+            }?.let { return it.weight }
+            var weight = 0
+            for (stroke in strokes) {
+                weight += if (!PencilBrushes.isDab(stroke.brush.family)) 1 else {
+                    val shape = stroke.shape
+                    var outlines = 0
+                    for (group in 0 until shape.getRenderGroupCount()) outlines += shape.getOutlineCount(group)
+                    dabDrawWeight(outlines)
+                }
+            }
+            inkWeights[page] = InkWeight(page.revision, page.meshRevision, strokes.size, weight)
+            return weight
+        }
+
         fun strokesIn(page: Page, left: Float, top: Float, right: Float, bottom: Float): List<Stroke> =
             strokeIndexes.getOrPut(page) { StrokeGrid() }.visible(page, left, top, right, bottom)
 
@@ -8935,7 +8971,7 @@ class InkCanvasView @JvmOverloads constructor(
                     val visibleRight = cullRight.coerceAtMost(page.width)
                     val visibleBottom = cullBottom.coerceAtMost(page.height)
                     val tiledInk = scoped.isHardwareAccelerated && meshInk &&
-                        page.strokes.size >= 256 && playbackStrokeCount == null
+                        inkDrawWeight(page) >= TILED_INK_WEIGHT && playbackStrokeCount == null
                     // The tiles query the index themselves; a culled list here
                     // was built every frame and only ever counted.
                     val visibleStrokes = if (tiledInk) emptyList() else {
@@ -9575,6 +9611,9 @@ class InkCanvasView @JvmOverloads constructor(
         const val MAX_INK_NODES = 6
         /** Strokes drawn live on top of a recording before it is re-recorded anyway. */
         const val MAX_NODE_APPENDED = 48
+
+        /** Pen strokes' worth of ink (see inkDrawWeight) from which a page is drawn from cached tiles. */
+        const val TILED_INK_WEIGHT = 256
         const val BASE_TESSELLATION_SCALE = 1f
         /** The finest zoom a page is first read in at; see refineVisiblePages. */
         const val LOAD_TESSELLATION_SCALE = 2f
