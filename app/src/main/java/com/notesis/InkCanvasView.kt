@@ -928,7 +928,7 @@ class InkCanvasView @JvmOverloads constructor(
     var autoShapeRecognitionEnabled: Boolean = false
 
     /** A pen stroke held still at its end for [CIRCLE_HOLD_MS] becomes the shape it looks like. */
-    var holdToDraw: Boolean = false
+    var holdToDraw: Boolean = true
     private var holdTracking = false
     /** Set at pen-up when the hold was long enough; the commit that follows reads and clears it. */
     private var recognizeOnFinish = false
@@ -2008,6 +2008,28 @@ class InkCanvasView @JvmOverloads constructor(
     private var holdSince = 0L
     /** The rest already judged not to be a loop, so a pen left standing is not asked again. */
     private var checkedHold = -1L
+    /** The hold that was last felt, so a pen left standing ticks once, not every half second. */
+    private var feltHold = -1L
+
+    /**
+     * A tick under the pen, and a ring around its tip, once it has rested long
+     * enough for the stroke to become a shape on lift. Without it nothing said
+     * the hold had registered, and lifting early looked exactly like the
+     * feature not working. The ring is for tablets with no vibration motor.
+     */
+    private val holdReady: Runnable = object : Runnable {
+        override fun run() {
+            if (!holdTracking) return
+            val waited = SystemClock.uptimeMillis() - holdSince
+            if (waited >= CIRCLE_HOLD_MS && feltHold != holdSince) {
+                feltHold = holdSince
+                performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+                laser.tapAt(holdX, holdY, SystemClock.uptimeMillis())
+            }
+            postDelayed(this, if (waited < CIRCLE_HOLD_MS) CIRCLE_HOLD_MS - waited else CIRCLE_HOLD_MS)
+        }
+    }
+
     private val circleHold: Runnable = object : Runnable {
         override fun run() {
             if (!circleTracking) return
@@ -2490,6 +2512,7 @@ class InkCanvasView @JvmOverloads constructor(
         registeredDocument = null
         removeCallbacks(refineRunnable)
         removeCallbacks(prefetchRunnable)
+        removeCallbacks(holdReady)
         removeCallbacks(viewportFrame)
         viewportFramePosted = false
         prefetchWanted = false
@@ -3825,6 +3848,8 @@ class InkCanvasView @JvmOverloads constructor(
                         holdX = stationaryStartX
                         holdY = stationaryStartY
                         holdSince = event.eventTime
+                        removeCallbacks(holdReady)
+                        postDelayed(holdReady, CIRCLE_HOLD_MS)
                     }
                     if (circleTracking) {
                         lassoPage = index
@@ -4490,6 +4515,7 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun endStylus() {
+        removeCallbacks(holdReady)
         if (holdTracking) {
             holdTracking = false
             recognizeOnFinish = activeStrokeId != null &&

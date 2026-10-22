@@ -2614,34 +2614,15 @@ internal fun trackPosition(fraction: Float, length: Float, inset: Float): Float 
     inset + fraction.coerceIn(0f, 1f) * (length - 2f * inset).coerceAtLeast(0f)
 
 
-/** The shape tool: tapping it offers the four, and picking one arms the pen. */
+/** The shape in hand; tapping it opens the shape picker. */
 @Composable
 private fun ShapeButton(
     selected: Boolean,
     kind: ShapeKind,
-    onShape: (ShapeKind) -> Unit,
+    onOptions: () -> Unit,
 ) {
-    var open by remember { mutableStateOf(false) }
-    Box {
-        ToolButton(shapeIcon(kind), "Shape", selected) { open = true }
-        DropdownMenu(open, onDismissRequest = { open = false }) {
-            // The other shapes stay in the code for a later fix, but not on offer.
-            for (option in OFFERED_SHAPES) {
-                DropdownMenuItem(
-                    text = { Text(shapeLabel(option)) },
-                    leadingIcon = { Icon(shapeIcon(option), contentDescription = null) },
-                    onClick = {
-                        open = false
-                        onShape(option)
-                    },
-                )
-            }
-        }
-    }
+    ToolButton(shapeIcon(kind), "Shape: ${shapeLabel(kind).substringBefore(" (")}", selected, onClick = onOptions)
 }
-
-/** What the shape tool offers for now: a straight line, and a box to tick. */
-private val OFFERED_SHAPES = listOf(ShapeKind.LINE, ShapeKind.CHECKBOX)
 
 private fun shapeIcon(kind: ShapeKind): ImageVector = when (kind) {
     ShapeKind.LINE -> Reicons.Remove
@@ -2652,7 +2633,7 @@ private fun shapeIcon(kind: ShapeKind): ImageVector = when (kind) {
     else -> Reicons.Category
 }
 
-private fun shapeLabel(kind: ShapeKind): String = when (kind) {
+internal fun shapeLabel(kind: ShapeKind): String = when (kind) {
     ShapeKind.LINE -> "Line"
     ShapeKind.ARROW -> "Arrow"
     ShapeKind.DOUBLE_ARROW -> "Double arrow"
@@ -3659,6 +3640,7 @@ private fun NoteScreen(
     var compatWetInk by remember { mutableStateOf(penStore.compatWetInk) }
     var partialEraser by remember { mutableStateOf(penStore.partialEraser) }
     var gestures by remember { mutableStateOf(penStore.gestures) }
+    var choosingShape by remember { mutableStateOf(false) }
     fun setGestures(value: CanvasGestures) { gestures = value; penStore.gestures = value }
     /** Bumped on copy and cut so the paste bar sees the clipboard change. */
     var clipRevision by remember { mutableIntStateOf(0) }
@@ -4041,6 +4023,7 @@ private fun NoteScreen(
                 canvas?.clearImageSelection()
                 mode = EditMode.SHAPE
             },
+            onShapeOptions = { choosingShape = true },
             onPickImage = {
                 pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
             },
@@ -5179,6 +5162,21 @@ private fun NoteScreen(
                 confirmButton = { TextButton(onClick = { sendingPages = null }) { Text("Cancel") } },
             )
         }
+        if (choosingShape) ShapePickerDialog(
+            current = shapeKind,
+            holdToShape = gestures.holdToDraw,
+            onHoldToShape = { setGestures(gestures.copy(holdToDraw = it)) },
+            cornerRadius = shapeCorner,
+            onCornerRadius = { shapeCorner = it; penStore.shapeCornerRadius = it },
+            onPick = { picked ->
+                choosingShape = false
+                shapeKind = picked
+                canvas?.clearSelection()
+                canvas?.clearImageSelection()
+                mode = EditMode.SHAPE
+            },
+            onDismiss = { choosingShape = false },
+        )
         if (showLibrary) LibraryDialog(store, onPaste = { clip ->
             showLibrary = false
             canvas?.paste(clip)
@@ -7851,6 +7849,7 @@ private fun Toolbar(
     onEditPen: () -> Unit,
     onMode: (EditMode) -> Unit,
     onShape: (ShapeKind) -> Unit,
+    onShapeOptions: () -> Unit = {},
     onPickImage: () -> Unit,
     onText: () -> Unit,
     onAddText: () -> Unit,
@@ -7985,7 +7984,9 @@ private fun Toolbar(
             },
             onDrag = onDragBar,
             onTool = { tool -> when (tool.mode) {
-                EditMode.SHAPE -> onShape(shapeKind)
+                // The shape already in hand, tapped again, opens the picker,
+                // the way a pen tapped again opens its settings.
+                EditMode.SHAPE -> if (mode == EditMode.SHAPE) onShapeOptions() else onShape(shapeKind)
                 EditMode.TEXT -> onText()
                 null -> Unit
                 else -> onMode(tool.mode)
@@ -8031,7 +8032,7 @@ private fun Toolbar(
                 for (item in config.penRow) {
                     when (item) {
                         PenRowItem.TOOL -> {
-                            if (mode == EditMode.SHAPE) ShapeButton(true, shapeKind, onShape)
+                            if (mode == EditMode.SHAPE) ShapeButton(true, shapeKind, onShapeOptions)
                             if (mode == EditMode.TEXT) TextButton(onClick = onAddText) { Text("+ Text") }
                             if (mode in PenStore.DEFAULTS) PenChip(pen, true, onEditPen)
                         }

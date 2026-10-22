@@ -113,7 +113,7 @@ data class CanvasGestures(
     val eraseLocked: Boolean = false,
     val eraseImages: Boolean = false,
     val eraseText: Boolean = false,
-    val holdToDraw: Boolean = false,
+    val holdToDraw: Boolean = true,
     val snapToAlign: Boolean = true,
     val keepAspect: Boolean = true,
     val oneFinger: Int = FINGER_SCROLL,
@@ -385,6 +385,19 @@ class PenStore(context: Context) {
         get() = prefs.getFloat("playbackSpeed", 1f).takeIf { it in PLAYBACK_SPEEDS } ?: 1f
         set(value) = prefs.edit().putFloat("playbackSpeed", value).apply()
 
+    /**
+     * Hold to make a shape. It was off unless found in the pen settings, so it
+     * looked like it did nothing at all; 0.47.3 turns it on once, for everyone,
+     * and from then on whatever the person sets is kept.
+     */
+    private fun holdToShape(): Boolean {
+        if (!prefs.getBoolean(HOLD_TO_SHAPE_ON, false)) {
+            prefs.edit().putBoolean("holdToDraw", true).putBoolean(HOLD_TO_SHAPE_ON, true).apply()
+            return true
+        }
+        return prefs.getBoolean("holdToDraw", true)
+    }
+
     var gestures: CanvasGestures
         get() = CanvasGestures(
             eraseInk = prefs.getBoolean("eraseInk", true),
@@ -401,7 +414,7 @@ class PenStore(context: Context) {
             eraseLocked = prefs.getBoolean("eraseLocked", false),
             eraseImages = prefs.getBoolean("eraseImages", false),
             eraseText = prefs.getBoolean("eraseText", false),
-            holdToDraw = prefs.getBoolean("holdToDraw", false),
+            holdToDraw = holdToShape(),
             snapToAlign = prefs.getBoolean("snapToAlign", true),
             keepAspect = prefs.getBoolean("keepAspect", true),
             oneFinger = prefs.getInt("oneFinger", FINGER_SCROLL),
@@ -567,6 +580,7 @@ class PenStore(context: Context) {
     companion object {
         private const val OPAQUE = -0x1000000
         const val MAX_QUICK_COLORS = 8
+        private const val HOLD_TO_SHAPE_ON = "holdToShapeTurnedOn"
         private const val KEY = "tools"
         private const val DOCKED = "docked"
         private const val PREDICTION = "prediction"

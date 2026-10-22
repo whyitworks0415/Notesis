@@ -43,10 +43,11 @@ internal data class RecognizedShape(
  * drawn within a few degrees of level.
  */
 internal fun recognizeShape(
-    points: List<FloatArray>,
+    drawn: List<FloatArray>,
     held: Boolean = false,
     axisSnap: Boolean = true,
 ): RecognizedShape? {
+    val points = forRecognition(drawn)
     if (points.size < 6) return null
     val first = points.first()
     val last = points.last()
@@ -872,3 +873,75 @@ private fun segmentsCross(a: FloatArray, b: FloatArray, c: FloatArray, d: FloatA
 }
 
 private const val AXIS_SNAP_RADIANS = 0.07f
+
+/**
+ * The stroke as recognition should see it. Holding the pen still to ask for a
+ * shape leaves a few hundred samples jittering on one spot at the end, and the
+ * pen settles the same way as it lands; read as they are, those clusters are a
+ * tangle of tiny turns, and a straight line came back as a bent one. Each is
+ * folded into the one point it rests on, and samples nearer together than a
+ * small fraction of the drawing are merged, so a slow 240 Hz trace looks the
+ * same as a quick one.
+ */
+internal fun forRecognition(points: List<FloatArray>): List<FloatArray> {
+    if (points.size < 3) return points
+    var left = Float.POSITIVE_INFINITY
+    var top = Float.POSITIVE_INFINITY
+    var right = Float.NEGATIVE_INFINITY
+    var bottom = Float.NEGATIVE_INFINITY
+    for (p in points) {
+        left = min(left, p[0]); right = max(right, p[0])
+        top = min(top, p[1]); bottom = max(bottom, p[1])
+    }
+    val diagonal = hypot(right - left, bottom - top)
+    val rest = max(REST_MIN, diagonal * REST_FRACTION)
+    // Measured from the running middle of the cluster, not from one sample:
+    // a single jittered sample is as likely as any to be the stray one.
+    var end = points.size - 1
+    var sumX = points[end][0]
+    var sumY = points[end][1]
+    while (end > 0) {
+        val n = (points.size - end).toFloat()
+        val p = points[end - 1]
+        if (hypot(p[0] - sumX / n, p[1] - sumY / n) > rest) break
+        end--
+        sumX += p[0]; sumY += p[1]
+    }
+    var start = 0
+    sumX = points[0][0]
+    sumY = points[0][1]
+    while (start < end) {
+        val n = (start + 1).toFloat()
+        val p = points[start + 1]
+        if (hypot(p[0] - sumX / n, p[1] - sumY / n) > rest) break
+        start++
+        sumX += p[0]; sumY += p[1]
+    }
+    if (end - start < 2) return points
+    fun centroid(from: Int, to: Int): FloatArray {
+        var x = 0f
+        var y = 0f
+        for (i in from..to) { x += points[i][0]; y += points[i][1] }
+        val n = (to - from + 1).toFloat()
+        return floatArrayOf(x / n, y / n)
+    }
+    val spacing = max(SPACING_MIN, diagonal * SPACING_FRACTION)
+    val out = ArrayList<FloatArray>(end - start + 2)
+    out += centroid(0, start)
+    for (i in start + 1 until end) {
+        val p = points[i]
+        val previous = out.last()
+        if (hypot(p[0] - previous[0], p[1] - previous[1]) >= spacing) out += p
+    }
+    val landing = centroid(end, points.size - 1)
+    val previous = out.last()
+    if (out.size > 1 && hypot(landing[0] - previous[0], landing[1] - previous[1]) < spacing) out[out.size - 1] = landing
+    else out += landing
+    return out
+}
+
+/** A rest is the pen within this much of one spot: at least a few units, and more on a big drawing. */
+private const val REST_MIN = 6f
+private const val REST_FRACTION = 0.02f
+private const val SPACING_MIN = 1f
+private const val SPACING_FRACTION = 0.004f

@@ -208,6 +208,34 @@ class ShapeRecognitionTest {
 
     // ---- writing stays writing ----------------------------------------------------
 
+    @Test fun `a pen held still at the end still makes the shape`() {
+        // What a real hold looks like: the digitizer keeps reporting for the
+        // half second the pen rests, a few hundred samples jittering in place.
+        fun rested(points: List<FloatArray>, seed: Int): List<FloatArray> {
+            val random = Random(seed + 1000)
+            val end = points.last()
+            return points + (0 until 240).map { pt(end[0] + random.gaussian() * 1.2f, end[1] + random.gaussian() * 1.2f) }
+        }
+        val square = listOf(pt(80f, 90f), pt(420f, 90f), pt(420f, 300f), pt(80f, 300f))
+        val triangle = listOf(pt(100f, 320f), pt(240f, 70f), pt(410f, 300f))
+        val ell = listOf(pt(100f, 80f), pt(110f, 350f), pt(340f, 340f))
+        for (seed in 0 until 20) {
+            assertEquals("rect $seed", ShapeKind.RECT,
+                recognizeShape(rested(handDrawn(square, closed = true, seed = seed), seed), held = true)?.kind)
+            assertEquals("triangle $seed", ShapeKind.TRIANGLE,
+                recognizeShape(rested(handDrawn(triangle, closed = true, seed = seed), seed), held = true)?.kind)
+            assertEquals("L $seed", ShapeKind.POLYGON,
+                recognizeShape(rested(handDrawn(ell, closed = false, seed = seed), seed), held = true)?.kind)
+            val line = (0..300).map { pt(50f + it, 80f + it * 0.3f) }
+            assertEquals("line $seed", ShapeKind.LINE, recognizeShape(rested(line, seed), held = true)?.kind)
+            val circle = (0..400).map { i ->
+                val a = i * 2 * PI / 400
+                pt(250f + 120f * cos(a).toFloat(), 250f + 120f * sin(a).toFloat())
+            }
+            assertEquals("circle $seed", ShapeKind.OVAL, recognizeShape(rested(circle, seed), held = true)?.kind)
+        }
+    }
+
     @Test fun `scribbles stay as written unheld`() {
         for (seed in 0 until 60) {
             val random = Random(seed)
