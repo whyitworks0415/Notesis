@@ -90,6 +90,20 @@ internal fun HelpDialog(
                 if (onTutorial != null) {
                     TextButton(onClick = onTutorial) { Text("Open the tutorial") }
                 }
+                var firstRun by remember { mutableStateOf(Onboarding.firstRunMode(context)) }
+                SettingsToggle(
+                    "First-run mode",
+                    firstRun,
+                    { on -> firstRun = on; Onboarding.setFirstRunMode(context, on) },
+                    hint = if (firstRun) {
+                        "On: close the app and open it again, and it starts as on a fresh install - the welcome, " +
+                            "the choice of look, the tutorial marks and tips. Every time, until you turn it off. " +
+                            "Your notes and settings stay as they are."
+                    } else {
+                        "Shows the welcome and the tutorial again each time the app starts, as on a fresh install. " +
+                            "Your notes and settings stay as they are."
+                    },
+                )
                 if (onTips != null) {
                     TextButton(onClick = onTips) { Text("Show the tips again") }
                 }

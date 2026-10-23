@@ -82,6 +82,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.roundToInt
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.widthIn
 
 /** The name the appearance screens use for each skin: the one it has everywhere else. */
 internal val Skin.displayName: String
@@ -103,6 +105,9 @@ internal enum class PreviewBackground(val label: String) {
     PHOTO("Your photo"),
 }
 
+/** Room for the bar to try and the switch and slider under it. */
+private val PREVIEW_STAGE_HEIGHT = 196.dp
+
 /** How long a slider must rest before its value becomes the app's look. */
 private const val APPEARANCE_COMMIT_MS = 250L
 
@@ -114,14 +119,17 @@ private fun previewPhotoFile(context: Context) = File(context.filesDir, PREVIEW_
 /**
  * A stage for the real toolbar: its own background, recorded for the glass
  * on it to look through, so the bar is judged against something without the
- * note behind the panel being recorded or redrawn for it. Nothing in it can
- * be touched; it is a picture of the bar, not a second bar.
+ * note behind the panel being recorded or redrawn for it. Unless it is
+ * [interactive], nothing in it can be touched: it is a picture of the bar,
+ * not a second bar.
  */
 @Composable
 internal fun ToolbarPreviewStage(
     background: PreviewBackground,
     photo: ImageBitmap?,
     modifier: Modifier = Modifier,
+    /** A bar and controls to try: they take touches, and the stage only draws behind them. */
+    interactive: Boolean = false,
     content: @Composable BoxScope.() -> Unit,
 ) {
     val backdrop = rememberBackdrop(active = true)
@@ -148,14 +156,17 @@ internal fun ToolbarPreviewStage(
             LocalSpotiPopupBackdrop provides null,
         ) {
             Box(
-                Modifier.matchParentSize().clearAndSetSemantics { contentDescription = "Toolbar preview" },
+                Modifier.matchParentSize().then(
+                    if (interactive) Modifier
+                    else Modifier.clearAndSetSemantics { contentDescription = "Toolbar preview" },
+                ),
                 contentAlignment = Alignment.Center,
                 content = content,
             )
         }
         // On top of the bar: it takes every touch, so the preview's buttons
         // never act, and leaves the events unconsumed for a scrolling parent.
-        Box(
+        if (!interactive) Box(
             Modifier.matchParentSize().pointerInput(Unit) {
                 awaitPointerEventScope { while (true) awaitPointerEvent() }
             },
@@ -258,18 +269,92 @@ private fun Modifier.previewBackdrop(kind: PreviewBackground, photo: ImageBitmap
     }
 }
 
-/** The bar as it stands when no note is open to lend its own: 2/4, with the pen in hand. */
+/**
+ * The bar to try, in the look being set: tools that pick (the highlight
+ * slides to them), Functions that opens from where it was tapped, the pen
+ * row's swatches and width at the full size, and under it a switch and a
+ * slider in the same skin. Only the preview changes; the note's own tool
+ * and pen are left alone. [sizeLevel] is the bar's real size.
+ */
 @Composable
-private fun StandaloneToolbarPreview() {
-    SpotiGlassToolbar(
-        sizeLevel = 1, onSizeLevel = {}, mode = EditMode.PEN,
-        toolColors = PenStore.DEFAULTS.filterKeys { it.tints }
-            .mapValues { Color(it.value.colorArgb or 0xFF000000.toInt()) },
-        targetWidth = spotiToolbarWidth(1), docked = false, modifier = Modifier, onDrag = {},
-        onTool = {}, functions = emptyList(), notes = emptyList(), ai = emptyList(),
-        topRow = {}, penOptions = {},
-    )
+private fun InteractiveToolbarPreview(sizeLevel: Int, onSizeLevel: (Int) -> Unit) {
+    var mode by remember { mutableStateOf(EditMode.PEN) }
+    var swatch by remember { mutableIntStateOf(0) }
+    var width by remember { mutableFloatStateOf(0.35f) }
+    var toggle by remember { mutableStateOf(true) }
+    var level by remember { mutableFloatStateOf(0.6f) }
+    val swatches = PREVIEW_SWATCHES
+    val toolColors = remember(swatch) {
+        PenStore.DEFAULTS.filterKeys { it.tints }.mapValues { Color(it.value.colorArgb or 0xFF000000.toInt()) } +
+            (EditMode.PEN to swatches[swatch])
+    }
+    Column(
+        Modifier.padding(Ui.Space.s),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(Ui.Space.s),
+    ) {
+        Box(Modifier.previewFit(spotiToolbarWidth(sizeLevel))) {
+            SpotiGlassToolbar(
+                sizeLevel = sizeLevel, onSizeLevel = onSizeLevel, mode = mode,
+                toolColors = toolColors,
+                targetWidth = spotiToolbarWidth(sizeLevel), docked = false, modifier = Modifier, onDrag = {},
+                onTool = { tool -> tool.mode?.let { mode = it } },
+                functions = listOf(
+                    listOf(
+                        SpotiToolbarAction("Picture", AppIcons.picture) {},
+                        SpotiToolbarAction("Layers", AppIcons.layers) {},
+                        SpotiToolbarAction("Text", AppIcons.text) {},
+                    ),
+                    listOf(SpotiToolbarAction("Settings", AppIcons.settings) {}),
+                ),
+                notes = emptyList(),
+                ai = listOf(SpotiToolbarAction("Gemini", AppIcons.ai) {}, SpotiToolbarAction("Claude", AppIcons.ai) {}),
+                topRow = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        AppIconButton(onClick = {}, icon = AppIcons.back, contentDescription = "Back")
+                        AppIconButton(onClick = {}, icon = AppIcons.undo, contentDescription = "Undo")
+                        AppIconButton(onClick = {}, icon = AppIcons.redo, contentDescription = "Redo")
+                        Text("100%", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = Ui.Space.s))
+                    }
+                },
+                penOptions = {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+                        swatches.forEachIndexed { i, c ->
+                            Box(
+                                Modifier
+                                    .size(26.dp)
+                                    .then(if (i == swatch) Modifier.border(2.dp, c, CircleShape).padding(4.dp) else Modifier)
+                                    .clip(CircleShape)
+                                    .background(c)
+                                    .clickable { swatch = i },
+                            )
+                        }
+                        Box(Modifier.weight(1f)) { SkinSlider(width, { width = it }, 0f..1f) }
+                    }
+                },
+            )
+        }
+        // A switch and a slider in the same skin, to try beside the bar.
+        Row(
+            Modifier.widthIn(max = 360.dp).fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Ui.Space.m),
+        ) {
+            SkinSurface(corner = Ui.Corner.chip) {
+                Box(Modifier.padding(horizontal = Ui.Space.s, vertical = Ui.Space.xs)) {
+                    SkinSwitch(checked = toggle, onCheckedChange = { toggle = it })
+                }
+            }
+            SkinSurface(Modifier.weight(1f), corner = Ui.Corner.chip) {
+                Box(Modifier.padding(horizontal = Ui.Space.m, vertical = Ui.Space.xs)) {
+                    SkinSlider(level, { level = it }, 0f..1f)
+                }
+            }
+        }
+    }
 }
+
+private val PREVIEW_SWATCHES = listOf(Color(0xFF23252B), Color(0xFF2F6FD6), Color(0xFFD94B3D), Color(0xFF3C9A5F))
 
 @Composable
 private fun rememberPreviewPhoto(revision: Int, wanted: Boolean): ImageBitmap? {
@@ -324,8 +409,9 @@ internal fun AppearanceSettings(
     onSkin: (Skin) -> Unit,
     onChange: (SkinSettings) -> Unit,
     modifier: Modifier = Modifier,
-    /** The note's own bar at 2/4, when there is a note to lend it. */
-    preview: (@Composable () -> Unit)? = null,
+    /** The bar's size, 0 (the whole bar, 1/4) to 3 (one button, 4/4): chosen here, kept everywhere. */
+    toolbarSize: Int = 1,
+    onToolbarSize: (Int) -> Unit = {},
 ) {
     // A slider reports every frame of a drag. Handed straight up, each frame
     // replaced the app's look: every screen under the sidebar recomposed - the
@@ -378,13 +464,14 @@ internal fun AppearanceSettings(
 
     val upper: @Composable () -> Unit = {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
-            ToolbarPreviewStage(background, photo, Modifier.fillMaxWidth().height(140.dp)) {
+            Text("Toolbar size", style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            ToolbarStageSelector(toolbarSize, onSelect = onToolbarSize)
+            ToolbarPreviewStage(background, photo, Modifier.fillMaxWidth().height(PREVIEW_STAGE_HEIGHT), interactive = true) {
                 // The preview shows the draft while the note behind keeps the
                 // committed look until the hand rests.
                 CompositionLocalProvider(LocalSkinSettings provides settings) {
-                    Box(Modifier.padding(Ui.Space.s).previewFit(spotiToolbarWidth(1))) {
-                        if (preview != null) preview() else StandaloneToolbarPreview()
-                    }
+                    InteractiveToolbarPreview(toolbarSize, onToolbarSize)
                 }
             }
             Row(
@@ -761,9 +848,15 @@ fun SkinSettingsScreen(
         // Plain chrome here: the one piece of glass worth looking at is the
         // preview, and it brings its own background.
         CompositionLocalProvider(LocalBackdrop provides NoBackdrop, LocalLiquidGlassBackdrop provides null) {
+            // No note open: the size is kept for the next one that is.
+            val context = LocalContext.current
+            val store = remember { PenStore(context) }
+            var toolbarSize by remember { mutableIntStateOf(store.toolbarSize) }
             AppearanceSettings(
                 skin, settings, onSkin, onChange,
                 modifier = Modifier.padding(padding).background(MaterialTheme.colorScheme.surface),
+                toolbarSize = toolbarSize,
+                onToolbarSize = { toolbarSize = it; store.toolbarSize = it },
             )
         }
     }
