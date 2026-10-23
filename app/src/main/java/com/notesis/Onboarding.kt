@@ -15,7 +15,6 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -38,7 +37,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -59,7 +57,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathFillType
@@ -78,7 +75,6 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
@@ -507,71 +503,9 @@ internal fun SkinChooser(current: Skin, onSkin: (Skin) -> Unit, onDone: () -> Un
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                for (skin in Skin.entries) {
-                    val chosen = skin == current
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .background(
-                                if (chosen) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f) else Color.Transparent,
-                                Ui.Shape.control,
-                            )
-                            .clickable(role = Role.RadioButton) { onSkin(skin) }
-                            .padding(Ui.Space.s),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(Ui.Space.m),
-                    ) {
-                        SkinPreview(skin, Modifier.size(88.dp, 56.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(skin.label, style = MaterialTheme.typography.titleMedium)
-                            Text(skin.blurb, style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        RadioButton(selected = chosen, onClick = { onSkin(skin) })
-                    }
-                }
+                SkinChoiceList(current, onSkin)
                 Button(onClick = onDone, modifier = Modifier.align(Alignment.End)) { Text("Continue") }
             }
-        }
-    }
-}
-
-/** A little bar in [skin]'s material over a scrap of colour, so the three can be told apart at a glance. */
-@Composable
-private fun SkinPreview(skin: Skin, modifier: Modifier) {
-    val accent = MaterialTheme.colorScheme.primary
-    val surface = MaterialTheme.colorScheme.surfaceContainerHigh
-    val onSurface = MaterialTheme.colorScheme.onSurface
-    Canvas(modifier.semantics { contentDescription = "${skin.label} preview" }) {
-        val corner = Ui.Corner.preview.toPx()
-        // What the bar sits over: a page with something coloured on it.
-        drawRoundRect(Color(0xFFF4F1EA), cornerRadius = CornerRadius(corner))
-        drawCircle(Color(0xFFFF8A65), radius = size.height * 0.34f, center = Offset(size.width * 0.28f, size.height * 0.62f))
-        drawCircle(Color(0xFF4FC3F7), radius = size.height * 0.30f, center = Offset(size.width * 0.70f, size.height * 0.40f))
-        val bar = Rect(Offset(size.width * 0.1f, size.height * 0.30f), Size(size.width * 0.8f, size.height * 0.40f))
-        val radius = CornerRadius(bar.height / 2f)
-        when (skin) {
-            Skin.MATERIAL -> drawRoundRect(surface, bar.topLeft, bar.size, radius)
-            Skin.GLASSMORPHISM -> {
-                drawRoundRect(Color.White.copy(alpha = 0.55f), bar.topLeft, bar.size, radius)
-                drawRoundRect(Color.White.copy(alpha = 0.9f), bar.topLeft, bar.size, radius, style = Stroke(1.dp.toPx()))
-            }
-            Skin.SPOTIGLASS -> {
-                drawRoundRect(Color.White.copy(alpha = 0.22f), bar.topLeft, bar.size, radius)
-                drawRoundRect(
-                    Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.75f), Color.White.copy(alpha = 0f)),
-                        startY = bar.top, endY = bar.center.y),
-                    bar.topLeft, bar.size, radius,
-                )
-                drawRoundRect(Color.White, bar.topLeft, bar.size, radius, style = Stroke(1.2.dp.toPx()))
-            }
-        }
-        // The tools, the first one picked.
-        val step = bar.width / 4f
-        for (i in 0 until 4) {
-            val c = Offset(bar.left + step * (i + 0.5f), bar.center.y)
-            if (i == 0) drawCircle(accent.copy(alpha = 0.25f), radius = bar.height * 0.42f, center = c)
-            drawCircle(if (i == 0) accent else onSurface.copy(alpha = 0.7f), radius = bar.height * 0.14f, center = c)
         }
     }
 }

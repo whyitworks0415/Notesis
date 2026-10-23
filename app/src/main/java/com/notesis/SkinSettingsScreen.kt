@@ -83,13 +83,9 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.roundToInt
 
-/** The names the appearance screens use for each skin. */
+/** The name the appearance screens use for each skin: the one it has everywhere else. */
 internal val Skin.displayName: String
-    get() = when (this) {
-        Skin.MATERIAL -> "Material"
-        Skin.GLASSMORPHISM -> "Frosted glass"
-        Skin.SPOTIGLASS -> "Liquid glass"
-    }
+    get() = label
 
 private val RefractionDirection.displayName: String
     get() = when (this) {
@@ -424,11 +420,7 @@ internal fun AppearanceSettings(
             )
             Text("UI style", style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
-                Skin.entries.forEach { option ->
-                    SettingsChoiceChip(selected = option == skin, onClick = { onSkin(option) }, label = option.displayName)
-                }
-            }
+            SkinChoiceTiles(skin, onSkin)
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
                 AppearanceGroup.entries.forEach { option ->
                     SettingsChoiceChip(selected = group == option, onClick = { group = option }, label = option.label)

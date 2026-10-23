@@ -30,7 +30,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -78,9 +77,6 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.compose.ui.window.DialogWindowProvider
 import kotlinx.coroutines.delay
 import kotlin.math.atan2
 import kotlin.math.hypot
@@ -244,259 +240,207 @@ internal fun PenDialog(
     // Open: grow from the bar. Close: fold back, and only then hand the
     // result over, since the host takes the panel away the moment it has it.
     // Material has no motion: the panel is simply there, and simply gone.
-    val skin = LocalSkin.current
-    val animate = skin.animatesPopups && rememberLiquidGlassEffectsAllowed()
-    // Out of the point that was tapped, and back into it (see [PopupGrowth]).
-    val growth = remember { PopupGrowth(shown = !animate) }
-    var closing by remember { mutableStateOf<(() -> Unit)?>(null) }
-    LaunchedEffect(closing) {
-        val after = closing
-        if (after == null) {
-            growth.open(animate)
-        } else {
-            growth.close(animate)
-            after()
-        }
-    }
-    fun close(after: () -> Unit) {
-        if (closing == null) closing = after
-    }
-    fun keep() = close { onConfirm(current()) }
-    fun cancel() = close(onDismiss)
-    val anchor = remember { PenPopupAnchor.point() }
+    val panel = rememberToolPanelState()
+    val animate = panel.animate
+    fun keep() = panel.close { onConfirm(current()) }
+    fun cancel() = panel.close(onDismiss)
     val wide = LocalConfiguration.current.screenWidthDp >= 720
 
-    Dialog(onDismissRequest = ::keep, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        // A light dim: the page should still show through the glass.
-        (LocalView.current.parent as? DialogWindowProvider)?.window?.setDimAmount(0.12f)
-        // The panel's own corner is the one fixed radius, and everything
-        // inside follows it, one inset in. It is the toolbar's and its menu's,
-        // on the same round outline, in every skin (see [chromeCorner]).
-        val corner = skin.tokens().corner
-        val shape = RoundedCornerShape(corner)
-        val tallest = LocalConfiguration.current.screenHeightDp.dp * 0.9f
-        ProvideMovingBackdrops(growth.motion) {
-        NestedCorners(corner, PANEL_INSET) {
-        Column(
-            Modifier
-                // Outside the padding: while the panel fades, the growth's
-                // layer is drawn offscreen at its own bounds, and the padding
-                // is the room the panel's shadow falls in.
-                .growOutOf({ anchor }, growth)
-                .padding(Ui.Space.l)
-                .widthIn(max = if (wide) 880.dp else 600.dp)
-                .fillMaxWidth()
-                .heightIn(max = tallest)
-                // Liquid glass under the glass skin, the same lens as the bar
-                // it came from; frost or a solid panel under the others.
-                .skinMaterial(shape, panel = true)
-                .clip(shape)
-                // No size animation of its own: the detail below grows on one
-                // curve and the panel, measured round it, comes with it. An
-                // animateContentSize here ran a second, slower spring behind
-                // that one, so the background trailed the rows it held.
-                .verticalScroll(rememberScrollState())
-                // One inset all round, so the rows and chips inside are
-                // concentric with the panel's corner.
-                .padding(PANEL_INSET),
-            verticalArrangement = Arrangement.spacedBy(GAP),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(penPanelTitle(mode), style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-                TextButton(onClick = ::cancel, modifier = Modifier.heightIn(min = Ui.Size.touchCompact)) { Text("Cancel") }
-                TextButton(onClick = ::keep, modifier = Modifier.heightIn(min = Ui.Size.touchCompact)) { Text("Save") }
-            }
-
-            val colorPart: @Composable () -> Unit = {
-                if (mode == EditMode.ERASE) {
-                    SectionHeader("Eraser")
-                    EraserSection(partialEraser, onPartialEraser, gestures, onGestures)
-                } else if (mode.tints) {
-                    SectionHeader("Color")
-                    ColorSection(
-                        color = color,
-                        opacity = opacity,
-                        initialMode = store.colorPickerMode,
-                        onMode = { store.colorPickerMode = it },
-                        joined = joined,
-                        // Handed over at once, not after the fold: the eyedropper
-                        // takes the panel away itself.
-                        onEyedropper = onEyedropper?.let { pick -> { onConfirm(current()); pick() } },
-                    )
-                }
-            }
-            val strokePart: @Composable () -> Unit = {
-                SectionHeader(if (mode == EditMode.PEN) "Pen width" else "Width")
-                WidthSection(
-                    mode = mode,
-                    width = width,
-                    range = range,
-                    onWidth = { width = it },
-                    preview = if (mode == EditMode.ERASE) null
-                        else Color(if (opacity) color.argb() else color.rgb()),
-                    linePattern = if (freehand && !drawing.isDabbed()) linePattern else 0,
+    ToolPanel(
+        title = penPanelTitle(mode),
+        state = panel,
+        onOutside = ::keep,
+        maxWidth = if (wide) 880.dp else TOOL_PANEL_WIDTH,
+        actions = {
+            TextButton(onClick = ::cancel, modifier = Modifier.heightIn(min = Ui.Size.touchCompact)) { Text("Cancel") }
+            TextButton(onClick = ::keep, modifier = Modifier.heightIn(min = Ui.Size.touchCompact)) { Text("Save") }
+        },
+    ) {
+        val colorPart: @Composable () -> Unit = {
+            if (mode == EditMode.ERASE) {
+                PanelSectionHeader("Eraser")
+                EraserSection(partialEraser, onPartialEraser, gestures, onGestures)
+            } else if (mode.tints) {
+                PanelSectionHeader("Color")
+                ColorSection(
+                    color = color,
+                    opacity = opacity,
+                    initialMode = store.colorPickerMode,
+                    onMode = { store.colorPickerMode = it },
+                    joined = joined,
+                    // Handed over at once, not after the fold: the eyedropper
+                    // takes the panel away itself.
+                    onEyedropper = onEyedropper?.let { pick -> { onConfirm(current()); pick() } },
                 )
+            }
+        }
+        val strokePart: @Composable () -> Unit = {
+            PanelSectionHeader(if (mode == EditMode.PEN) "Pen width" else "Width")
+            WidthSection(
+                mode = mode,
+                width = width,
+                range = range,
+                onWidth = { width = it },
+                preview = if (mode == EditMode.ERASE) null
+                    else Color(if (opacity) color.argb() else color.rgb()),
+                linePattern = if (freehand && !drawing.isDabbed()) linePattern else 0,
+            )
 
-                val nibs = if (freehand) nibsFor(pen.tool) else emptyList()
-                if (nibs.isNotEmpty() || mode == EditMode.PEN) {
-                    SectionHeader(if (mode == EditMode.PENCIL) "Pencil type" else "Pen type")
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Row(Modifier.weight(1f).horizontalScroll(rememberScrollState())) {
-                            nibs.forEach { (tool, label) ->
-                                SettingsChoiceChip(
-                                    selected = if (mode == EditMode.PENCIL) drawing == tool else nib == tool,
-                                    onClick = { nib = tool },
-                                    label = label,
-                                    modifier = Modifier.padding(end = Ui.Space.s),
-                                )
-                            }
-                        }
-                        if (mode == EditMode.PEN) {
-                            Text("Pressure", style = MaterialTheme.typography.bodyMedium)
-                            Spacer(Modifier.width(Ui.Space.s))
-                            SkinSwitch(checked = pressure, onCheckedChange = { pressure = it })
-                        }
-                    }
-                }
-
-                if (freehand && !drawing.isDabbed()) {
-                    SectionHeader("Line style")
-                    Row(Modifier.horizontalScroll(rememberScrollState())) {
-                        listOf("Solid", "Dotted", "Dashed", "Dash-dot").forEachIndexed { index, label ->
+            val nibs = if (freehand) nibsFor(pen.tool) else emptyList()
+            if (nibs.isNotEmpty() || mode == EditMode.PEN) {
+                PanelSectionHeader(if (mode == EditMode.PENCIL) "Pencil type" else "Pen type")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.weight(1f).horizontalScroll(rememberScrollState())) {
+                        nibs.forEach { (tool, label) ->
                             SettingsChoiceChip(
-                                selected = linePattern == index,
-                                onClick = { linePattern = index },
+                                selected = if (mode == EditMode.PENCIL) drawing == tool else nib == tool,
+                                onClick = { nib = tool },
                                 label = label,
                                 modifier = Modifier.padding(end = Ui.Space.s),
                             )
                         }
                     }
-                }
-
-                if (mode in STRAIGHT_LINE_MODES) {
-                    SwitchRow(
-                        "Straight line",
-                        straightLine,
-                        hint = "Draws a straight line from where the pen lands to where it lifts",
-                    ) { straightLine = it }
+                    if (mode == EditMode.PEN) {
+                        Text("Pressure", style = MaterialTheme.typography.bodyMedium)
+                        Spacer(Modifier.width(Ui.Space.s))
+                        SkinSwitch(checked = pressure, onCheckedChange = { pressure = it })
+                    }
                 }
             }
-            if (wide) {
-                Row(horizontalArrangement = Arrangement.spacedBy(Ui.Space.l)) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(GAP)) { colorPart() }
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(GAP)) { strokePart() }
+
+            if (freehand && !drawing.isDabbed()) {
+                PanelSectionHeader("Line style")
+                Row(Modifier.horizontalScroll(rememberScrollState())) {
+                    listOf("Solid", "Dotted", "Dashed", "Dash-dot").forEachIndexed { index, label ->
+                        SettingsChoiceChip(
+                            selected = linePattern == index,
+                            onClick = { linePattern = index },
+                            label = label,
+                            modifier = Modifier.padding(end = Ui.Space.s),
+                        )
+                    }
                 }
-            } else {
-                colorPart()
-                strokePart()
             }
 
-            // The rest of this tool's settings, opened downward on demand.
-            Row(
+            if (mode in STRAIGHT_LINE_MODES) {
+                PanelSwitchRow(
+                    "Straight line",
+                    straightLine,
+                    hint = "Draws a straight line from where the pen lands to where it lifts",
+                ) { straightLine = it }
+            }
+        }
+        if (wide) {
+            Row(horizontalArrangement = Arrangement.spacedBy(Ui.Space.l)) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(GAP)) { colorPart() }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(GAP)) { strokePart() }
+            }
+        } else {
+            colorPart()
+            strokePart()
+        }
+
+        // The rest of this tool's settings, opened downward on demand.
+        Row(
+            Modifier
+                .clip(Ui.Shape.pill)
+                .clickable { details = !details }
+                .heightIn(min = Ui.Size.touchCompact)
+                .padding(Ui.Space.xs),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
                 Modifier
-                    .clip(Ui.Shape.pill)
-                    .clickable { details = !details }
-                    .heightIn(min = Ui.Size.touchCompact)
-                    .padding(Ui.Space.xs),
-                verticalAlignment = Alignment.CenterVertically,
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape),
+                contentAlignment = Alignment.Center,
             ) {
-                Box(
-                    Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(Reicons.Tune, contentDescription = null, modifier = Modifier.size(Ui.Icon.small))
-                }
-                Spacer(Modifier.width(Ui.Space.m))
-                Text(if (details) "Fewer settings" else "More for this ${penPanelTitle(mode).lowercase()}",
-                    style = MaterialTheme.typography.bodyMedium)
+                Icon(Reicons.Tune, contentDescription = null, modifier = Modifier.size(Ui.Icon.small))
             }
-            // Quick and eased out, rows and background together; Material
-            // opens and closes it at once.
-            AnimatedVisibility(
-                visible = details,
-                enter = if (animate) {
-                    expandVertically(tween(DETAIL_OPEN_MS, easing = EmphasizedDecelerateEasing), expandFrom = Alignment.Top) +
-                        fadeIn(tween(DETAIL_OPEN_MS / 2, delayMillis = DETAIL_OPEN_MS / 6))
-                } else EnterTransition.None,
-                exit = if (animate) {
-                    shrinkVertically(tween(DETAIL_CLOSE_MS, easing = DETAIL_CLOSE_EASING), shrinkTowards = Alignment.Top) +
-                        fadeOut(tween(DETAIL_CLOSE_MS / 2))
-                } else ExitTransition.None,
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(GAP)) {
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    Text("Only this tool", style = MaterialTheme.typography.labelLarge)
-                    if (mode != EditMode.ERASE) PredictionSetting(leadMs) { leadMs = it }
-                    if (freehand) {
-                        Text(
-                            "Smoothing $stabilizer%" + if (gestures.windowedStabilizer && stabilizer > 0)
-                                " · average of the last ${slidingWindowMillis(stabilizer)} ms" else "",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        SkinSlider(
-                            value = stabilizer.toFloat(),
-                            onValueChange = { stabilizer = it.roundToInt() },
-                            valueRange = 0f..100f,
-                            step = 1f,
-                        )
-                        Text(
-                            if (gestures.windowedStabilizer) "Window average, set for every pen in Pen settings."
-                            else "Adaptive, set for every pen in Pen settings.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.outline,
-                        )
-                        SwitchRow("Recognize shapes", autoShapes) { autoShapes = it }
-                    }
-                    WidthCeilings(mode, range) { ceiling ->
-                        maxWidth = ceiling
-                        width = width.coerceAtMost(ceiling)
-                    }
-                    WidthControls(mode, width) {
-                        width = it
-                        if (it > range.endInclusive) maxWidth = it
-                    }
-                    if (mode == EditMode.SHAPE) {
-                        SwitchRow("Snap lines to 90° steps", axisSnap, onChange = onAxisSnap)
-                        var corner by remember { mutableFloatStateOf(store.shapeCornerRadius) }
-                        Text("Polygon corner rounding ${corner.roundToInt()}", style = MaterialTheme.typography.bodyMedium)
-                        SkinSlider(corner, { corner = it; store.shapeCornerRadius = it; onCornerRadius(it) }, 0f..120f, step = 1f)
-                    }
-                    if (mode == EditMode.HIGHLIGHTER) {
-                        SwitchRow(if (highlighterAboveInk) "Shown above the writing" else "Shown under the writing",
-                            highlighterAboveInk, onChange = onHighlighterAboveInk)
-                    }
-                    if (mode == EditMode.ERASE && onClearPage != null) {
-                        TextButton(onClick = onClearPage, modifier = Modifier.heightIn(min = 44.dp)) {
-                            Icon(Reicons.Delete, contentDescription = null)
-                            Text(" Clear this whole page")
-                        }
-                    }
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Spacer(Modifier.width(Ui.Space.m))
+            Text(if (details) "Fewer settings" else "More for this ${penPanelTitle(mode).lowercase()}",
+                style = MaterialTheme.typography.bodyMedium)
+        }
+        // Quick and eased out, rows and background together; Material
+        // opens and closes it at once.
+        AnimatedVisibility(
+            visible = details,
+            enter = if (animate) {
+                expandVertically(tween(DETAIL_OPEN_MS, easing = EmphasizedDecelerateEasing), expandFrom = Alignment.Top) +
+                    fadeIn(tween(DETAIL_OPEN_MS / 2, delayMillis = DETAIL_OPEN_MS / 6))
+            } else EnterTransition.None,
+            exit = if (animate) {
+                shrinkVertically(tween(DETAIL_CLOSE_MS, easing = DETAIL_CLOSE_EASING), shrinkTowards = Alignment.Top) +
+                    fadeOut(tween(DETAIL_CLOSE_MS / 2))
+            } else ExitTransition.None,
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(GAP)) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Text("Only this tool", style = MaterialTheme.typography.labelLarge)
+                if (mode != EditMode.ERASE) PredictionSetting(leadMs) { leadMs = it }
+                if (freehand) {
                     Text(
-                        "Pressure sensitivity, smoothing mode, 480 Hz frames, pen gestures and drawing " +
-                            "options apply to every pen. They are in Settings › Pen settings.",
+                        "Smoothing $stabilizer%" + if (gestures.windowedStabilizer && stabilizer > 0)
+                            " · average of the last ${slidingWindowMillis(stabilizer)} ms" else "",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    SkinSlider(
+                        value = stabilizer.toFloat(),
+                        onValueChange = { stabilizer = it.roundToInt() },
+                        valueRange = 0f..100f,
+                        step = 1f,
+                    )
+                    Text(
+                        if (gestures.windowedStabilizer) "Window average, set for every pen in Pen settings."
+                        else "Adaptive, set for every pen in Pen settings.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.outline,
                     )
-                    if (onAllPens != null) {
-                        TextButton(
-                            onClick = { onConfirm(current()); onAllPens() },
-                            modifier = Modifier.heightIn(min = 44.dp),
-                        ) { Text("Open settings for every pen") }
+                    PanelSwitchRow("Recognize shapes", autoShapes) { autoShapes = it }
+                }
+                WidthCeilings(mode, range) { ceiling ->
+                    maxWidth = ceiling
+                    width = width.coerceAtMost(ceiling)
+                }
+                WidthControls(mode, width) {
+                    width = it
+                    if (it > range.endInclusive) maxWidth = it
+                }
+                if (mode == EditMode.SHAPE) {
+                    PanelSwitchRow("Snap lines to 90° steps", axisSnap, onChange = onAxisSnap)
+                    var corner by remember { mutableFloatStateOf(store.shapeCornerRadius) }
+                    Text("Polygon corner rounding ${corner.roundToInt()}", style = MaterialTheme.typography.bodyMedium)
+                    SkinSlider(corner, { corner = it; store.shapeCornerRadius = it; onCornerRadius(it) }, 0f..120f, step = 1f)
+                }
+                if (mode == EditMode.HIGHLIGHTER) {
+                    PanelSwitchRow(if (highlighterAboveInk) "Shown above the writing" else "Shown under the writing",
+                        highlighterAboveInk, onChange = onHighlighterAboveInk)
+                }
+                if (mode == EditMode.ERASE && onClearPage != null) {
+                    TextButton(onClick = onClearPage, modifier = Modifier.heightIn(min = 44.dp)) {
+                        Icon(Reicons.Delete, contentDescription = null)
+                        Text(" Clear this whole page")
                     }
                 }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Text(
+                    "Pressure sensitivity, smoothing mode, 480 Hz frames, pen gestures and drawing " +
+                        "options apply to every pen. They are in Settings › Pen settings.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline,
+                )
+                if (onAllPens != null) {
+                    TextButton(
+                        onClick = { onConfirm(current()); onAllPens() },
+                        modifier = Modifier.heightIn(min = 44.dp),
+                    ) { Text("Open settings for every pen") }
+                }
             }
-        }
-        }
         }
     }
 }
 
-/** The pen panel's padding, all round; its rows' corners follow from it. */
-private val PANEL_INSET = Ui.Space.l
 
 /** How long "More for this pen" takes to open the rest of the panel, and to close it. */
 private const val DETAIL_OPEN_MS = 280
@@ -643,22 +587,6 @@ private fun PredictionSetting(leadMs: Int, onLead: (Int) -> Unit) {
 }
 
 @Composable
-private fun SwitchRow(label: String, checked: Boolean, hint: String? = null, onChange: (Boolean) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text(label, style = MaterialTheme.typography.bodyMedium)
-            if (hint != null) Text(
-                hint,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline,
-            )
-        }
-        Spacer(Modifier.width(10.dp))
-        SkinSwitch(checked = checked, onCheckedChange = onChange)
-    }
-}
-
-@Composable
 private fun EraserSection(
     partialEraser: Boolean,
     onPartialEraser: (Boolean) -> Unit,
@@ -691,7 +619,7 @@ private fun EraserSection(
             })
         }
     }
-    SwitchRow(
+    PanelSwitchRow(
         "Pressure eraser",
         gestures.pressureEraser,
         hint = "The set size is the lightest touch; pressing harder grows it up to 2.5 times",
@@ -716,16 +644,6 @@ private val PALETTE_WIDTH = 96.dp
 /** The colour fields' corner: concentric with the panel they sit in. */
 private val pickerShape: androidx.compose.ui.graphics.Shape
     @Composable get() = RoundedCornerShape(nestedCorner(Ui.Corner.control))
-
-/** A section's name with a hairline running out to the right edge. */
-@Composable
-private fun SectionHeader(label: String) {
-    Row(Modifier.fillMaxWidth().padding(top = Ui.Space.xs), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.width(GAP))
-        HorizontalDivider(Modifier.weight(1f), color = MaterialTheme.colorScheme.outlineVariant)
-    }
-}
 
 /** One of a row of equal pills that share the width between them. */
 @Composable

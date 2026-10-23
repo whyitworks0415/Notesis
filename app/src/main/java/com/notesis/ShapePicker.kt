@@ -11,10 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -52,7 +49,8 @@ private val ShapeKind.drawnEndToEnd: Boolean
 /**
  * The shape tool's picker, opened by tapping the tool again: every shape it
  * draws, each shown as itself, and the two settings that decide how shapes
- * come out - hold-to-shape for the pen, and how round the corners are.
+ * come out - hold-to-shape for the pen, and how round the corners are. The
+ * same panel as the pen's own settings, out of the tool that was tapped.
  */
 @Composable
 internal fun ShapePickerDialog(
@@ -64,45 +62,55 @@ internal fun ShapePickerDialog(
     onPick: (ShapeKind) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Shapes") },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
-                OFFERED_SHAPES.chunked(SHAPES_PER_ROW).forEach { row ->
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
-                        row.forEach { kind ->
-                            ShapeTile(kind, kind == current, Modifier.weight(1f)) { onPick(kind) }
-                        }
-                        repeat(SHAPES_PER_ROW - row.size) { Spacer(Modifier.weight(1f)) }
-                    }
-                }
-                SettingsToggle(
-                    "Hold the pen to make a shape",
-                    holdToShape,
-                    onHoldToShape,
-                    hint = "Draw with the pen and keep it still for half a second before lifting. A tick says it " +
-                        "took: the stroke becomes a line, triangle, rectangle or other four-sided shape, circle, " +
-                        "bent line or bent curve.",
-                )
-                Text(
-                    if (cornerRadius <= 0f) "Corners: sharp" else "Corner rounding: ${cornerRadius.roundToInt()}",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                SkinSlider(cornerRadius, onCornerRadius, 0f..120f, step = 1f)
+    val panel = rememberToolPanelState()
+    ToolPanel(
+        title = "Shapes",
+        state = panel,
+        onOutside = { panel.close(onDismiss) },
+        actions = {
+            TextButton(onClick = { panel.close(onDismiss) }, modifier = Modifier.heightIn(min = Ui.Size.touchCompact)) {
+                Text("Done")
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
-    )
+    ) {
+        PanelSectionHeader("Shape")
+        Column(verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+            OFFERED_SHAPES.chunked(SHAPES_PER_ROW).forEach { row ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+                    row.forEach { kind ->
+                        ShapeTile(kind, kind == current, Modifier.weight(1f)) { panel.close { onPick(kind) } }
+                    }
+                    repeat(SHAPES_PER_ROW - row.size) { Spacer(Modifier.weight(1f)) }
+                }
+            }
+        }
+        PanelSectionHeader("Pen")
+        PanelSwitchRow(
+            "Hold the pen to make a shape",
+            holdToShape,
+            hint = "Draw with the pen and keep it still for half a second before lifting. A ring says it " +
+                "took: the stroke becomes a line, triangle, rectangle or other four-sided shape, circle, " +
+                "bent line or bent curve.",
+            onChange = onHoldToShape,
+        )
+        PanelSectionHeader("Corners")
+        Text(
+            if (cornerRadius <= 0f) "Sharp" else "Rounded ${cornerRadius.roundToInt()}",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        SkinSlider(cornerRadius, onCornerRadius, 0f..120f, step = 1f)
+    }
 }
 
 @Composable
 private fun ShapeTile(kind: ShapeKind, chosen: Boolean, modifier: Modifier, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     val ink = if (chosen) scheme.onPrimaryContainer else scheme.onSurface
+    // Concentric with the panel it sits in, as every tile in a panel is.
+    val shape = RoundedCornerShape(nestedCorner(Ui.Corner.chip))
     Column(
         modifier
-            .clip(Ui.Shape.chip)
+            .clip(shape)
             .background(if (chosen) scheme.primaryContainer else Color.Transparent)
             .clickable(role = Role.Button, onClick = onClick)
             .semantics { contentDescription = shapeLabel(kind); selected = chosen }

@@ -2224,45 +2224,12 @@ private fun NoteCard(
     }
 }
 
-/** Picks how the chrome is dressed, with each choice wearing its own skin. */
+/** Picks how the chrome is dressed, on the same panel and list as everywhere else the look is chosen. */
 @Composable
 private fun SkinButton(skin: Skin, onSkin: (Skin) -> Unit) {
     var open by remember { mutableStateOf(false) }
-    Box {
-        AppIconButton(onClick = { open = true }, icon = AppIcons.skin, contentDescription = "Theme")
-        DropdownMenu(open, onDismissRequest = { open = false }) {
-            for (option in Skin.entries) {
-                DropdownMenuItem(
-                    text = {
-                        Column {
-                            Text(option.label)
-                            Text(
-                                option.blurb,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.outline,
-                            )
-                        }
-                    },
-                    leadingIcon = {
-                        // Each row shows the skin it names, so the choice is
-                        // made by looking rather than by reading.
-                        ProvideSkin(option, LocalSkinSettings.current) {
-                            SkinSurface(Modifier.size(30.dp), corner = Ui.Corner.preview) {}
-                        }
-                    },
-                    trailingIcon = {
-                        if (option == skin) {
-                            Icon(Reicons.Check, contentDescription = null)
-                        }
-                    },
-                    onClick = {
-                        open = false
-                        onSkin(option)
-                    },
-                )
-            }
-        }
-    }
+    AppIconButton(onClick = { open = true }, icon = AppIcons.skin, contentDescription = "Look")
+    if (open) SkinPickerPanel(skin, onSkin, onDismiss = { open = false })
 }
 
 /**
@@ -3013,6 +2980,8 @@ private fun WebPanel(
     onToggleLog: () -> Unit,
     onClose: () -> Unit,
     onFile: (android.webkit.ValueCallback<Array<Uri>>) -> Unit,
+    /** Opens another site in the panel: one of the AI chats, or the search page. */
+    onSite: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val web = holder.value
@@ -3055,59 +3024,85 @@ private fun WebPanel(
                 .windowInsetsPadding(ChromeInsets)
                 .windowInsetsPadding(keyboardRoom),
         ) {
+            // The same buttons as the note's bar, and the same search field
+            // as the library's; the less used ones folded behind one button.
+            var more by remember { mutableStateOf(false) }
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 4.dp),
+                    .padding(horizontal = Ui.Space.xs, vertical = Ui.Space.xs),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                IconButton(onClick = { web?.let { if (it.canGoBack()) it.goBack() } }) {
-                    Icon(Reicons.ArrowBack, contentDescription = "Back")
-                }
-                IconButton(onClick = { web?.reload() }) {
-                    Icon(Reicons.Refresh, contentDescription = "Reload")
-                }
+                AppIconButton(onClick = { web?.let { if (it.canGoBack()) it.goBack() } }, icon = AppIcons.back,
+                    contentDescription = "Back")
+                AppIconButton(onClick = { web?.reload() }, icon = AppIconStyle.pick(Lucide.RotateCcw, Reicons.Refresh),
+                    contentDescription = "Reload")
                 OutlinedTextField(
                     value = address,
                     onValueChange = { address = it },
                     singleLine = true,
                     placeholder = { Text("Address or search") },
+                    leadingIcon = { Icon(Reicons.Search, contentDescription = null) },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
                     keyboardActions = KeyboardActions(onGo = { web?.loadUrl(asUrl(address)) }),
                     modifier = Modifier
                         .weight(1f)
-                        .padding(vertical = 4.dp),
+                        .padding(horizontal = Ui.Space.xs),
                 )
-                IconButton(onClick = onToggleLog) {
-                    Icon(
-                        Reicons.BugReport,
-                        contentDescription = "Error log",
-                        tint = if (log.isEmpty()) {
-                            MaterialTheme.colorScheme.outlineVariant
-                        } else {
-                            MaterialTheme.colorScheme.error
-                        },
+                AppIconButton(onClick = onTogglePopup,
+                    icon = if (popup) AppIconStyle.pick(Lucide.PanelLeft, Reicons.CloseFullscreen)
+                        else AppIconStyle.pick(Lucide.PictureInPicture, Reicons.OpenInFull),
+                    contentDescription = if (popup) "Dock" else "Pop out")
+                Box {
+                    AppIconButton(onClick = { more = true }, icon = AppIcons.noteMenu, contentDescription = "More",
+                        // A logged error shows on the button that hides the log.
+                        tint = if (log.isEmpty()) null else MaterialTheme.colorScheme.error)
+                    DropdownMenu(more, onDismissRequest = { more = false }) {
+                        DropdownMenuItem(
+                            text = { Text(if (desktop) "Mobile site" else "Desktop site") },
+                            leadingIcon = {
+                                Icon(if (desktop) Reicons.PhoneAndroid else Reicons.Computer, contentDescription = null)
+                            },
+                            onClick = { more = false; onToggleDesktop() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Open in browser") },
+                            leadingIcon = { Icon(Reicons.Launch, contentDescription = null) },
+                            onClick = { more = false; openExternally(web?.context, web?.url ?: url) },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(if (showLog) "Hide error log" else "Error log (${log.size})") },
+                            leadingIcon = {
+                                Icon(Reicons.BugReport, contentDescription = null,
+                                    tint = if (log.isEmpty()) LocalContentColor.current else MaterialTheme.colorScheme.error)
+                            },
+                            onClick = { more = false; onToggleLog() },
+                        )
+                    }
+                }
+                AppIconButton(onClick = { web?.clearFocus(); keyboard?.hide(); onClose() }, icon = AppIcons.close,
+                    contentDescription = "Close")
+            }
+            // Which chat, picked here as the pen's options are picked: the
+            // same chips, one tap to change.
+            val host = remember(url) { runCatching { Uri.parse(url).host.orEmpty().removePrefix("www.") }.getOrDefault("") }
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(start = Ui.Space.m, end = Ui.Space.m, bottom = Ui.Space.xs),
+                horizontalArrangement = Arrangement.spacedBy(Ui.Space.s),
+            ) {
+                for ((name, site) in listOf("Web" to SEARCH_HOME) + AI_SITES) {
+                    val siteHost = Uri.parse(site).host.orEmpty().removePrefix("www.")
+                    SettingsChoiceChip(
+                        selected = host.isNotEmpty() && host == siteHost,
+                        onClick = { address = site; onSite(site) },
+                        label = name,
                     )
-                }
-                IconButton(onClick = onToggleDesktop) {
-                    Icon(
-                        if (desktop) Reicons.Computer else Reicons.PhoneAndroid,
-                        contentDescription = if (desktop) "Desktop site" else "Mobile site",
-                    )
-                }
-                IconButton(onClick = { openExternally(web?.context, web?.url ?: url) }) {
-                    Icon(Reicons.Launch, contentDescription = "Open in browser")
-                }
-                IconButton(onClick = onTogglePopup) {
-                    Icon(
-                        if (popup) Reicons.CloseFullscreen else Reicons.OpenInFull,
-                        contentDescription = if (popup) "Dock" else "Pop out",
-                    )
-                }
-                IconButton(onClick = { web?.clearFocus(); keyboard?.hide(); onClose() }) {
-                    Icon(Reicons.Close, contentDescription = "Close")
                 }
             }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             key(rendererGeneration) { AndroidView(
                 // weight, not fillMaxSize: a Column measures an unweighted child
                 // with an unbounded height, AndroidView passes that on as an
@@ -4006,6 +4001,7 @@ private fun NoteScreen(
                 webUrl = null
                 webPopup = false
             },
+            onSite = { webUrl = it },
             onFile = { callback ->
                 val ready = pendingAttachment.value
                 if (ready != null) {
