@@ -40,6 +40,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -102,6 +103,7 @@ internal object Onboarding {
     private const val HOME_TIPS = "homeTipsShown"
     private const val NOTE_TIPS = "noteTipsSeen"
     private const val TIPS_OFF = "noteTipsOff"
+    private const val NOTE_TOUR = "noteTourShown"
 
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -118,6 +120,14 @@ internal object Onboarding {
     fun finishWelcome(context: Context) = prefs(context).edit().putBoolean(WELCOME, true).apply()
     fun finishSkin(context: Context) = prefs(context).edit().putBoolean(SKIN, true).apply()
     fun finishHomeTips(context: Context) = prefs(context).edit().putBoolean(HOME_TIPS, true).apply()
+    fun noteTourDone(context: Context): Boolean = prefs(context).getBoolean(NOTE_TOUR, false)
+    fun finishNoteTour(context: Context) = prefs(context).edit().putBoolean(NOTE_TOUR, true).apply()
+
+    /**
+     * Whether the tutorial is open. Asked for from the home bar, the note's
+     * Functions and About & help; whichever screen is showing puts it up.
+     */
+    var tutorialOpen by mutableStateOf(false)
 
     fun seenTips(context: Context): Set<NoteTip> {
         val names = prefs(context).getStringSet(NOTE_TIPS, emptySet()).orEmpty()
@@ -134,7 +144,7 @@ internal object Onboarding {
 
     /** About & help's "Show the tips again": the home marks and every note tip, from the start. */
     fun resetTips(context: Context) {
-        prefs(context).edit().remove(HOME_TIPS).remove(NOTE_TIPS).remove(TIPS_OFF).apply()
+        prefs(context).edit().remove(HOME_TIPS).remove(NOTE_TIPS).remove(TIPS_OFF).remove(NOTE_TOUR).apply()
         strokes = 0
     }
 
@@ -155,8 +165,8 @@ internal object Onboarding {
     }.getOrDefault(true)
 }
 
-/** The parts of the home screen the coach marks point at. */
-internal enum class CoachTarget { NEW_NOTE, GUIDE, SEARCH, LOOK, HELP }
+/** The parts of the home screen and the note's bar the coach marks point at. */
+internal enum class CoachTarget { NEW_NOTE, GUIDE, SEARCH, TUTORIAL, LOOK, HELP, TOOLS, PEN_ROW, TOP_ROW, FUNCTIONS }
 
 /** Where each [CoachTarget] is on screen, in root coordinates, as last laid out. */
 internal class CoachTargets {
@@ -171,14 +181,40 @@ internal fun Modifier.coachTarget(targets: CoachTargets, target: CoachTarget): M
         if (targets.bounds[target] != rect) targets.bounds[target] = rect
     }
 
-private class CoachMark(val target: CoachTarget, val title: String, val text: String)
+/**
+ * [coachTarget] for an element that comes and goes - a part of the bar
+ * that only some sizes have - so a mark never points at where it used to be.
+ */
+@Composable
+internal fun Modifier.coachTargetWhileShown(targets: CoachTargets, target: CoachTarget): Modifier {
+    DisposableEffect(targets, target) { onDispose { targets.bounds.remove(target) } }
+    return coachTarget(targets, target)
+}
 
-private val HOME_MARKS = listOf(
+/** Where the note's bar is, for the note's coach marks. One note screen at a time, so one set. */
+internal val NoteCoachTargets = CoachTargets()
+
+internal class CoachMark(val target: CoachTarget, val title: String, val text: String)
+
+internal val HOME_MARKS = listOf(
     CoachMark(CoachTarget.NEW_NOTE, "New notes", "A blank page, a PDF, pictures, a web page or Markdown all start here."),
     CoachMark(CoachTarget.GUIDE, "The guide", "Welcome to Notesis is a short tour, one page per part of the app. Write on it."),
     CoachMark(CoachTarget.SEARCH, "Search", "Finds titles, words in PDFs and your own handwriting."),
+    CoachMark(CoachTarget.TUTORIAL, "Tutorial", "The pen and its settings, gestures, pages, shapes, the AI panel and every setting, a page each. Open it any time."),
     CoachMark(CoachTarget.LOOK, "The look", "Skin, colours, corners and dark mode, any time."),
     CoachMark(CoachTarget.HELP, "About & help", "The guide note and these tips, whenever you want them again."),
+)
+
+/** The note's bar, part by part, the first time a note is opened. */
+internal val NOTE_MARKS = listOf(
+    CoachMark(CoachTarget.TOOLS, "Your tools",
+        "Pen, pencil, highlighter, eraser, lasso, shapes and more. Tap one to pick it; tap the one in hand again for its settings."),
+    CoachMark(CoachTarget.PEN_ROW, "Colour and width",
+        "For the tool in hand. Tap the colour in use for every setting; + keeps a new colour; hold one to move or remove it."),
+    CoachMark(CoachTarget.TOP_ROW, "The note's buttons",
+        "Back to the notes, undo and redo, recording, zoom and more. Choose which ones show in Settings › Customize toolbar."),
+    CoachMark(CoachTarget.FUNCTIONS, "Functions",
+        "Pictures, camera, layers, text, capture, the clock and planner, other notes, add page, the tutorial and Settings. The bar's size, 1/4 to 4/4, is chosen here too."),
 )
 
 /**
@@ -515,9 +551,9 @@ internal fun SkinChooser(current: Skin, onSkin: (Skin) -> Unit, onDone: () -> Un
  * on what it is, and Next. Marks whose target is not on screen are left out.
  */
 @Composable
-internal fun CoachMarks(targets: CoachTargets, onDone: () -> Unit) {
+internal fun CoachMarks(targets: CoachTargets, all: List<CoachMark> = HOME_MARKS, onDone: () -> Unit) {
     val skin = LocalSkin.current
-    val marks = HOME_MARKS.filter { it.target in targets.bounds }
+    val marks = remember(all) { all.filter { it.target in targets.bounds } }
     var index by remember { mutableIntStateOf(0) }
     if (marks.isEmpty()) {
         LaunchedEffect(Unit) { onDone() }

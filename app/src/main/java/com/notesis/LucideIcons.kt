@@ -1309,6 +1309,18 @@ internal object Lucide {
             IconPart(paths = listOf(line(8f, 21f, 16f, 21f), line(12f, 17f, 12f, 21f))),
         ),
     )
+
+    val CircleHelp = AnimIcon(
+        "circle-help",
+        listOf(
+            IconPart(paths = listOf(circle(12f, 12f, 10f))),
+            IconPart(
+                paths = listOf("M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3", "M12 17h.01"),
+                pivot = Offset(12f, 13f),
+                rotate = track(0f, -12f, 10f, -4f, 0f, duration = 0.7f),
+            ),
+        ),
+    )
 }
 
 internal val ALL_LUCIDE: List<AnimIcon> = listOf(
@@ -1382,4 +1394,5 @@ internal val ALL_LUCIDE: List<AnimIcon> = listOf(
     Lucide.File,
     Lucide.List,
     Lucide.Monitor,
+    Lucide.CircleHelp,
 )

@@ -552,6 +552,7 @@ private fun NoteListScreen(
             Onboarding.resetTips(context)
             onboarding = OnboardingStep.COACH
         },
+        onTutorial = { showHelp = false; Onboarding.tutorialOpen = true },
     )
     LaunchUpdateCheck()
     // A fresh install starts with the guide among its notes - once, so a
@@ -997,6 +998,12 @@ private fun NoteListScreen(
                     IconButton(onClick = { showHomeBackground = true }) {
                         Icon(Reicons.Image, contentDescription = "Library background")
                     }
+                    AppIconButton(
+                        onClick = { Onboarding.tutorialOpen = true },
+                        icon = AppIcons.tutorial,
+                        contentDescription = "Tutorial",
+                        modifier = Modifier.coachTarget(coachTargets, CoachTarget.TUTORIAL),
+                    )
                     IconButton(onClick = onSettings, modifier = Modifier.coachTarget(coachTargets, CoachTarget.LOOK)) {
                         Icon(Reicons.Tune, contentDescription = "Display settings")
                     }
@@ -1325,6 +1332,18 @@ private fun NoteListScreen(
         }
         OnboardingStep.NONE -> Unit
     }
+    if (Onboarding.tutorialOpen) TutorialOverlay(
+        onClose = { Onboarding.tutorialOpen = false },
+        onGuide = {
+            Onboarding.tutorialOpen = false
+            scope.launch {
+                // The guide already on the shelf, or a new copy if it has been deleted.
+                val guide = notes.firstOrNull { it.title == GuideNote.TITLE }
+                    ?: withContext(Dispatchers.IO) { GuideNote.create(store) }?.also { revision++ }
+                guide?.let(onOpen)
+            }
+        },
+    )
     }
     }
 
@@ -4634,6 +4653,26 @@ private fun NoteScreen(
 
         // Above the page and the bar, on the same glass as the bar.
         ClockOverlay()
+
+        // The bar, part by part: the first time a note is opened, and from the tutorial.
+        var noteTour by remember { mutableStateOf(false) }
+        LaunchedEffect(Unit) {
+            if (Onboarding.noteTourDone(context)) return@LaunchedEffect
+            // Once the bar has been laid out, so every mark knows where it points.
+            delay(NOTE_TOUR_DELAY_MS)
+            noteTour = true
+        }
+        if (noteTour) CoachMarks(NoteCoachTargets, NOTE_MARKS) {
+            Onboarding.finishNoteTour(context)
+            noteTour = false
+        }
+        if (Onboarding.tutorialOpen) TutorialOverlay(
+            onClose = { Onboarding.tutorialOpen = false },
+            onShowOnScreen = {
+                Onboarding.tutorialOpen = false
+                noteTour = true
+            },
+        )
 
         // A tip now and then, at the bottom, clear of the bar; only between strokes.
         NoteTips(
@@ -8047,6 +8086,7 @@ private fun Toolbar(
                     SpotiToolbarAction("Add page", AppIcons.addPage, onClick = onAddPage),
                 ),
                 listOf(
+                    SpotiToolbarAction("Tutorial", AppIcons.tutorial, onClick = { Onboarding.tutorialOpen = true }),
                     SpotiToolbarAction("Settings", AppIcons.settings, onClick = { onSettings(SettingsPage.ROOT) }),
                 ),
             ),
@@ -8250,6 +8290,8 @@ private const val INK_INDEX_RECHECK_MS = 250L
 private const val SEARCH_DEBOUNCE_MS = 220L
 
 private const val PEN_SAVE_DELAY_MS = 400L
+/** How long a note is open before its first tour starts: the bar is laid out by then. */
+private const val NOTE_TOUR_DELAY_MS = 900L
 
 /** 페이지 이동이 끝난 뒤 스크러버가 화면에 남아 있는 시간입니다. */
 private const val PAGE_SCRUBBER_IDLE_MS = 1600L

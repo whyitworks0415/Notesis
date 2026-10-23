@@ -458,7 +458,8 @@ internal fun SpotiGlassToolbar(
                 // strip's corners can follow the bar's.
                 .padding(horizontal = TOOLBAR_INSET, vertical = if (full) 0.dp else 2.dp)) {
                 if (full) {
-                    Box(Modifier.fillMaxWidth().spotiFitRow(800.dp)) { topRow() }
+                    Box(Modifier.fillMaxWidth().spotiFitRow(800.dp)
+                        .coachTargetWhileShown(NoteCoachTargets, CoachTarget.TOP_ROW)) { topRow() }
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
                 Box {
@@ -466,6 +467,7 @@ internal fun SpotiGlassToolbar(
                         SpotiActionButton("Tools and functions", AppIcons.functions,
                             Modifier.size(52.dp)
                                 .onGloballyPositioned { functionsAt[0] = it.centerOnScreen() }
+                                .coachTargetWhileShown(NoteCoachTargets, CoachTarget.FUNCTIONS)
                                 .pointerInput(Unit) {
                                     detectDragGestures { change, delta -> change.consume(); onDrag(delta) }
                                 }, iconOnly = true, persistentGlass = true, onClick = { menu(ToolbarMenu.FUNCTIONS) })
@@ -473,7 +475,7 @@ internal fun SpotiGlassToolbar(
                         Row(Modifier.fillMaxWidth().then(if (full) Modifier.spotiFitRow(800.dp) else Modifier),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(if (full) Ui.Space.xs else Ui.Space.s)) {
-                            Box(Modifier.weight(1f)) {
+                            Box(Modifier.weight(1f).coachTargetWhileShown(NoteCoachTargets, CoachTarget.TOOLS)) {
                               // Freeze wrapping at the destination width while the
                               // spring grows the bar; avoid 6 -> 3 -> 2 -> 1 rows.
                               val toolWidth = (targetWidth.value - 100f).coerceAtLeast(100f)
@@ -496,10 +498,12 @@ internal fun SpotiGlassToolbar(
                                 }
                               }
                             }
-                            if (full) Box(Modifier.width(360.dp)) { penOptions(360.dp) }
+                            if (full) Box(Modifier.width(360.dp)
+                                .coachTargetWhileShown(NoteCoachTargets, CoachTarget.PEN_ROW)) { penOptions(360.dp) }
                             SpotiActionButton("Functions", AppIcons.functions, selected = open,
                                 modifier = Modifier.size(if (full) Ui.Size.touchCompact else 52.dp)
-                                    .onGloballyPositioned { functionsAt[0] = it.centerOnScreen() },
+                                    .onGloballyPositioned { functionsAt[0] = it.centerOnScreen() }
+                                    .coachTargetWhileShown(NoteCoachTargets, CoachTarget.FUNCTIONS),
                                 iconOnly = true,
                                 persistentGlass = !full,
                                 corner = if (full) Ui.concentric(outer, TOOLBAR_INSET) else null,

@@ -78,6 +78,9 @@ internal object GuideNote {
                 "A fresh copy is in About & help whenever you want one."),
             Block.Tip("Scroll with one finger to reach the next page,\n" +
                 "or drag the page slider at the side."),
+            Block.Tip("For a walk through every part - the pen and its settings,\n" +
+                "gestures, pages, the AI panel and Settings - open the\n" +
+                "tutorial: the ? on the home screen, or Functions › Tutorial."),
             Block.Space(120f),
             Block.Body("Try it: write your name in the space below."),
         ), PageBackground.LINED),

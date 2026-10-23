@@ -70,6 +70,8 @@ internal fun HelpDialog(
     onWelcome: (() -> Unit)? = null,
     /** Shows the home marks again, and lets every note tip come back. */
     onTips: (() -> Unit)? = null,
+    /** Opens the tutorial. */
+    onTutorial: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -84,6 +86,9 @@ internal fun HelpDialog(
                 AppVersionSection(onLicenses = { licenses = true })
                 if (onGuide != null) {
                     TextButton(onClick = onGuide) { Text("Open the guide note") }
+                }
+                if (onTutorial != null) {
+                    TextButton(onClick = onTutorial) { Text("Open the tutorial") }
                 }
                 if (onTips != null) {
                     TextButton(onClick = onTips) { Text("Show the tips again") }
