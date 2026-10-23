@@ -353,6 +353,10 @@ class MainActivity : ComponentActivity() {
                 } else if (note == null) {
                     NoteListScreen(
                         store = store,
+                        onSkin = {
+                            skin = it
+                            prefs.skin = it
+                        },
                         onSettings = { settingsOpen = true },
                         onOpenDocument = { pickedDocument = it },
                         onOpen = { incomingImportedNote = null; requestOpen(it) },
@@ -487,6 +491,7 @@ private fun android.content.Context.recordCrashes() {
 @Composable
 private fun NoteListScreen(
     store: NoteStore,
+    onSkin: (Skin) -> Unit,
     onSettings: () -> Unit,
     onOpenDocument: (ViewerRequest) -> Unit,
     onOpen: (NoteMeta) -> Unit,
@@ -524,14 +529,30 @@ private fun NoteListScreen(
     var sortMenu by remember { mutableStateOf(false) }
     var tagFilter by remember { mutableStateOf<String?>(null) }
     var showHelp by remember { mutableStateOf(false) }
-    if (showHelp) HelpDialog(onDismiss = { showHelp = false }, onGuide = {
-        showHelp = false
-        scope.launch {
-            val guide = withContext(Dispatchers.IO) { GuideNote.create(store) }
-            revision++
-            guide?.let(onOpen)
-        }
-    })
+    // The first run: the welcome, a choice of look, then marks on what is
+    // where. Each part is remembered once it is over; About & help brings
+    // the welcome and the tips back.
+    val coachTargets = remember { CoachTargets() }
+    var onboarding by remember { mutableStateOf(Onboarding.step(context)) }
+    if (showHelp) HelpDialog(
+        onDismiss = { showHelp = false },
+        onGuide = {
+            showHelp = false
+            scope.launch {
+                val guide = withContext(Dispatchers.IO) { GuideNote.create(store) }
+                revision++
+                guide?.let(onOpen)
+            }
+        },
+        onWelcome = if (Onboarding.animationsOn(context)) {
+            { showHelp = false; onboarding = OnboardingStep.WELCOME }
+        } else null,
+        onTips = {
+            showHelp = false
+            Onboarding.resetTips(context)
+            onboarding = OnboardingStep.COACH
+        },
+    )
     LaunchUpdateCheck()
     // A fresh install starts with the guide among its notes - once, so a
     // deleted guide stays deleted; About & help makes a new one on request.
@@ -976,10 +997,10 @@ private fun NoteListScreen(
                     IconButton(onClick = { showHomeBackground = true }) {
                         Icon(Reicons.Image, contentDescription = "Library background")
                     }
-                    IconButton(onClick = onSettings) {
+                    IconButton(onClick = onSettings, modifier = Modifier.coachTarget(coachTargets, CoachTarget.LOOK)) {
                         Icon(Reicons.Tune, contentDescription = "Display settings")
                     }
-                    IconButton(onClick = { showHelp = true }) {
+                    IconButton(onClick = { showHelp = true }, modifier = Modifier.coachTarget(coachTargets, CoachTarget.HELP)) {
                         Icon(Reicons.BugReport, contentDescription = "About · Help")
                     }
                 },
@@ -1014,7 +1035,8 @@ private fun NoteListScreen(
                             modifier = Modifier
                                 .focusRequester(searchFocus)
                                 .weight(1f)
-                                .padding(end = 16.dp, top = 4.dp, bottom = 4.dp),
+                                .padding(end = 16.dp, top = 4.dp, bottom = 4.dp)
+                                .coachTarget(coachTargets, CoachTarget.SEARCH),
                         )
                     }
                 },
@@ -1037,6 +1059,7 @@ private fun NoteListScreen(
                 )
                 Spacer(Modifier.height(12.dp))
                 // Everything that makes a note, folded into the one button.
+                Box(Modifier.coachTarget(coachTargets, CoachTarget.NEW_NOTE)) {
                 NewNoteDial(
                     listOf(
                         DialOption("New note from web page", AppIconStyle.pick(Lucide.Globe, Reicons.Language)) { askingUrl = true },
@@ -1055,6 +1078,7 @@ private fun NoteListScreen(
                         DialOption("New note", AppIconStyle.pick(Lucide.NotebookPen, Reicons.Edit)) { naming = true },
                     ),
                 )
+                }
             }
         },
     ) { padding ->
@@ -1162,6 +1186,8 @@ private fun NoteListScreen(
                     }
                 }
                 items(shown, key = { it.id }) { note ->
+                    // The guide's card is where the welcome folds into, and what its first mark points at.
+                    Box(if (note.title == GuideNote.TITLE) Modifier.coachTarget(coachTargets, CoachTarget.GUIDE) else Modifier) {
                     NoteCard(
                         note = note,
                         selected = note.id in selectedIds,
@@ -1233,6 +1259,7 @@ private fun NoteListScreen(
                             }
                         },
                     )
+                    }
                 }
             }
         }
@@ -1276,6 +1303,28 @@ private fun NoteListScreen(
         }
     }
     ClockOverlay()
+    when (onboarding) {
+        OnboardingStep.WELCOME -> WelcomeOverlay(
+            target = { coachTargets.bounds[CoachTarget.GUIDE] },
+            onDone = {
+                Onboarding.finishWelcome(context)
+                onboarding = Onboarding.step(context)
+            },
+        )
+        OnboardingStep.SKIN -> SkinChooser(
+            current = currentSkin,
+            onSkin = onSkin,
+            onDone = {
+                Onboarding.finishSkin(context)
+                onboarding = Onboarding.step(context)
+            },
+        )
+        OnboardingStep.COACH -> CoachMarks(coachTargets) {
+            Onboarding.finishHomeTips(context)
+            onboarding = OnboardingStep.NONE
+        }
+        OnboardingStep.NONE -> Unit
+    }
     }
     }
 
@@ -4389,6 +4438,8 @@ private fun NoteScreen(
                     view.referenceOpen = referenceOpen
                     view.onLinkUrl = { url -> webUrl = url }
                     view.onStrokesCommitted = { pageIndex, strokes ->
+                        // One stroke of writing, however many it put down, for when the tips are due.
+                        Onboarding.strokes++
                         if (recorder != null) {
                             val at = android.os.SystemClock.elapsedRealtime() - recordingStartedAt
                             for (stroke in strokes) {
@@ -4587,6 +4638,15 @@ private fun NoteScreen(
 
         // Above the page and the bar, on the same glass as the bar.
         ClockOverlay()
+
+        // A tip now and then, at the bottom, clear of the bar; only between strokes.
+        NoteTips(
+            onLastPage = { currentPage >= pageCount - 1 },
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .windowInsetsPadding(ChromeInsets)
+                .padding(horizontal = Ui.Space.l, vertical = Ui.Space.xl),
+        )
 
         // Settings live in a sidebar along the edge, over the page and the
         // bar, with its own screens inside it rather than dialogs on dialogs.

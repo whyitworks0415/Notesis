@@ -63,7 +63,14 @@ internal object Diagnostics {
 
 /** The version and updates, then diagnostics to share, the id to quote, how to take the system's own report, and a short guide. */
 @Composable
-internal fun HelpDialog(onDismiss: () -> Unit, onGuide: (() -> Unit)? = null) {
+internal fun HelpDialog(
+    onDismiss: () -> Unit,
+    onGuide: (() -> Unit)? = null,
+    /** Plays the first-run welcome again; null where it cannot play (animations off). */
+    onWelcome: (() -> Unit)? = null,
+    /** Shows the home marks again, and lets every note tip come back. */
+    onTips: (() -> Unit)? = null,
+) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val id = remember { Diagnostics.id(context) }
@@ -77,6 +84,12 @@ internal fun HelpDialog(onDismiss: () -> Unit, onGuide: (() -> Unit)? = null) {
                 AppVersionSection(onLicenses = { licenses = true })
                 if (onGuide != null) {
                     TextButton(onClick = onGuide) { Text("Open the guide note") }
+                }
+                if (onTips != null) {
+                    TextButton(onClick = onTips) { Text("Show the tips again") }
+                }
+                if (onWelcome != null) {
+                    TextButton(onClick = onWelcome) { Text("Play the welcome again") }
                 }
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))
                 Text("Diagnostic ID $id", style = MaterialTheme.typography.titleSmall)
@@ -104,7 +117,7 @@ private val HELP_TEXT = """
 • Three fingers up: reference panel · down: close it
 • Lasso: move, resize, rotate, copy, cut, paste, group, lock, link, add to library
 • Draw a circle and hold: switch to lasso (turn on in Pen settings)
-• Hold at the end of a stroke: snap to a shape (turn on in Pen settings)
+• Hold the pen still at the end of a stroke: it becomes a shape; keep moving to stretch it
 • Pull past the last page: new page
 • Ctrl+Z / Ctrl+Shift+Z undo and redo, Ctrl+1–9 tools, Ctrl+Alt+G go to page, Ctrl+F search
 • Home: Ctrl+N new note, Ctrl+Shift+N new folder
