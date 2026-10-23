@@ -234,6 +234,8 @@ class MainActivity : ComponentActivity() {
         InteractionGovernor.init(applicationContext)
         Planner.init(applicationContext)
         ToolbarMotion.init(applicationContext)
+        // A real start, not a rotation: first-run mode shows the welcome and the tutorial again.
+        if (savedInstanceState == null) Onboarding.startAsFirstRunIfAsked(applicationContext)
         val store = NoteStore(this)
         noteStore = store
         val prefs = PenStore(this)
@@ -559,6 +561,14 @@ private fun NoteListScreen(
     // deleted guide stays deleted; About & help makes a new one on request.
     LaunchedEffect(Unit) {
         if (withContext(Dispatchers.IO) { GuideNote.seedOnce(context, store) }) revision++
+        // First-run mode: the guide is back on the shelf if it has gone, as on a
+        // fresh install. Nothing is taken away; a guide that is there stays as it is.
+        if (Onboarding.takeGuideReseed(context)) {
+            val added = withContext(Dispatchers.IO) {
+                if (store.list().none { it.title == GuideNote.TITLE }) GuideNote.create(store) else null
+            }
+            if (added != null) revision++
+        }
     }
     val allTags = remember(revision) { store.allTags() }
     var taggingNote by remember { mutableStateOf<NoteMeta?>(null) }
@@ -4748,7 +4758,7 @@ private fun NoteScreen(
                 },
                 appearance = {
                     AppearanceSettings(skin, LocalSkinSettings.current, onSkin, onLookChange,
-                        preview = { toolbar(Modifier, 1) })
+                        toolbarSize = toolbarSize, onToolbarSize = { setToolbarSize(it) })
                 },
                 touch = { TouchGestureSettings(gestures) { setGestures(it) } },
                 toolbar = { done ->
@@ -8043,6 +8053,8 @@ private fun Toolbar(
         }
     }
     SpotiGlassToolbar(sizeLevel, onSizeLevel, mode,
+            // A preview of the bar is not where the tour should point.
+            coachTargets = if (preview) null else NoteCoachTargets,
             toolColors = toolPens.filterKeys { it.tints }.mapValues { Color(it.value.colorArgb.or(0xFF000000.toInt())) },
             targetWidth = toolbarTargetWidth,
             docked = docked,

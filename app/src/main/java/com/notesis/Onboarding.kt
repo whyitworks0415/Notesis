@@ -104,6 +104,8 @@ internal object Onboarding {
     private const val NOTE_TIPS = "noteTipsSeen"
     private const val TIPS_OFF = "noteTipsOff"
     private const val NOTE_TOUR = "noteTourShown"
+    private const val FIRST_RUN_MODE = "firstRunMode"
+    private const val RESEED_GUIDE = "reseedGuide"
 
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -141,6 +143,36 @@ internal object Onboarding {
 
     fun tipsOff(context: Context): Boolean = prefs(context).getBoolean(TIPS_OFF, false)
     fun turnTipsOff(context: Context) = prefs(context).edit().putBoolean(TIPS_OFF, true).apply()
+
+    /**
+     * First-run mode: while it is on, every start of the app is a fresh
+     * install's first start as far as the welcome and the tutorial go - and
+     * no further. Notes, settings and the look are left exactly as they are.
+     */
+    fun firstRunMode(context: Context): Boolean = prefs(context).getBoolean(FIRST_RUN_MODE, false)
+    fun setFirstRunMode(context: Context, on: Boolean) = prefs(context).edit().putBoolean(FIRST_RUN_MODE, on).apply()
+
+    /**
+     * Called as the app starts (not on a rotation): in first-run mode, forgets
+     * that the welcome, the choice of look, the marks, the note's tour and its
+     * tips were ever shown.
+     */
+    fun startAsFirstRunIfAsked(context: Context) {
+        if (!firstRunMode(context)) return
+        prefs(context).edit()
+            .remove(WELCOME).remove(SKIN).remove(HOME_TIPS).remove(NOTE_TIPS).remove(TIPS_OFF).remove(NOTE_TOUR)
+            .putBoolean(RESEED_GUIDE, true)
+            .apply()
+        strokes = 0
+    }
+
+    /** Once after a first-run start: whether the guide note should be put back if it is not on the shelf. */
+    fun takeGuideReseed(context: Context): Boolean {
+        val p = prefs(context)
+        if (!p.getBoolean(RESEED_GUIDE, false)) return false
+        p.edit().remove(RESEED_GUIDE).apply()
+        return true
+    }
 
     /** About & help's "Show the tips again": the home marks and every note tip, from the start. */
     fun resetTips(context: Context) {
@@ -186,7 +218,8 @@ internal fun Modifier.coachTarget(targets: CoachTargets, target: CoachTarget): M
  * that only some sizes have - so a mark never points at where it used to be.
  */
 @Composable
-internal fun Modifier.coachTargetWhileShown(targets: CoachTargets, target: CoachTarget): Modifier {
+internal fun Modifier.coachTargetWhileShown(targets: CoachTargets?, target: CoachTarget): Modifier {
+    if (targets == null) return this
     DisposableEffect(targets, target) { onDispose { targets.bounds.remove(target) } }
     return coachTarget(targets, target)
 }
