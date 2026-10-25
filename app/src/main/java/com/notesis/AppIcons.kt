@@ -61,4 +61,5 @@ internal object AppIcons {
     val reset get() = AppIconStyle.pick(Lucide.History, Reicons.Restore)
     val photo get() = AppIconStyle.pick(Lucide.Image, Reicons.Image)
     val tutorial get() = AppIconStyle.pick(Lucide.CircleHelp, Reicons.Help)
+    val split get() = AppIconStyle.pick(Lucide.LayoutGrid, Reicons.AutoAwesomeMosaic)
 }

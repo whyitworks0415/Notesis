@@ -119,6 +119,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.MutableState
@@ -3813,11 +3814,23 @@ private fun NoteScreen(
     var toolbarSize by remember { mutableIntStateOf(penStore.toolbarSize) }
     val collapsed = false
     fun setToolbarSize(size: Int) { toolbarSize = size; penStore.toolbarSize = size }
-    // The smaller bars may run down the side (see ToolbarOrientation); the whole bar never does.
-    val barVertical = ToolbarOrientation.vertical && toolbarSize > 0
     // Flush against the top edge, or floating over the page. Kept in
     // preferences: where the toolbar sits is a habit, not a per-note choice.
     var docked by remember { mutableStateOf(penStore.docked) }
+    // The screen split into parts, a note in each; null while it is not.
+    // Pane 0 is this note; the others' notes and pages are kept by pane.
+    var split by remember(note.id) { mutableStateOf<SplitNode?>(null) }
+    val paneNotes = remember(note.id) { mutableStateMapOf<Int, String>() }
+    val panePages = remember(note.id) { mutableStateMapOf<Int, Int>() }
+    var choosingSplit by remember { mutableStateOf(false) }
+    // Split, the bar floats over the parts at a narrower size: the whole bar
+    // (1/4) shows as 2/4 while the screen is split, and nothing is docked, so
+    // the bar lies over the notes instead of over one part's edge. The size
+    // that was chosen is kept for when the split ends.
+    val shownToolbarSize = if (split != null && toolbarSize == 0) 1 else toolbarSize
+    val barDocked = docked && split == null
+    // The smaller bars may run down the side (see ToolbarOrientation); the whole bar never does.
+    val barVertical = ToolbarOrientation.vertical && shownToolbarSize > 0
     // Prediction, smoothing, line style and shape straightening belong to
     // the tool in hand; picking up another tool brings its own.
     val prediction = pen.leadMs != 0
@@ -3862,6 +3875,32 @@ private fun NoteScreen(
     // in preferences, so it is still the same one after a close, after leaving
     // the note, and after the app has been shut.
     var referenceOpen by remember { mutableStateOf(false) }
+    /**
+     * A note for a new part of the split: one not open in any other part,
+     * the most recently changed first, else this note, which a part can
+     * show beside itself.
+     */
+    fun freePaneNote(forPane: Int): String {
+        val used = paneNotes.filterKeys { it != forPane }.values.toSet()
+        return otherNotes.firstOrNull { it.id !in used }?.id ?: note.id
+    }
+    /** Splits the screen the way [preset] does, keeping the notes parts already had; null ends the split. */
+    fun applySplit(preset: SplitPreset?) {
+        choosingSplit = false
+        if (preset == null) {
+            split = null
+            paneNotes.clear()
+            panePages.clear()
+            return
+        }
+        val tree = preset.tree()
+        val ids = tree.paneIds().filter { it != 0 }
+        (paneNotes.keys - ids.toSet()).forEach { paneNotes.remove(it); panePages.remove(it) }
+        for (id in ids) if (id !in paneNotes) paneNotes[id] = freePaneNote(id)
+        // A part of the split is where another note goes now.
+        referenceOpen = false
+        split = tree
+    }
     var referenceNoteId by remember { mutableStateOf(initialReferenceNoteId) }
     var referencePage by remember { mutableIntStateOf(initialReferencePage) }
     // Whether the page in the panel is fitted to the panel's width. Off, it
@@ -3901,7 +3940,7 @@ private fun NoteScreen(
     }
     val toolbarEffects = rememberLiquidGlassEffectsAllowed() && !LocalSkinSettings.current.highContrast
     val floatingBarWidth = animateDpAsState(
-        minOf(maxBarWidth, spotiToolbarWidth(toolbarSize)),
+        minOf(maxBarWidth, spotiToolbarWidth(shownToolbarSize)),
         // Material and Glassmorphism switch sizes at once; only Liquid glass morphs.
         if (skin.animatesChrome && toolbarEffects) ToolbarMotion.spec() else tween(0),
         label = "Top bar mode width",
@@ -4203,6 +4242,8 @@ private fun NoteScreen(
             },
             onClock = { StudyClock.openPanel() },
             onLayers = { showLayers = true },
+            onSplit = { choosingSplit = true },
+            split = split != null,
             onCamera = {
                 val file = java.io.File(context.cacheDir, "shared/camera.jpg").apply { parentFile?.mkdirs() }
                 takePhoto.launch(androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".files", file))
@@ -4220,7 +4261,7 @@ private fun NoteScreen(
                 penStore.noteRotation = noteRotation.roundToInt()
             },
             onTogglePages = { showPages = !showPages },
-            sizeLevel = previewLevel ?: toolbarSize,
+            sizeLevel = previewLevel ?: shownToolbarSize,
             onSizeLevel = { setToolbarSize(it) },
             onOpenNote = onOpenNote,
             onBack = onBack,
@@ -4228,7 +4269,7 @@ private fun NoteScreen(
             onPalette = { showPalette = true },
             skin = skin,
             onSkin = onSkin,
-            docked = docked && previewLevel == null,
+            docked = barDocked && previewLevel == null,
             canResetBar = !docked && barOffset != null,
             onResetBar = { barOffset = null },
             onSettings = { openSettings(it) },
@@ -4283,6 +4324,16 @@ private fun NoteScreen(
     // the whole way up closes both gaps and gives the glass something of the
     // page's own to sit on.
     val desk = deskColor()
+    val splitGap = with(density) { SPLIT_GAP.toPx() }
+    val paneZeroPadding = split?.takeIf { containerSize.width > 0 }?.let { tree ->
+        val w = containerSize.width.toFloat()
+        val h = containerSize.height.toFloat()
+        tree.layout(SplitRect(0f, 0f, w, h), splitGap)[0]?.let { r ->
+            with(density) {
+                Modifier.padding(start = r.left.toDp(), top = r.top.toDp(), end = (w - r.right).toDp(), bottom = (h - r.bottom).toDp())
+            }
+        }
+    } ?: Modifier
     Box(Modifier.weight(1f).fillMaxHeight().background(desk)) {
     Box(
         Modifier
@@ -4358,6 +4409,8 @@ private fun NoteScreen(
             AndroidView(
                 modifier = Modifier
                     .fillMaxSize()
+                    // Split, this note keeps to its own part of the screen.
+                    .then(paneZeroPadding)
                     .dropImages(::addImageFrom)
                     // AndroidView를 Backdrop 레이어에 안정적으로 합성합니다.
                     .graphicsLayer {
@@ -4558,7 +4611,10 @@ private fun NoteScreen(
                             }
                         }
                     }
-                    view.onOpenReference = { cx, cy ->
+                    view.onOpenReference = open@{ cx, cy ->
+                        // Split, every part already holds a note; a popup over
+                        // them would be one more copy of a note to keep apart.
+                        if (split != null) return@open
                         // Whichever note it was last pointed at stays pointed
                         // at. Closing the panel is putting a book down, not
                         // throwing it away.
@@ -4580,6 +4636,85 @@ private fun NoteScreen(
                 },
             )
         }
+        }
+
+        // The other parts of a split screen: a note each, where the split
+        // puts it, written on with the same tool as this one. Under the bar,
+        // which floats over them all.
+        val splitTree = split
+        if (splitTree != null && containerSize.width > 0) {
+            val area = SplitRect(0f, 0f, containerSize.width.toFloat(), containerSize.height.toFloat())
+            for ((id, r) in splitTree.layout(area, splitGap)) {
+                if (id == 0) continue
+                val paneNote = paneNotes[id]?.takeIf { want -> referenceNotes.any { it.id == want } } ?: note.id
+                key(id, paneNote) { ReferencePanel(
+                    store = store,
+                    sharedDocument = if (paneNote == note.id) canvas?.document else null,
+                    onSharedOpen = { canvas?.suspendSharedDetail() },
+                    onSharedChanged = { canvas?.refreshSharedInk() },
+                    // A note open in another part is not offered: two copies of
+                    // one note would each save over the other.
+                    notes = referenceNotes.filter { candidate ->
+                        candidate.id == paneNote || paneNotes.none { (other, open) -> other != id && open == candidate.id }
+                    },
+                    noteId = paneNote,
+                    page = panePages[id] ?: restoredPage(
+                        penStore.lastPage(paneNote),
+                        referenceNotes.firstOrNull { it.id == paneNote }?.pageCount ?: 1,
+                    ),
+                    mode = mode,
+                    tool = tool,
+                    pen = pen,
+                    shapeKind = shapeKind,
+                    straightLine = straightLine,
+                    eraserWidth = eraserWidth,
+                    deferDetail = deferDetail,
+                    stabilizer = stabilizer,
+                    highlighterAboveInk = highlighterAboveInk,
+                    meshInk = meshInk,
+                    compatWetInk = compatWetInk,
+                    partialEraser = partialEraser,
+                    gestures = gestures,
+                    autoShapes = autoShapes,
+                    axisSnap = axisSnap,
+                    dottedPattern = dottedPattern,
+                    offset = { Offset(r.left, r.top) },
+                    size = Size(r.width, r.height),
+                    fit = referenceFit,
+                    onFit = {
+                        referenceFit = it
+                        penStore.referenceFit = it
+                    },
+                    onNoteChange = { picked ->
+                        paneNotes[id] = picked
+                        val count = referenceNotes.firstOrNull { it.id == picked }?.pageCount ?: 1
+                        panePages[id] = restoredPage(penStore.lastPage(picked), count)
+                    },
+                    onPageChange = {
+                        panePages[id] = it
+                        penStore.setLastPage(paneNote, it)
+                    },
+                    onClose = {
+                        split = split?.closePane(id)
+                        paneNotes.remove(id)
+                        panePages.remove(id)
+                    },
+                    pinned = true,
+                    onSplitPane = { sideBySide ->
+                        split?.let { tree ->
+                            val newId = tree.nextPaneId()
+                            val next = tree.splitPane(id, sideBySide, newId)
+                            if (next != tree) {
+                                paneNotes[newId] = freePaneNote(newId)
+                                split = next
+                            }
+                        }
+                    },
+                ) }
+            }
+            SplitSeams(splitTree, area, splitGap) { seam, fraction ->
+                split = split?.moveSeam(seam.path, seam.index, fraction)
+            }
         }
 
         // Autosave: a burst of strokes writes the note once, in a pause, rather
@@ -4709,7 +4844,7 @@ private fun NoteScreen(
         // The smaller bars have no top row, so no way back: a round button of
         // the bar's own material in the top corner. Under the bar, should the
         // bar be carried over it.
-        if (toolbarSize > 0 && !collapsed) {
+        if (shownToolbarSize > 0 && !collapsed) {
             RoundBarButton(
                 "Back to notes", AppIcons.back,
                 onClick = {
@@ -4723,7 +4858,7 @@ private fun NoteScreen(
             )
         }
 
-        if (!docked && !collapsed) {
+        if (!barDocked && !collapsed) {
             toolbar(
                 Modifier
                     .align(Alignment.TopStart)
@@ -5371,6 +5506,11 @@ private fun NoteScreen(
                 confirmButton = { TextButton(onClick = { sendingPages = null }) { Text("Cancel") } },
             )
         }
+        if (choosingSplit) SplitPickerPanel(
+            current = split,
+            onPick = { preset -> applySplit(preset) },
+            onDismiss = { choosingSplit = false },
+        )
         if (choosingShape) ShapePickerDialog(
             current = shapeKind,
             holdToShape = gestures.holdToDraw,
@@ -6002,15 +6142,16 @@ private fun NoteScreen(
                 },
             ) }
         }
+
     }
-        if (docked && !collapsed) {
+        if (barDocked && !collapsed) {
             toolbar(
                 when {
                     // Docked down the side: against the start edge, in the middle of it.
                     barVertical -> Modifier.align(Alignment.CenterStart)
                         .windowInsetsPadding(ChromeInsets.only(WindowInsetsSides.Start))
                         .padding(start = Ui.Space.s)
-                    toolbarSize > 0 -> Modifier.align(Alignment.TopCenter).spotiToolbarAnimatedWidth(floatingBarWidth)
+                    shownToolbarSize > 0 -> Modifier.align(Alignment.TopCenter).spotiToolbarAnimatedWidth(floatingBarWidth)
                         .windowInsetsPadding(ChromeInsets.only(WindowInsetsSides.Top))
                     else -> Modifier.align(Alignment.TopCenter).fillMaxWidth()
                 },
@@ -6574,6 +6715,14 @@ private fun ReferencePanel(
     onNoteChange: (String) -> Unit,
     onPageChange: (Int) -> Unit,
     onClose: () -> Unit,
+    /**
+     * A pane of a split screen rather than a floating panel: it is where
+     * the split puts it, with its bar along the bottom, clear of the note's
+     * own bar floating over the top of the screen, and no handles.
+     */
+    pinned: Boolean = false,
+    /** For a pane: splits it in two, side by side (true) or one above the other. */
+    onSplitPane: ((Boolean) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = context as? LifecycleOwner
@@ -6719,10 +6868,15 @@ private fun ReferencePanel(
         Column(Modifier.fillMaxSize()) {
             // The top bar is the panel's handle: drag anywhere on it, its
             // buttons included, and the panel follows. A tap is still a tap.
+            // A pane of a split stays where the split puts it, so its bar is
+            // only its buttons.
             val grabColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+            var paneMenu by remember { mutableStateOf(false) }
+            val header: @Composable () -> Unit = {
             Row(
                 Modifier
                     .fillMaxWidth()
+                    .then(if (pinned) Modifier.padding(horizontal = 4.dp, vertical = 2.dp) else Modifier
                     .pointerInput(Unit) {
                         detectDragGestures { change, amount ->
                             change.consume()
@@ -6741,7 +6895,7 @@ private fun ReferencePanel(
                     }
                     .semantics { contentDescription = "Drag to move" }
                     // Clear of the corner handles at either end.
-                    .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 2.dp),
+                    .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 2.dp)),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(Modifier.weight(1f)) {
@@ -6848,6 +7002,25 @@ private fun ReferencePanel(
                         },
                     )
                 }
+                if (onSplitPane != null) Box {
+                    IconButton(onClick = { paneMenu = true }) {
+                        Icon(AppIcons.split, contentDescription = "Split this side")
+                    }
+                    DropdownMenu(paneMenu, onDismissRequest = { paneMenu = false }) {
+                        DropdownMenuItem(text = { Text("Split side by side") }, onClick = {
+                            paneMenu = false
+                            onSplitPane(true)
+                        })
+                        DropdownMenuItem(text = { Text("Split top and bottom") }, onClick = {
+                            paneMenu = false
+                            onSplitPane(false)
+                        })
+                        DropdownMenuItem(text = { Text("Close this side") }, onClick = {
+                            paneMenu = false
+                            closePanel()
+                        })
+                    }
+                }
                 IconButton(
                     modifier = Modifier.pointerInput(Unit) {
                         awaitEachGesture {
@@ -6859,9 +7032,11 @@ private fun ReferencePanel(
                     },
                     onClick = ::closePanel,
                 ) {
-                    Icon(Reicons.Close, contentDescription = "Close reference")
+                    Icon(Reicons.Close, contentDescription = if (pinned) "Close this side" else "Close reference")
                 }
             }
+            }
+            if (!pinned) header()
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 val ready = opened
                 if (ready == null) {
@@ -6962,14 +7137,22 @@ private fun ReferencePanel(
                     }
                 }
             }
+            // A pane's bar along its bottom, where the note's own bar never is.
+            if (pinned) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                header()
+            }
         }
 
     }
     // A handle in each corner and on the side and bottom edges: what is held
     // follows the hand, what is opposite stays where it is. The top edge is
-    // the bar that moves the panel, so it is sized from its corners.
-    val resizeEnd: () -> Unit = { latestResizeEnd(view) }
-    FrameGrips(onResize = { h, v, dx, dy -> latestResize(h, v, dx, dy) }, onEnd = resizeEnd)
+    // the bar that moves the panel, so it is sized from its corners. A pane
+    // is sized by the seams between panes instead.
+    if (!pinned) {
+        val resizeEnd: () -> Unit = { latestResizeEnd(view) }
+        FrameGrips(onResize = { h, v, dx, dy -> latestResize(h, v, dx, dy) }, onEnd = resizeEnd)
+    }
     }
 }
 
@@ -8075,6 +8258,9 @@ private fun Toolbar(
     onQuickColor: (Int) -> Unit = {},
     onCamera: () -> Unit = {},
     onLayers: () -> Unit = {},
+    /** Opens the split panel; [split] says whether the screen is split now. */
+    onSplit: () -> Unit = {},
+    split: Boolean = false,
     /** The layer new ink goes to, shown beside the pen options (and in the top row if placed there). */
     layerChip: @Composable () -> Unit = {},
     /** Drawn as a picture of the bar in a settings preview: it reports no position for the pen panel. */
@@ -8210,6 +8396,7 @@ private fun Toolbar(
                 ),
                 listOf(
                     SpotiToolbarAction("Notes", AppIcons.otherNotes, opensNotes = true, onClick = {}),
+                    SpotiToolbarAction("Split notes", AppIcons.split, selected = split, onClick = onSplit),
                     SpotiToolbarAction("Add page", AppIcons.addPage, onClick = onAddPage),
                 ),
                 listOf(

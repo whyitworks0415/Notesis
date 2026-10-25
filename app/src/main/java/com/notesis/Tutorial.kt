@@ -142,6 +142,15 @@ private val LESSONS: List<Lesson> = listOf(
         ),
     ) { PopupNotePicture() },
     Lesson(
+        "Split notes",
+        listOf(
+            "Functions › Split notes divides the screen: side by side, top and bottom, three across, or with one side split again, up to four notes.",
+            "This note stays in the first part; each other part opens a note of its own, written on with the same pen.",
+            "Drag the handles between the parts to resize them. Each part's bar, along its bottom, changes its note, splits it again or closes it.",
+            "The toolbar floats over every part at a narrower size, so it never takes room from one of them.",
+        ),
+    ) { SplitPicture() },
+    Lesson(
         "AI and the web",
         listOf(
             "The AI tool, or Functions, opens the internet panel beside the note.",
@@ -597,6 +606,26 @@ private fun PopupNotePicture() {
         val hand = Offset(pageAt.x + page.width * 0.25f, page.height * 0.72f)
         for (i in -1..1) drawCircle(BLUE, 7.dp.toPx(), hand + Offset(i * 18.dp.toPx(), 0f))
         arrow(hand - Offset(0f, 14.dp.toPx()), hand - Offset(0f, 46.dp.toPx()), SOFT)
+    }
+}
+
+@Composable
+private fun SplitPicture() {
+    Canvas(Modifier.fillMaxSize().padding(Ui.Space.m)) {
+        val gap = 6.dp.toPx()
+        val radius = CornerRadius(8.dp.toPx())
+        SplitPreset.RIGHT_SPLIT.tree().layout(SplitRect(0f, 0f, size.width, size.height), gap).forEach { (id, r) ->
+            drawRoundRect(if (id == 0) Color.White else Color(0xFFEFF3FB), Offset(r.left, r.top), Size(r.width, r.height), radius)
+            for (l in 1..3) {
+                val y = r.top + l * r.height / 4f
+                drawLine(SOFT.copy(alpha = 0.35f), Offset(r.left + 10.dp.toPx(), y), Offset(r.left + r.width * 0.6f, y), 1.5.dp.toPx())
+            }
+        }
+        // The bar over all of them, and a handle on the seam.
+        val bar = Size(size.width * 0.42f, 18.dp.toPx())
+        drawRoundRect(BLUE.copy(alpha = 0.85f), Offset((size.width - bar.width) / 2f, 4.dp.toPx()), bar, CornerRadius(bar.height / 2f))
+        val seamX = (size.width - gap) / 2f + gap / 2f
+        drawLine(SOFT, Offset(seamX, size.height / 2f - 20.dp.toPx()), Offset(seamX, size.height / 2f + 20.dp.toPx()), 4.dp.toPx(), StrokeCap.Round)
     }
 }
 
