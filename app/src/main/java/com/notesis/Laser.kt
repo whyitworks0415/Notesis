@@ -49,12 +49,12 @@ internal object LaserSettings {
         color = p.getInt(KEY_COLOR, LASER_COLORS.first())
     }
 
-    fun setStyle(value: Int) {
+    fun chooseStyle(value: Int) {
         style = value
         prefs?.edit()?.putInt(KEY_STYLE, value)?.apply()
     }
 
-    fun setColor(value: Int) {
+    fun chooseColor(value: Int) {
         color = value
         prefs?.edit()?.putInt(KEY_COLOR, value)?.apply()
     }
@@ -96,7 +96,7 @@ internal fun LaserPanel(onDismiss: () -> Unit) {
         PanelSectionHeader("Style")
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
             for ((style, label, _) in LASER_STYLES) {
-                SettingsChoiceChip(selected = LaserSettings.style == style, onClick = { LaserSettings.setStyle(style) }, label = label)
+                SettingsChoiceChip(selected = LaserSettings.style == style, onClick = { LaserSettings.chooseStyle(style) }, label = label)
             }
         }
         Text(
@@ -118,7 +118,7 @@ internal fun LaserPanel(onDismiss: () -> Unit) {
                         .clip(CircleShape)
                         .background(color)
                         .border(1.dp, Color(0x33000000), CircleShape)
-                        .clickable(role = Role.RadioButton) { LaserSettings.setColor(argb) }
+                        .clickable(role = Role.RadioButton) { LaserSettings.chooseColor(argb) }
                         .semantics { contentDescription = "Laser colour"; selected = chosen },
                 )
             }
