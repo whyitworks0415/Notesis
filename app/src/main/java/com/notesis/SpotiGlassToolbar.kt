@@ -264,6 +264,16 @@ internal fun Modifier.spotiGlassMorph(key: Any, enter: Boolean = false): Modifie
 }
 
 
+/**
+ * A round button of the bar's own material standing on its own, as the
+ * Functions button of the smaller bars does - for the way back to the
+ * notes when the bar is too small to have a top row.
+ */
+@Composable
+internal fun RoundBarButton(label: String, icon: ImageVector, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    SpotiActionButton(label, icon, modifier.size(52.dp), iconOnly = true, persistentGlass = true, onClick = onClick)
+}
+
 @Composable
 private fun SpotiActionButton(
     label: String, icon: ImageVector? = null, modifier: Modifier = Modifier,

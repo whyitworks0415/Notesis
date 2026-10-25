@@ -41,4 +41,29 @@ class ReferenceGesturePolicyTest {
         // Wider than the container: pinned to its left edge, so the top bar is still reachable.
         assertEquals(Pair(0f, 0f), movePanel(10f, 10f, 1200f, 1200f, 30f, 30f, 1000f, 1000f))
     }
+
+    @Test fun `an edge handle moves one edge and leaves the other axis alone`() {
+        val start = PanelBounds(100f, 100f, 300f, 400f)
+        // The right edge: wider, same height, same place.
+        assertEquals(PanelBounds(100f, 100f, 350f, 400f),
+            frameResize(start, FrameHandle.END, FrameHandle.NONE, 50f, 80f, 220f, 1000f, 1000f))
+        // The left edge: the right one stays where it was.
+        assertEquals(PanelBounds(60f, 100f, 340f, 400f),
+            frameResize(start, FrameHandle.START, FrameHandle.NONE, -40f, -30f, 220f, 1000f, 1000f))
+        // The bottom edge.
+        assertEquals(PanelBounds(100f, 100f, 300f, 460f),
+            frameResize(start, FrameHandle.NONE, FrameHandle.END, 20f, 60f, 220f, 1000f, 1000f))
+        // Limits still hold.
+        assertEquals(PanelBounds(100f, 100f, 300f, 220f),
+            frameResize(start, FrameHandle.NONE, FrameHandle.END, 0f, -900f, 220f, 1000f, 1000f))
+    }
+
+    @Test fun `a kept window is fitted back into a smaller screen`() {
+        // Too wide and partly off the side after a turn: made to fit, and moved in.
+        assertEquals(PanelBounds(0f, 100f, 800f, 400f), clampPanel(PanelBounds(300f, 100f, 1000f, 400f), 800f, 1000f, 280f))
+        assertEquals(PanelBounds(500f, 600f, 300f, 400f), clampPanel(PanelBounds(900f, 900f, 300f, 400f), 800f, 1000f, 280f))
+        // Already inside: unchanged.
+        val inside = PanelBounds(10f, 20f, 300f, 300f)
+        assertEquals(inside, clampPanel(inside, 800f, 1000f, 280f))
+    }
 }

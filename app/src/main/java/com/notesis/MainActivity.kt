@@ -35,6 +35,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -57,6 +58,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.union
@@ -102,6 +104,7 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
@@ -130,6 +133,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.progressBarRangeInfo
@@ -3012,6 +3017,12 @@ private fun WebPanel(
     /** Opens another site in the panel: one of the AI chats, or the search page. */
     onSite: (String) -> Unit = {},
     modifier: Modifier = Modifier,
+    /** The panel's corner: the sidebar's beside the note, the same floating over it. */
+    corner: Dp = Ui.Corner.sheet,
+    /** Whether the panel keeps clear of the system bars, as it must when it runs to the screen's edges. */
+    insets: Boolean = true,
+    /** Floating, the panel is moved by a handle along its top. */
+    onMove: ((Float, Float) -> Unit)? = null,
 ) {
     val web = holder.value
     var address by remember(url) { mutableStateOf(url) }
@@ -3041,18 +3052,79 @@ private fun WebPanel(
         }
     }
 
-    SkinSurface(modifier = modifier, corner = 0.dp) {
+    // The bar over the page takes the colour of the page's own top, as a
+    // browser's does, with its icons and text in whichever of dark or light
+    // reads on it. Asked of the page every moment or so: it scrolls, and a
+    // chat switches theme. Until it answers, the bar is the panel's surface.
+    val skin = LocalSkin.current
+    var pageTop by remember(web) { mutableStateOf<Color?>(null) }
+    LaunchedEffect(web) {
+        val view = web ?: return@LaunchedEffect
+        while (true) {
+            runCatching {
+                view.evaluateJavascript(PAGE_TOP_COLOR_JS) { result -> pageTop = parseCssColor(result)?.let { Color(it) } }
+            }
+            delay(PAGE_TOP_COLOR_POLL_MS)
+        }
+    }
+    val surface = MaterialTheme.colorScheme.surface
+    val header by androidx.compose.animation.animateColorAsState(
+        pageTop ?: surface,
+        // Material changes it at once; the other skins ease into it.
+        if (skin == Skin.MATERIAL) androidx.compose.animation.core.snap() else tween(240),
+        label = "Web bar",
+    )
+    val onHeader = if (pageTop == null) MaterialTheme.colorScheme.onSurface else liquidGlassContentColor(header)
+    val fieldColors = OutlinedTextFieldDefaults.colors(
+        focusedTextColor = onHeader,
+        unfocusedTextColor = onHeader,
+        cursorColor = onHeader,
+        focusedBorderColor = onHeader.copy(alpha = 0.6f),
+        unfocusedBorderColor = onHeader.copy(alpha = 0.3f),
+        focusedLeadingIconColor = onHeader,
+        unfocusedLeadingIconColor = onHeader.copy(alpha = 0.75f),
+        focusedPlaceholderColor = onHeader.copy(alpha = 0.6f),
+        unfocusedPlaceholderColor = onHeader.copy(alpha = 0.6f),
+        focusedContainerColor = Color.Transparent,
+        unfocusedContainerColor = Color.Transparent,
+    )
+
+    SkinSurface(modifier = modifier, corner = corner) {
         // The whole panel keeps clear of the system bars, not just its header: a
         // chat composer pinned to the bottom of the page was sitting under the
         // navigation bar with nothing holding it up.
         Column(
             Modifier
                 .fillMaxHeight()
-                // 시스템 바 inset도 패널의 실제 표면색으로 칠해 상단 회색 띠를 없앱니다.
-                .background(MaterialTheme.colorScheme.surface)
-                .windowInsetsPadding(ChromeInsets)
+                .background(surface)
+                .then(if (insets) Modifier.windowInsetsPadding(ChromeInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
+                    else Modifier)
                 .windowInsetsPadding(keyboardRoom),
         ) {
+            CompositionLocalProvider(LocalContentColor provides onHeader) {
+            // The bar and the strip of chats, on the page's colour - into the
+            // status bar's room too, so the top of the screen is one colour.
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .background(header)
+                    .then(if (insets) Modifier.windowInsetsPadding(ChromeInsets.only(WindowInsetsSides.Top)) else Modifier),
+            ) {
+            if (onMove != null) {
+                // Floating: the panel is carried by this strip along its top.
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(18.dp)
+                        .pointerInput(Unit) {
+                            detectDragGestures { change, amount -> change.consume(); onMove(amount.x, amount.y) }
+                        }
+                        .semantics { contentDescription = "Drag to move" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(Modifier.size(width = 32.dp, height = 4.dp).clip(CircleShape).background(onHeader.copy(alpha = 0.45f)))
+                }
+            }
             // The same buttons as the note's bar, and the same search field
             // as the library's; the less used ones folded behind one button.
             var more by remember { mutableStateOf(false) }
@@ -3074,6 +3146,7 @@ private fun WebPanel(
                     leadingIcon = { Icon(Reicons.Search, contentDescription = null) },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
                     keyboardActions = KeyboardActions(onGo = { web?.loadUrl(asUrl(address)) }),
+                    colors = fieldColors,
                     modifier = Modifier
                         .weight(1f)
                         .padding(horizontal = Ui.Space.xs),
@@ -3128,8 +3201,11 @@ private fun WebPanel(
                         selected = host.isNotEmpty() && host == siteHost,
                         onClick = { address = site; onSite(site) },
                         label = name,
+                        contentColor = onHeader,
                     )
                 }
+            }
+            }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             key(rendererGeneration) { AndroidView(
@@ -3675,6 +3751,11 @@ private fun NoteScreen(
     var webWidth by remember { mutableStateOf(WEB_PANEL_WIDTH) }
     var draftWebWidth by remember { mutableStateOf<Dp?>(null) }
     var webPopup by remember { mutableStateOf(false) }
+    // Where the floating web window is, once it has been moved or sized; and
+    // the size a handle is being dragged to, laid out once when it is let go.
+    var webWindow by remember { mutableStateOf<PanelBounds?>(null) }
+    var webWindowDraft by remember { mutableStateOf<PanelBounds?>(null) }
+    var webWindowDrag by remember { mutableStateOf(Offset.Zero) }
     // Every AI site refuses to sign in to something that looks like a
     // WebView, so the panel can claim to be desktop Chrome instead.
     var webDesktop by remember { mutableStateOf(false) }
@@ -3792,13 +3873,13 @@ private fun NoteScreen(
     // hand lifts, so the page inside is laid out once, at its new size.
     var referenceDraft by remember { mutableStateOf<PanelBounds?>(null) }
     var referenceResizeDrag by remember { mutableStateOf(Offset.Zero) }
-    fun resizeReference(fromLeft: Boolean, fromTop: Boolean, dx: Float, dy: Float) {
+    fun resizeReference(horizontal: FrameHandle, vertical: FrameHandle, dx: Float, dy: Float) {
         val minSize = with(density) { REFERENCE_MIN_SIZE.toPx() }
         val drag = referenceResizeDrag + Offset(dx, dy)
         referenceResizeDrag = drag
         val start = PanelBounds(referenceOffset.x, referenceOffset.y, referenceSize.width, referenceSize.height)
-        referenceDraft = cornerResize(
-            start, fromLeft, fromTop, drag.x, drag.y, minSize,
+        referenceDraft = frameResize(
+            start, horizontal, vertical, drag.x, drag.y, minSize,
             containerSize.width.toFloat(), containerSize.height.toFloat(),
         )
     }
@@ -4006,7 +4087,7 @@ private fun NoteScreen(
 
     // One panel, shown either docked beside the note or floating over it. The
     // WebView is the same instance in both, so switching keeps the page.
-    val panel: @Composable (Modifier) -> Unit = { panelModifier ->
+    val panel: @Composable (Modifier, ((Float, Float) -> Unit)?) -> Unit = { panelModifier, onMove ->
         WebPanel(
             url = webUrl.orEmpty(),
             holder = browser,
@@ -4031,6 +4112,8 @@ private fun NoteScreen(
                 webPopup = false
             },
             onSite = { webUrl = it },
+            insets = onMove == null,
+            onMove = onMove,
             onFile = { callback ->
                 val ready = pendingAttachment.value
                 if (ready != null) {
@@ -4618,6 +4701,23 @@ private fun NoteScreen(
                 thumbnail = { index -> canvas?.pageThumbnail(index, SCRUBBER_THUMBNAIL_PX) },
             )
         }
+        }
+
+        // The smaller bars have no top row, so no way back: a round button of
+        // the bar's own material in the top corner. Under the bar, should the
+        // bar be carried over it.
+        if (toolbarSize > 0 && !collapsed) {
+            RoundBarButton(
+                "Back to notes", AppIcons.back,
+                onClick = {
+                    settingsNav = null
+                    onBack()
+                },
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .windowInsetsPadding(ChromeInsets)
+                    .padding(12.dp),
+            )
         }
 
         if (!docked && !collapsed) {
@@ -5859,7 +5959,7 @@ private fun NoteScreen(
                 offset = { referenceOffset },
                 size = referenceSize,
                 draft = { referenceDraft },
-                onResize = { fromLeft, fromTop, dx, dy -> resizeReference(fromLeft, fromTop, dx, dy) },
+                onResize = { horizontal, vertical, dx, dy -> resizeReference(horizontal, vertical, dx, dy) },
                 onResizeEnd = { view ->
                     val draft = referenceDraft
                     referenceDraft = null
@@ -5909,28 +6009,52 @@ private fun NoteScreen(
 
         if (!webPopup) {
             webUrl?.let {
-                // Drag the seam to give the browser more room, or less.
+                // Drag the seam to give the browser more room, or less: the
+                // settings sidebar's handle, a pill on clear ground, which
+                // goes solid while it is held.
+                val dragging = draftWebWidth != null
                 Box(
                     Modifier
                         .fillMaxHeight()
-                        .width(10.dp)
-                        .background(MaterialTheme.colorScheme.outlineVariant)
+                        .width(24.dp)
                         .pointerInput(webWidth) {
-                            detectDragGestures(
+                            detectHorizontalDragGestures(
                                 onDragStart = { draftWebWidth = webWidth },
                                 onDragEnd = {
                                     draftWebWidth?.let { webWidth = it }
                                     draftWebWidth = null
                                 },
-                                onDragCancel = { draftWebWidth = null },
+                                onDragCancel = {
+                                    draftWebWidth?.let { webWidth = it }
+                                    draftWebWidth = null
+                                },
                             ) { change, drag ->
                                 change.consume()
-                                draftWebWidth = ((draftWebWidth ?: webWidth) - drag.x.toDp())
+                                draftWebWidth = ((draftWebWidth ?: webWidth) - drag.toDp())
                                     .coerceIn(WEB_PANEL_MIN, WEB_PANEL_MAX)
                             }
+                        }
+                        .semantics {
+                            contentDescription = "Resize the web panel"
+                            customActions = listOf(
+                                CustomAccessibilityAction("Make wider") {
+                                    webWidth = (webWidth + 60.dp).coerceIn(WEB_PANEL_MIN, WEB_PANEL_MAX); true
+                                },
+                                CustomAccessibilityAction("Make narrower") {
+                                    webWidth = (webWidth - 60.dp).coerceIn(WEB_PANEL_MIN, WEB_PANEL_MAX); true
+                                },
+                            )
                         },
-                )
-                panel(Modifier.fillMaxHeight().width(webWidth))
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        Modifier
+                            .size(width = 5.dp, height = 56.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.outline.copy(alpha = if (dragging) 0.95f else 0.6f)),
+                    )
+                }
+                panel(Modifier.fillMaxHeight().width(webWidth).padding(vertical = Ui.Space.s).padding(end = Ui.Space.s), null)
             }
         }
     }
@@ -5942,7 +6066,44 @@ private fun NoteScreen(
             onDismissRequest = { webPopup = false },
             properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
         ) {
-            panel(Modifier.fillMaxSize(0.85f))
+            // A window over the note: moved by the strip along its top, sized
+            // from any corner or edge, and put back beside the note by a tap
+            // past it.
+            BoxWithConstraints(
+                Modifier
+                    .fillMaxSize()
+                    .windowInsetsPadding(ChromeInsets)
+                    .pointerInput(Unit) { detectTapGestures { webPopup = false } },
+            ) {
+                val area = with(density) { Size(maxWidth.toPx(), maxHeight.toPx()) }
+                val minSize = with(density) { WEB_POPUP_MIN.toPx() }
+                val bounds = webWindow?.let { clampPanel(it, area.width, area.height, minSize) }
+                    ?: PanelBounds(area.width * 0.075f, area.height * 0.075f, area.width * 0.85f, area.height * 0.85f)
+                val shown = webWindowDraft ?: bounds
+                Box(
+                    Modifier
+                        .offset { IntOffset(shown.left.roundToInt(), shown.top.roundToInt()) }
+                        .size(with(density) { shown.width.toDp() }, with(density) { shown.height.toDp() })
+                        // Taps inside the window are the window's.
+                        .pointerInput(Unit) { detectTapGestures { } },
+                ) {
+                    panel(Modifier.fillMaxSize()) { dx, dy ->
+                        val (x, y) = movePanel(bounds.left, bounds.top, bounds.width, bounds.height, dx, dy, area.width, area.height)
+                        webWindow = bounds.copy(left = x, top = y)
+                    }
+                    FrameGrips(
+                        onResize = { h, v, dx, dy ->
+                            webWindowDrag += Offset(dx, dy)
+                            webWindowDraft = frameResize(bounds, h, v, webWindowDrag.x, webWindowDrag.y, minSize, area.width, area.height)
+                        },
+                        onEnd = {
+                            webWindowDraft?.let { webWindow = it }
+                            webWindowDraft = null
+                            webWindowDrag = Offset.Zero
+                        },
+                    )
+                }
+            }
         }
     }
 }
@@ -6383,8 +6544,8 @@ private fun ReferencePanel(
     size: Size,
     /** Where a corner is being dragged to, drawn as an outline; null when none is held. */
     draft: () -> PanelBounds? = { null },
-    /** A corner moved by this much (pixels, each axis free); which corner it is, first. */
-    onResize: (fromLeft: Boolean, fromTop: Boolean, dx: Float, dy: Float) -> Unit = { _, _, _, _ -> },
+    /** A corner or an edge moved by this much (pixels, each axis free); which one it is, first. */
+    onResize: (horizontal: FrameHandle, vertical: FrameHandle, dx: Float, dy: Float) -> Unit = { _, _, _, _ -> },
     /** The corner was let go: take the [draft] place and size, given this panel's view. */
     onResizeEnd: (InkCanvasView?) -> Unit = {},
     /** The top bar was dragged by this much. */
@@ -6790,73 +6951,11 @@ private fun ReferencePanel(
         }
 
     }
-    // A handle in each corner: the corner held follows the hand, the one
-    // opposite stays where it is, each axis on its own.
+    // A handle in each corner and on the side and bottom edges: what is held
+    // follows the hand, what is opposite stays where it is. The top edge is
+    // the bar that moves the panel, so it is sized from its corners.
     val resizeEnd: () -> Unit = { latestResizeEnd(view) }
-    for ((fromLeft, fromTop) in REFERENCE_CORNERS) {
-        ReferenceResizeGrip(
-            fromLeft = fromLeft,
-            fromTop = fromTop,
-            onDrag = { dx, dy -> latestResize(fromLeft, fromTop, dx, dy) },
-            onEnd = resizeEnd,
-            modifier = Modifier
-                .align(
-                    when {
-                        fromLeft && fromTop -> Alignment.TopStart
-                        fromTop -> Alignment.TopEnd
-                        fromLeft -> Alignment.BottomStart
-                        else -> Alignment.BottomEnd
-                    },
-                )
-                .size(REFERENCE_GRIP_SIZE),
-        )
-    }
-    }
-}
-
-/**
- * One of the reference panel's corner handles: a short arc along the panel's
- * rounded corner, so it reads as the corner itself being picked up.
- */
-@Composable
-private fun ReferenceResizeGrip(
-    fromLeft: Boolean,
-    fromTop: Boolean,
-    onDrag: (Float, Float) -> Unit,
-    onEnd: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val color = MaterialTheme.colorScheme.primary.copy(alpha = 0.72f)
-    Canvas(
-        modifier
-            .semantics { contentDescription = "Resize" }
-            .pointerInput(fromLeft, fromTop) {
-                detectDragGestures(onDragEnd = onEnd, onDragCancel = onEnd) { change, amount ->
-                    change.consume()
-                    onDrag(amount.x, amount.y)
-                }
-            },
-    ) {
-        // Concentric with the panel's own corner, a little inside it.
-        val corner = Ui.Corner.card.toPx()
-        val radius = corner - 6.dp.toPx()
-        val cx = if (fromLeft) corner else size.width - corner
-        val cy = if (fromTop) corner else size.height - corner
-        val start = when {
-            fromLeft && fromTop -> 180f
-            fromTop -> 270f
-            fromLeft -> 90f
-            else -> 0f
-        }
-        drawArc(
-            color,
-            startAngle = start,
-            sweepAngle = 90f,
-            useCenter = false,
-            topLeft = Offset(cx - radius, cy - radius),
-            size = Size(radius * 2f, radius * 2f),
-            style = Stroke(width = 3.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round),
-        )
+    FrameGrips(onResize = { h, v, dx, dy -> latestResize(h, v, dx, dy) }, onEnd = resizeEnd)
     }
 }
 
@@ -8322,13 +8421,11 @@ private const val WEB_LOG_MAX = 40
 private const val WEB_LOG_LINE = 300
 private val WEB_PANEL_MIN = 280.dp
 private val WEB_PANEL_MAX = 1100.dp
+/** The floating web window is never smaller than this either way. */
+private val WEB_POPUP_MIN = 280.dp
 
 /** Below this the reference panel is too small to hold a readable page. */
 private val REFERENCE_MIN_SIZE = 220.dp
-/** The reference panel's corner handles: big enough for a fingertip, small enough to leave the page. */
-private val REFERENCE_GRIP_SIZE = 24.dp
-/** Each corner, as (from the left, from the top). */
-private val REFERENCE_CORNERS = listOf(true to true, false to true, true to false, false to false)
 /** The bar drawn at the top of the panel, saying it can be picked up there. */
 private val REFERENCE_GRAB_WIDTH = 32.dp
 private val REFERENCE_GRAB_THICKNESS = 4.dp

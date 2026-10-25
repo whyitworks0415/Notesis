@@ -24,19 +24,45 @@ internal fun cornerResize(
     minSize: Float,
     containerWidth: Float,
     containerHeight: Float,
+): PanelBounds = frameResize(
+    start, if (fromLeft) FrameHandle.START else FrameHandle.END, if (fromTop) FrameHandle.START else FrameHandle.END,
+    dragX, dragY, minSize, containerWidth, containerHeight,
+)
+
+/** Which edge of a frame, along one axis, a resize handle moves. */
+internal enum class FrameHandle { START, NONE, END }
+
+/**
+ * [start] after a handle has been dragged by ([dragX], [dragY]) since the
+ * hand went down: [horizontal] and [vertical] say which edge it moves along
+ * each axis - a corner moves one of each, an edge's handle one and [NONE] of
+ * the other, which then stays exactly as it was. Limits as [cornerResize].
+ */
+internal fun frameResize(
+    start: PanelBounds,
+    horizontal: FrameHandle,
+    vertical: FrameHandle,
+    dragX: Float,
+    dragY: Float,
+    minSize: Float,
+    containerWidth: Float,
+    containerHeight: Float,
 ): PanelBounds {
-    fun axis(near: Float, far: Float, drag: Float, movesNear: Boolean, limit: Float): Pair<Float, Float> =
-        if (movesNear) {
+    fun axis(near: Float, far: Float, drag: Float, handle: FrameHandle, limit: Float): Pair<Float, Float> = when (handle) {
+        FrameHandle.NONE -> near to far - near
+        FrameHandle.START -> {
             // The near edge moves; the far one is the anchor.
             val lowest = minOf(0f, far - minSize)
             val edge = (near + drag).coerceIn(lowest, far - minSize)
             edge to far - edge
-        } else {
+        }
+        FrameHandle.END -> {
             val reach = maxOf(minSize, limit - near)
             near to (far - near + drag).coerceIn(minSize, reach)
         }
-    val (left, width) = axis(start.left, start.right, dragX, fromLeft, containerWidth)
-    val (top, height) = axis(start.top, start.bottom, dragY, fromTop, containerHeight)
+    }
+    val (left, width) = axis(start.left, start.right, dragX, horizontal, containerWidth)
+    val (top, height) = axis(start.top, start.bottom, dragY, vertical, containerHeight)
     return PanelBounds(left, top, width, height)
 }
 
@@ -58,3 +84,19 @@ internal fun movePanel(
     (left + dx).coerceIn(0f, (containerWidth - width).coerceAtLeast(0f)),
     (top + dy).coerceIn(0f, (containerHeight - height).coerceAtLeast(0f)),
 )
+
+/**
+ * [bounds] made to fit a container of [width] x [height]: no smaller than
+ * [minSize] (or the container, if that is smaller still), no larger than the
+ * container, and moved back inside it. For a window kept from before the
+ * screen turned or the window was resized.
+ */
+internal fun clampPanel(bounds: PanelBounds, width: Float, height: Float, minSize: Float): PanelBounds {
+    val w = bounds.width.coerceIn(minOf(minSize, width), width.coerceAtLeast(0f))
+    val h = bounds.height.coerceIn(minOf(minSize, height), height.coerceAtLeast(0f))
+    return PanelBounds(
+        bounds.left.coerceIn(0f, (width - w).coerceAtLeast(0f)),
+        bounds.top.coerceIn(0f, (height - h).coerceAtLeast(0f)),
+        w, h,
+    )
+}
