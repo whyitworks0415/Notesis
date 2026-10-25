@@ -293,7 +293,9 @@ private fun InteractiveToolbarPreview(sizeLevel: Int, onSizeLevel: (Int) -> Unit
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(Ui.Space.s),
     ) {
-        Box(Modifier.previewFit(spotiToolbarWidth(sizeLevel))) {
+        // Down the side the bar is as long as its tools, so it is shrunk to the stage both ways.
+        val vertical = ToolbarOrientation.vertical && sizeLevel > 0
+        Box(if (vertical) Modifier.weight(1f, fill = false).fitInside() else Modifier.previewFit(spotiToolbarWidth(sizeLevel))) {
             SpotiGlassToolbar(
                 sizeLevel = sizeLevel, onSizeLevel = onSizeLevel, mode = mode,
                 toolColors = toolColors,
@@ -467,6 +469,7 @@ internal fun AppearanceSettings(
             Text("Toolbar size", style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             ToolbarStageSelector(toolbarSize, onSelect = onToolbarSize)
+            ToolbarOrientationChoice(toolbarSize)
             ToolbarPreviewStage(background, photo, Modifier.fillMaxWidth().height(PREVIEW_STAGE_HEIGHT), interactive = true) {
                 // The preview shows the draft while the note behind keeps the
                 // committed look until the hand rests.

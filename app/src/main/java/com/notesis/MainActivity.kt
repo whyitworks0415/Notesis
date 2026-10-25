@@ -239,6 +239,7 @@ class MainActivity : ComponentActivity() {
         InteractionGovernor.init(applicationContext)
         Planner.init(applicationContext)
         ToolbarMotion.init(applicationContext)
+        ToolbarOrientation.init(applicationContext)
         // A real start, not a rotation: first-run mode shows the welcome and the tutorial again.
         if (savedInstanceState == null) Onboarding.startAsFirstRunIfAsked(applicationContext)
         val store = NoteStore(this)
@@ -3812,6 +3813,8 @@ private fun NoteScreen(
     var toolbarSize by remember { mutableIntStateOf(penStore.toolbarSize) }
     val collapsed = false
     fun setToolbarSize(size: Int) { toolbarSize = size; penStore.toolbarSize = size }
+    // The smaller bars may run down the side (see ToolbarOrientation); the whole bar never does.
+    val barVertical = ToolbarOrientation.vertical && toolbarSize > 0
     // Flush against the top edge, or floating over the page. Kept in
     // preferences: where the toolbar sits is a habit, not a per-note choice.
     var docked by remember { mutableStateOf(penStore.docked) }
@@ -4230,7 +4233,7 @@ private fun NoteScreen(
             onResetBar = { barOffset = null },
             onSettings = { openSettings(it) },
             onDragBar = { delta ->
-                val at = barPlacement(barOffset, barSize, containerSize)
+                val at = barPlacement(barOffset, barSize, containerSize, barVertical)
                 if (docked) { docked = false; penStore.docked = false }
                 barOffset = Offset(at.x + delta.x, at.y + delta.y)
             },
@@ -4729,12 +4732,13 @@ private fun NoteScreen(
                     // landscape tablet the bar stretched the whole 2960px with
                     // the tools huddled in the first third of it.
                     // Intrinsic text must not resize the whole bar when the pen
-                    // type or a value such as 9.9/10 changes.
-                    .spotiToolbarAnimatedWidth(floatingBarWidth)
+                    // type or a value such as 9.9/10 changes. Down the side, the
+                    // bar is as wide as its tools and takes no width from this.
+                    .then(if (barVertical) Modifier else Modifier.spotiToolbarAnimatedWidth(floatingBarWidth))
                     // Placed and clamped together: the folded handle can be
                     // dragged anywhere, and unfolding measures the wide bar and
                     // pulls it back inside rather than letting it hang off.
-                    .offset { barPlacement(barOffset, barSize, containerSize) }
+                    .offset { barPlacement(barOffset, barSize, containerSize, barVertical) }
                     .onSizeChanged { barSize = it }
                     .windowInsetsPadding(ChromeInsets)
                     .padding(12.dp),
@@ -6000,10 +6004,18 @@ private fun NoteScreen(
         }
     }
         if (docked && !collapsed) {
-            toolbar(Modifier.align(Alignment.TopCenter).then(
-                if (toolbarSize > 0) Modifier.spotiToolbarAnimatedWidth(floatingBarWidth)
-                    .windowInsetsPadding(ChromeInsets.only(WindowInsetsSides.Top))
-                else Modifier.fillMaxWidth()), null)
+            toolbar(
+                when {
+                    // Docked down the side: against the start edge, in the middle of it.
+                    barVertical -> Modifier.align(Alignment.CenterStart)
+                        .windowInsetsPadding(ChromeInsets.only(WindowInsetsSides.Start))
+                        .padding(start = Ui.Space.s)
+                    toolbarSize > 0 -> Modifier.align(Alignment.TopCenter).spotiToolbarAnimatedWidth(floatingBarWidth)
+                        .windowInsetsPadding(ChromeInsets.only(WindowInsetsSides.Top))
+                    else -> Modifier.align(Alignment.TopCenter).fillMaxWidth()
+                },
+                null,
+            )
         }
     }
 
@@ -6411,8 +6423,10 @@ private fun barPlacement(offset: Offset, bar: IntSize, container: IntSize): IntO
     return IntOffset(offset.x.coerceIn(0f, maxX).toInt(), offset.y.coerceIn(0f, maxY).toInt())
 }
 
-private fun barPlacement(offset: Offset?, bar: IntSize, container: IntSize): IntOffset {
-    val start = offset ?: Offset((container.width - bar.width) / 2f, 0f)
+private fun barPlacement(offset: Offset?, bar: IntSize, container: IntSize, vertical: Boolean = false): IntOffset {
+    // Not moved yet: across the top in the middle, or down the left side in the middle.
+    val start = offset ?: if (vertical) Offset(0f, (container.height - bar.height) / 2f)
+        else Offset((container.width - bar.width) / 2f, 0f)
     return barPlacement(start, bar, container)
 }
 
@@ -8154,6 +8168,8 @@ private fun Toolbar(
     SpotiGlassToolbar(sizeLevel, onSizeLevel, mode,
             // A preview of the bar is not where the tour should point.
             coachTargets = if (preview) null else NoteCoachTargets,
+            // A preview of the tools shows them across, as they are arranged.
+            allowVertical = !preview,
             toolColors = toolPens.filterKeys { it.tints }.mapValues { Color(it.value.colorArgb.or(0xFF000000.toInt())) },
             targetWidth = toolbarTargetWidth,
             docked = docked,

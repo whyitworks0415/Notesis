@@ -43,6 +43,17 @@ class ChromeMotionTest {
         }
     }
 
+    @Test fun `beside a bar down the side, a popup opens to its right, else its left`() {
+        // A bar at the left edge: the menu to its right, level with its top.
+        assertEquals(Pair(88, 200), popupBeside(0, 200, 80, 600, 1000, 800, 340, 400, gap = 8, inset = 0))
+        // A bar at the right edge: no room to the right, so to its left.
+        assertEquals(Pair(572, 200), popupBeside(920, 200, 1000, 600, 1000, 800, 340, 400, gap = 8, inset = 0))
+        // Low on the screen: pulled up to stay inside it.
+        assertEquals(Pair(88, 392), popupBeside(0, 700, 80, 790, 1000, 800, 340, 400, gap = 8, inset = 0))
+        // With shadow room, the panel lands where it would without.
+        assertEquals(Pair(88 - 16, 200 - 16), popupBeside(0, 200, 80, 600, 1000, 800, 372, 432, gap = 8, inset = 16))
+    }
+
     @Test fun `a popup's two axes grow from their own start to their own size`() {
         assertEquals(0.55f, popupGrowScale(0f, 0.55f), 0f)
         assertEquals(1f, popupGrowScale(1f, 0.55f), 0f)

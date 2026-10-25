@@ -87,6 +87,47 @@ internal fun spotiToolbarTools(level: Int): List<SpotiToolbarTool> = ToolbarLayo
  * menu shows on the very next switch. Only Liquid glass moves; Material and
  * Glassmorphism switch at once (see [animatesChrome]).
  */
+/**
+ * Whether the bar runs across the top or down the side. Kept for every
+ * note, as where the bar sits is a habit. The whole bar (1/4) always runs
+ * across: its top row and pen row are rows.
+ */
+internal object ToolbarOrientation {
+    private var prefs: android.content.SharedPreferences? = null
+
+    var vertical by mutableStateOf(false)
+        private set
+
+    fun init(context: android.content.Context) {
+        if (prefs != null) return
+        val p = context.getSharedPreferences("pens", android.content.Context.MODE_PRIVATE)
+        prefs = p
+        vertical = p.getBoolean(KEY_VERTICAL, false)
+    }
+
+    fun set(vertical: Boolean) {
+        this.vertical = vertical
+        prefs?.edit()?.putBoolean(KEY_VERTICAL, vertical)?.apply()
+    }
+
+    private const val KEY_VERTICAL = "toolbarVertical"
+}
+
+/** "Horizontal" and "Vertical", for the menu and the appearance screen; [sizeLevel] 0 cannot turn. */
+@Composable
+internal fun ToolbarOrientationChoice(sizeLevel: Int) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+        Text("Direction", style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+        SettingsChoiceChip(selected = !ToolbarOrientation.vertical, onClick = { ToolbarOrientation.set(false) }, label = "Horizontal")
+        SettingsChoiceChip(selected = ToolbarOrientation.vertical, onClick = { ToolbarOrientation.set(true) }, label = "Vertical")
+    }
+    if (sizeLevel == 0 && ToolbarOrientation.vertical) {
+        Text("1/4 is the whole bar, with its top row and pen row, and always runs across. 2/4 to 4/4 run down the side.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+    }
+}
+
 internal object ToolbarMotion {
     private var prefs: android.content.SharedPreferences? = null
 
@@ -198,9 +239,9 @@ internal fun Modifier.spotiFitRow(minWidth: Dp): Modifier = layout { measurable,
 }
 
 /** Responsive rows preserve every tool and a 44 dp hit area without scrolling. */
-internal fun spotiToolRows(tools: List<SpotiToolbarTool>, widthDp: Float): List<List<SpotiToolbarTool>> {
+internal fun spotiToolRows(tools: List<SpotiToolbarTool>, widthDp: Float, cellDp: Float = 44f): List<List<SpotiToolbarTool>> {
     if (tools.isEmpty()) return emptyList()
-    val capacity = ((widthDp - 12f) / 44f).toInt().coerceAtLeast(2)
+    val capacity = ((widthDp - 12f) / cellDp).toInt().coerceAtLeast(2)
     val rows = (tools.size + capacity - 1) / capacity
     // Balance the rows instead of leaving almost all the tools in the first.
     var start = 0
@@ -359,9 +400,18 @@ private enum class ToolbarMenu { FUNCTIONS, NOTES, AI }
  */
 internal class SpotiToolbarPopupPosition(
     private val atStart: Boolean, private val gap: Int, private val inset: Int = 0,
+    /** Beside the bar rather than under it: for a bar down the side. */
+    private val beside: Boolean = false,
 ) : PopupPositionProvider {
     override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize,
         layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset {
+        if (beside) {
+            val (x, y) = popupBeside(
+                anchorBounds.left, anchorBounds.top, anchorBounds.right, anchorBounds.bottom,
+                windowSize.width, windowSize.height, popupContentSize.width, popupContentSize.height, gap, inset,
+            )
+            return IntOffset(x, y)
+        }
         val (x, y) = popupPlacement(
             anchorBounds.left, anchorBounds.top, anchorBounds.right, anchorBounds.bottom,
             windowSize.width, windowSize.height, popupContentSize.width, popupContentSize.height,
@@ -394,6 +444,8 @@ internal fun SpotiGlassToolbar(
     functions: List<List<SpotiToolbarAction>>,
     notes: List<SpotiToolbarAction>, ai: List<SpotiToolbarAction>,
     topRow: @Composable () -> Unit, penOptions: @Composable (Dp) -> Unit,
+    /** Whether the bar may run down the side when [ToolbarOrientation] says so; a preview of the tools keeps it across. */
+    allowVertical: Boolean = true,
 ) {
     var open by remember { mutableStateOf(false) }
     var page by remember { mutableStateOf(ToolbarMenu.FUNCTIONS) }
@@ -417,6 +469,8 @@ internal fun SpotiGlassToolbar(
     val outer = skin.tokens().corner
     val outline = RoundedCornerShape(outer)
     val full = sizeLevel == 0
+    // The smaller bars may run down the side; the whole bar is always across.
+    val vertical = allowVertical && ToolbarOrientation.vertical && !full
     // animateContentSize clips its layer, including stable corner shadows.
     // Width already has one animation clock in the host; do not animate twice.
     // The new size's contents come up out of a fade while the frame moves,
@@ -483,6 +537,36 @@ internal fun SpotiGlassToolbar(
                                 .pointerInput(Unit) {
                                     detectDragGestures { change, delta -> change.consume(); onDrag(delta) }
                                 }, iconOnly = true, persistentGlass = true, onClick = { menu(ToolbarMenu.FUNCTIONS) })
+                    } else if (vertical) {
+                        // Down the side: the tools as one capsule (or, when the
+                        // screen is too short for them, side by side columns)
+                        // with the Functions button under them.
+                        Column(horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+                            val shown = config.tools(sizeLevel)
+                            val tallest = (LocalConfiguration.current.screenHeightDp - VERTICAL_BAR_RESERVE_DP).coerceAtLeast(160)
+                            val columns = spotiToolRows(shown, tallest.toFloat(), cellDp = 52f)
+                            Row(Modifier.coachTargetWhileShown(coachTargets, CoachTarget.TOOLS),
+                                horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+                                columns.forEach { tools ->
+                                    val selected = if (open && page == ToolbarMenu.AI) tools.indexOf(SpotiToolbarTool.AI)
+                                        else tools.indexOfFirst { it.mode == mode }
+                                    if (skin == Skin.SPOTIGLASS) SpotiGlassBar(
+                                        tools.map { SpotiGlassItem(it.label, it.icon(), toolColors[it.mode]) },
+                                        selectedIndex = selected, onSelected = { pick(tools[it]) },
+                                        showLabels = false, compact = false, corner = outer,
+                                        surface = SpotiBarSurface.LIQUID, vertical = true)
+                                    else ToolStrip(tools, selected, compact = false, corner = outer,
+                                        ownSurface = true, toolColors = toolColors, onPick = ::pick, vertical = true)
+                                }
+                            }
+                            SpotiActionButton("Functions", AppIcons.functions, selected = open,
+                                modifier = Modifier.size(52.dp)
+                                    .onGloballyPositioned { functionsAt[0] = it.centerOnScreen() }
+                                    .coachTargetWhileShown(coachTargets, CoachTarget.FUNCTIONS),
+                                iconOnly = true, persistentGlass = true,
+                                onClick = { menu(ToolbarMenu.FUNCTIONS) })
+                        }
                     } else {
                         Row(Modifier.fillMaxWidth().then(if (full) Modifier.spotiFitRow(800.dp) else Modifier),
                             verticalAlignment = Alignment.CenterVertically,
@@ -527,7 +611,7 @@ internal fun SpotiGlassToolbar(
                         val density = androidx.compose.ui.platform.LocalDensity.current
                         val gap = with(density) { Ui.Space.s.roundToPx() }
                         val room = with(density) { POPUP_SHADOW_ROOM.roundToPx() }
-                        val position = remember(gap, room) { SpotiToolbarPopupPosition(false, gap, room) }
+                        val position = remember(gap, room, vertical) { SpotiToolbarPopupPosition(false, gap, room, beside = vertical) }
                         // The touch that opened it - the button, or the AI tool -
                         // or else the button. Kept for the fold back as well.
                         val anchor = remember { PenPopupAnchor.recentTap() ?: functionsAt[0] }
@@ -609,6 +693,9 @@ private fun Modifier.dismissInRoom(room: Dp, onDismiss: () -> Unit): Modifier = 
     }
 }
 
+/** Room a bar down the side leaves on the screen's height: its Functions button, and a margin above and below. */
+private const val VERTICAL_BAR_RESERVE_DP = 150
+
 /** How far in from the full bar's edge its lower row sits, all round. */
 private val TOOLBAR_INSET = Ui.Space.s
 
@@ -641,6 +728,7 @@ private fun ToolbarMenuContent(
                 Text("Toolbar size", style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 ToolbarStageSelector(sizeLevel, onSelect = { onClose(); onSizeLevel(it) })
+                ToolbarOrientationChoice(sizeLevel)
                 // The button-only bar has no tools of its own to hand,
                 // so its menu carries the compact size's.
                 val quick = if (sizeLevel == ToolbarConfig.BUTTON_ONLY_STAGE) config.tools(2) else emptyList()
@@ -813,6 +901,8 @@ internal fun ToolbarMotionSettings() {
 private fun ToolStrip(
     tools: List<SpotiToolbarTool>, selectedIndex: Int, compact: Boolean, corner: Dp,
     ownSurface: Boolean, toolColors: Map<EditMode, Color>, onPick: (SpotiToolbarTool) -> Unit,
+    /** Down the side: the same strip and sliding highlight on the other axis. */
+    vertical: Boolean = false,
 ) {
     if (tools.isEmpty()) return
     val skin = LocalSkin.current
@@ -843,32 +933,46 @@ private fun ToolStrip(
             slide.animateTo(selected.toFloat(), TOOL_HIGHLIGHT_SPRING)
         }
     }
-    BoxWithConstraints(Modifier.fillMaxWidth().height(barHeight + 16.dp).selectableGroup()) {
-        val cell = (maxWidth - padding * 2).coerceAtLeast(1.dp) / tools.size
-        Box(Modifier.fillMaxWidth().height(barHeight).align(Alignment.Center)
+    val frame = if (vertical) Modifier.width(barHeight + 16.dp).height(verticalBarLength(tools.size, compact, padding))
+        else Modifier.fillMaxWidth().height(barHeight + 16.dp)
+    BoxWithConstraints(frame.selectableGroup()) {
+        val cell = ((if (vertical) maxHeight else maxWidth) - padding * 2).coerceAtLeast(1.dp) / tools.size
+        val capsule = if (vertical) Modifier.fillMaxHeight().width(barHeight) else Modifier.fillMaxWidth().height(barHeight)
+        Box(capsule.align(Alignment.Center)
             .then(if (ownSurface) Modifier.skinMaterial(RoundedCornerShape(corner)) else Modifier)) {
             if (selected != null) {
                 // Kept inside the strip if the spring runs a hair past the end.
                 Box(Modifier
-                    .offset { IntOffset((padding + cell * slide.value.coerceIn(0f, tools.lastIndex.toFloat())).roundToPx(), padding.roundToPx()) }
-                    .size(cell, cellHeight)
+                    .offset {
+                        val along = (padding + cell * slide.value.coerceIn(0f, tools.lastIndex.toFloat())).roundToPx()
+                        if (vertical) IntOffset(padding.roundToPx(), along) else IntOffset(along, padding.roundToPx())
+                    }
+                    .then(if (vertical) Modifier.size(cellHeight, cell) else Modifier.size(cell, cellHeight))
                     .background(highlight, pill))
             }
         }
-        // The whole height of the strip is the target, not just the pill.
-        Row(Modifier.matchParentSize().padding(horizontal = padding)) {
-            tools.forEachIndexed { index, tool ->
-                val chosen = index == selected
-                Box(Modifier.weight(1f).fillMaxHeight()
-                    .semantics {
-                        contentDescription = tool.label
-                        this.selected = chosen
-                    }
-                    .clickable(role = Role.Tab, onClick = { onPick(tool) }),
-                    contentAlignment = Alignment.Center) {
-                    AppIcon(tool.icon(), null, Modifier.size(if (compact) 20.dp else 25.dp),
-                        tint = if (chosen) tool.mode?.let { toolColors[it] } ?: scheme.primary else scheme.onSurface)
+        @Composable
+        fun Cell(index: Int, tool: SpotiToolbarTool, base: Modifier) {
+            val chosen = index == selected
+            Box(base
+                .semantics {
+                    contentDescription = tool.label
+                    this.selected = chosen
                 }
+                .clickable(role = Role.Tab, onClick = { onPick(tool) }),
+                contentAlignment = Alignment.Center) {
+                AppIcon(tool.icon(), null, Modifier.size(if (compact) 20.dp else 25.dp),
+                    tint = if (chosen) tool.mode?.let { toolColors[it] } ?: scheme.primary else scheme.onSurface)
+            }
+        }
+        // The whole thickness of the strip is the target, not just the pill.
+        if (vertical) {
+            Column(Modifier.matchParentSize().padding(vertical = padding)) {
+                tools.forEachIndexed { index, tool -> Cell(index, tool, Modifier.weight(1f).fillMaxWidth()) }
+            }
+        } else {
+            Row(Modifier.matchParentSize().padding(horizontal = padding)) {
+                tools.forEachIndexed { index, tool -> Cell(index, tool, Modifier.weight(1f).fillMaxHeight()) }
             }
         }
     }

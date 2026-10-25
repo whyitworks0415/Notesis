@@ -172,6 +172,41 @@ internal fun popupPlacement(
 }
 
 /**
+ * Where a popup goes beside its anchor rather than under it - for a bar
+ * down the side of the screen: to its right if it fits, else to its left,
+ * and level with its top, kept the gap clear of the window's edges. [inset]
+ * is clear room round the panel inside the content, as in [popupPlacement].
+ */
+internal fun popupBeside(
+    anchorLeft: Int,
+    anchorTop: Int,
+    anchorRight: Int,
+    anchorBottom: Int,
+    windowWidth: Int,
+    windowHeight: Int,
+    contentWidth: Int,
+    contentHeight: Int,
+    gap: Int,
+    inset: Int,
+): Pair<Int, Int> {
+    val room = inset.coerceAtLeast(0)
+    val width = (contentWidth - 2 * room).coerceAtLeast(0)
+    val height = (contentHeight - 2 * room).coerceAtLeast(0)
+    val maxX = (windowWidth - width - gap).coerceAtLeast(gap)
+    val right = anchorRight + gap
+    val left = anchorLeft - gap - width
+    val x = when {
+        right <= maxX -> right
+        left >= gap -> left
+        else -> right.coerceIn(gap, maxX)
+    }
+    val maxY = (windowHeight - height - gap).coerceAtLeast(gap)
+    // Level with the anchor's top, or as near as the window lets it be.
+    val y = anchorTop.coerceIn(gap, maxY)
+    return (x - room) to (y - room)
+}
+
+/**
  * The scale one axis of a popup is drawn at while it grows: [start] when
  * [progress] is 0, its own size at 1, and a little past it when a spring
  * overshoots. The two axes run on their own curves, so a popup does not grow

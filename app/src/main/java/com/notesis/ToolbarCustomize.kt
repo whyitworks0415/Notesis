@@ -344,6 +344,24 @@ internal fun Modifier.previewFit(logicalWidth: Dp): Modifier = layout { measurab
     }
 }
 
+/**
+ * Lays its content out at the size it asks for and shrinks it, both ways
+ * alike, until it fits: for a bar down the side, whose length is its own.
+ */
+internal fun Modifier.fitInside(): Modifier = layout { measurable, constraints ->
+    val child = measurable.measure(Constraints())
+    val sx = if (constraints.hasBoundedWidth && child.width > 0) constraints.maxWidth.toFloat() / child.width else 1f
+    val sy = if (constraints.hasBoundedHeight && child.height > 0) constraints.maxHeight.toFloat() / child.height else 1f
+    val scale = minOf(1f, sx, sy)
+    layout((child.width * scale).roundToInt(), (child.height * scale).roundToInt()) {
+        child.placeWithLayer(0, 0) {
+            scaleX = scale
+            scaleY = scale
+            transformOrigin = TransformOrigin(0f, 0f)
+        }
+    }
+}
+
 private enum class CustomizeList(val label: String) { TOOLS("Tools"), TOP_ROW("Top row"), PEN_ROW("Pen row") }
 
 /**
