@@ -241,6 +241,7 @@ class MainActivity : ComponentActivity() {
         Planner.init(applicationContext)
         ToolbarMotion.init(applicationContext)
         ToolbarOrientation.init(applicationContext)
+        LaserSettings.init(applicationContext)
         // A real start, not a rotation: first-run mode shows the welcome and the tutorial again.
         if (savedInstanceState == null) Onboarding.startAsFirstRunIfAsked(applicationContext)
         val store = NoteStore(this)
@@ -2040,9 +2041,12 @@ private fun NoteCard(
         // the thumbnail, which is the only part you can see through, showed the
         // shadow beneath it: dark at the edges, clear in the middle. That pale
         // patch under every note's name was a shadow seen from the front.
-        elevation = CardDefaults.cardElevation(
-            defaultElevation = if (skin == Skin.MATERIAL) 1.dp else 0.dp,
-        ),
+        // And none in any state: a card's elevation rises when it is pressed,
+        // focused, or a pen hovers over it, and that lifted shadow showed
+        // through the strip as a pale box set inside it, cut off at the
+        // thumbnail.
+        elevation = if (skin == Skin.MATERIAL) CardDefaults.cardElevation(defaultElevation = 1.dp)
+            else CardDefaults.cardElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
         colors = if (skin == Skin.MATERIAL) {
             CardDefaults.cardColors()
         } else if (skin.isRefractive) {
@@ -3552,7 +3556,7 @@ internal val ChromeInsets: WindowInsets
  * What the pen does when it lands. One thing at a time, by construction, and
  * each one remembers its own colour and thickness rather than sharing a tray.
  */
-enum class EditMode { PEN, HIGHLIGHTER, MASK, LASSO, SHAPE, IMAGE, ERASE, READ, CAPTURE, TEXT, PENCIL }
+enum class EditMode { PEN, HIGHLIGHTER, MASK, LASSO, SHAPE, IMAGE, ERASE, READ, CAPTURE, TEXT, PENCIL, LASER }
 
 /** Whether this mode puts something on the page in the tool's own colour. */
 internal val EditMode.tints: Boolean
@@ -3946,8 +3950,8 @@ private fun NoteScreen(
         label = "Top bar mode width",
     )
     var showLatency by remember { mutableStateOf(false) }
-    var laser by remember { mutableStateOf(false) }
-    var laserDot by remember { mutableStateOf(false) }
+    var choosingLaser by remember { mutableStateOf(false) }
+    var confirmClearAll by remember { mutableStateOf(false) }
     var ruler by remember { mutableStateOf<RulerKind?>(null) }
     var rulerAngle by remember { mutableStateOf(false) }
     var showPages by remember { mutableStateOf(false) }
@@ -4243,6 +4247,7 @@ private fun NoteScreen(
             onClock = { StudyClock.openPanel() },
             onLayers = { showLayers = true },
             onSplit = { choosingSplit = true },
+            onLaserOptions = { choosingLaser = true },
             split = split != null,
             onCamera = {
                 val file = java.io.File(context.cacheDir, "shared/camera.jpg").apply { parentFile?.mkdirs() }
@@ -4515,7 +4520,7 @@ private fun NoteScreen(
                     view.pageTone = pageTone
                     view.partialEraser = partialEraser
                     view.applyGestures(gestures)
-                    view.laserMode = laser
+                    view.laserMode = mode == EditMode.LASER
                     view.onPullForPage = { pullingForPage = it }
                     view.onEditTextBox = { replacingText = canvas?.selectedTextBox(); showTextBox = true }
                     // Writing puts the page panel away; using it, scrolling and
@@ -4543,7 +4548,8 @@ private fun NoteScreen(
                         } ?: Toast.makeText(context, "Couldn't find the linked note", Toast.LENGTH_SHORT).show()
                     }
                     view.onLongPressCanvas = if (gestures.longPressMenu) { x, y -> pressMenu = Offset(x, y) } else null
-                    view.laserTrail = !laserDot
+                    view.laserStyle = LaserSettings.style
+                    view.laserColor = LaserSettings.color
                     view.rulerKind = ruler
                     view.onRulerClosed = { ruler = null }
                     view.autoShapeRecognitionEnabled = autoShapes
@@ -5214,6 +5220,10 @@ private fun NoteScreen(
                     edits++
                     editingPen = false
                 },
+                onClearAll = {
+                    editingPen = false
+                    confirmClearAll = true
+                },
                 onCornerRadius = { shapeCorner = it },
                 onEyedropper = {
                     val picking = mode
@@ -5506,6 +5516,22 @@ private fun NoteScreen(
                 confirmButton = { TextButton(onClick = { sendingPages = null }) { Text("Cancel") } },
             )
         }
+        if (choosingLaser) LaserPanel(onDismiss = { choosingLaser = false })
+        if (confirmClearAll) AlertDialog(
+            onDismissRequest = { confirmClearAll = false },
+            title = { Text("Clear all writing?") },
+            text = {
+                Text("The writing on all ${pageCount} pages of this note goes. Pictures, tape and the PDF stay, " +
+                    "and Undo brings the writing back.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmClearAll = false
+                    if ((canvas?.clearAllInk() ?: 0) > 0) edits++
+                }) { Text("Clear all") }
+            },
+            dismissButton = { TextButton(onClick = { confirmClearAll = false }) { Text("Cancel") } },
+        )
         if (choosingSplit) SplitPickerPanel(
             current = split,
             onPick = { preset -> applySplit(preset) },
@@ -7120,6 +7146,10 @@ private fun ReferencePanel(
                             v.autoShapeRecognitionEnabled = autoShapes
                             v.axisSnapEnabled = axisSnap
                             v.dottedPattern = dottedPattern
+                            // The laser points on every canvas alike.
+                            v.laserMode = mode == EditMode.LASER
+                            v.laserStyle = LaserSettings.style
+                            v.laserColor = LaserSettings.color
                         },
                     )
                     if (popupLassoCount > 0) {
@@ -8260,6 +8290,8 @@ private fun Toolbar(
     onLayers: () -> Unit = {},
     /** Opens the split panel; [split] says whether the screen is split now. */
     onSplit: () -> Unit = {},
+    /** The laser tapped again: its style and colour. */
+    onLaserOptions: () -> Unit = {},
     split: Boolean = false,
     /** The layer new ink goes to, shown beside the pen options (and in the top row if placed there). */
     layerChip: @Composable () -> Unit = {},
@@ -8370,6 +8402,8 @@ private fun Toolbar(
                 // the way a pen tapped again opens its settings.
                 EditMode.SHAPE -> if (mode == EditMode.SHAPE) onShapeOptions() else onShape(shapeKind)
                 EditMode.TEXT -> onText()
+                // The laser in hand, tapped again, opens its style and colour.
+                EditMode.LASER -> if (mode == EditMode.LASER) onLaserOptions() else onMode(EditMode.LASER)
                 null -> Unit
                 else -> onMode(tool.mode)
             } },
@@ -8418,6 +8452,10 @@ private fun Toolbar(
                         PenRowItem.TOOL -> {
                             if (mode == EditMode.SHAPE) ShapeButton(true, shapeKind, onShapeOptions)
                             if (mode == EditMode.TEXT) TextButton(onClick = onAddText) { Text("+ Text") }
+                            if (mode == EditMode.LASER) TextButton(onClick = onLaserOptions) {
+                                Box(Modifier.size(14.dp).background(Color(LaserSettings.color), CircleShape))
+                                Text("  Laser")
+                            }
                             if (mode in PenStore.DEFAULTS) PenChip(pen, true, onEditPen)
                         }
                         PenRowItem.QUICK_COLORS -> if (mode.tints) QuickColors(pen.colorArgb, onQuickColor, onEditPen)

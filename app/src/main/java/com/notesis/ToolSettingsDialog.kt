@@ -38,6 +38,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -199,6 +200,8 @@ internal fun PenDialog(
     gestures: CanvasGestures = CanvasGestures(),
     onGestures: (CanvasGestures) -> Unit = {},
     onClearPage: (() -> Unit)? = null,
+    /** Asks to take the writing off every page; the host confirms first. */
+    onClearAll: (() -> Unit)? = null,
     onEyedropper: (() -> Unit)? = null,
     onCornerRadius: (Float) -> Unit = {},
     /** Opens the settings every pen shares; null leaves the link out. */
@@ -260,6 +263,29 @@ internal fun PenDialog(
             if (mode == EditMode.ERASE) {
                 PanelSectionHeader("Eraser")
                 EraserSection(partialEraser, onPartialEraser, gestures, onGestures)
+                if (onClearPage != null || onClearAll != null) {
+                    PanelSectionHeader("Clear")
+                    // Right here rather than behind "More": clearing is what an
+                    // eraser's settings are opened for, often as not.
+                    Row(horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+                        if (onClearPage != null) OutlinedButton(onClick = { panel.close(onClearPage) }) {
+                            Icon(Reicons.Delete, contentDescription = null, modifier = Modifier.size(Ui.Icon.small))
+                            Spacer(Modifier.width(Ui.Space.xs))
+                            Text("Clear this page")
+                        }
+                        if (onClearAll != null) OutlinedButton(onClick = { panel.close(onClearAll) }) {
+                            Icon(Reicons.Delete, contentDescription = null, modifier = Modifier.size(Ui.Icon.small))
+                            Spacer(Modifier.width(Ui.Space.xs))
+                            Text("Clear all writing")
+                        }
+                    }
+                    Text(
+                        "This page: its writing, pictures and tape. All writing: the ink on every page; " +
+                            "pictures, tape and the PDF stay. Undo brings either back.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline,
+                    )
+                }
             } else if (mode.tints) {
                 PanelSectionHeader("Color")
                 ColorSection(
@@ -416,12 +442,6 @@ internal fun PenDialog(
                 if (mode == EditMode.HIGHLIGHTER) {
                     PanelSwitchRow(if (highlighterAboveInk) "Shown above the writing" else "Shown under the writing",
                         highlighterAboveInk, onChange = onHighlighterAboveInk)
-                }
-                if (mode == EditMode.ERASE && onClearPage != null) {
-                    TextButton(onClick = onClearPage, modifier = Modifier.heightIn(min = 44.dp)) {
-                        Icon(Reicons.Delete, contentDescription = null)
-                        Text(" Clear this whole page")
-                    }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Text(

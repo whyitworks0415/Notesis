@@ -33,7 +33,7 @@ internal val LocalBackdropMotion = compositionLocalOf<(() -> Float)?> { null }
  * and at whatever scale the layers above it draw it. See [backdropAlignment].
  */
 internal fun DrawScope.drawBackdropAligned(layer: GraphicsLayer, sourceOrigin: Offset, coordinates: LayoutCoordinates?) {
-    if (coordinates == null || !coordinates.isAttached) return
+    if (coordinates == null || !coordinates.isAttached || layer.isReleased) return
     val width = coordinates.size.width.toFloat()
     val height = coordinates.size.height.toFloat()
     val near = coordinates.localToScreen(Offset.Zero)

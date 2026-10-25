@@ -76,6 +76,7 @@ internal enum class SpotiToolbarTool(val mode: EditMode?, val label: String) {
     HIGHLIGHTER(EditMode.HIGHLIGHTER, "Highlighter"), MASK(EditMode.MASK, "Mask"),
     ERASE(EditMode.ERASE, "Eraser"), SHAPE(EditMode.SHAPE, "Shape"), TEXT(EditMode.TEXT, "Text"),
     LASSO(EditMode.LASSO, "Lasso"), CAPTURE(EditMode.CAPTURE, "Capture"), AI(null, "AI"),
+    LASER(EditMode.LASER, "Laser"),
 }
 
 /** The tools the bar shows at [level], as arranged in [ToolbarLayout]. */
@@ -263,6 +264,7 @@ internal fun SpotiToolbarTool.icon(): ImageVector = when (this) {
     SpotiToolbarTool.LASSO -> AppIconStyle.pick(Lucide.CircleDashed, Reicons.Gesture)
     SpotiToolbarTool.CAPTURE -> AppIconStyle.pick(Lucide.SquareDashed, Reicons.CropFree)
     SpotiToolbarTool.AI -> AppIconStyle.pick(Lucide.Zap, Reicons.AutoAwesome)
+    SpotiToolbarTool.LASER -> AppIconStyle.pick(Lucide.Laser, Reicons.Laser)
 }
 
 internal data class SpotiToolbarAction(

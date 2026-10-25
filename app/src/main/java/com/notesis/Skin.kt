@@ -308,8 +308,13 @@ val NoBackdrop = Backdrop(null)
 
 @Composable
 fun rememberBackdrop(active: Boolean): Backdrop {
-    val layer = if (active) rememberGraphicsLayer() else null
-    return remember(layer) { Backdrop(layer) }
+    // Always the one layer, handed out only while active. Remembered only
+    // when active, it was released each time the frost went off - battery
+    // saver coming on, the blur turned to nothing - while a pane in a popup
+    // or a dialog, a window of its own, could still draw it in that frame,
+    // and drawing a released layer takes the app down.
+    val layer = rememberGraphicsLayer()
+    return remember(layer, active) { Backdrop(if (active) layer else null) }
 }
 
 /**
@@ -336,6 +341,10 @@ fun Modifier.recordBackdrop(
             // governor covers every canvas, the reference panel's too, and
             // the settle after a stroke, so strokes in quick succession do not
             // re-record the page in each gap between them.
+            if (layer.isReleased) {
+                drawContent()
+                return@drawWithContent
+            }
             if (stale?.invoke() != true && (backdrop.paused || InteractionGovernor.observed != Interaction.IDLE)) {
                 drawContent()
                 return@drawWithContent
@@ -518,6 +527,9 @@ private fun Modifier.frost(): Modifier {
         .drawBehind {
             here
             motion?.invoke()
+            // Gone with the screen it came from: nothing to frost, and drawing
+            // it would throw.
+            if (layer.isReleased || pane.isReleased) return@drawBehind
             pane.renderEffect = effect
             // The pane is already clipped to its shape, so drawing the whole
             // backdrop back by this pane's place on screen - and at the
