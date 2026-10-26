@@ -59,12 +59,74 @@ class OnboardingPlanTest {
         assertEquals(0f, t.progress(t.WRITE, 0f), 0f)
         assertEquals(0.5f, t.progress(t.WRITE, 750f), 0.0001f)
         assertEquals(1f, t.progress(t.WRITE, 2000f), 0f)
-        assertTrue(t.SHAPE.first < t.HOLD.first && t.HOLD.last <= t.SNAP.first)
-        assertTrue(t.SNAP.last < t.EXIT.first)
+        assertTrue(t.PEN_IN.first < t.FRAME.first && t.FRAME.last <= t.MOVE.last)
+        assertTrue(t.MOVE.last <= t.CHEVRON.first && t.CHEVRON.last <= t.DROP.first)
+        assertTrue(t.DROP.last <= t.SETTLE.first && t.SETTLE.last < t.EXIT.first)
         assertEquals(t.TOTAL, t.EXIT.last)
-        for (window in listOf(t.WRITE, t.FILL, t.TAGLINE, t.SHAPE, t.HOLD, t.SNAP, t.CAPTION, t.EXIT)) {
+        for (window in listOf(t.WRITE, t.FILL, t.TAGLINE, t.PEN_IN, t.FRAME, t.PAPER, t.MOVE, t.CHEVRON, t.DROP, t.SETTLE, t.EXIT)) {
             assertEquals(1f, t.progress(window, t.TOTAL.toFloat()), 0f)
         }
+    }
+
+    @Test fun `the square is traced from its left edge all the way round`() {
+        val m = WelcomeMark
+        val start = m.framePoint(0f)
+        assertEquals(0f, start.first, 0.01f)
+        assertEquals(m.CORNER, start.second, 0.01f)
+        // Every point on the edge of the rounded square, and the trace closes.
+        for (i in 0..200) {
+            val (x, y) = m.framePoint(m.perimeter * i / 200f)
+            assertTrue(x in -0.01f..m.SIZE + 0.01f && y in -0.01f..m.SIZE + 0.01f)
+            assertTrue(x < 0.01f || y < 0.01f || x > m.SIZE - 0.01f || y > m.SIZE - 0.01f ||
+                cornerDistance(x, y) in m.CORNER - 0.5f..m.CORNER + 0.5f)
+        }
+        val end = m.framePoint(m.perimeter)
+        assertEquals(start.first, end.first, 0.01f)
+        assertEquals(start.second, end.second, 0.01f)
+        // Half way round is the opposite side.
+        assertEquals(m.SIZE, m.framePoint(m.perimeter / 2f).first, 0.01f)
+    }
+
+    private fun cornerDistance(x: Float, y: Float): Float {
+        val r = WelcomeMark.CORNER
+        val cx = if (x < WelcomeMark.SIZE / 2f) r else WelcomeMark.SIZE - r
+        val cy = if (y < WelcomeMark.SIZE / 2f) r else WelcomeMark.SIZE - r
+        return kotlin.math.hypot(x - cx, y - cy)
+    }
+
+    @Test fun `the pen writes the mark and comes to rest where the icon has it`() {
+        val m = WelcomeMark
+        val t = WelcomeTimeline
+        assertNull(m.pen(t.PEN_IN.first - 1f))
+        // Writing ">": at its point half way through.
+        val mid = m.pen((t.CHEVRON.first + t.CHEVRON.last) / 2f)!!
+        assertEquals(470f, mid.x, 0.5f)
+        assertEquals(480f, mid.y, 0.5f)
+        // In the air while it is thrown, higher than where it started and where it lands.
+        val air = m.pen((t.DROP.first + t.DROP.last) / 2f)!!
+        assertTrue(air.y < m.REST_Y && air.y < m.CHEVRON.last().second && air.lift > 0.9f)
+        // At rest at the end, lying as on the icon, on the paper.
+        val rest = m.pen(t.TOTAL.toFloat())!!
+        assertEquals(m.REST_X, rest.x, 0.01f)
+        assertEquals(m.REST_Y, rest.y, 0.5f)
+        assertEquals(m.REST_ANGLE, rest.angle, 0.5f)
+        assertEquals(1f, rest.scale, 0f)
+        // Thrown and landed with no jump: the end of the drop is the start of the bounce.
+        val landing = m.pen(t.SETTLE.first - 0.001f)!!
+        val bounced = m.pen(t.SETTLE.first.toFloat())!!
+        assertEquals(bounced.x, landing.x, 1f)
+        assertEquals(bounced.y, landing.y, 2f)
+        assertEquals(0f, ((landing.angle - bounced.angle) % 360f + 360f) % 360f, 1f)
+    }
+
+    @Test fun `the square is drawn, then turns to paper, then the chevron is written`() {
+        val m = WelcomeMark
+        val t = WelcomeTimeline
+        assertEquals(0f, m.frameDrawn(t.FRAME.first.toFloat()), 0f)
+        assertEquals(1f, m.frameDrawn(t.FRAME.last.toFloat()), 0f)
+        assertEquals(1f, m.paper(t.CHEVRON.first.toFloat()), 0.05f)
+        assertEquals(1f, m.chevronDrawn(t.TOTAL.toFloat()), 0f)
+        assertEquals(292f to 630f, m.chevronPoint(1f))
     }
 
     @Test fun `the ease out leaves quickly and lands on one`() {

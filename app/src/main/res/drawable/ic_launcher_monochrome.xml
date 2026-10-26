@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The mark: ">" and a pen lying where "_" goes, in one colour, for themed icons. Drawn on a
+     1024 grid and scaled into the 72dp a launcher shows of the 108dp layer. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+    <group
+        android:pivotX="512"
+        android:pivotY="512"
+        android:scaleX="0.6667"
+        android:scaleY="0.6667">
+        <path
+            android:pathData="M292,330 L470,480 L292,630"
+            android:strokeWidth="92"
+            android:strokeColor="#FFFFFF"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+        <group
+            android:rotation="-6"
+            android:translateX="520"
+            android:translateY="668">
+            <path
+                android:fillColor="#FFFFFF"
+                android:pathData="M0,0 L104,-42 L104,42 Z"
+                android:strokeWidth="10"
+                android:strokeColor="#FFFFFF"
+                android:strokeLineJoin="round" />
+            <path
+                android:fillColor="#FFFFFF"
+                android:pathData="M118,-42 L320,-42 A42,42 0 0 1 320,42 L118,42 Z"
+                android:strokeWidth="10"
+                android:strokeColor="#FFFFFF"
+                android:strokeLineJoin="round" />
+        </group>
+    </group>
+</vector>
