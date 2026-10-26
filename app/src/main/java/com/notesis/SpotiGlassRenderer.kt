@@ -207,7 +207,11 @@ internal fun Modifier.spotiGlassSurface(
         else -> 18f
     } * (settings.blur / 20f)
     val baseOpacity = if (navigation) { if (dark) 0.44f else 0.54f } else { if (dark) 0.60f else 0.70f }
-    val baseTint = scheme.surfaceContainerHigh.copy(alpha = baseOpacity * if (dark) 0.82f else 0.88f)
+    // Clearer than the first three quarters, the body itself thins too - down
+    // to under half at full clarity - so the page shows through as it does
+    // through real glass, not just through a lighter wash over a solid one.
+    val thinning = if (useBlur) 1f - ((clarity - 0.75f) / 0.25f).coerceIn(0f, 1f) * 0.55f else 1f
+    val baseTint = scheme.surfaceContainerHigh.copy(alpha = baseOpacity * thinning * if (dark) 0.82f else 0.88f)
     val tint = if (useBlur) scheme.surfaceContainerHigh.copy(alpha = 1 - clarity).compositeOver(baseTint)
         else scheme.surfaceContainerHigh
     val dimFilter = remember {
@@ -218,6 +222,9 @@ internal fun Modifier.spotiGlassSurface(
             0f, 0f, 0f, 1f, 0f,
         ))
     }
+    // The rim and sheen, measured against the edge as it was first drawn.
+    val reflectionLevel = settings.reflection.coerceIn(0f, 1f)
+    val shine = reflectionLevel / SkinSettings.LEGACY_REFLECTION
     var result = this.shadow(elevation, shape, clip = false,
         ambientColor = Color.Black.copy(alpha = if (dark) 0.14f else 0.08f),
         spotColor = Color.Black.copy(alpha = if (dark) 0.14f else 0.08f))
@@ -241,9 +248,26 @@ internal fun Modifier.spotiGlassSurface(
             }
         }
         edge(0.25f, 0.5f, androidx.compose.ui.graphics.SolidColor(Color.Black.copy(alpha = if (useBlur) 0.10f else 0.22f)))
-        if (useBlur) edge(0.8f, 0.6f, Brush.verticalGradient(
-            0f to Color(0x2EFFFFFF), 0.14f to Color(0x08FFFFFF), 0.5f to Color(0x0A000000),
-            0.86f to Color(0x08FFFFFF), 1f to Color(0x1FFFFFFF)))
+        if (useBlur && shine > 0f) {
+            fun white(a: Float) = Color.White.copy(alpha = (a * shine).coerceAtMost(0.7f))
+            // The lit rim: brightest along the top, again along the bottom.
+            edge(0.8f, 0.6f + 0.6f * reflectionLevel, Brush.verticalGradient(
+                0f to white(0.18f), 0.14f to white(0.03f), 0.5f to Color(0x0A000000),
+                0.86f to white(0.03f), 1f to white(0.12f)))
+            // Light caught across the top of the glass, fading down into it.
+            if (reflectionLevel > LEGACY_SHEEN_FROM) {
+                val sheen = Brush.verticalGradient(0f to white(0.05f), 0.35f to Color.Transparent, 1f to Color.Transparent)
+                when (val outline = shape.createOutline(size, layoutDirection, this)) {
+                    is Outline.Generic -> drawPath(outline.path, sheen)
+                    is Outline.Rounded -> drawRoundRect(sheen,
+                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(outline.roundRect.topLeftCornerRadius.x))
+                    is Outline.Rectangle -> drawRect(sheen)
+                }
+            }
+        }
     }
     return result
 }
+
+/** Past the edge it was first drawn with, the glass also takes a sheen across its top. */
+private const val LEGACY_SHEEN_FROM = 0.4f

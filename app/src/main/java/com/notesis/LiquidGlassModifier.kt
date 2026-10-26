@@ -148,8 +148,10 @@ fun Modifier.liquidGlass(
             (body.alpha * (0.72f + amount * 0.28f)).coerceIn(0f, 0.72f)
         },
     )
+    // The edge and the sheen catch as much light as [SkinSettings.reflection] lets them.
+    val shine = settings.reflection.coerceIn(0f, 1f) / SkinSettings.LEGACY_REFLECTION
     val borderColor = Color(settings.border).copy(
-        alpha = (0.30f + settings.dispersion.coerceIn(0f, 1f) * 0.38f) * amount,
+        alpha = ((0.30f + settings.dispersion.coerceIn(0f, 1f) * 0.38f) * amount * shine).coerceIn(0f, 1f),
     )
 
     if (enabled && amount > 0.001f && effectsAllowed && backdrop != null) {
@@ -183,7 +185,7 @@ fun Modifier.liquidGlass(
                         Brush.verticalGradient(
                             if (settings.refractionDirection == RefractionDirection.RAISED) {
                                 listOf(
-                                    Color.White.copy(alpha = 0.13f * amount),
+                                    Color.White.copy(alpha = (0.13f * amount * shine).coerceAtMost(0.5f)),
                                     Color.Transparent,
                                     Color.Black.copy(alpha = 0.035f * amount),
                                 )
@@ -191,7 +193,7 @@ fun Modifier.liquidGlass(
                                 listOf(
                                     Color.Black.copy(alpha = 0.055f * amount),
                                     Color.Transparent,
-                                    Color.White.copy(alpha = 0.10f * amount),
+                                    Color.White.copy(alpha = (0.10f * amount * shine).coerceAtMost(0.5f)),
                                 )
                             },
                         ),

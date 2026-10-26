@@ -650,6 +650,20 @@ fun SkinSlider(
      */
     step: Float = 0f,
 ) {
+    // A control keeps the glass it was designed with, however the panels are tuned.
+    CompositionLocalProvider(LocalSkinSettings provides LocalSkinSettings.current.controlOptics()) {
+        SkinSliderBody(value, onValueChange, valueRange, modifier, step)
+    }
+}
+
+@Composable
+private fun SkinSliderBody(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    valueRange: ClosedFloatingPointRange<Float>,
+    modifier: Modifier,
+    step: Float,
+) {
     val skin = LocalSkin.current
     val steps = sliderSteps(valueRange, step)
     if (skin.isRefractive) {
@@ -797,6 +811,14 @@ fun SkinSlider(
  */
 @Composable
 fun SkinSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    // A control keeps the glass it was designed with, however the panels are tuned.
+    CompositionLocalProvider(LocalSkinSettings provides LocalSkinSettings.current.controlOptics()) {
+        SkinSwitchBody(checked, onCheckedChange)
+    }
+}
+
+@Composable
+private fun SkinSwitchBody(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     if (LocalSkin.current == Skin.SPOTIGLASS) {
         SpotiGlassSwitch(checked, onCheckedChange)
         return

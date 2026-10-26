@@ -50,6 +50,20 @@ fun LiquidSegmentedControl(
     modifier: Modifier = Modifier,
     useLiquidGlass: Boolean = true,
 ) {
+    // A control keeps the glass it was designed with, however the panels are tuned.
+    androidx.compose.runtime.CompositionLocalProvider(LocalSkinSettings provides LocalSkinSettings.current.controlOptics()) {
+        SegmentedControlBody(segments, selectedIndex, onSelected, modifier, useLiquidGlass)
+    }
+}
+
+@Composable
+private fun SegmentedControlBody(
+    segments: List<String>,
+    selectedIndex: Int,
+    onSelected: (Int) -> Unit,
+    modifier: Modifier,
+    useLiquidGlass: Boolean,
+) {
     require(segments.size in 2..4) { "LiquidSegmentedControl supports 2 to 4 segments." }
     if (useLiquidGlass && LocalSkin.current == Skin.SPOTIGLASS) {
         SpotiGlassBar(segments.map { SpotiGlassItem(it) }, selectedIndex, onSelected, modifier)

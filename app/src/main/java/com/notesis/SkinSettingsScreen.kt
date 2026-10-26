@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -32,6 +33,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -107,6 +109,8 @@ internal enum class PreviewBackground(val label: String) {
 
 /** Room for the bar to try and the switch and slider under it. */
 private val PREVIEW_STAGE_HEIGHT = 196.dp
+/** The preview kept above the controls on a narrow screen: enough to see the bar, no more. */
+private val COMPACT_PREVIEW_HEIGHT = 150.dp
 
 /** How long a slider must rest before its value becomes the app's look. */
 private const val APPEARANCE_COMMIT_MS = 250L
@@ -396,13 +400,14 @@ private suspend fun copyPreviewPhoto(context: Context, uri: Uri): Boolean = with
 }
 
 private enum class AppearanceGroup(val label: String) {
-    ICONS("Icons"), BACKGROUND("Background"), GLASS("Glass"), COLORS("Colors"),
+    STYLE("Style"), PANELS("Panels"), GLASS("Glass"), COLORS("Colors"), ICONS("Icons"),
 }
 
 /**
- * Light or dark, the UI style, then one group of settings at a time under a
- * preview of the real toolbar. The preview and the switches above the chips
- * stay put; only the group below them scrolls, and only when it has to.
+ * One group of settings at a time under a preview of the real toolbar - the
+ * style and toolbar first, then panels, glass, colours and icons. The preview
+ * and the group chips stay put and the group's controls have the rest of the
+ * screen; on a wide screen the preview sits beside them instead.
  */
 @Composable
 internal fun AppearanceSettings(
@@ -462,67 +467,37 @@ internal fun AppearanceSettings(
         }
     }
     fun launchPicker() = pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-    var group by remember { mutableStateOf(AppearanceGroup.ICONS) }
+    var group by remember { mutableStateOf(AppearanceGroup.STYLE) }
 
-    val upper: @Composable () -> Unit = {
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
-            Text("Toolbar size", style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            ToolbarStageSelector(toolbarSize, onSelect = onToolbarSize)
-            ToolbarOrientationChoice(toolbarSize)
-            ToolbarPreviewStage(background, photo, Modifier.fillMaxWidth().height(PREVIEW_STAGE_HEIGHT), interactive = true) {
-                // The preview shows the draft while the note behind keeps the
-                // committed look until the hand rests.
-                CompositionLocalProvider(LocalSkinSettings provides settings, LocalChromeScale provides ToolbarScale.scale) {
-                    InteractiveToolbarPreview(toolbarSize, onToolbarSize)
-                }
-            }
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(Ui.Space.s),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("Preview on", style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                PreviewBackground.entries.forEach { option ->
-                    SettingsChoiceChip(
-                        selected = background == option,
-                        onClick = {
-                            if (option == PreviewBackground.PHOTO && !hasPhoto) launchPicker() else choose(option)
-                        },
-                        label = option.label,
-                    )
-                }
-                if (background == PreviewBackground.PHOTO && hasPhoto) {
-                    TextButton(onClick = { launchPicker() }, modifier = Modifier.heightIn(min = 44.dp)) {
-                        Text("Change photo")
-                    }
-                }
-            }
-            LiquidSegmentedControl(
-                segments = listOf("Light", "Dark"),
-                selectedIndex = settings.themeMode.ordinal,
-                onSelected = { index -> onChange(settings.copy(themeMode = AppThemeMode.entries[index])) },
-                modifier = Modifier.fillMaxWidth(),
-                // The control sits beside a recorded preview, not over one; a
-                // plain indicator reads in light and dark alike.
-                useLiquidGlass = false,
-            )
-            Text("UI style", style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            SkinChoiceTiles(skin, onSkin)
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
-                AppearanceGroup.entries.forEach { option ->
-                    SettingsChoiceChip(selected = group == option, onClick = { group = option }, label = option.label)
-                }
+    // The preview and the choice of group stay in view; the group's own
+    // controls get the rest of the screen to themselves.
+    val preview: @Composable (Modifier) -> Unit = { stage ->
+        ToolbarPreviewStage(background, photo, stage, interactive = true) {
+            // The preview shows the draft while the note behind keeps the
+            // committed look until the hand rests.
+            CompositionLocalProvider(LocalSkinSettings provides settings, LocalChromeScale provides ToolbarScale.scale) {
+                InteractiveToolbarPreview(toolbarSize, onToolbarSize)
             }
         }
     }
-    val lower: @Composable () -> Unit = {
+    val groups: @Composable () -> Unit = {
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+            AppearanceGroup.entries.forEach { option ->
+                SettingsChoiceChip(selected = group == option, onClick = { group = option }, label = option.label)
+            }
+        }
+    }
+    val controls: @Composable () -> Unit = {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(Ui.Space.m)) {
             when (group) {
+                AppearanceGroup.STYLE -> {
+                    StyleGroup(
+                        skin, onSkin, settings, onChange, toolbarSize, onToolbarSize,
+                        background, hasPhoto, ::choose, ::launchPicker,
+                    )
+                }
                 AppearanceGroup.ICONS -> IconsGroup()
-                AppearanceGroup.BACKGROUND -> BackgroundGroup(skin, settings, onChange)
+                AppearanceGroup.PANELS -> PanelsGroup(skin, settings, onChange)
                 AppearanceGroup.GLASS -> GlassGroup(skin, settings, onChange, onSkin)
                 AppearanceGroup.COLORS -> ColorsGroup(settings, onChange)
             }
@@ -533,20 +508,84 @@ internal fun AppearanceSettings(
         }
     }
     BoxWithConstraints(modifier.fillMaxSize()) {
-        // Tall enough, the top stays still and the group scrolls under it.
-        // Short (a phone on its side, a large font), everything scrolls
-        // together rather than squeezing the group to nothing.
-        if (maxHeight >= 560.dp) {
-            Column(Modifier.fillMaxSize()) {
-                upper()
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                Box(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) { lower() }
+        when {
+            // Wide: the preview on the left, the controls the whole height on the right.
+            maxWidth >= 760.dp -> Row(Modifier.fillMaxSize()) {
+                Column(Modifier.weight(1f).fillMaxHeight().padding(16.dp), verticalArrangement = Arrangement.spacedBy(Ui.Space.m)) {
+                    preview(Modifier.fillMaxWidth().weight(1f, fill = false).heightIn(min = PREVIEW_STAGE_HEIGHT))
+                    groups()
+                }
+                VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Box(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState())) { controls() }
             }
-        } else {
-            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-                upper()
+            // Tall enough: the preview and the group chips stay put, the controls scroll under them.
+            maxHeight >= 520.dp -> Column(Modifier.fillMaxSize()) {
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+                    preview(Modifier.fillMaxWidth().height(COMPACT_PREVIEW_HEIGHT))
+                    groups()
+                }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                lower()
+                Box(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) { controls() }
+            }
+            // Short (a phone on its side, a large font): everything scrolls together.
+            else -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+                    preview(Modifier.fillMaxWidth().height(COMPACT_PREVIEW_HEIGHT))
+                    groups()
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                controls()
+            }
+        }
+    }
+}
+
+/**
+ * The toolbar's size, direction and scale, what the preview stands on, light
+ * or dark, and the UI style: the choices that change everything at once.
+ */
+@Composable
+private fun StyleGroup(
+    skin: Skin, onSkin: (Skin) -> Unit,
+    settings: SkinSettings, onChange: (SkinSettings) -> Unit,
+    toolbarSize: Int, onToolbarSize: (Int) -> Unit,
+    background: PreviewBackground, hasPhoto: Boolean,
+    choose: (PreviewBackground) -> Unit, launchPicker: () -> Unit,
+) {
+    SettingsSectionHeader("UI style")
+    SkinChoiceTiles(skin, onSkin)
+    LiquidSegmentedControl(
+        segments = listOf("Light", "Dark"),
+        selectedIndex = settings.themeMode.ordinal,
+        onSelected = { index -> onChange(settings.copy(themeMode = AppThemeMode.entries[index])) },
+        modifier = Modifier.fillMaxWidth(),
+        // The control sits beside a recorded preview, not over one; a
+        // plain indicator reads in light and dark alike.
+        useLiquidGlass = false,
+    )
+    SettingsSectionHeader("Toolbar")
+    ToolbarStageSelector(toolbarSize, onSelect = onToolbarSize)
+    ToolbarOrientationChoice(toolbarSize)
+    SettingsSectionHeader("Preview")
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(Ui.Space.s),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("Preview on", style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        PreviewBackground.entries.forEach { option ->
+            SettingsChoiceChip(
+                selected = background == option,
+                onClick = {
+                    if (option == PreviewBackground.PHOTO && !hasPhoto) launchPicker() else choose(option)
+                },
+                label = option.label,
+            )
+        }
+        if (background == PreviewBackground.PHOTO && hasPhoto) {
+            TextButton(onClick = launchPicker, modifier = Modifier.heightIn(min = 44.dp)) {
+                Text("Change photo")
             }
         }
     }
@@ -576,30 +615,31 @@ private fun IconsGroup() {
 }
 
 @Composable
-private fun BackgroundGroup(skin: Skin, settings: SkinSettings, onChange: (SkinSettings) -> Unit) {
-    SettingsSectionHeader("Panels and bars")
-    if (skin == Skin.SPOTIGLASS) {
-        AppearanceSlider(
-            "Toolbar background opacity", "%.0f%%".format(settings.spotiglassToolbarOpacity * 100),
-            settings.spotiglassToolbarOpacity, 0f..1f,
-            note = "0% is clear, 100% solid. The bar and its tool strip are one surface at this opacity; " +
-                "menus and the pen panel stay at least 55% solid so their text reads.",
-        ) { onChange(settings.copy(spotiglassToolbarOpacity = it)) }
-    }
-    AppearanceSlider("Blur radius", "%.0f dp".format(settings.blur), settings.blur, SkinSettings.BLUR_RANGE,
-        note = "How much the page behind a panel or popup is blurred.",
-        disabledReason = if (skin == Skin.MATERIAL) "Material panels are solid" else null,
-    ) { onChange(settings.copy(blur = it)) }
-    AppearanceSlider("Blur vibrancy", "+%.0f%%".format(settings.vibrancy * 100), settings.vibrancy,
-        SkinSettings.VIBRANCY_RANGE,
-        disabledReason = if (skin == Skin.MATERIAL) "Material panels are solid" else null,
-    ) { onChange(settings.copy(vibrancy = it)) }
+private fun PanelsGroup(skin: Skin, settings: SkinSettings, onChange: (SkinSettings) -> Unit) {
+    val defaults = SkinSettings()
+    SettingsSectionHeader("Panels, menus and the toolbar")
     // One corner for every style: the toolbar, its menus and the panels take
     // the same curve whichever style is on (see [chromeCorner]).
-    val corner = settings.spotiglassCorner
-    AppearanceSlider("Corner radius", "%.0f dp".format(corner), corner, SkinSettings.CORNER_RANGE,
-        note = "Shared by every style: the toolbar, its menus and panels.",
+    AppearanceSlider("Corner radius", "%.0f dp".format(settings.spotiglassCorner), settings.spotiglassCorner,
+        SkinSettings.CORNER_RANGE, step = 1f, default = defaults.spotiglassCorner,
+        note = "Shared by every style.",
     ) { onChange(settings.copy(spotiglassCorner = it)) }
+    AppearanceSlider("Frost", "%.0f%%".format(settings.frost * 100), settings.frost, 0f..1f,
+        step = 0.01f, default = defaults.frost,
+        note = "How much the page behind is blurred, and how much colour comes through the blur.",
+        disabledReason = if (skin == Skin.MATERIAL) "Material panels are solid" else null,
+    ) { onChange(settings.withFrost(it)) }
+    if (skin == Skin.SPOTIGLASS) {
+        AppearanceSlider("Transparency", "%.0f%%".format(settings.transparency * 100), settings.transparency, 0f..1f,
+            step = 0.01f, default = defaults.transparency,
+            note = "0% is solid, 100% clear glass - the panels and the toolbar together. " +
+                "Menus and the pen panel stay solid enough to read.",
+        ) { onChange(settings.withTransparency(it)) }
+        AppearanceSlider("Reflection", "%.0f%%".format(settings.reflection * 100), settings.reflection,
+            SkinSettings.REFLECTION_RANGE, step = 0.01f, default = defaults.reflection,
+            note = "The light the glass catches: its bright rim and the sheen across its top.",
+        ) { onChange(settings.copy(reflection = it)) }
+    }
 }
 
 @Composable
@@ -611,17 +651,13 @@ private fun GlassGroup(skin: Skin, settings: SkinSettings, onChange: (SkinSettin
         }
         return
     }
-    if (skin == Skin.SPOTIGLASS) {
-        SettingsSectionHeader("Liquid glass")
-        AppearanceSlider("Glass clarity", "%.0f%%".format(settings.spotiglassClarity * 100),
-            settings.spotiglassClarity, 0f..1f, note = "0% is frosted solid, 100% clear glass.",
-        ) { onChange(settings.copy(spotiglassClarity = it)) }
-        AppearanceSlider("Interaction strength", "%.0f%%".format(settings.spotiglassResponse * 100),
-            settings.spotiglassResponse, 0f..1f, note = "How far the lens stretches and lifts on press and slide.",
-        ) { onChange(settings.copy(spotiglassResponse = it)) }
-    }
+    val defaults = SkinSettings()
     SettingsSectionHeader("Lens")
-    Text("Refraction direction", style = MaterialTheme.typography.bodyLarge)
+    AppearanceSlider("Depth", "%.0f dp".format(settings.depth), settings.depth, SkinSettings.DEPTH_RANGE,
+        step = 1f, default = defaults.depth,
+        note = "How far in from the edge the glass bends the page, and how strongly.",
+    ) { onChange(settings.withDepth(it)) }
+    Text("Lens direction", style = MaterialTheme.typography.bodyLarge)
     LiquidSegmentedControl(
         segments = RefractionDirection.entries.map { it.displayName },
         selectedIndex = settings.refractionDirection.ordinal,
@@ -630,14 +666,14 @@ private fun GlassGroup(skin: Skin, settings: SkinSettings, onChange: (SkinSettin
         useLiquidGlass = false,
     )
     SettingsNote("Raised is a lens standing above the page, pressed in a lens sunk into it.")
-    AppearanceSlider("Lens depth", "%.0f dp".format(settings.depth), settings.depth, SkinSettings.DEPTH_RANGE,
-        note = "How far the bending reaches in from the edge.") { onChange(settings.copy(depth = it)) }
-    AppearanceSlider("Refraction", "%.0f dp".format(settings.refraction), settings.refraction,
-        SkinSettings.REFRACTION_RANGE, note = "How far the page bends at the lens edge.",
-    ) { onChange(settings.copy(refraction = it)) }
-    AppearanceSlider("Dispersion", "%.0f%%".format(settings.dispersion * 100f), settings.dispersion,
-        SkinSettings.DISPERSION_RANGE, note = "The faint colour fringe at the edge.",
-    ) { onChange(settings.copy(dispersion = it)) }
+    if (skin == Skin.SPOTIGLASS) {
+        SettingsSectionHeader("Touch")
+        AppearanceSlider("Interaction strength", "%.0f%%".format(settings.spotiglassResponse * 100),
+            settings.spotiglassResponse, 0f..1f, step = 0.01f, default = defaults.spotiglassResponse,
+            note = "How far the lens stretches and lifts on press and slide.",
+        ) { onChange(settings.copy(spotiglassResponse = it)) }
+    }
+    SettingsNote("Sliders, switches and segmented controls keep their own glass, whatever is set here.")
 }
 
 @Composable
@@ -724,6 +760,12 @@ private val ACCENTS = listOf(
     0xFF3F51B5, 0xFFEF6C00, 0xFFD8324B, 0xFFC2185B, 0xFF5A6472,
 ).map { it.toInt() }
 
+/**
+ * One setting as a card of its own: what it is and its value large enough to
+ * read at a glance, the slider the card's full width, and a step down and up
+ * either side of it for the last bit - easier than landing a finger on a
+ * value. Tapping the value puts it back to its default.
+ */
 @Composable
 private fun AppearanceSlider(
     label: String,
@@ -732,26 +774,55 @@ private fun AppearanceSlider(
     range: ClosedFloatingPointRange<Float>,
     note: String? = null,
     disabledReason: String? = null,
+    step: Float = if (range.endInclusive - range.start >= 20f) 1f else 0.01f,
+    default: Float? = null,
     onChange: (Float) -> Unit,
 ) {
-    Column(Modifier.fillMaxWidth().disabledReason(disabledReason)) {
+    val scheme = MaterialTheme.colorScheme
+    val shape = RoundedCornerShape(nestedCorner(Ui.Corner.card))
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(scheme.surfaceContainerHigh.copy(alpha = 0.6f))
+            .disabledReason(disabledReason)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(Ui.Space.xs),
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-            Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
+            Text(label, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            val resettable = default != null && disabledReason == null && kotlin.math.abs(current - default) > step / 2f
+            Text(
+                value,
+                style = MaterialTheme.typography.titleMedium,
+                color = scheme.onPrimaryContainer,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(scheme.primaryContainer)
+                    .then(if (resettable) Modifier.clickable(onClickLabel = "Reset to default") { onChange(default!!) } else Modifier)
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+            )
         }
         if (note != null) SettingsNote(note)
         if (disabledReason != null) {
-            Text(disabledReason, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            Text(disabledReason, style = MaterialTheme.typography.bodySmall, color = scheme.error)
         } else {
-            Spacer(Modifier.height(4.dp))
-            SkinSlider(
-                value = current.coerceIn(range),
-                onValueChange = onChange,
-                valueRange = range,
-                modifier = Modifier.fillMaxWidth(),
-                // Whole steps where the range is wide enough to be counted in them.
-                step = if (range.endInclusive - range.start >= 20f) 1f else 0f,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Ui.Space.xs)) {
+                fun nudge(by: Float) = onChange((current + by).coerceIn(range))
+                IconButton(onClick = { nudge(-step) }, modifier = Modifier.size(Ui.Size.touch)) {
+                    Text("−", style = MaterialTheme.typography.titleLarge)
+                }
+                SkinSlider(
+                    value = current.coerceIn(range),
+                    onValueChange = onChange,
+                    valueRange = range,
+                    modifier = Modifier.weight(1f).heightIn(min = Ui.Size.touch),
+                    step = step,
+                )
+                IconButton(onClick = { nudge(step) }, modifier = Modifier.size(Ui.Size.touch)) {
+                    Text("+", style = MaterialTheme.typography.titleLarge)
+                }
+            }
         }
     }
 }

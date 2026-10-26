@@ -27,13 +27,13 @@ data class SkinSettings(
     /** 시스템 설정과 무관하게 앱에서 선택한 라이트/다크 모드입니다. */
     val themeMode: AppThemeMode = AppThemeMode.LIGHT,
     /** How far the backdrop is scattered behind a panel. This is the frost. */
-    val blur: Float = 20f,
+    val blur: Float = 30f,
     /** Saturation lift on the blurred backdrop; glass makes colour, not mud. */
-    val vibrancy: Float = 0.42f,
+    val vibrancy: Float = 0.6f,
     /** 굴절이 가장자리에서 안쪽으로 파고드는 깊이(dp). */
-    val depth: Float = LiquidGlassTokens.refractionDepth.value,
+    val depth: Float = 16f,
     /** 렌즈가 배경 픽셀을 휘게 하는 거리(dp). */
-    val refraction: Float = LiquidGlassTokens.refractionAmount.value,
+    val refraction: Float = 32f,
     /** 가장자리의 배경 픽셀을 바깥/안쪽 어느 방향으로 굴절할지 정합니다. */
     val refractionDirection: RefractionDirection = RefractionDirection.RAISED,
     /** RGB 파장이 갈라지는 색수차의 체감 강도(0~1). */
@@ -53,13 +53,18 @@ data class SkinSettings(
      */
     val corner: Float = 26f,
     /** Spotiglass의 투명도. 0은 불투명, 1은 가장 맑은 유리입니다. */
-    val spotiglassClarity: Float = 0.75f,
+    val spotiglassClarity: Float = 0.9f,
     /** 도구바 배경의 불투명도. 렌즈 굴절과 아이콘에는 적용하지 않습니다. */
-    val spotiglassToolbarOpacity: Float = 0.205f,
+    val spotiglassToolbarOpacity: Float = 0.08f,
     /** 누름/슬라이드에 따른 렌즈의 늘어남과 들림 강도입니다. */
     val spotiglassResponse: Float = 1f,
     /** The corner of every skin's chrome; the name is from when only Liquid glass had one. */
     val spotiglassCorner: Float = 32f,
+    /**
+     * How strongly the glass catches the light along its edge - the bright
+     * rim and the sheen down from the top. 0 is a plain edge.
+     */
+    val reflection: Float = 0.75f,
     /**
      * Everything legible before everything pretty. Darkens the accent, makes
      * the glass solid, thickens every edge and gives the outlines their weight
@@ -85,8 +90,49 @@ data class SkinSettings(
         .put("spotiglassToolbarOpacity", spotiglassToolbarOpacity.toDouble())
         .put("spotiglassResponse", spotiglassResponse.toDouble())
         .put("spotiglassCorner", spotiglassCorner.toDouble())
+        .put("reflection", reflection.toDouble())
+        .put("opticsVersion", OPTICS_VERSION)
         .put("highContrast", highContrast)
         .toString()
+
+    /** Whether the optics are still the ones a fresh install had before [OPTICS_VERSION] 2. */
+    internal fun hasOriginalOptics(): Boolean {
+        val o = ORIGINAL
+        fun same(a: Float, b: Float) = kotlin.math.abs(a - b) < 0.001f
+        return same(blur, o.blur) && same(vibrancy, o.vibrancy) && same(depth, o.depth) &&
+            same(refraction, o.refraction) && same(spotiglassClarity, o.spotiglassClarity) &&
+            same(spotiglassToolbarOpacity, o.spotiglassToolbarOpacity)
+    }
+
+    /**
+     * These settings with [ORIGINAL]'s optics: what sliders, switches and
+     * segmented controls are drawn with, so tuning the panels never changes
+     * how a control looks or feels. Colours, theme and contrast still follow.
+     */
+    fun controlOptics(): SkinSettings = ORIGINAL.copy(
+        themeMode = themeMode, tint = tint, border = border, content = content, accent = accent,
+        highContrast = highContrast,
+    )
+
+    /** The frost, 0 to 1: blur and the colour lift that goes with it, set as one. */
+    val frost: Float get() = (blur / BLUR_RANGE.endInclusive).coerceIn(0f, 1f)
+    fun withFrost(f: Float): SkinSettings {
+        val x = f.coerceIn(0f, 1f)
+        return copy(blur = BLUR_RANGE.endInclusive * x, vibrancy = 0.2f + 0.8f * x)
+    }
+
+    /** How clear the glass is, 0 to 1: the panels' clarity and the bar's own opacity, set as one. */
+    val transparency: Float get() = spotiglassClarity
+    fun withTransparency(t: Float): SkinSettings {
+        val x = t.coerceIn(0f, 1f)
+        return copy(spotiglassClarity = x, spotiglassToolbarOpacity = 0.8f * (1f - x))
+    }
+
+    /** The lens's depth in dp: how far in the bending reaches, and how far it bends with it. */
+    fun withDepth(dp: Float): SkinSettings {
+        val d = dp.coerceIn(DEPTH_RANGE)
+        return copy(depth = d, refraction = (2f * d).coerceIn(REFRACTION_RANGE))
+    }
 
     companion object {
         val DEFAULT_TINT = Color(0xFFFFFFFF).copy(alpha = 0.30f).toArgb()
@@ -97,7 +143,7 @@ data class SkinSettings(
         fun fromJson(raw: String?): SkinSettings {
             val json = runCatching { JSONObject(raw.orEmpty()) }.getOrNull() ?: return SkinSettings()
             val d = SkinSettings()
-            return SkinSettings(
+            val read = SkinSettings(
                 themeMode = runCatching {
                     AppThemeMode.valueOf(json.optString("themeMode", d.themeMode.name))
                 }.getOrDefault(d.themeMode),
@@ -124,9 +170,38 @@ data class SkinSettings(
                     .toFloat().takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: d.spotiglassResponse,
                 spotiglassCorner = json.optDouble("spotiglassCorner", d.spotiglassCorner.toDouble())
                     .toFloat().takeIf { it.isFinite() }?.coerceIn(CORNER_RANGE) ?: d.spotiglassCorner,
+                reflection = json.optDouble("reflection", LEGACY_REFLECTION.toDouble())
+                    .toFloat().takeIf { it.isFinite() }?.coerceIn(REFLECTION_RANGE) ?: LEGACY_REFLECTION,
                 highContrast = json.optBoolean("highContrast", d.highContrast),
             )
+            // Saved before the glass took its present look: optics never moved
+            // from the old defaults take the new ones; any the reader set are kept,
+            // with the edge they were seen with.
+            if (json.optInt("opticsVersion", 1) < OPTICS_VERSION && read.hasOriginalOptics()) {
+                return read.copy(blur = d.blur, vibrancy = d.vibrancy, depth = d.depth, refraction = d.refraction,
+                    spotiglassClarity = d.spotiglassClarity, spotiglassToolbarOpacity = d.spotiglassToolbarOpacity,
+                    reflection = d.reflection)
+            }
+            return read
         }
+
+        /** The look's version; 2 is the glass after the reference photo. */
+        const val OPTICS_VERSION = 2
+
+        /** The edge as it was drawn before [reflection] could be set. */
+        const val LEGACY_REFLECTION = 0.35f
+
+        /**
+         * The glass as it was before it took the reference photo's look: the
+         * optics sliders and switches keep, whatever the panels are set to.
+         */
+        val ORIGINAL = SkinSettings(
+            blur = 20f, vibrancy = 0.42f,
+            depth = LiquidGlassTokens.refractionDepth.value, refraction = LiquidGlassTokens.refractionAmount.value,
+            refractionDirection = RefractionDirection.RAISED, dispersion = LiquidGlassTokens.dispersion,
+            spotiglassClarity = 0.75f, spotiglassToolbarOpacity = 0.205f, spotiglassResponse = 1f,
+            spotiglassCorner = 32f, reflection = LEGACY_REFLECTION,
+        )
 
         /** What each control may be set to, so the screen and the shader agree. */
         val BLUR_RANGE = 0f..60f
@@ -135,6 +210,7 @@ data class SkinSettings(
         val REFRACTION_RANGE = 0f..52f
         val DISPERSION_RANGE = 0f..1f
         val CORNER_RANGE = 0f..48f
+        val REFLECTION_RANGE = 0f..1f
     }
 }
 
