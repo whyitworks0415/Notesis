@@ -233,23 +233,3 @@ internal fun sidebarContentAlpha(progress: Float): Float =
     ((progress - SIDEBAR_CONTENT_DELAY) / (1f - SIDEBAR_CONTENT_DELAY)).coerceIn(0f, 1f)
 
 private const val SIDEBAR_CONTENT_DELAY = 0.25f
-
-/**
- * How big the note's chrome - the toolbar, its buttons, the way back - is
- * drawn in a window [widthDp] by [heightDp]: as designed (a hair under) on a
- * phone or in a split, growing to a fifth larger on a whole tablet.
- * Read from the window's shorter side, so turning the device keeps it.
- */
-internal fun chromeScaleFor(widthDp: Int, heightDp: Int): Float {
-    val shortest = minOf(widthDp, heightDp).toFloat()
-    val t = ((shortest - CHROME_SMALL_DP) / (CHROME_LARGE_DP - CHROME_SMALL_DP)).coerceIn(0f, 1f)
-    val scale = CHROME_SCALE_MIN + (CHROME_SCALE_MAX - CHROME_SCALE_MIN) * t
-    // In twentieths, so a window resized by a few pixels does not resize the bar.
-    return kotlin.math.round(scale * 20f) / 20f
-}
-
-private const val CHROME_SMALL_DP = 360f
-private const val CHROME_LARGE_DP = 900f
-/** No smaller: the round buttons are the capsule's height, and below this they would be under the 44dp a finger needs. */
-private const val CHROME_SCALE_MIN = 0.95f
-private const val CHROME_SCALE_MAX = 1.2f

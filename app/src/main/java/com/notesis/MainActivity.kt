@@ -255,6 +255,7 @@ class MainActivity : ComponentActivity() {
         Planner.init(applicationContext)
         ToolbarMotion.init(applicationContext)
         ToolbarOrientation.init(applicationContext)
+        ToolbarScale.init(applicationContext)
         LaserSettings.init(applicationContext)
         // A real start, not a rotation: first-run mode shows the welcome and the tutorial again.
         if (savedInstanceState == null) Onboarding.startAsFirstRunIfAsked(applicationContext)
@@ -401,10 +402,8 @@ class MainActivity : ComponentActivity() {
                     // fresh screen instead of showing the old document until
                     // the new one finishes loading into state that was kept.
                     key(note.id) {
-                    // The toolbar and its buttons sized for the window: smaller in a
-                    // split or on a phone, larger on a whole tablet.
-                    val window = LocalConfiguration.current
-                    CompositionLocalProvider(LocalChromeScale provides chromeScaleFor(window.screenWidthDp, window.screenHeightDp)) {
+                    // The smaller bars and their buttons at the size set in the toolbar's settings.
+                    CompositionLocalProvider(LocalChromeScale provides ToolbarScale.scale) {
                     NoteScreen(
                         store = store,
                         note = note,

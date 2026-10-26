@@ -94,10 +94,38 @@ internal fun spotiToolbarTools(level: Int): List<SpotiToolbarTool> = ToolbarLayo
  * across: its top row and pen row are rows.
  */
 /**
- * The size the note's chrome is drawn at for the window it is in; see
- * [chromeScaleFor]. 1 outside the note screen.
+ * The size the note's chrome - the smaller bars, their icons, the Functions
+ * button and the way back - is drawn at: [ToolbarScale]'s, where it is
+ * provided; 1 elsewhere.
  */
 internal val LocalChromeScale = staticCompositionLocalOf { 1f }
+
+/** How big the smaller bars are drawn, as the reader sets it. Kept between runs. */
+internal object ToolbarScale {
+    private var prefs: android.content.SharedPreferences? = null
+
+    const val MIN = 0.9f
+    const val MAX = 1.4f
+    const val STEP = 0.05f
+
+    var scale by mutableFloatStateOf(1f)
+        private set
+
+    fun init(context: android.content.Context) {
+        if (prefs != null) return
+        val p = context.getSharedPreferences("pens", android.content.Context.MODE_PRIVATE)
+        prefs = p
+        scale = p.getFloat(KEY, 1f).coerceIn(MIN, MAX)
+    }
+
+    fun choose(value: Float) {
+        // In whole steps, so the slider's stops are what is kept.
+        scale = (kotlin.math.round(value / STEP) * STEP).coerceIn(MIN, MAX)
+        prefs?.edit()?.putFloat(KEY, scale)?.apply()
+    }
+
+    private const val KEY = "toolbarScale"
+}
 
 /** The height of a tool strip's capsule, and so of every round button beside it. */
 @Composable
@@ -168,6 +196,20 @@ internal fun ToolbarOrientationChoice(sizeLevel: Int) {
     if (sizeLevel == 0 && ToolbarOrientation.vertical) {
         Text("1/4 is the whole bar, with its top row and pen row, and always runs across. 2/4 to 4/4 run down the side.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+    }
+    // How big the 2/4 to 4/4 bars are drawn, with their buttons and the way back.
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+        Text("Scale", style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        SkinSlider(
+            value = ToolbarScale.scale,
+            onValueChange = { ToolbarScale.choose(it) },
+            valueRange = ToolbarScale.MIN..ToolbarScale.MAX,
+            step = ToolbarScale.STEP,
+            modifier = Modifier.weight(1f),
+        )
+        Text("${(ToolbarScale.scale * 100).roundToInt()}%", style = MaterialTheme.typography.labelMedium,
+            modifier = Modifier.widthIn(min = 40.dp))
     }
 }
 

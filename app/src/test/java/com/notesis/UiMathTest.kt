@@ -140,19 +140,4 @@ class UiMathTest {
         val empty = backdropAlignment(0f, 0f, 10f, 20f, 10f, 20f, 0f, 0f)
         assertEquals(1f, empty.scaleX, 0f)
     }
-
-    @Test fun `the chrome grows with the window's shorter side, within a finger's size and a fifth over`() {
-        // A phone, either way round: no smaller than keeps a 44dp button.
-        assertEquals(0.95f, chromeScaleFor(360, 780), 0.001f)
-        assertEquals(chromeScaleFor(360, 780), chromeScaleFor(780, 360), 0f)
-        assertTrue(48f * chromeScaleFor(300, 300) >= 44f)
-        // A whole tablet, at the top.
-        assertEquals(1.2f, chromeScaleFor(1280, 900), 0.001f)
-        assertEquals(1.2f, chromeScaleFor(2000, 1600), 0.001f)
-        // Half a tablet, in between, and never more than the whole one.
-        val half = chromeScaleFor(640, 900)
-        assertTrue(half > 0.95f && half < 1.2f)
-        // In twentieths: a few pixels of resize leave it alone.
-        assertEquals(chromeScaleFor(640, 900), chromeScaleFor(642, 900), 0f)
-    }
 }

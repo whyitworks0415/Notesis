@@ -295,11 +295,11 @@ private fun InteractiveToolbarPreview(sizeLevel: Int, onSizeLevel: (Int) -> Unit
     ) {
         // Down the side the bar is as long as its tools, so it is shrunk to the stage both ways.
         val vertical = ToolbarOrientation.vertical && sizeLevel > 0
-        Box(if (vertical) Modifier.weight(1f, fill = false).fitInside() else Modifier.previewFit(spotiToolbarWidth(sizeLevel))) {
+        Box(if (vertical) Modifier.weight(1f, fill = false).fitInside() else Modifier.previewFit(spotiToolbarWidth(sizeLevel, LocalChromeScale.current))) {
             SpotiGlassToolbar(
                 sizeLevel = sizeLevel, onSizeLevel = onSizeLevel, mode = mode,
                 toolColors = toolColors,
-                targetWidth = spotiToolbarWidth(sizeLevel), docked = false, modifier = Modifier, onDrag = {},
+                targetWidth = spotiToolbarWidth(sizeLevel, LocalChromeScale.current), docked = false, modifier = Modifier, onDrag = {},
                 onTool = { tool -> tool.mode?.let { mode = it } },
                 functions = listOf(
                     listOf(
@@ -473,7 +473,7 @@ internal fun AppearanceSettings(
             ToolbarPreviewStage(background, photo, Modifier.fillMaxWidth().height(PREVIEW_STAGE_HEIGHT), interactive = true) {
                 // The preview shows the draft while the note behind keeps the
                 // committed look until the hand rests.
-                CompositionLocalProvider(LocalSkinSettings provides settings) {
+                CompositionLocalProvider(LocalSkinSettings provides settings, LocalChromeScale provides ToolbarScale.scale) {
                     InteractiveToolbarPreview(toolbarSize, onToolbarSize)
                 }
             }
