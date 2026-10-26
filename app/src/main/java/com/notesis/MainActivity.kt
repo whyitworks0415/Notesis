@@ -3974,9 +3974,17 @@ private fun NoteScreen(
     val maxBarWidth = with(density) {
         (containerSize.width.takeIf { it > 0 } ?: Int.MAX_VALUE).toDp()
     }
+    // The smaller bars leave the way back in the top left corner. Across the
+    // top, a bar centred in a narrow window would lie over it, so there it
+    // starts past the button instead, and is no wider than the room left.
+    val backReserve = 12.dp + barButtonSize() + Ui.Space.s
+    val wantedBarWidth = spotiToolbarWidth(shownToolbarSize, LocalChromeScale.current)
+    val barCrowdsBack = shownToolbarSize > 0 && !barVertical && (maxBarWidth - wantedBarWidth) / 2 < backReserve
+    val barRoom = if (barCrowdsBack) (maxBarWidth - backReserve - 12.dp).coerceAtLeast(120.dp) else maxBarWidth
+    val barClearStartPx = with(density) { if (barCrowdsBack) backReserve.toPx() else 0f }
     val toolbarEffects = rememberLiquidGlassEffectsAllowed() && !LocalSkinSettings.current.highContrast
     val floatingBarWidth = animateDpAsState(
-        minOf(maxBarWidth, spotiToolbarWidth(shownToolbarSize, LocalChromeScale.current)),
+        minOf(barRoom, wantedBarWidth),
         // Material and Glassmorphism switch sizes at once; only Liquid glass morphs.
         if (skin.animatesChrome && toolbarEffects) ToolbarMotion.spec() else tween(0),
         label = "Top bar mode width",
@@ -4217,7 +4225,7 @@ private fun NoteScreen(
             pen = pen,
             toolPens = settings,
             toolbarTargetWidth = if (previewLevel != null) spotiToolbarWidth(previewLevel, LocalChromeScale.current)
-                else minOf(maxBarWidth, spotiToolbarWidth(toolbarSize, LocalChromeScale.current)),
+                else minOf(barRoom, spotiToolbarWidth(toolbarSize, LocalChromeScale.current)),
             mode = mode,
             shapeKind = shapeKind,
             straightLine = straightLine,
@@ -4311,7 +4319,7 @@ private fun NoteScreen(
             onResetBar = { barOffset = null },
             onSettings = { openSettings(it) },
             onDragBar = { delta ->
-                val at = barPlacement(barOffset, barSize, containerSize, barVertical, barRight)
+                val at = barPlacement(barOffset, barSize, containerSize, barVertical, barRight, barClearStartPx)
                 if (docked) { docked = false; penStore.docked = false }
                 barOffset = Offset(at.x + delta.x, at.y + delta.y)
             },
@@ -4925,7 +4933,7 @@ private fun NoteScreen(
                     // Placed and clamped together: the folded handle can be
                     // dragged anywhere, and unfolding measures the wide bar and
                     // pulls it back inside rather than letting it hang off.
-                    .offset { barPlacement(barOffset, barSize, containerSize, barVertical, barRight) }
+                    .offset { barPlacement(barOffset, barSize, containerSize, barVertical, barRight, barClearStartPx) }
                     .onSizeChanged { barSize = it }
                     .windowInsetsPadding(ChromeInsets)
                     .padding(12.dp),
@@ -6227,6 +6235,10 @@ private fun NoteScreen(
                     barVertical -> Modifier.align(Alignment.CenterStart)
                         .windowInsetsPadding(ChromeInsets.only(WindowInsetsSides.Start))
                         .padding(start = Ui.Space.s)
+                    // Past the way back, when centred it would lie over it.
+                    shownToolbarSize > 0 && barCrowdsBack -> Modifier.align(Alignment.TopStart).padding(start = backReserve)
+                        .spotiToolbarAnimatedWidth(floatingBarWidth)
+                        .windowInsetsPadding(ChromeInsets.only(WindowInsetsSides.Top))
                     shownToolbarSize > 0 -> Modifier.align(Alignment.TopCenter).spotiToolbarAnimatedWidth(floatingBarWidth)
                         .windowInsetsPadding(ChromeInsets.only(WindowInsetsSides.Top))
                     else -> Modifier.align(Alignment.TopCenter).fillMaxWidth()
@@ -6640,10 +6652,14 @@ private fun barPlacement(offset: Offset, bar: IntSize, container: IntSize): IntO
     return IntOffset(offset.x.coerceIn(0f, maxX).toInt(), offset.y.coerceIn(0f, maxY).toInt())
 }
 
-private fun barPlacement(offset: Offset?, bar: IntSize, container: IntSize, vertical: Boolean = false, right: Boolean = false): IntOffset {
+private fun barPlacement(
+    offset: Offset?, bar: IntSize, container: IntSize, vertical: Boolean = false, right: Boolean = false,
+    /** Across the top, how far in from the left it must start to keep clear of the way back. */
+    clearStart: Float = 0f,
+): IntOffset {
     // Not moved yet: across the top in the middle, or down the chosen side in the middle.
     val start = offset ?: if (vertical) Offset(if (right) (container.width - bar.width).toFloat() else 0f, (container.height - bar.height) / 2f)
-        else Offset((container.width - bar.width) / 2f, 0f)
+        else Offset(maxOf((container.width - bar.width) / 2f, clearStart), 0f)
     return barPlacement(start, bar, container)
 }
 

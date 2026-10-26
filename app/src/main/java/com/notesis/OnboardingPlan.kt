@@ -88,21 +88,21 @@ internal object WelcomeTimeline {
     val FILL = 1100L..1600L
     /** The line under the name. */
     val TAGLINE = 1300L..1800L
-    /** A square of white paper, the icon's shape, laid down below the name. */
-    val PAPER = 1600L..1950L
     /** The pen set down where ">" starts. */
-    val PEN_IN = 1750L..2000L
-    /** ">" written, roughly. */
-    val CHEVRON = 2000L..2600L
-    /** ">" coming clean as the pen leaves it - the app's own trick. */
-    val CHEVRON_SNAP = 2600L..2850L
+    val PEN_IN = 1600L..1850L
+    /** The icon's rounded square, a line drawing itself roughly round, as a hand would. */
+    val FRAME = 1750L..2600L
+    /** ">" written roughly by the pen, while the square draws itself. */
+    val CHEVRON = 1850L..2550L
+    /** The rough square and ">" coming clean together - the app's own trick. */
+    val SNAP = 2650L..2900L
     /** The pen lifted off ">" and held over its place. */
-    val LIFT = 2600L..2900L
+    val LIFT = 2650L..2950L
     /** Let go: it falls, strikes, rocks and settles. See [WelcomeDrop]. */
-    val FALL = 2900L..3550L
+    val FALL = 2950L..3600L
     /** The page folding into the guide note's card. */
-    val EXIT = 4100L..4700L
-    const val TOTAL = 4700L
+    val EXIT = 4150L..4750L
+    const val TOTAL = 4750L
 
     /** 0 before [window], 1 after it, linear in between. */
     fun progress(window: LongRange, t: Float): Float {
@@ -115,8 +115,8 @@ internal object WelcomeTimeline {
 
 /**
  * The app's mark as the welcome draws it, on the launcher icon's 1024 grid:
- * a rounded square of paper, ">" written on it roughly and coming clean, and
- * the pen dropped to lie where "_" goes.
+ * the icon's rounded square as a line, ">" written inside it, both rough and
+ * then clean, and the pen dropped to lie where "_" goes.
  */
 internal object WelcomeMark {
     const val SIZE = 1024f
@@ -132,6 +132,60 @@ internal object WelcomeMark {
     const val WRITING_ANGLE = -72f
     /** How far a hand's line strays from the clean one, on this grid. */
     private const val WOBBLE = 22f
+
+    /** How far round the square it is. */
+    val perimeter: Float get() = 4f * (SIZE - 2f * CORNER) + 2f * PI.toFloat() * CORNER
+
+    /**
+     * The point [distance] round the clean square, clockwise from the middle
+     * of the top left corner's left edge - where a hand starts a box.
+     */
+    fun framePoint(distance: Float): Pair<Float, Float> {
+        val r = CORNER
+        val straight = SIZE - 2f * r
+        val quarter = PI.toFloat() * r / 2f
+        var d = ((distance % perimeter) + perimeter) % perimeter
+        fun arc(cx: Float, cy: Float, from: Float): Pair<Float, Float> {
+            val a = Math.toRadians((from + 90f * d / quarter).toDouble())
+            return (cx + r * cos(a)).toFloat() to (cy + r * sin(a)).toFloat()
+        }
+        if (d < quarter) return arc(r, r, 180f)
+        d -= quarter
+        if (d < straight) return (r + d) to 0f
+        d -= straight
+        if (d < quarter) return arc(SIZE - r, r, 270f)
+        d -= quarter
+        if (d < straight) return SIZE to (r + d)
+        d -= straight
+        if (d < quarter) return arc(SIZE - r, SIZE - r, 0f)
+        d -= quarter
+        if (d < straight) return (SIZE - r - d) to SIZE
+        d -= straight
+        if (d < quarter) return arc(r, SIZE - r, 90f)
+        d -= quarter
+        return 0f to (SIZE - r - d)
+    }
+
+    /**
+     * The square as a hand draws it, [along] of the way round (0 to 1):
+     * wandering a little and running on past where it began. [clean] moves
+     * it onto the exact square, so 1 is the shape it snaps to.
+     */
+    fun roughFramePoint(along: Float, clean: Float): Pair<Float, Float> {
+        val (ex, ey) = framePoint(along * perimeter)
+        val (rx, ry) = framePoint(along * 1.04f * perimeter)
+        val turn = along * 2f * PI.toFloat()
+        val drift = WOBBLE * (sin(turn * 3f) + 0.6f * sin(turn * 7.3f + 1.1f))
+        val x = rx + cos(turn) * drift
+        val y = ry + sin(turn * 1.7f) * drift
+        return (x + (ex - x) * clean) to (y + (ey - y) * clean)
+    }
+
+    /** How far round the square the line has gone at [t], 0 to 1. */
+    fun frameDrawn(t: Float) = easeInOutQuad(WelcomeTimeline.progress(WelcomeTimeline.FRAME, t))
+
+    /** How far the square and ">" have come clean at [t], 0 to 1. */
+    fun clean(t: Float) = easeOut(WelcomeTimeline.progress(WelcomeTimeline.SNAP, t))
 
     /** The point [fraction] of the way along the clean ">", both strokes the same length. */
     fun chevronPoint(fraction: Float): Pair<Float, Float> {
@@ -157,12 +211,6 @@ internal object WelcomeMark {
 
     /** How much of ">" is written at [t], 0 to 1. */
     fun chevronDrawn(t: Float) = easeInOutQuad(WelcomeTimeline.progress(WelcomeTimeline.CHEVRON, t))
-
-    /** How far ">" has come clean at [t], 0 to 1. */
-    fun chevronClean(t: Float) = easeOut(WelcomeTimeline.progress(WelcomeTimeline.CHEVRON_SNAP, t))
-
-    /** How far the paper has come in at [t], 0 to 1. */
-    fun paper(t: Float) = easeOut(WelcomeTimeline.progress(WelcomeTimeline.PAPER, t))
 
     /** Where the pen is at [t], or null before it comes in. */
     fun pen(t: Float): WelcomePen? {

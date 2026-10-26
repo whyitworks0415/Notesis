@@ -59,12 +59,44 @@ class OnboardingPlanTest {
         assertEquals(0f, t.progress(t.WRITE, 0f), 0f)
         assertEquals(0.5f, t.progress(t.WRITE, 750f), 0.0001f)
         assertEquals(1f, t.progress(t.WRITE, 2000f), 0f)
-        assertTrue(t.PAPER.first < t.PEN_IN.first && t.PEN_IN.last <= t.CHEVRON.first)
+        // The square and ">" are drawn at the same time, and come clean together after both.
+        assertTrue(t.FRAME.first < t.CHEVRON.last && t.CHEVRON.first < t.FRAME.last)
+        assertTrue(t.FRAME.last <= t.SNAP.first && t.CHEVRON.last <= t.SNAP.first)
         assertTrue(t.CHEVRON.last <= t.LIFT.first && t.LIFT.last <= t.FALL.first && t.FALL.last < t.EXIT.first)
         assertEquals(t.TOTAL, t.EXIT.last)
-        for (window in listOf(t.WRITE, t.FILL, t.TAGLINE, t.PAPER, t.PEN_IN, t.CHEVRON, t.CHEVRON_SNAP, t.LIFT, t.FALL, t.EXIT)) {
+        for (window in listOf(t.WRITE, t.FILL, t.TAGLINE, t.PEN_IN, t.FRAME, t.CHEVRON, t.SNAP, t.LIFT, t.FALL, t.EXIT)) {
             assertEquals(1f, t.progress(window, t.TOTAL.toFloat()), 0f)
         }
+    }
+
+    @Test fun `the square is traced from its left edge all the way round, roughly and then exactly`() {
+        val m = WelcomeMark
+        val start = m.framePoint(0f)
+        assertEquals(0f, start.first, 0.01f)
+        assertEquals(m.CORNER, start.second, 0.01f)
+        val end = m.framePoint(m.perimeter)
+        assertEquals(start.first, end.first, 0.01f)
+        assertEquals(start.second, end.second, 0.01f)
+        assertEquals(m.SIZE, m.framePoint(m.perimeter / 2f).first, 0.01f)
+        var strayed = 0f
+        for (i in 0..50) {
+            val along = i / 50f
+            val (cx, cy) = m.roughFramePoint(along, 1f)
+            val (ex, ey) = m.framePoint(along * m.perimeter)
+            assertEquals(ex, cx, 0.01f)
+            assertEquals(ey, cy, 0.01f)
+            val (rx, ry) = m.roughFramePoint(along, 0f)
+            val off = (0 until 400).minOf { j ->
+                val (sx, sy) = m.framePoint(m.perimeter * j / 400f)
+                kotlin.math.hypot(rx - sx, ry - sy)
+            }
+            strayed = maxOf(strayed, off)
+        }
+        assertTrue(strayed in 10f..80f)
+        // Rough while drawn, clean once snapped.
+        assertEquals(0f, m.clean(WelcomeTimeline.FRAME.last.toFloat()), 0f)
+        assertEquals(1f, m.clean(WelcomeTimeline.SNAP.last.toFloat()), 0f)
+        assertEquals(1f, m.frameDrawn(WelcomeTimeline.FRAME.last.toFloat()), 0f)
     }
 
     @Test fun `the rough chevron wanders, and clean it is exact`() {
@@ -128,15 +160,6 @@ class OnboardingPlanTest {
         assertEquals(m.REST_ANGLE, rest.angle, 0.01f)
         assertEquals(1f, rest.scale, 0f)
         assertEquals(0f, rest.lift, 0f)
-    }
-
-    @Test fun `the paper comes before the pen, and the chevron is written and comes clean`() {
-        val m = WelcomeMark
-        val t = WelcomeTimeline
-        assertEquals(1f, m.paper(t.CHEVRON.first.toFloat()), 0.05f)
-        assertEquals(1f, m.chevronDrawn(t.TOTAL.toFloat()), 0f)
-        assertEquals(0f, m.chevronClean(t.CHEVRON.last.toFloat()), 0f)
-        assertEquals(1f, m.chevronClean(t.TOTAL.toFloat()), 0f)
     }
 
     @Test fun `the ease out leaves quickly and lands on one`() {
