@@ -93,6 +93,26 @@ internal fun spotiToolbarTools(level: Int): List<SpotiToolbarTool> = ToolbarLayo
  * note, as where the bar sits is a habit. The whole bar (1/4) always runs
  * across: its top row and pen row are rows.
  */
+/**
+ * The size the note's chrome is drawn at for the window it is in; see
+ * [chromeScaleFor]. 1 outside the note screen.
+ */
+internal val LocalChromeScale = staticCompositionLocalOf { 1f }
+
+/** The height of a tool strip's capsule, and so of every round button beside it. */
+@Composable
+internal fun barButtonSize(): Dp = 48.dp * LocalChromeScale.current
+
+/**
+ * Where the strip's capsule starts below the top of the smaller bar's box:
+ * the bar's own inset and the strip's margin round its capsule. The way back
+ * sits this far down, so it lines up with the bar.
+ */
+internal val BAR_CAPSULE_TOP = 2.dp + 8.dp
+
+/** Across the side bar, the same: its inset and the strip's margin. */
+internal val BAR_CAPSULE_SIDE = 8.dp + 8.dp
+
 internal object ToolbarOrientation {
     private var prefs: android.content.SharedPreferences? = null
 
@@ -234,11 +254,12 @@ private fun Modifier.toolbarAnimatedHeight(enabled: Boolean): Modifier {
     }
 }
 
-internal fun spotiToolbarWidth(level: Int) = when (level) {
+/** The bar's width at each size; the smaller bars grow and shrink with the chrome ([LocalChromeScale]). */
+internal fun spotiToolbarWidth(level: Int, scale: Float = 1f) = when (level) {
     0 -> 940.dp
-    1 -> 632.dp
-    2 -> 304.dp
-    else -> 92.dp
+    1 -> 632.dp * scale
+    2 -> 304.dp * scale
+    else -> 92.dp * scale
 }
 
 internal fun Modifier.spotiToolbarAnimatedWidth(width: State<Dp>): Modifier = layout { measurable, constraints ->
@@ -336,7 +357,7 @@ internal fun Modifier.spotiGlassMorph(key: Any, enter: Boolean = false): Modifie
  */
 @Composable
 internal fun RoundBarButton(label: String, icon: ImageVector, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    SpotiActionButton(label, icon, modifier.size(52.dp), iconOnly = true, persistentGlass = true, onClick = onClick)
+    SpotiActionButton(label, icon, modifier.size(barButtonSize()), iconOnly = true, persistentGlass = true, onClick = onClick)
 }
 
 @Composable
@@ -399,7 +420,9 @@ private fun SpotiActionButton(
         Box(if (persistentGlass) body.skinMaterial(CircleShape) else body.background(fill, shape))
         Column(Modifier.padding(horizontal = Ui.Space.s, vertical = Ui.Space.xs),
             horizontalAlignment = Alignment.CenterHorizontally) {
-            icon?.let { AppIcon(it, null, Modifier.size(Ui.Icon.small), tint = content, play = taps) }
+            // On its own, a round button's glyph grows with it.
+            icon?.let { AppIcon(it, null, Modifier.size(if (iconOnly) Ui.Icon.small * LocalChromeScale.current else Ui.Icon.small),
+                tint = content, play = taps) }
             if (!iconOnly) ActionLabels(label, reason, content)
         }
     }
@@ -554,7 +577,7 @@ internal fun SpotiGlassToolbar(
                 Box {
                     if (sizeLevel == ToolbarConfig.BUTTON_ONLY_STAGE) {
                         SpotiActionButton("Tools and functions", AppIcons.functions,
-                            Modifier.size(52.dp)
+                            Modifier.size(barButtonSize())
                                 .onGloballyPositioned { functionsAt[0] = it.centerOnScreen() }
                                 .coachTargetWhileShown(coachTargets, CoachTarget.FUNCTIONS)
                                 .pointerInput(Unit) {
@@ -568,7 +591,7 @@ internal fun SpotiGlassToolbar(
                             verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
                             val shown = config.tools(sizeLevel)
                             val tallest = (LocalConfiguration.current.screenHeightDp - VERTICAL_BAR_RESERVE_DP).coerceAtLeast(160)
-                            val columns = spotiToolRows(shown, tallest.toFloat(), cellDp = 52f)
+                            val columns = spotiToolRows(shown, tallest.toFloat(), cellDp = 52f * LocalChromeScale.current)
                             Row(Modifier.coachTargetWhileShown(coachTargets, CoachTarget.TOOLS),
                                 horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
                                 columns.forEach { tools ->
@@ -584,7 +607,7 @@ internal fun SpotiGlassToolbar(
                                 }
                             }
                             SpotiActionButton("Functions", AppIcons.functions, selected = open,
-                                modifier = Modifier.size(52.dp)
+                                modifier = Modifier.size(barButtonSize())
                                     .onGloballyPositioned { functionsAt[0] = it.centerOnScreen() }
                                     .coachTargetWhileShown(coachTargets, CoachTarget.FUNCTIONS),
                                 iconOnly = true, persistentGlass = true,
@@ -597,7 +620,7 @@ internal fun SpotiGlassToolbar(
                             Box(Modifier.weight(1f).coachTargetWhileShown(coachTargets, CoachTarget.TOOLS)) {
                               // Freeze wrapping at the destination width while the
                               // spring grows the bar; avoid 6 -> 3 -> 2 -> 1 rows.
-                              val toolWidth = (targetWidth.value - 100f).coerceAtLeast(100f)
+                              val toolWidth = (targetWidth.value - 100f * LocalChromeScale.current).coerceAtLeast(100f)
                               // On the full bar the strip is inset in it; alone it is the bar.
                               val stripCorner = if (full) Ui.concentric(outer, TOOLBAR_INSET) else outer
                               Column {
@@ -620,7 +643,7 @@ internal fun SpotiGlassToolbar(
                             if (full) Box(Modifier.width(360.dp)
                                 .coachTargetWhileShown(coachTargets, CoachTarget.PEN_ROW)) { penOptions(360.dp) }
                             SpotiActionButton("Functions", AppIcons.functions, selected = open,
-                                modifier = Modifier.size(if (full) Ui.Size.touchCompact else 52.dp)
+                                modifier = Modifier.size(if (full) Ui.Size.touchCompact else barButtonSize())
                                     .onGloballyPositioned { functionsAt[0] = it.centerOnScreen() }
                                     .coachTargetWhileShown(coachTargets, CoachTarget.FUNCTIONS),
                                 iconOnly = true,
@@ -930,7 +953,8 @@ private fun ToolStrip(
     if (tools.isEmpty()) return
     val skin = LocalSkin.current
     val scheme = MaterialTheme.colorScheme
-    val barHeight = if (compact) 40.dp else 48.dp
+    val chromeScale = LocalChromeScale.current
+    val barHeight = (if (compact) 40.dp else 48.dp) * chromeScale
     val padding = 6.dp
     val cellHeight = barHeight - padding * 2
     // Liquid glass's resting pill and lens radius, from the same function.
@@ -956,7 +980,7 @@ private fun ToolStrip(
             slide.animateTo(selected.toFloat(), TOOL_HIGHLIGHT_SPRING)
         }
     }
-    val frame = if (vertical) Modifier.width(barHeight + 16.dp).height(verticalBarLength(tools.size, compact, padding))
+    val frame = if (vertical) Modifier.width(barHeight + 16.dp).height(verticalBarLength(tools.size, compact, padding, chromeScale))
         else Modifier.fillMaxWidth().height(barHeight + 16.dp)
     BoxWithConstraints(frame.selectableGroup()) {
         val cell = ((if (vertical) maxHeight else maxWidth) - padding * 2).coerceAtLeast(1.dp) / tools.size
@@ -984,7 +1008,7 @@ private fun ToolStrip(
                 }
                 .clickable(role = Role.Tab, onClick = { onPick(tool) }),
                 contentAlignment = Alignment.Center) {
-                AppIcon(tool.icon(), null, Modifier.size(if (compact) 20.dp else 25.dp),
+                AppIcon(tool.icon(), null, Modifier.size((if (compact) 20.dp else 25.dp) * chromeScale),
                     tint = if (chosen) tool.mode?.let { toolColors[it] } ?: scheme.primary else scheme.onSurface)
             }
         }

@@ -167,7 +167,8 @@ fun SpotiGlassBar(
         }
     }
     val withIcons = items.any { it.icon != null }
-    val barHeight = if (compact) 40.dp else if (withIcons && showLabels) 64.dp else 48.dp
+    val chromeScale = LocalChromeScale.current
+    val barHeight = (if (compact) 40.dp else if (withIcons && showLabels) 64.dp else 48.dp) * chromeScale
     val padding = 6.dp
     val cellHeight = barHeight - padding * 2
     val fill = scheme.onSurface.copy(alpha = if (dark) 0.12f else 0.08f)
@@ -181,7 +182,7 @@ fun SpotiGlassBar(
     // past the bar on either side so the shadow is inside it.
     val room = if (surface == SpotiBarSurface.NONE) 0.dp else SPOTIGLASS_SHADOW_ROOM
     val thickness = Modifier.then(
-        if (vertical) Modifier.width(barHeight + 16.dp).height(verticalBarLength(items.size, compact, padding))
+        if (vertical) Modifier.width(barHeight + 16.dp).height(verticalBarLength(items.size, compact, padding, chromeScale))
         else Modifier.height(barHeight + 16.dp),
     )
     BoxWithConstraints(modifier.then(thickness).selectableGroup()) {
@@ -258,7 +259,7 @@ fun SpotiGlassBar(
                         .clickable(role = Role.Tab, interactionSource = remember { MutableInteractionSource() }, indication = null) { choose(index) }
                     Column(hit, horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(Ui.Space.hair, Alignment.CenterVertically)) {
-                        item.icon?.let { AppIcon(it, null, tint = color, modifier = Modifier.size(if (compact) 20.dp else 25.dp), play = selected == index) }
+                        item.icon?.let { AppIcon(it, null, tint = color, modifier = Modifier.size((if (compact) 20.dp else 25.dp) * chromeScale), play = selected == index) }
                         if (showLabels || item.icon == null) Text(item.label, color = color,
                             style = if (withIcons) MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp) else MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -390,8 +391,8 @@ private fun Modifier.spillOver(room: Dp, vertical: Boolean = false): Modifier {
 }
 
 /** How long a bar down the side is: one cell per tool, each a fingertip tall, and its inset at both ends. */
-internal fun verticalBarLength(count: Int, compact: Boolean, padding: Dp): Dp =
-    (if (compact) VERTICAL_CELL_COMPACT else VERTICAL_CELL) * count + padding * 2
+internal fun verticalBarLength(count: Int, compact: Boolean, padding: Dp, scale: Float = 1f): Dp =
+    (if (compact) VERTICAL_CELL_COMPACT else VERTICAL_CELL) * scale * count + padding * 2
 
 private val VERTICAL_CELL = 52.dp
 private val VERTICAL_CELL_COMPACT = 44.dp

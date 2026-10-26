@@ -401,6 +401,10 @@ class MainActivity : ComponentActivity() {
                     // fresh screen instead of showing the old document until
                     // the new one finishes loading into state that was kept.
                     key(note.id) {
+                    // The toolbar and its buttons sized for the window: smaller in a
+                    // split or on a phone, larger on a whole tablet.
+                    val window = LocalConfiguration.current
+                    CompositionLocalProvider(LocalChromeScale provides chromeScaleFor(window.screenWidthDp, window.screenHeightDp)) {
                     NoteScreen(
                         store = store,
                         note = note,
@@ -413,6 +417,7 @@ class MainActivity : ComponentActivity() {
                         onLookChange = { look = it; lookStore.save(it) },
                         onBack = { closeNote(note) },
                     )
+                    }
                     }
                 }
                 // The library and the ink note float the clock on their own
@@ -3971,7 +3976,7 @@ private fun NoteScreen(
     }
     val toolbarEffects = rememberLiquidGlassEffectsAllowed() && !LocalSkinSettings.current.highContrast
     val floatingBarWidth = animateDpAsState(
-        minOf(maxBarWidth, spotiToolbarWidth(shownToolbarSize)),
+        minOf(maxBarWidth, spotiToolbarWidth(shownToolbarSize, LocalChromeScale.current)),
         // Material and Glassmorphism switch sizes at once; only Liquid glass morphs.
         if (skin.animatesChrome && toolbarEffects) ToolbarMotion.spec() else tween(0),
         label = "Top bar mode width",
@@ -4211,8 +4216,8 @@ private fun NoteScreen(
             otherNotes = otherNotes,
             pen = pen,
             toolPens = settings,
-            toolbarTargetWidth = if (previewLevel != null) spotiToolbarWidth(previewLevel)
-                else minOf(maxBarWidth, spotiToolbarWidth(toolbarSize)),
+            toolbarTargetWidth = if (previewLevel != null) spotiToolbarWidth(previewLevel, LocalChromeScale.current)
+                else minOf(maxBarWidth, spotiToolbarWidth(toolbarSize, LocalChromeScale.current)),
             mode = mode,
             shapeKind = shapeKind,
             straightLine = straightLine,
@@ -4876,19 +4881,32 @@ private fun NoteScreen(
         }
 
         // The smaller bars have no top row, so no way back: a round button of
-        // the bar's own material in the top corner. Under the bar, should the
-        // bar be carried over it.
+        // the bar's own material in the top corner, the height of the bar's
+        // tool strip and level with it. Down the side, it heads the bar's
+        // column instead. Under the bar, should the bar be carried over it.
         if (shownToolbarSize > 0 && !collapsed) {
+            // The bar's box sits 12dp in when it floats and against the edge when docked.
+            val barInset = if (barDocked) 0.dp else 12.dp
             RoundBarButton(
                 "Back to notes", AppIcons.back,
                 onClick = {
                     settingsNav = null
                     onBack()
                 },
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .windowInsetsPadding(ChromeInsets)
-                    .padding(12.dp),
+                modifier = when {
+                    barRight -> Modifier
+                        .align(Alignment.TopEnd)
+                        .windowInsetsPadding(ChromeInsets)
+                        .padding(top = 12.dp, end = (if (barDocked) Ui.Space.s else 12.dp) + BAR_CAPSULE_SIDE)
+                    barVertical -> Modifier
+                        .align(Alignment.TopStart)
+                        .windowInsetsPadding(ChromeInsets)
+                        .padding(top = 12.dp, start = (if (barDocked) Ui.Space.s else 12.dp) + BAR_CAPSULE_SIDE)
+                    else -> Modifier
+                        .align(Alignment.TopStart)
+                        .windowInsetsPadding(ChromeInsets)
+                        .padding(start = 12.dp, top = barInset + BAR_CAPSULE_TOP)
+                },
             )
         }
 
