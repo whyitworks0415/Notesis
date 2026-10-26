@@ -59,111 +59,83 @@ class OnboardingPlanTest {
         assertEquals(0f, t.progress(t.WRITE, 0f), 0f)
         assertEquals(0.5f, t.progress(t.WRITE, 750f), 0.0001f)
         assertEquals(1f, t.progress(t.WRITE, 2000f), 0f)
-        assertTrue(t.PEN_IN.first < t.FRAME.first && t.FRAME.last <= t.HOLD.first && t.HOLD.last <= t.SNAP.first)
-        assertTrue(t.SNAP.last <= t.MOVE.last && t.MOVE.last <= t.CHEVRON.first && t.CHEVRON.last <= t.DROP.first)
-        assertTrue(t.DROP.last <= t.SETTLE.first && t.SETTLE.last < t.EXIT.first)
+        assertTrue(t.PAPER.first < t.PEN_IN.first && t.PEN_IN.last <= t.CHEVRON.first)
+        assertTrue(t.CHEVRON.last <= t.LIFT.first && t.LIFT.last <= t.FALL.first && t.FALL.last < t.EXIT.first)
         assertEquals(t.TOTAL, t.EXIT.last)
-        for (window in listOf(t.WRITE, t.FILL, t.TAGLINE, t.PEN_IN, t.FRAME, t.HOLD, t.CAPTION, t.SNAP, t.PAPER,
-            t.MOVE, t.CHEVRON, t.CHEVRON_SNAP, t.DROP, t.SETTLE, t.EXIT)) {
+        for (window in listOf(t.WRITE, t.FILL, t.TAGLINE, t.PAPER, t.PEN_IN, t.CHEVRON, t.CHEVRON_SNAP, t.LIFT, t.FALL, t.EXIT)) {
             assertEquals(1f, t.progress(window, t.TOTAL.toFloat()), 0f)
         }
     }
 
-    @Test fun `the square is traced from its left edge all the way round`() {
-        val m = WelcomeMark
-        val start = m.framePoint(0f)
-        assertEquals(0f, start.first, 0.01f)
-        assertEquals(m.CORNER, start.second, 0.01f)
-        // Every point on the edge of the rounded square, and the trace closes.
-        for (i in 0..200) {
-            val (x, y) = m.framePoint(m.perimeter * i / 200f)
-            assertTrue(x in -0.01f..m.SIZE + 0.01f && y in -0.01f..m.SIZE + 0.01f)
-            assertTrue(x < 0.01f || y < 0.01f || x > m.SIZE - 0.01f || y > m.SIZE - 0.01f ||
-                cornerDistance(x, y) in m.CORNER - 0.5f..m.CORNER + 0.5f)
-        }
-        val end = m.framePoint(m.perimeter)
-        assertEquals(start.first, end.first, 0.01f)
-        assertEquals(start.second, end.second, 0.01f)
-        // Half way round is the opposite side.
-        assertEquals(m.SIZE, m.framePoint(m.perimeter / 2f).first, 0.01f)
-    }
-
-    private fun cornerDistance(x: Float, y: Float): Float {
-        val r = WelcomeMark.CORNER
-        val cx = if (x < WelcomeMark.SIZE / 2f) r else WelcomeMark.SIZE - r
-        val cy = if (y < WelcomeMark.SIZE / 2f) r else WelcomeMark.SIZE - r
-        return kotlin.math.hypot(x - cx, y - cy)
-    }
-
-    @Test fun `the rough square and chevron wander, and clean they are exact`() {
+    @Test fun `the rough chevron wanders, and clean it is exact`() {
         val m = WelcomeMark
         var strayed = 0f
         for (i in 0..50) {
             val along = i / 50f
-            val (rx, ry) = m.roughFramePoint(along, 0f)
-            val (cx, cy) = m.roughFramePoint(along, 1f)
-            val (ex, ey) = m.framePoint(along * m.perimeter)
-            assertEquals(ex, cx, 0.01f)
-            assertEquals(ey, cy, 0.01f)
-            // How far off the square's line it is, wherever along it.
-            val off = (0 until 400).minOf { j ->
-                val (sx, sy) = m.framePoint(m.perimeter * j / 400f)
-                kotlin.math.hypot(rx - sx, ry - sy)
-            }
-            strayed = maxOf(strayed, off)
             val (hx, hy) = m.roughChevronPoint(along, 1f)
             val (gx, gy) = m.chevronPoint(along)
             assertEquals(gx, hx, 0.01f)
             assertEquals(gy, hy, 0.01f)
+            val (rx, ry) = m.roughChevronPoint(along, 0f)
+            strayed = maxOf(strayed, kotlin.math.hypot(rx - gx, ry - gy))
         }
-        // Rough enough to see, not so rough it leaves the square's neighbourhood.
-        assertTrue(strayed in 10f..80f)
+        assertTrue(strayed in 5f..40f)
         assertEquals(470f to 480f, m.chevronPoint(0.5f))
     }
 
-    @Test fun `the pen writes the mark, is dropped without a spin and comes to rest where the icon has it`() {
+    @Test fun `the dropped pen strikes tip first, then cap, never goes through the page, and turns less than a right angle`() {
+        val d = WelcomeDrop
+        val fall = (WelcomeTimeline.FALL.last - WelcomeTimeline.FALL.first).toFloat()
+        var tipFirstAt = -1f
+        var capFirstAt = -1f
+        var least = Float.MAX_VALUE
+        var most = -Float.MAX_VALUE
+        var ms = 0f
+        while (ms <= fall) {
+            val p = d.at(ms)
+            val a = Math.toRadians(p.angle.toDouble())
+            val capHeight = p.tipHeight + d.LENGTH * kotlin.math.sin(a).toFloat()
+            assertTrue("tip under the page at $ms", p.tipHeight > -3f)
+            assertTrue("cap under the page at $ms", capHeight > -3f)
+            if (tipFirstAt < 0f && p.tipHeight < 1f) tipFirstAt = ms
+            if (capFirstAt < 0f && capHeight < 1f) capFirstAt = ms
+            least = minOf(least, p.angle)
+            most = maxOf(most, p.angle)
+            ms += 2f
+        }
+        assertTrue("the tip lands at $tipFirstAt, the cap at $capFirstAt", tipFirstAt in 0f..capFirstAt - 20f)
+        // From the writing angle to lying down, and its rocking, inside a right angle.
+        val writing = WelcomeMark.REST_ANGLE - WelcomeMark.WRITING_ANGLE
+        assertTrue(maxOf(writing, most) - least < 90f)
+        // At rest at the end, exactly.
+        assertEquals(DropPose(0f, 0f, 0f), d.at(fall))
+    }
+
+    @Test fun `the pen writes the mark and comes to rest where the icon has it`() {
         val m = WelcomeMark
         val t = WelcomeTimeline
         assertNull(m.pen(t.PEN_IN.first - 1f))
-        // Writing: held at the writing angle throughout.
         assertEquals(m.WRITING_ANGLE, m.pen((t.CHEVRON.first + t.CHEVRON.last) / 2f)!!.angle, 0f)
-        // Never turned further than from writing to lying: no spin on the way down.
-        var at = t.DROP.first.toFloat()
-        while (at <= t.TOTAL) {
-            val angle = m.pen(at)!!.angle
-            assertTrue(angle in m.WRITING_ANGLE - 0.01f..m.REST_ANGLE + 5f)
-            at += 10f
-        }
-        // Falling, it gathers speed: the second half of the fall covers more than the first.
-        val drop = t.DROP
-        val letGo = drop.first + (drop.last - drop.first) * 0.35f
-        val y0 = m.pen(letGo + 1f)!!.y
-        val yMid = m.pen((letGo + drop.last) / 2f)!!.y
-        val y1 = m.pen(drop.last - 1f)!!.y
-        assertTrue(y1 - yMid > yMid - y0)
-        // At rest at the end, lying as on the icon, on the paper.
+        // Lifted then let go with no jump.
+        val held = m.pen(t.FALL.first - 0.01f)!!
+        val dropped = m.pen(t.FALL.first.toFloat())!!
+        assertEquals(dropped.x, held.x, 1f)
+        assertEquals(dropped.y, held.y, 1f)
+        assertEquals(dropped.angle, held.angle, 0.5f)
         val rest = m.pen(t.TOTAL.toFloat())!!
         assertEquals(m.REST_X, rest.x, 0.01f)
-        assertEquals(m.REST_Y, rest.y, 0.5f)
-        assertEquals(m.REST_ANGLE, rest.angle, 0.5f)
+        assertEquals(m.REST_Y, rest.y, 0.01f)
+        assertEquals(m.REST_ANGLE, rest.angle, 0.01f)
         assertEquals(1f, rest.scale, 0f)
-        // Landed with no jump: the end of the drop is the start of the bounce.
-        val landing = m.pen(t.SETTLE.first - 0.001f)!!
-        val bounced = m.pen(t.SETTLE.first.toFloat())!!
-        assertEquals(bounced.x, landing.x, 1f)
-        assertEquals(bounced.y, landing.y, 2f)
-        assertEquals(bounced.angle, landing.angle, 1f)
+        assertEquals(0f, rest.lift, 0f)
     }
 
-    @Test fun `the square is drawn, snaps, turns to paper, then the chevron is written and comes clean`() {
+    @Test fun `the paper comes before the pen, and the chevron is written and comes clean`() {
         val m = WelcomeMark
         val t = WelcomeTimeline
-        assertEquals(0f, m.frameDrawn(t.FRAME.first.toFloat()), 0f)
-        assertEquals(1f, m.frameDrawn(t.FRAME.last.toFloat()), 0f)
-        assertEquals(0f, m.frameClean(t.HOLD.last.toFloat()), 0f)
-        assertEquals(1f, m.frameClean(t.SNAP.last.toFloat()), 0f)
         assertEquals(1f, m.paper(t.CHEVRON.first.toFloat()), 0.05f)
         assertEquals(1f, m.chevronDrawn(t.TOTAL.toFloat()), 0f)
+        assertEquals(0f, m.chevronClean(t.CHEVRON.last.toFloat()), 0f)
         assertEquals(1f, m.chevronClean(t.TOTAL.toFloat()), 0f)
     }
 
