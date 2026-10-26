@@ -14,8 +14,8 @@ android {
         // dependable from Q onward, even though ink itself declares minSdk 23.
         minSdk = 29
         targetSdk = 36
-        versionCode = 146
-        versionName = "0.61.0"
+        versionCode = 147
+        versionName = "0.62.0"
         testInstrumentationRunner = "com.notesis.CustomizationInstrumentation"
         // Ship arm64 for the tablet; opt into x86_64 for emulator GPU checks.
         ndk { abiFilters += providers.gradleProperty("notesis.testAbi").getOrElse("arm64-v8a") }

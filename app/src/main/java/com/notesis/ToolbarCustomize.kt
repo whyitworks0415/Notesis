@@ -219,21 +219,6 @@ internal object ToolbarLayout {
         val stored = ToolbarConfig.decode(prefs.getString(KEY, null))
         if (stored != null) {
             config = stored
-            // A bar arranged before the laser came back has no place for it:
-            // put it after the highlighter on the two bars with every tool,
-            // once. Taken off again in the editor, it stays off.
-            if (!prefs.getBoolean(LASER_ADDED, false)) {
-                prefs.edit().putBoolean(LASER_ADDED, true).apply()
-                val stages = List(ToolbarConfig.STAGES) { level ->
-                    val tools = stored.tools(level)
-                    if (level > 1 || SpotiToolbarTool.LASER in tools) tools
-                    else tools.toMutableList().apply {
-                        val after = indexOf(SpotiToolbarTool.HIGHLIGHTER)
-                        add(if (after >= 0) after + 1 else size, SpotiToolbarTool.LASER)
-                    }
-                }
-                set(context, ToolbarConfig(stages, stored.topRow, stored.penRow))
-            }
             return
         }
         val saved = prefs.getString(LEGACY_KEY, null)
@@ -267,7 +252,6 @@ internal object ToolbarLayout {
     private const val KEY = "toolbarStages"
     private const val LEGACY_KEY = "toolbarTools"
     private const val PENCIL_RETURNED = "toolbarPencilReturned"
-    private const val LASER_ADDED = "toolbarLaserAdded"
 }
 
 /** A draft arrangement for a preview to draw instead of the committed one. */

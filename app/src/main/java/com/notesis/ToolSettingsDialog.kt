@@ -315,34 +315,30 @@ internal fun PenDialog(
             val nibs = if (freehand) nibsFor(pen.tool) else emptyList()
             if (nibs.isNotEmpty() || mode == EditMode.PEN) {
                 PanelSectionHeader(if (mode == EditMode.PENCIL) "Pencil type" else "Pen type")
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Row(Modifier.weight(1f).horizontalScroll(rememberScrollState())) {
-                        nibs.forEach { (tool, label) ->
-                            SettingsChoiceChip(
-                                selected = if (mode == EditMode.PENCIL) drawing == tool else nib == tool,
-                                onClick = { nib = tool },
-                                label = label,
-                                modifier = Modifier.padding(end = Ui.Space.s),
-                            )
-                        }
+                // Every type in sight at once, wrapping onto a second line
+                // rather than scrolling - and nothing beside them to cover one.
+                WrappingChips {
+                    nibs.forEach { (tool, label) ->
+                        SettingsChoiceChip(
+                            selected = if (mode == EditMode.PENCIL) drawing == tool else nib == tool,
+                            onClick = { nib = tool },
+                            label = label,
+                        )
                     }
-                    if (mode == EditMode.PEN) {
-                        Text("Pressure", style = MaterialTheme.typography.bodyMedium)
-                        Spacer(Modifier.width(Ui.Space.s))
-                        SkinSwitch(checked = pressure, onCheckedChange = { pressure = it })
-                    }
+                }
+                if (mode == EditMode.PEN) {
+                    PanelSwitchRow("Pressure", pressure, hint = "Pressing harder draws a wider line") { pressure = it }
                 }
             }
 
             if (freehand && !drawing.isDabbed()) {
                 PanelSectionHeader("Line style")
-                Row(Modifier.horizontalScroll(rememberScrollState())) {
+                WrappingChips {
                     listOf("Solid", "Dotted", "Dashed", "Dash-dot").forEachIndexed { index, label ->
                         SettingsChoiceChip(
                             selected = linePattern == index,
                             onClick = { linePattern = index },
                             label = label,
-                            modifier = Modifier.padding(end = Ui.Space.s),
                         )
                     }
                 }
@@ -621,13 +617,13 @@ private fun EraserSection(
     Text(if (partialEraser) "Erases only where it passes" else "Erases every stroke it touches, whole",
         style = MaterialTheme.typography.bodySmall)
     Text("Erases", style = MaterialTheme.typography.labelLarge)
-    Row(Modifier.horizontalScroll(rememberScrollState())) {
+    WrappingChips {
         listOf(
             EraseTarget.INK to gestures.eraseInk, EraseTarget.HIGHLIGHTER to gestures.eraseHighlighter,
             EraseTarget.TAPE to gestures.eraseTape, EraseTarget.IMAGES to gestures.eraseImages,
             EraseTarget.TEXT to gestures.eraseText, EraseTarget.LOCKED to gestures.eraseLocked,
         ).forEach { (target, on) ->
-            SettingsChoiceChip(selected = on, label = target.label, modifier = Modifier.padding(end = Ui.Space.s), onClick = {
+            SettingsChoiceChip(selected = on, label = target.label, onClick = {
                 onGestures(when (target) {
                     EraseTarget.INK -> gestures.copy(eraseInk = !on)
                     EraseTarget.HIGHLIGHTER -> gestures.copy(eraseHighlighter = !on)
@@ -644,6 +640,16 @@ private fun EraserSection(
         gestures.pressureEraser,
         hint = "The set size is the lightest touch; pressing harder grows it up to 2.5 times",
     ) { onGestures(gestures.copy(pressureEraser = it)) }
+}
+
+/** Choice chips that wrap onto as many lines as they need instead of scrolling out of sight. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun WrappingChips(content: @Composable () -> Unit) {
+    androidx.compose.foundation.layout.FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(Ui.Space.s),
+        verticalArrangement = Arrangement.spacedBy(Ui.Space.xs),
+    ) { content() }
 }
 
 private enum class EraseTarget(val label: String) {

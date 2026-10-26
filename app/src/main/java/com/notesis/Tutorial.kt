@@ -72,7 +72,6 @@ private val LESSONS: List<Lesson> = listOf(
         listOf(
             "The bar holds the tools: pen, pencil, highlighter, eraser, lasso, shapes, text and more.",
             "Tap one to pick it. Each pen keeps its own colour and width, so switching back finds it as you left it.",
-            "The laser points without writing. Tap it again for a fading trail, a line that goes a second after the pen lifts, or a dot, in any colour.",
             "With a keyboard, Ctrl+1 to Ctrl+9 pick them in the order the bar shows.",
         ),
     ) { ToolBarPicture(selected = 0) },

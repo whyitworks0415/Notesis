@@ -32,4 +32,19 @@ class WebTintTest {
         assertNull(parseCssColor("\"transparent\""))
         assertNull(parseCssColor("\"#zzzzzz\""))
     }
+
+    @Test fun `the page's top colours across it, and its bottom`() {
+        val read = parsePageColors("\"rgb(255, 0, 0)|rgb(0, 255, 0)|rgb(0, 0, 255)|#ffffff|black;rgb(10, 20, 30)\"")!!
+        assertEquals(listOf(0xFFFF0000.toInt(), 0xFF00FF00.toInt(), 0xFF0000FF.toInt(), 0xFFFFFFFF.toInt(), 0xFF000000.toInt()), read.top)
+        assertEquals(0xFF0A141E.toInt(), read.bottom)
+    }
+
+    @Test fun `a point the page could not tell takes its neighbour's, and none is nothing`() {
+        val read = parsePageColors("\"|rgb(1, 2, 3)||rgba(0, 0, 0, 0)|rgb(9, 9, 9);\"")!!
+        assertEquals(listOf(0xFF010203.toInt(), 0xFF010203.toInt(), 0xFF010203.toInt(), 0xFF090909.toInt(), 0xFF090909.toInt()), read.top)
+        assertNull(read.bottom)
+        assertNull(parsePageColors("\"||;\""))
+        assertNull(parsePageColors("\"\""))
+        assertNull(parsePageColors(null))
+    }
 }

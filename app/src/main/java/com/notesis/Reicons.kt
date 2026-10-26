@@ -438,11 +438,4 @@ internal object Reicons {
             addPath(pathData = PathParser().parsePathString("M12 16.75H12.01").toNodes(), fill = null, stroke = SolidColor(Color.Black), strokeLineWidth = 2f, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round, pathFillType = PathFillType.NonZero, fillAlpha = 1.0f, strokeAlpha = 1.0f)
         }.build()
     }
-    val Laser: ImageVector by lazy {
-        ImageVector.Builder(name = "Reicon.Laser", defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f, autoMirror = false).apply {
-            addPath(pathData = PathParser().parsePathString("M3.25 20.75L11.5 12.5").toNodes(), fill = null, stroke = SolidColor(Color.Black), strokeLineWidth = 1.5f, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round, pathFillType = PathFillType.NonZero, fillAlpha = 1.0f, strokeAlpha = 1.0f)
-            addPath(pathData = PathParser().parsePathString("M15 7.25C16.24 7.25 17.25 8.26 17.25 9.5C17.25 10.74 16.24 11.75 15 11.75C13.76 11.75 12.75 10.74 12.75 9.5C12.75 8.26 13.76 7.25 15 7.25Z").toNodes(), fill = null, stroke = SolidColor(Color.Black), strokeLineWidth = 1.5f, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round, pathFillType = PathFillType.NonZero, fillAlpha = 1.0f, strokeAlpha = 1.0f)
-            addPath(pathData = PathParser().parsePathString("M15 2.75V4.75M21.75 9.5H19.75M19.75 4.75L18.25 6.25M19.75 14.25L18.25 12.75").toNodes(), fill = null, stroke = SolidColor(Color.Black), strokeLineWidth = 1.5f, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round, pathFillType = PathFillType.NonZero, fillAlpha = 1.0f, strokeAlpha = 1.0f)
-        }.build()
-    }
 }

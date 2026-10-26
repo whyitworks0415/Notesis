@@ -76,7 +76,6 @@ internal enum class SpotiToolbarTool(val mode: EditMode?, val label: String) {
     HIGHLIGHTER(EditMode.HIGHLIGHTER, "Highlighter"), MASK(EditMode.MASK, "Mask"),
     ERASE(EditMode.ERASE, "Eraser"), SHAPE(EditMode.SHAPE, "Shape"), TEXT(EditMode.TEXT, "Text"),
     LASSO(EditMode.LASSO, "Lasso"), CAPTURE(EditMode.CAPTURE, "Capture"), AI(null, "AI"),
-    LASER(EditMode.LASER, "Laser"),
 }
 
 /** The tools the bar shows at [level], as arranged in [ToolbarLayout]. */
@@ -337,6 +336,13 @@ internal fun spotiToolRows(tools: List<SpotiToolbarTool>, widthDp: Float, cellDp
     }
 }
 
+/**
+ * Whether [tools], in a bar across [targetWidth] wide, would fold onto more
+ * than one row - the same sum the bar does, beside its Functions button.
+ */
+internal fun spotiBarWraps(tools: List<SpotiToolbarTool>, targetWidth: Dp, scale: Float): Boolean =
+    spotiToolRows(tools, (targetWidth.value - 100f * scale).coerceAtLeast(100f)).size > 1
+
 internal fun SpotiToolbarTool.icon(): ImageVector = when (this) {
     SpotiToolbarTool.READ -> AppIcons.read
     SpotiToolbarTool.PEN -> AppIcons.penTool
@@ -349,7 +355,6 @@ internal fun SpotiToolbarTool.icon(): ImageVector = when (this) {
     SpotiToolbarTool.LASSO -> AppIconStyle.pick(Lucide.CircleDashed, Reicons.Gesture)
     SpotiToolbarTool.CAPTURE -> AppIconStyle.pick(Lucide.SquareDashed, Reicons.CropFree)
     SpotiToolbarTool.AI -> AppIconStyle.pick(Lucide.Zap, Reicons.AutoAwesome)
-    SpotiToolbarTool.LASER -> AppIconStyle.pick(Lucide.Laser, Reicons.Laser)
 }
 
 internal data class SpotiToolbarAction(
@@ -535,6 +540,8 @@ internal fun SpotiGlassToolbar(
     topRow: @Composable () -> Unit, penOptions: @Composable (Dp) -> Unit,
     /** Whether the bar may run down the side when [ToolbarOrientation] says so; a preview of the tools keeps it across. */
     allowVertical: Boolean = true,
+    /** Down the side whatever [ToolbarOrientation] says: the window is too narrow for one row across. */
+    autoVertical: Boolean = false,
 ) {
     var open by remember { mutableStateOf(false) }
     var page by remember { mutableStateOf(ToolbarMenu.FUNCTIONS) }
@@ -559,7 +566,7 @@ internal fun SpotiGlassToolbar(
     val outline = RoundedCornerShape(outer)
     val full = sizeLevel == 0
     // The smaller bars may run down the side; the whole bar is always across.
-    val vertical = allowVertical && ToolbarOrientation.vertical && !full
+    val vertical = allowVertical && (ToolbarOrientation.vertical || autoVertical) && !full
     // animateContentSize clips its layer, including stable corner shadows.
     // Width already has one animation clock in the host; do not animate twice.
     // The new size's contents come up out of a fade while the frame moves,

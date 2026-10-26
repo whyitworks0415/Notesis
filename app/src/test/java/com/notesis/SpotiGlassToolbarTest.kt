@@ -59,4 +59,14 @@ class SpotiGlassToolbarTest {
         assertEquals(100, position.calculatePosition(anchor, IntSize(800, 600), LayoutDirection.Ltr, IntSize(340, 180)).x)
         assertEquals(360, position.calculatePosition(anchor, IntSize(800, 600), LayoutDirection.Rtl, IntSize(340, 180)).x)
     }
+
+    @Test fun `a bar that would fold onto a second row is the one that turns down the side`() {
+        val tools = SpotiToolbarTool.entries.take(8)
+        // Wide: one row, stays across.
+        assertFalse(spotiBarWraps(tools, androidx.compose.ui.unit.Dp(632f), 1f))
+        // Narrow: two rows, turns.
+        assertTrue(spotiBarWraps(tools, androidx.compose.ui.unit.Dp(300f), 1f))
+        // The same answer the bar's own rows give.
+        assertEquals(spotiToolRows(tools, 200f).size > 1, spotiBarWraps(tools, androidx.compose.ui.unit.Dp(300f), 1f))
+    }
 }

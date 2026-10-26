@@ -14,6 +14,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
@@ -256,7 +257,6 @@ class MainActivity : ComponentActivity() {
         ToolbarMotion.init(applicationContext)
         ToolbarOrientation.init(applicationContext)
         ToolbarScale.init(applicationContext)
-        LaserSettings.init(applicationContext)
         // A real start, not a rotation: first-run mode shows the welcome and the tutorial again.
         if (savedInstanceState == null) Onboarding.startAsFirstRunIfAsked(applicationContext)
         val store = NoteStore(this)
@@ -3076,29 +3076,43 @@ private fun WebPanel(
         }
     }
 
-    // The bar over the page takes the colour of the page's own top, as a
-    // browser's does, with its icons and text in whichever of dark or light
-    // reads on it. Asked of the page every moment or so: it scrolls, and a
-    // chat switches theme. Until it answers, the bar is the panel's surface.
+    // The bar over the page takes the colours of the page's own top, point by
+    // point across it, as a pane of tinted glass laid over them; the panel
+    // round the page takes the page's bottom colour, so nothing white frames
+    // it. Asked of the page five times a second and eased from one answer to
+    // the next, so the bar follows a scroll or a change of theme as it
+    // happens. Until the page answers, the bar is the panel's surface.
     val skin = LocalSkin.current
-    var pageTop by remember(web) { mutableStateOf<Color?>(null) }
+    var pageColors by remember(web) { mutableStateOf<PageColors?>(null) }
     LaunchedEffect(web) {
         val view = web ?: return@LaunchedEffect
         while (true) {
             runCatching {
-                view.evaluateJavascript(PAGE_TOP_COLOR_JS) { result -> pageTop = parseCssColor(result)?.let { Color(it) } }
+                view.evaluateJavascript(PAGE_TOP_COLOR_JS) { result -> parsePageColors(result)?.let { pageColors = it } }
             }
             delay(PAGE_TOP_COLOR_POLL_MS)
         }
     }
     val surface = MaterialTheme.colorScheme.surface
-    val header by androidx.compose.animation.animateColorAsState(
-        pageTop ?: surface,
-        // Material changes it at once; the other skins ease into it.
-        if (skin == Skin.MATERIAL) androidx.compose.animation.core.snap() else tween(240),
-        label = "Web bar",
+    // Material changes it at once; the other skins ease into it, about as
+    // long as the page takes to be asked again, so the change never stops.
+    val ease: androidx.compose.animation.core.AnimationSpec<Color> =
+        if (skin == Skin.MATERIAL) androidx.compose.animation.core.snap() else tween(PAGE_TOP_COLOR_POLL_MS.toInt() + 60, easing = LinearEasing)
+    val headerStops = List(PAGE_TOP_SAMPLES) { i ->
+        androidx.compose.animation.animateColorAsState(
+            pageColors?.top?.getOrNull(i)?.let { Color(it) } ?: surface, ease, label = "Web bar $i",
+        ).value
+    }
+    val pageBottom by androidx.compose.animation.animateColorAsState(
+        pageColors?.bottom?.let { Color(it) } ?: surface, ease, label = "Web panel",
     )
-    val onHeader = if (pageTop == null) MaterialTheme.colorScheme.onSurface else liquidGlassContentColor(header)
+    // One colour for the bar's text and icons, read off the colours under it on average.
+    val header = Color(
+        headerStops.sumOf { it.red.toDouble() }.toFloat() / headerStops.size,
+        headerStops.sumOf { it.green.toDouble() }.toFloat() / headerStops.size,
+        headerStops.sumOf { it.blue.toDouble() }.toFloat() / headerStops.size,
+    )
+    val onHeader = if (pageColors == null) MaterialTheme.colorScheme.onSurface else liquidGlassContentColor(header)
     val fieldColors = OutlinedTextFieldDefaults.colors(
         focusedTextColor = onHeader,
         unfocusedTextColor = onHeader,
@@ -3120,7 +3134,7 @@ private fun WebPanel(
         Column(
             Modifier
                 .fillMaxHeight()
-                .background(surface)
+                .background(pageBottom)
                 .then(if (insets) Modifier.windowInsetsPadding(ChromeInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
                     else Modifier)
                 .windowInsetsPadding(keyboardRoom),
@@ -3131,7 +3145,7 @@ private fun WebPanel(
             Column(
                 Modifier
                     .fillMaxWidth()
-                    .background(header)
+                    .webBarGlass(headerStops, glass = skin != Skin.MATERIAL)
                     .then(if (insets) Modifier.windowInsetsPadding(ChromeInsets.only(WindowInsetsSides.Top)) else Modifier),
             ) {
             if (onMove != null) {
@@ -3231,7 +3245,6 @@ private fun WebPanel(
             }
             }
             }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             key(rendererGeneration) { AndroidView(
                 // weight, not fillMaxSize: a Column measures an unweighted child
                 // with an unbounded height, AndroidView passes that on as an
@@ -3291,6 +3304,28 @@ private fun WebPanel(
             }
         }
     }
+}
+
+/**
+ * The web bar's glass: the page's top colours left to right under it, a light
+ * caught along its top fading down, and a lit hairline where it meets the
+ * page - so it reads as a pane laid over the page rather than a band of paint.
+ * Under Material it is the colours alone.
+ */
+private fun Modifier.webBarGlass(stops: List<Color>, glass: Boolean): Modifier = drawBehind {
+    val across = if (stops.size > 1) Brush.horizontalGradient(stops) else androidx.compose.ui.graphics.SolidColor(stops.first())
+    drawRect(across)
+    if (!glass) return@drawBehind
+    // A wash of white, strongest at the top edge.
+    drawRect(Brush.verticalGradient(0f to Color.White.copy(alpha = 0.22f), 0.45f to Color.White.copy(alpha = 0.06f),
+        1f to Color.Transparent))
+    // The lit edge along its top, and a soft shadow and a bright line along its foot.
+    drawRect(Color.White.copy(alpha = 0.35f), size = androidx.compose.ui.geometry.Size(size.width, 1.dp.toPx()))
+    drawRect(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.08f)),
+        startY = size.height - 6.dp.toPx(), endY = size.height),
+        topLeft = Offset(0f, size.height - 6.dp.toPx()), size = androidx.compose.ui.geometry.Size(size.width, 6.dp.toPx()))
+    drawRect(Color.White.copy(alpha = 0.45f), topLeft = Offset(0f, size.height - 1.dp.toPx()),
+        size = androidx.compose.ui.geometry.Size(size.width, 1.dp.toPx()))
 }
 
 /**
@@ -3584,7 +3619,7 @@ internal val ChromeInsets: WindowInsets
  * What the pen does when it lands. One thing at a time, by construction, and
  * each one remembers its own colour and thickness rather than sharing a tray.
  */
-enum class EditMode { PEN, HIGHLIGHTER, MASK, LASSO, SHAPE, IMAGE, ERASE, READ, CAPTURE, TEXT, PENCIL, LASER }
+enum class EditMode { PEN, HIGHLIGHTER, MASK, LASSO, SHAPE, IMAGE, ERASE, READ, CAPTURE, TEXT, PENCIL }
 
 /** Whether this mode puts something on the page in the tool's own colour. */
 internal val EditMode.tints: Boolean
@@ -3861,9 +3896,6 @@ private fun NoteScreen(
     // that was chosen is kept for when the split ends.
     val shownToolbarSize = if (split != null && toolbarSize == 0) 1 else toolbarSize
     val barDocked = docked && split == null
-    // The smaller bars may run down the side (see ToolbarOrientation); the whole bar never does.
-    val barVertical = ToolbarOrientation.vertical && shownToolbarSize > 0
-    val barRight = barVertical && ToolbarOrientation.right
     // The docked side bar's width, so what else lives on that edge can stand clear of it.
     var sideBarWidth by remember { mutableIntStateOf(0) }
     // Prediction, smoothing, line style and shape straightening belong to
@@ -3977,9 +4009,19 @@ private fun NoteScreen(
     // top, a bar centred in a narrow window would lie over it, so there it
     // starts past the button instead, and is no wider than the room left.
     val backReserve = 12.dp + barButtonSize() + Ui.Space.s
-    val wantedBarWidth = spotiToolbarWidth(shownToolbarSize, LocalChromeScale.current)
-    val barCrowdsBack = shownToolbarSize > 0 && !barVertical && (maxBarWidth - wantedBarWidth) / 2 < backReserve
-    val barRoom = if (barCrowdsBack) (maxBarWidth - backReserve - 12.dp).coerceAtLeast(120.dp) else maxBarWidth
+    val chromeScale = LocalChromeScale.current
+    val wantedBarWidth = spotiToolbarWidth(shownToolbarSize, chromeScale)
+    val crowdsAcross = shownToolbarSize > 0 && (maxBarWidth - wantedBarWidth) / 2 < backReserve
+    val acrossRoom = if (crowdsAcross) (maxBarWidth - backReserve - 12.dp).coerceAtLeast(120.dp) else maxBarWidth
+    // Too narrow for the tools in one row, a bar across would fold onto a
+    // second: it runs down the side instead until the window is wide again.
+    val barWraps = shownToolbarSize > 0 && !ToolbarOrientation.vertical &&
+        spotiBarWraps(ToolbarLayout.config.tools(shownToolbarSize), minOf(acrossRoom, wantedBarWidth), chromeScale)
+    // The smaller bars may run down the side (see ToolbarOrientation); the whole bar never does.
+    val barVertical = (ToolbarOrientation.vertical || barWraps) && shownToolbarSize > 0
+    val barRight = barVertical && ToolbarOrientation.right
+    val barCrowdsBack = crowdsAcross && !barVertical
+    val barRoom = if (barCrowdsBack) acrossRoom else maxBarWidth
     val barClearStartPx = with(density) { if (barCrowdsBack) backReserve.toPx() else 0f }
     val toolbarEffects = rememberLiquidGlassEffectsAllowed() && !LocalSkinSettings.current.highContrast
     val floatingBarWidth = animateDpAsState(
@@ -3989,7 +4031,6 @@ private fun NoteScreen(
         label = "Top bar mode width",
     )
     var showLatency by remember { mutableStateOf(false) }
-    var choosingLaser by remember { mutableStateOf(false) }
     var confirmClearAll by remember { mutableStateOf(false) }
     var ruler by remember { mutableStateOf<RulerKind?>(null) }
     var rulerAngle by remember { mutableStateOf(false) }
@@ -4223,6 +4264,7 @@ private fun NoteScreen(
             otherNotes = otherNotes,
             pen = pen,
             toolPens = settings,
+            autoVertical = barWraps && previewLevel == null,
             toolbarTargetWidth = if (previewLevel != null) spotiToolbarWidth(previewLevel, LocalChromeScale.current)
                 else minOf(barRoom, spotiToolbarWidth(toolbarSize, LocalChromeScale.current)),
             mode = mode,
@@ -4286,7 +4328,6 @@ private fun NoteScreen(
             onClock = { StudyClock.openPanel() },
             onLayers = { showLayers = true },
             onSplit = { choosingSplit = true },
-            onLaserOptions = { choosingLaser = true },
             split = split != null,
             onCamera = {
                 val file = java.io.File(context.cacheDir, "shared/camera.jpg").apply { parentFile?.mkdirs() }
@@ -4559,7 +4600,6 @@ private fun NoteScreen(
                     view.pageTone = pageTone
                     view.partialEraser = partialEraser
                     view.applyGestures(gestures)
-                    view.laserMode = mode == EditMode.LASER
                     view.onPullForPage = { pullingForPage = it }
                     view.onEditTextBox = { replacingText = canvas?.selectedTextBox(); showTextBox = true }
                     // Writing puts the page panel away; using it, scrolling and
@@ -4587,8 +4627,6 @@ private fun NoteScreen(
                         } ?: Toast.makeText(context, "Couldn't find the linked note", Toast.LENGTH_SHORT).show()
                     }
                     view.onLongPressCanvas = if (gestures.longPressMenu) { x, y -> pressMenu = Offset(x, y) } else null
-                    view.laserStyle = LaserSettings.style
-                    view.laserColor = LaserSettings.color
                     view.rulerKind = ruler
                     view.onRulerClosed = { ruler = null }
                     view.autoShapeRecognitionEnabled = autoShapes
@@ -5569,7 +5607,6 @@ private fun NoteScreen(
                 confirmButton = { TextButton(onClick = { sendingPages = null }) { Text("Cancel") } },
             )
         }
-        if (choosingLaser) LaserPanel(onDismiss = { choosingLaser = false })
         if (confirmClearAll) AlertDialog(
             onDismissRequest = { confirmClearAll = false },
             title = { Text("Clear all writing?") },
@@ -7211,10 +7248,6 @@ private fun ReferencePanel(
                             v.autoShapeRecognitionEnabled = autoShapes
                             v.axisSnapEnabled = axisSnap
                             v.dottedPattern = dottedPattern
-                            // The laser points on every canvas alike.
-                            v.laserMode = mode == EditMode.LASER
-                            v.laserStyle = LaserSettings.style
-                            v.laserColor = LaserSettings.color
                         },
                     )
                     if (popupLassoCount > 0) {
@@ -8306,6 +8339,8 @@ private fun Toolbar(
     pen: PenPreset,
     toolPens: Map<EditMode, PenPreset>,
     toolbarTargetWidth: Dp,
+    /** Down the side because the window is too narrow for the tools in one row. */
+    autoVertical: Boolean = false,
     mode: EditMode,
     shapeKind: ShapeKind,
     straightLine: Boolean,
@@ -8355,8 +8390,6 @@ private fun Toolbar(
     onLayers: () -> Unit = {},
     /** Opens the split panel; [split] says whether the screen is split now. */
     onSplit: () -> Unit = {},
-    /** The laser tapped again: its style and colour. */
-    onLaserOptions: () -> Unit = {},
     split: Boolean = false,
     /** The layer new ink goes to, shown beside the pen options (and in the top row if placed there). */
     layerChip: @Composable () -> Unit = {},
@@ -8453,6 +8486,7 @@ private fun Toolbar(
             coachTargets = if (preview) null else NoteCoachTargets,
             // A preview of the tools shows them across, as they are arranged.
             allowVertical = !preview,
+            autoVertical = autoVertical,
             toolColors = toolPens.filterKeys { it.tints }.mapValues { Color(it.value.colorArgb.or(0xFF000000.toInt())) },
             targetWidth = toolbarTargetWidth,
             docked = docked,
@@ -8467,8 +8501,6 @@ private fun Toolbar(
                 // the way a pen tapped again opens its settings.
                 EditMode.SHAPE -> if (mode == EditMode.SHAPE) onShapeOptions() else onShape(shapeKind)
                 EditMode.TEXT -> onText()
-                // The laser in hand, tapped again, opens its style and colour.
-                EditMode.LASER -> if (mode == EditMode.LASER) onLaserOptions() else onMode(EditMode.LASER)
                 null -> Unit
                 else -> onMode(tool.mode)
             } },
@@ -8517,10 +8549,6 @@ private fun Toolbar(
                         PenRowItem.TOOL -> {
                             if (mode == EditMode.SHAPE) ShapeButton(true, shapeKind, onShapeOptions)
                             if (mode == EditMode.TEXT) TextButton(onClick = onAddText) { Text("+ Text") }
-                            if (mode == EditMode.LASER) TextButton(onClick = onLaserOptions) {
-                                Box(Modifier.size(14.dp).background(Color(LaserSettings.color), CircleShape))
-                                Text("  Laser")
-                            }
                             if (mode in PenStore.DEFAULTS) PenChip(pen, true, onEditPen)
                         }
                         PenRowItem.QUICK_COLORS -> if (mode.tints) QuickColors(pen.colorArgb, onQuickColor, onEditPen)

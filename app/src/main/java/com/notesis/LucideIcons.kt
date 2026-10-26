@@ -1310,23 +1310,6 @@ internal object Lucide {
         ),
     )
 
-    // A pointer with its beam: a short body, the bright spot, and rays from it.
-    val Laser = AnimIcon(
-        "laser",
-        listOf(
-            IconPart(paths = listOf("M3 21l9-9", "M5 23l-2-2")),
-            IconPart(
-                paths = listOf(circle(15f, 9f, 2f)),
-                pivot = Offset(15f, 9f),
-                scale = track(1f, 1.35f, 0.9f, 1f, duration = 0.6f),
-            ),
-            IconPart(
-                paths = listOf("M15 2v3", "M22 9h-3", "M20 4l-2 2", "M20 14l-2-2", "M10 4l2 2"),
-                opacity = track(1f, 0.3f, 1f, duration = 0.6f),
-            ),
-        ),
-    )
-
     val CircleHelp = AnimIcon(
         "circle-help",
         listOf(
@@ -1412,5 +1395,4 @@ internal val ALL_LUCIDE: List<AnimIcon> = listOf(
     Lucide.List,
     Lucide.Monitor,
     Lucide.CircleHelp,
-    Lucide.Laser,
 )

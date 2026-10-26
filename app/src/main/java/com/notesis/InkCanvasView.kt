@@ -668,20 +668,12 @@ private fun Tool.isFreehandPen(): Boolean =
 internal fun Tool.isDabbed(): Boolean =
     this == Tool.STAMP || this == Tool.BUBBLE || this == Tool.SPRAY || this == Tool.SOFT_PENCIL
 
-/** The laser's tail fades away behind the pen; the faster it moves, the longer the tail. */
-internal const val LASER_TRAIL = 0
-/** The laser draws its whole line, which goes a second after the pen lifts. */
-internal const val LASER_STROKE = 1
-/** The laser is a dot under the pen and nothing else. */
-internal const val LASER_DOT = 2
-
 /**
  * What the pen just did in reading (gesture) mode, in screen pixels: the
  * path a drag took, and a ring where a tap with the button landed - and the
  * laser pointer, drawn the same way. A fixed ring of samples that age out
  * after [LIFE_MS], so the trail follows the pen and fades behind it without
- * ever touching the page or its history; for [LASER_STROKE], whole lines that
- * stay until a moment after the pen lifts.
+ * ever touching the page or its history.
  */
 private class LaserView(context: Context) : View(context) {
     private val xs = FloatArray(CAPACITY)
@@ -709,19 +701,6 @@ private class LaserView(context: Context) : View(context) {
     private var tapY = 0f
     private var tapTime = Long.MIN_VALUE
 
-    /** [LASER_TRAIL], [LASER_STROKE] or [LASER_DOT]. */
-    var style = LASER_TRAIL
-        set(value) {
-            if (field == value) return
-            field = value
-            lines.clear()
-            invalidate()
-        }
-
-    /** For [LASER_STROKE]: every line drawn since the pen last lifted for long enough. */
-    private val lines = ArrayList<Path>()
-    private var liftedAt = Long.MIN_VALUE
-
     /** The trail's colour: a glow of it, with a pale core. */
     fun tint(color: Int) {
         glow.color = color
@@ -748,12 +727,7 @@ private class LaserView(context: Context) : View(context) {
     }
 
     fun add(x: Float, y: Float, time: Long, down: Boolean) {
-        val starting = !touching
         touching = down
-        if (style == LASER_STROKE) {
-            if (starting || lines.isEmpty()) lines += Path().apply { moveTo(x, y) }
-            else lines.last().lineTo(x, y)
-        }
         if (count == CAPACITY) {
             start = (start + 1) % CAPACITY
             count--
@@ -768,14 +742,12 @@ private class LaserView(context: Context) : View(context) {
 
     fun lift() {
         touching = false
-        liftedAt = SystemClock.uptimeMillis()
         postInvalidateOnAnimation()
     }
 
     fun clear() {
         count = 0
         touching = false
-        lines.clear()
         invalidate()
     }
 
@@ -797,31 +769,11 @@ private class LaserView(context: Context) : View(context) {
             canvas.drawCircle(tapX, tapY, 4f * density, dot)
             dot.alpha = 255
         }
-        // The whole lines: held while the pen is down and for a second after
-        // it lifts, then gone in a quick fade. Writing again within that
-        // second keeps the earlier lines with the new one.
-        if (style == LASER_STROKE && lines.isNotEmpty()) {
-            val since = if (touching) 0L else now - liftedAt
-            val fade = if (since <= STROKE_HOLD_MS) 1f else 1f - (since - STROKE_HOLD_MS).toFloat() / STROKE_FADE_MS
-            if (fade <= 0f) {
-                lines.clear()
-            } else {
-                glow.alpha = (110 * fade).toInt()
-                glow.strokeWidth = 12f * density
-                core.alpha = (255 * fade).toInt()
-                core.strokeWidth = 3f * density
-                for (line in lines) {
-                    canvas.drawPath(line, glow)
-                    canvas.drawPath(line, core)
-                }
-                postInvalidateOnAnimation()
-            }
-        }
         if (count == 0) {
             if (tapping) postInvalidateOnAnimation()
             return
         }
-        if (style == LASER_TRAIL) for (i in 1 until count) {
+        for (i in 1 until count) {
             val a = (start + i - 1) % CAPACITY
             val b = (start + i) % CAPACITY
             val fade = (1f - (now - times[b]).toFloat() / LIFE_MS).coerceIn(0f, 1f)
@@ -843,9 +795,6 @@ private class LaserView(context: Context) : View(context) {
         const val CAPACITY = 512
         const val LIFE_MS = 650L
         const val TAP_LIFE_MS = 600L
-        /** How long the lines stay after the pen lifts, and how quickly they then go. */
-        const val STROKE_HOLD_MS = 1000L
-        const val STROKE_FADE_MS = 250L
     }
 }
 
@@ -1062,37 +1011,6 @@ class InkCanvasView @JvmOverloads constructor(
             screenBrushes[brush] = twin
         }
         return twin
-    }
-
-    /** The pen points instead of writing: a laser in [laserColor], drawn as [laserStyle], that is never saved. */
-    var laserMode: Boolean = false
-        set(value) {
-            if (field == value) return
-            field = value
-            laser.clear()
-            if (value) applyLaserLook() else {
-                // Back to what the view is otherwise for: reading mode's trail.
-                laser.style = LASER_TRAIL
-                laser.tint(GESTURE_TRAIL_COLOR)
-            }
-        }
-
-    /** [LASER_TRAIL], [LASER_STROKE] or [LASER_DOT]. */
-    var laserStyle: Int = LASER_TRAIL
-        set(value) {
-            field = value
-            if (laserMode) applyLaserLook()
-        }
-
-    var laserColor: Int = 0xFFFF3B30.toInt()
-        set(value) {
-            field = value
-            if (laserMode) applyLaserLook()
-        }
-
-    private fun applyLaserLook() {
-        laser.style = laserStyle
-        laser.tint(laserColor)
     }
 
     /** Cut strokes where the eraser crosses them instead of removing them whole. */
@@ -3661,7 +3579,7 @@ class InkCanvasView @JvmOverloads constructor(
             MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE -> {
                 // The pen hovers before it lands: the brush its first point needs
                 // - new after a zoom or a tool's first use - is made now, not then.
-                if (event.actionMasked == MotionEvent.ACTION_HOVER_ENTER && !readMode && !laserMode &&
+                if (event.actionMasked == MotionEvent.ACTION_HOVER_ENTER && !readMode &&
                     tool != Tool.ERASER && !event.isEraserGesture()) {
                     val stored = currentBrush()
                     if (strokeIsMask == maskMode) wetBrushFor(stored)
@@ -3800,7 +3718,7 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun onStylusEvent(event: MotionEvent): Boolean {
-        if (laserMode || laserPointer != null) return onLaser(event)
+        if (laserPointer != null) return onLaser(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 if (activeStylusPointer != null) return true
