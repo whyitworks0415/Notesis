@@ -99,11 +99,16 @@ internal object ToolbarOrientation {
     var vertical by mutableStateOf(false)
         private set
 
+    /** Down the side: true against the right edge, false against the left. */
+    var right by mutableStateOf(false)
+        private set
+
     fun init(context: android.content.Context) {
         if (prefs != null) return
         val p = context.getSharedPreferences("pens", android.content.Context.MODE_PRIVATE)
         prefs = p
         vertical = p.getBoolean(KEY_VERTICAL, false)
+        right = p.getBoolean(KEY_RIGHT, false)
     }
 
     fun set(vertical: Boolean) {
@@ -111,10 +116,19 @@ internal object ToolbarOrientation {
         prefs?.edit()?.putBoolean(KEY_VERTICAL, vertical)?.apply()
     }
 
+    fun setSide(right: Boolean) {
+        this.right = right
+        prefs?.edit()?.putBoolean(KEY_RIGHT, right)?.apply()
+    }
+
     private const val KEY_VERTICAL = "toolbarVertical"
+    private const val KEY_RIGHT = "toolbarRight"
 }
 
-/** "Horizontal" and "Vertical", for the menu and the appearance screen; [sizeLevel] 0 cannot turn. */
+/**
+ * "Horizontal" and "Vertical", and down the side which side, for the menu and
+ * the appearance screen; [sizeLevel] 0 cannot turn.
+ */
 @Composable
 internal fun ToolbarOrientationChoice(sizeLevel: Int) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
@@ -122,6 +136,14 @@ internal fun ToolbarOrientationChoice(sizeLevel: Int) {
             color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
         SettingsChoiceChip(selected = !ToolbarOrientation.vertical, onClick = { ToolbarOrientation.set(false) }, label = "Horizontal")
         SettingsChoiceChip(selected = ToolbarOrientation.vertical, onClick = { ToolbarOrientation.set(true) }, label = "Vertical")
+    }
+    if (ToolbarOrientation.vertical) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+            Text("Side", style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+            SettingsChoiceChip(selected = !ToolbarOrientation.right, onClick = { ToolbarOrientation.setSide(false) }, label = "Left")
+            SettingsChoiceChip(selected = ToolbarOrientation.right, onClick = { ToolbarOrientation.setSide(true) }, label = "Right")
+        }
     }
     if (sizeLevel == 0 && ToolbarOrientation.vertical) {
         Text("1/4 is the whole bar, with its top row and pen row, and always runs across. 2/4 to 4/4 run down the side.",
@@ -520,8 +542,7 @@ internal fun SpotiGlassToolbar(
             Column(Modifier.toolbarAnimatedHeight(effects && ToolbarMotion.durationMs > 0)
                 .graphicsLayer { alpha = fade.value }
                 .then(if (docked && full) Modifier.windowInsetsPadding(
-                WindowInsets.systemBars.union(WindowInsets.displayCutout)
-                    .only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)) else Modifier)
+                ChromeInsets.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)) else Modifier)
                 // An even inset all round the full bar's lower row, so the
                 // strip's corners can follow the bar's.
                 .padding(horizontal = TOOLBAR_INSET, vertical = if (full) 0.dp else 2.dp)) {

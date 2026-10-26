@@ -91,21 +91,29 @@ internal object WelcomeTimeline {
     val TAGLINE = 1300L..1800L
     /** The pen set down at the corner of the mark. */
     val PEN_IN = 1500L..1750L
-    /** The pen going round the icon's rounded square. */
+    /** The icon's rounded square, drawn roughly by hand. */
     val FRAME = 1700L..2500L
+    /** The pen held still at the end: a ring closing round it. */
+    val HOLD = 2500L..2900L
+    /** What the hold does, in words. */
+    val CAPTION = 2500L..2900L
+    /** The rough square becoming a clean one - the app's own trick. */
+    val SNAP = 2900L..3150L
     /** The square turning to white paper. */
-    val PAPER = 2400L..2800L
+    val PAPER = 3050L..3400L
     /** The pen lifted across to where ">" starts. */
-    val MOVE = 2500L..2700L
-    /** ">" written. */
-    val CHEVRON = 2700L..3300L
-    /** The pen tossed up, turning once, and falling where "_" goes. */
-    val DROP = 3350L..3850L
+    val MOVE = 3150L..3350L
+    /** ">" written, roughly. */
+    val CHEVRON = 3350L..3950L
+    /** ">" coming clean as the pen leaves it. */
+    val CHEVRON_SNAP = 3950L..4200L
+    /** The pen lifted off and dropped where "_" goes. */
+    val DROP = 3950L..4500L
     /** Its little bounce as it lands. */
-    val SETTLE = 3850L..4300L
+    val SETTLE = 4500L..4900L
     /** The page folding into the guide note's card. */
-    val EXIT = 4800L..5400L
-    const val TOTAL = 5400L
+    val EXIT = 5400L..6000L
+    const val TOTAL = 6000L
 
     /** 0 before [window], 1 after it, linear in between. */
     fun progress(window: LongRange, t: Float): Float {
@@ -118,7 +126,8 @@ internal object WelcomeTimeline {
 
 /**
  * The app's mark as the welcome draws it, on the launcher icon's 1024 grid:
- * a rounded square, ">" inside it, and the pen lying where "_" goes.
+ * a rounded square, ">" inside it, and the pen lying where "_" goes. Both
+ * are drawn roughly first, as a hand draws them, and then come clean.
  */
 internal object WelcomeMark {
     const val SIZE = 1024f
@@ -132,13 +141,15 @@ internal object WelcomeMark {
     const val REST_ANGLE = -6f
     /** The pen's angle while it writes, held as a right hand holds it. */
     const val WRITING_ANGLE = -72f
+    /** How far a hand's line strays from the clean one, on this grid. */
+    private const val WOBBLE = 22f
 
     /** How far round the square it is. */
     val perimeter: Float get() = 4f * (SIZE - 2f * CORNER) + 2f * PI.toFloat() * CORNER
 
     /**
-     * The point [distance] round the square, clockwise from the middle of
-     * the top left corner's left edge - where a hand starts a box.
+     * The point [distance] round the clean square, clockwise from the middle
+     * of the top left corner's left edge - where a hand starts a box.
      */
     fun framePoint(distance: Float): Pair<Float, Float> {
         val r = CORNER
@@ -166,7 +177,22 @@ internal object WelcomeMark {
         return 0f to (SIZE - r - d)
     }
 
-    /** The point [fraction] of the way along ">", both strokes the same length. */
+    /**
+     * The square as a hand draws it, [along] of the way round (0 to 1):
+     * wandering a little and running on past where it began. [clean] moves
+     * it onto the exact square, so 1 is the shape it snaps to.
+     */
+    fun roughFramePoint(along: Float, clean: Float): Pair<Float, Float> {
+        val (ex, ey) = framePoint(along * perimeter)
+        val (rx, ry) = framePoint(along * 1.04f * perimeter)
+        val turn = along * 2f * PI.toFloat()
+        val drift = WOBBLE * (sin(turn * 3f) + 0.6f * sin(turn * 7.3f + 1.1f))
+        val x = rx + cos(turn) * drift
+        val y = ry + sin(turn * 1.7f) * drift
+        return (x + (ex - x) * clean) to (y + (ey - y) * clean)
+    }
+
+    /** The point [fraction] of the way along the clean ">", both strokes the same length. */
     fun chevronPoint(fraction: Float): Pair<Float, Float> {
         val f = fraction.coerceIn(0f, 1f) * 2f
         val i = min(f.toInt(), 1)
@@ -176,11 +202,26 @@ internal object WelcomeMark {
         return (ax + (bx - ax) * u) to (ay + (by - ay) * u)
     }
 
-    /** How much of the square is drawn at [t], 0 to 1. */
+    /** ">" as a hand writes it, [fraction] of the way along; [clean] as for [roughFramePoint]. */
+    fun roughChevronPoint(fraction: Float, clean: Float): Pair<Float, Float> {
+        val (ex, ey) = chevronPoint(fraction)
+        val turn = fraction * 2f * PI.toFloat()
+        val x = ex + WOBBLE * 0.6f * sin(turn * 1.5f + 0.4f)
+        val y = ey + WOBBLE * 0.5f * sin(turn * 2.2f + 0.9f)
+        return (x + (ex - x) * clean) to (y + (ey - y) * clean)
+    }
+
+    /** How far round the square the pen has gone at [t], 0 to 1. */
     fun frameDrawn(t: Float) = easeInOutQuad(WelcomeTimeline.progress(WelcomeTimeline.FRAME, t))
 
-    /** How much of ">" is drawn at [t], 0 to 1. */
+    /** How far the square has come clean at [t], 0 to 1. */
+    fun frameClean(t: Float) = easeOut(WelcomeTimeline.progress(WelcomeTimeline.SNAP, t))
+
+    /** How much of ">" is written at [t], 0 to 1. */
     fun chevronDrawn(t: Float) = easeInOutQuad(WelcomeTimeline.progress(WelcomeTimeline.CHEVRON, t))
+
+    /** How far ">" has come clean at [t], 0 to 1. */
+    fun chevronClean(t: Float) = easeOut(WelcomeTimeline.progress(WelcomeTimeline.CHEVRON_SNAP, t))
 
     /** How far the square has turned to paper at [t], 0 to 1. */
     fun paper(t: Float) = easeOut(WelcomeTimeline.progress(WelcomeTimeline.PAPER, t))
@@ -192,47 +233,59 @@ internal object WelcomeMark {
         if (t < tl.FRAME.first) {
             // Set down from a little above, at the square's starting corner.
             val e = easeOut(tl.progress(tl.PEN_IN, t))
-            val (x, y) = framePoint(0f)
+            val (x, y) = roughFramePoint(0f, 0f)
             return WelcomePen(x, y - 90f * (1f - e), WRITING_ANGLE, 1.2f - 0.2f * e, lift = 1f - e, alpha = e)
         }
-        if (t <= tl.FRAME.last) {
-            val p = tl.progress(tl.FRAME, t)
-            val (x, y) = framePoint(frameDrawn(t) * perimeter)
-            // A hand's small turn of the wrist as it goes round.
-            return WelcomePen(x, y, WRITING_ANGLE + 4f * sin(p * 4f * PI.toFloat()))
+        if (t < tl.MOVE.first) {
+            // Going round, then held still at the end while the square snaps under it.
+            val (x, y) = roughFramePoint(frameDrawn(t), frameClean(t))
+            return WelcomePen(x, y, WRITING_ANGLE)
         }
         if (t < tl.CHEVRON.first) {
             val p = tl.progress(tl.MOVE, t)
             val e = easeInOutQuad(p)
-            val (ax, ay) = framePoint(0f)
-            val (bx, by) = CHEVRON[0]
+            val (ax, ay) = roughFramePoint(1f, 1f)
+            val (bx, by) = roughChevronPoint(0f, 0f)
             val lift = sin(p * PI.toFloat())
             return WelcomePen(ax + (bx - ax) * e, ay + (by - ay) * e - 50f * lift, WRITING_ANGLE, 1f + 0.08f * lift, lift)
         }
         if (t < tl.DROP.first) {
-            val (x, y) = chevronPoint(chevronDrawn(t))
+            val (x, y) = roughChevronPoint(chevronDrawn(t), 0f)
             return WelcomePen(x, y, WRITING_ANGLE)
         }
         if (t < tl.SETTLE.first) {
-            // Thrown: an even fall, so it lands moving, turning once on the way.
+            // Lifted off the end of ">" to just above its place, then let go:
+            // it falls, gathering speed, and tips over to lie as it lands.
             val p = tl.progress(tl.DROP, t)
-            val (ax, ay) = CHEVRON.last()
-            val arc = 4f * p * (1f - p)
-            val turn = easeInOutQuad(p)
+            val (ax, ay) = roughChevronPoint(1f, 0f)
+            val hoverX = REST_X
+            val hoverY = REST_Y - DROP_HEIGHT
+            if (p < LIFT_SHARE) {
+                val e = easeOut(p / LIFT_SHARE)
+                return WelcomePen(ax + (hoverX - ax) * e, ay + (hoverY - ay) * e, WRITING_ANGLE, 1f + 0.08f * e, lift = e)
+            }
+            val f = (p - LIFT_SHARE) / (1f - LIFT_SHARE)
+            val fall = f * f
+            val tip = easeInOutQuad(f)
             return WelcomePen(
-                ax + (REST_X - ax) * easeOut(p),
-                ay + (REST_Y - ay) * p - 260f * arc,
-                WRITING_ANGLE + (REST_ANGLE - 360f - WRITING_ANGLE) * turn,
-                1f + 0.18f * arc,
-                lift = arc,
+                hoverX,
+                hoverY + DROP_HEIGHT * fall,
+                WRITING_ANGLE + (REST_ANGLE - WRITING_ANGLE) * tip,
+                1.08f - 0.08f * fall,
+                lift = 1f - fall,
             )
         }
-        // Landed: a bounce and a rock that die away.
+        // Landed: a bounce and a small rock that die away.
         val p = tl.progress(tl.SETTLE, t)
         val decay = exp(-4f * p)
-        val bounce = 30f * decay * abs(sin(p * 3f * PI.toFloat()))
-        return WelcomePen(REST_X, REST_Y - bounce, REST_ANGLE + 7f * decay * sin(p * 4f * PI.toFloat()), lift = bounce / 260f)
+        val bounce = 26f * decay * abs(sin(p * 3f * PI.toFloat()))
+        return WelcomePen(REST_X, REST_Y - bounce, REST_ANGLE + 4f * decay * sin(p * 4f * PI.toFloat()), lift = bounce / DROP_HEIGHT)
     }
+
+    /** How far above its place the pen is let go. */
+    private const val DROP_HEIGHT = 220f
+    /** The part of the drop spent lifting it there. */
+    private const val LIFT_SHARE = 0.35f
 }
 
 /**

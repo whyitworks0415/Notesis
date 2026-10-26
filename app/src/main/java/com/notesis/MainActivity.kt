@@ -61,6 +61,8 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.captionBar
+import androidx.compose.foundation.layout.systemBarsIgnoringVisibility
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -214,12 +216,24 @@ class MainActivity : ComponentActivity() {
     private var incomingImportedNote: NoteMeta? by mutableStateOf(null)
     private lateinit var noteStore: NoteStore
 
-    // Always full screen: the bars come back on a swipe and leave again on their own.
+    // Full screen: the bars come back on a swipe and leave again on their own.
+    // Not in split screen or pop-up view: the system keeps its bars there
+    // whatever is asked, and asking had some phones (Samsung's split screen)
+    // report them hidden while still drawing them over the top of the window.
     private fun hideSystemBars() {
         WindowCompat.getInsetsController(window, window.decorView).apply {
-            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            hide(WindowInsetsCompat.Type.systemBars())
+            if (isInMultiWindowMode) {
+                show(WindowInsetsCompat.Type.systemBars())
+            } else {
+                systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                hide(WindowInsetsCompat.Type.systemBars())
+            }
         }
+    }
+
+    override fun onMultiWindowModeChanged(isInMultiWindowMode: Boolean, newConfig: android.content.res.Configuration) {
+        super.onMultiWindowModeChanged(isInMultiWindowMode, newConfig)
+        hideSystemBars()
     }
 
     // A dialog or the keyboard taking focus can bring the bars back.
@@ -3547,10 +3561,20 @@ private fun NameDialog(
 
 /**
  * safeDrawing minus the keyboard. safeDrawing counts the IME, so every bar and
- * the canvas itself jumped whenever a text field took focus.
+ * the canvas itself jumped whenever a text field took focus. In split screen
+ * and pop-up view the bars count even when reported hidden - the system draws
+ * them there regardless - and so does a pop-up window's caption.
  */
 internal val ChromeInsets: WindowInsets
-    @Composable get() = WindowInsets.systemBars.union(WindowInsets.displayCutout)
+    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+    @Composable get() {
+        // Read so a change of window (into or out of split screen) reads this again.
+        LocalConfiguration.current
+        val shared = (LocalContext.current as? ComponentActivity)?.isInMultiWindowMode == true
+        val bars = if (shared) WindowInsets.systemBarsIgnoringVisibility.union(WindowInsets.captionBar)
+            else WindowInsets.systemBars
+        return bars.union(WindowInsets.displayCutout)
+    }
 
 /**
  * What the pen does when it lands. One thing at a time, by construction, and
@@ -3835,6 +3859,9 @@ private fun NoteScreen(
     val barDocked = docked && split == null
     // The smaller bars may run down the side (see ToolbarOrientation); the whole bar never does.
     val barVertical = ToolbarOrientation.vertical && shownToolbarSize > 0
+    val barRight = barVertical && ToolbarOrientation.right
+    // The docked side bar's width, so what else lives on that edge can stand clear of it.
+    var sideBarWidth by remember { mutableIntStateOf(0) }
     // Prediction, smoothing, line style and shape straightening belong to
     // the tool in hand; picking up another tool brings its own.
     val prediction = pen.leadMs != 0
@@ -4279,7 +4306,7 @@ private fun NoteScreen(
             onResetBar = { barOffset = null },
             onSettings = { openSettings(it) },
             onDragBar = { delta ->
-                val at = barPlacement(barOffset, barSize, containerSize, barVertical)
+                val at = barPlacement(barOffset, barSize, containerSize, barVertical, barRight)
                 if (docked) { docked = false; penStore.docked = false }
                 barOffset = Offset(at.x + delta.x, at.y + delta.y)
             },
@@ -4832,7 +4859,8 @@ private fun NoteScreen(
                 .align(Alignment.CenterEnd)
                 .fillMaxHeight(0.70f)
                 .windowInsetsPadding(ChromeInsets)
-                .padding(end = 6.dp),
+                // Beside a bar docked down the right, not under it.
+                .padding(end = 6.dp + if (barRight && barDocked) with(LocalDensity.current) { sideBarWidth.toDp() } + Ui.Space.s else 0.dp),
         ) {
             PageScrubber(
                 currentPage = currentPage,
@@ -4879,7 +4907,7 @@ private fun NoteScreen(
                     // Placed and clamped together: the folded handle can be
                     // dragged anywhere, and unfolding measures the wide bar and
                     // pulls it back inside rather than letting it hang off.
-                    .offset { barPlacement(barOffset, barSize, containerSize, barVertical) }
+                    .offset { barPlacement(barOffset, barSize, containerSize, barVertical, barRight) }
                     .onSizeChanged { barSize = it }
                     .windowInsetsPadding(ChromeInsets)
                     .padding(12.dp),
@@ -6173,7 +6201,11 @@ private fun NoteScreen(
         if (barDocked && !collapsed) {
             toolbar(
                 when {
-                    // Docked down the side: against the start edge, in the middle of it.
+                    // Docked down the side: against the chosen edge, in the middle of it.
+                    barRight -> Modifier.align(Alignment.CenterEnd)
+                        .onSizeChanged { sideBarWidth = it.width }
+                        .windowInsetsPadding(ChromeInsets.only(WindowInsetsSides.End))
+                        .padding(end = Ui.Space.s)
                     barVertical -> Modifier.align(Alignment.CenterStart)
                         .windowInsetsPadding(ChromeInsets.only(WindowInsetsSides.Start))
                         .padding(start = Ui.Space.s)
@@ -6590,9 +6622,9 @@ private fun barPlacement(offset: Offset, bar: IntSize, container: IntSize): IntO
     return IntOffset(offset.x.coerceIn(0f, maxX).toInt(), offset.y.coerceIn(0f, maxY).toInt())
 }
 
-private fun barPlacement(offset: Offset?, bar: IntSize, container: IntSize, vertical: Boolean = false): IntOffset {
-    // Not moved yet: across the top in the middle, or down the left side in the middle.
-    val start = offset ?: if (vertical) Offset(0f, (container.height - bar.height) / 2f)
+private fun barPlacement(offset: Offset?, bar: IntSize, container: IntSize, vertical: Boolean = false, right: Boolean = false): IntOffset {
+    // Not moved yet: across the top in the middle, or down the chosen side in the middle.
+    val start = offset ?: if (vertical) Offset(if (right) (container.width - bar.width).toFloat() else 0f, (container.height - bar.height) / 2f)
         else Offset((container.width - bar.width) / 2f, 0f)
     return barPlacement(start, bar, container)
 }

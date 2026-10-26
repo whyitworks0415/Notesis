@@ -248,9 +248,10 @@ internal val NOTE_MARKS = listOf(
 
 /**
  * The welcome: the name written out by a pen; the same pen drawing the
- * app's icon - its rounded square, then ">" - and tossed up to land where
- * "_" goes, black on white; and then the page folding into the guide note's
- * card on the shelf below. A tap anywhere skips to that last part.
+ * app's icon - a rough rounded square, held until it snaps clean (the app's
+ * own trick), then a rough ">" that comes clean as the pen is lifted off and
+ * dropped where "_" goes, black on white; and then the page folding into the
+ * guide note's card on the shelf below. A tap anywhere skips to that last part.
  */
 @Composable
 internal fun WelcomeOverlay(
@@ -286,6 +287,7 @@ internal fun WelcomeOverlay(
     val dark = isDarkTheme()
     val paper = if (dark) Color(0xFF1C1D21) else Color(0xFFFCFBF7)
     val ink = if (dark) Color(0xFFEDEDF0) else Color(0xFF23252B)
+    val accent = MaterialTheme.colorScheme.primary
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     var origin by remember { mutableStateOf(Offset.Zero) }
     val logo = remember { WelcomeLogo() }
@@ -348,8 +350,15 @@ internal fun WelcomeOverlay(
                 native.save()
                 native.translate(w / 2f - side / 2f, h * 0.68f - side / 2f)
                 native.scale(scale, scale)
-                mark.draw(native, t, ink.toArgb(), contentAlpha, 2.5.dp.toPx() / scale)
+                mark.draw(native, t, ink.toArgb(), accent.toArgb(), contentAlpha, 2.5.dp.toPx() / scale)
                 native.restore()
+                val caption = easeOut(WelcomeTimeline.progress(WelcomeTimeline.CAPTION, t))
+                if (caption > 0f) {
+                    logo.text.color = muted.copy(alpha = caption * contentAlpha).toArgb()
+                    logo.text.textSize = 15.sp.toPx()
+                    native.drawText("Hold the pen still, and it becomes the shape", w / 2f,
+                        h * 0.68f + side / 2f + 40.dp.toPx(), logo.text)
+                }
             }
         }
         TextButton(
@@ -475,6 +484,10 @@ private class WelcomeMarkPainter {
         strokeWidth = 10f
         strokeJoin = android.graphics.Paint.Join.ROUND
     }
+    private val ring = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        style = android.graphics.Paint.Style.STROKE
+        strokeCap = android.graphics.Paint.Cap.ROUND
+    }
     private val path = android.graphics.Path()
     // The pen with its tip at the origin and its body along +x, as on the icon.
     private val cone = android.graphics.Path().apply {
@@ -486,7 +499,7 @@ private class WelcomeMarkPainter {
         lineTo(118f, 42f); close()
     }
 
-    fun draw(canvas: android.graphics.Canvas, t: Float, ink: Int, alpha: Float, hairline: Float) {
+    fun draw(canvas: android.graphics.Canvas, t: Float, ink: Int, accent: Int, alpha: Float, hairline: Float) {
         val size = WelcomeMark.SIZE
         val corner = WelcomeMark.CORNER
         val white = WelcomeMark.paper(t)
@@ -501,28 +514,40 @@ private class WelcomeMarkPainter {
             canvas.drawRoundRect(0f, 0f, size, size, corner, corner, paper)
             canvas.restore()
         }
-        // The pen's line round it, fading to a hairline once it is paper.
+        // The pen's line round it - rough, then clean - fading to a hairline once it is paper.
         val frame = WelcomeMark.frameDrawn(t)
         if (frame > 0f) {
+            val clean = WelcomeMark.frameClean(t)
             path.reset()
             val steps = (160 * frame).roundToInt().coerceAtLeast(1)
             for (i in 0..steps) {
-                val (x, y) = WelcomeMark.framePoint(WelcomeMark.perimeter * frame * i / steps)
+                val (x, y) = WelcomeMark.roughFramePoint(frame * i / steps, clean)
                 if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
             }
             line.color = ink
             line.alpha = (255 * alpha * (1f - 0.85f * white)).roundToInt()
             line.strokeWidth = hairline
             canvas.drawPath(path, line)
+            // Held still: a ring closes round the pen, as it does on a page, and goes as it snaps.
+            val hold = WelcomeTimeline.progress(WelcomeTimeline.HOLD, t)
+            if (hold > 0f && clean < 1f) {
+                val (x, y) = WelcomeMark.roughFramePoint(frame, clean)
+                ring.color = accent
+                ring.alpha = (255 * alpha * (1f - clean)).roundToInt()
+                ring.strokeWidth = hairline * 0.8f
+                canvas.drawArc(x - RING, y - RING, x + RING, y + RING, -90f, 360f * hold, false, ring)
+            }
         }
-        // ">", black, as far as it is written.
+        // ">", black, as far as it is written: rough, then clean as the pen leaves it.
         val chevron = WelcomeMark.chevronDrawn(t)
         if (chevron > 0f) {
+            val clean = WelcomeMark.chevronClean(t)
             path.reset()
-            val (x0, y0) = WelcomeMark.CHEVRON[0]
-            path.moveTo(x0, y0)
-            if (chevron > 0.5f) WelcomeMark.CHEVRON[1].let { (x, y) -> path.lineTo(x, y) }
-            WelcomeMark.chevronPoint(chevron).let { (x, y) -> path.lineTo(x, y) }
+            val steps = (48 * chevron).roundToInt().coerceAtLeast(1)
+            for (i in 0..steps) {
+                val (x, y) = WelcomeMark.roughChevronPoint(chevron * i / steps, clean)
+                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            }
             line.color = MARK_BLACK
             line.alpha = (255 * alpha).roundToInt()
             line.strokeWidth = WelcomeMark.CHEVRON_WIDTH
@@ -535,6 +560,14 @@ private class WelcomeMarkPainter {
             // Its shadow on the paper, further off and fainter the higher it is.
             drawPen(canvas, pen.x + 16f * pen.lift, pen.y + 40f * pen.lift, pen.angle, 1f,
                 android.graphics.Color.argb((40 * pen.alpha * alpha * (1f - 0.4f * pen.lift)).roundToInt(), 0, 0, 0))
+        }
+        if (white > 0f) {
+            // A rim of paper round it, so over the black ">" it reads as a pen lying on the ink
+            // rather than one black shape with it - as the icon parts them with a gap.
+            solid.strokeWidth = 10f + 2f * PEN_RIM
+            drawPen(canvas, pen.x, pen.y, pen.angle, pen.scale,
+                android.graphics.Color.argb((255 * white * pen.alpha * alpha).roundToInt(), 255, 255, 255))
+            solid.strokeWidth = 10f
         }
         drawPen(canvas, pen.x, pen.y, pen.angle, pen.scale,
             android.graphics.Color.argb((255 * pen.alpha * alpha).roundToInt(),
@@ -555,6 +588,10 @@ private class WelcomeMarkPainter {
     private companion object {
         /** The icon's own black. */
         const val MARK_BLACK = 0xFF0E1116.toInt()
+        /** The hold ring's radius, on the mark's grid. */
+        const val RING = 80f
+        /** The paper's rim round the pen, on the mark's grid. */
+        const val PEN_RIM = 12f
     }
 }
 

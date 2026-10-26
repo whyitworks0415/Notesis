@@ -2123,6 +2123,8 @@ class InkCanvasView @JvmOverloads constructor(
         val pivot: FloatArray,
         val grabX: Float,
         val grabY: Float,
+        /** Tape, not ink: kept on the page's tape when the pen lifts. */
+        val mask: Boolean = false,
     ) {
         var outline: List<FloatArray> = base
     }
@@ -2140,8 +2142,9 @@ class InkCanvasView @JvmOverloads constructor(
         if (holdCount < 2) return false
         val points = ArrayList<FloatArray>(holdCount)
         for (i in 0 until holdCount) points += floatArrayOf(holdXs[i], holdYs[i])
-        val shape = if (tool == Tool.HIGHLIGHTER) {
+        val shape = if (tool == Tool.HIGHLIGHTER || strokeIsMask) {
             // A held highlighter only ever straightens: it marks lines of text.
+            // Tape too: a strip is laid straight over what it hides.
             val cleaned = forRecognition(points)
             val a = cleaned.first()
             val b = cleaned.last()
@@ -2155,7 +2158,7 @@ class InkCanvasView @JvmOverloads constructor(
         if (base.size < 2) return false
         pageLocalInto(holdX, holdY, holdPage, holdLocal)
         heldShape = HeldShapeEdit(page, holdPage, shape, heldReshapeOf(shape), base,
-            reshapePivot(base), holdLocal[0], holdLocal[1])
+            reshapePivot(base), holdLocal[0], holdLocal[1], mask = strokeIsMask)
         wet.cancelStroke(strokeId)
         cancelCompatWet(strokeId)
         wetStarts.remove(strokeId)
@@ -2203,12 +2206,19 @@ class InkCanvasView @JvmOverloads constructor(
         }
         val group = nextEditGroup++
         for (part in parts) {
-            held.page.strokes += part
-            undoStack += Edit.Drawn(held.page, part, group)
+            if (held.mask) {
+                // Tape goes on the tape list, so it can still be lifted to read under it.
+                val mask = PageMask(part)
+                held.page.masks += mask
+                undoStack += Edit.MaskAdded(held.page, mask, group)
+            } else {
+                held.page.strokes += part
+                undoStack += Edit.Drawn(held.page, part, group)
+            }
         }
         redoStack.clear()
         afterEdit(held.page)
-        onStrokesCommitted?.invoke(held.pageIndex, parts)
+        if (!held.mask) onStrokesCommitted?.invoke(held.pageIndex, parts)
     }
 
     private val circleHold: Runnable = object : Runnable {
@@ -4021,7 +4031,7 @@ class InkCanvasView @JvmOverloads constructor(
                     stationaryStartY = event.getY(event.actionIndex)
                     stationaryStartTime = event.eventTime
                     circleTracking = circleToLasso && tool.isFreehandPen() && !strokeIsMask
-                    holdTracking = holdToDraw && (tool.isFreehandPen() || tool == Tool.HIGHLIGHTER) && !strokeIsMask
+                    holdTracking = holdToDraw && (tool.isFreehandPen() || tool == Tool.HIGHLIGHTER || strokeIsMask)
                     recognizeOnFinish = false
                     if (holdTracking) {
                         holdX = stationaryStartX
