@@ -4239,6 +4239,8 @@ private fun NoteScreen(
             },
             onSite = { webUrl = it },
             insets = onMove == null,
+            // Docked it is flush with the window's edges, so square; floating, its own round corner.
+            corner = if (onMove == null) 0.dp else Ui.Corner.sheet,
             onMove = onMove,
             onFile = { callback ->
                 val ready = pendingAttachment.value
@@ -6286,52 +6288,57 @@ private fun NoteScreen(
 
         if (!webPopup) {
             webUrl?.let {
-                // Drag the seam to give the browser more room, or less: the
-                // settings sidebar's handle, a pill on clear ground, which
-                // goes solid while it is held.
+                // Docked, the panel runs to the window's top, right and bottom
+                // edges and meets the note with nothing between them. Its left
+                // edge is the seam: drag the handle on it to give the browser
+                // more room, or less - a pill on the panel's own edge that goes
+                // solid while it is held.
                 val dragging = draftWebWidth != null
-                Box(
-                    Modifier
-                        .fillMaxHeight()
-                        .width(24.dp)
-                        .pointerInput(webWidth) {
-                            detectHorizontalDragGestures(
-                                onDragStart = { draftWebWidth = webWidth },
-                                onDragEnd = {
-                                    draftWebWidth?.let { webWidth = it }
-                                    draftWebWidth = null
-                                },
-                                onDragCancel = {
-                                    draftWebWidth?.let { webWidth = it }
-                                    draftWebWidth = null
-                                },
-                            ) { change, drag ->
-                                change.consume()
-                                draftWebWidth = ((draftWebWidth ?: webWidth) - drag.toDp())
-                                    .coerceIn(WEB_PANEL_MIN, WEB_PANEL_MAX)
-                            }
-                        }
-                        .semantics {
-                            contentDescription = "Resize the web panel"
-                            customActions = listOf(
-                                CustomAccessibilityAction("Make wider") {
-                                    webWidth = (webWidth + 60.dp).coerceIn(WEB_PANEL_MIN, WEB_PANEL_MAX); true
-                                },
-                                CustomAccessibilityAction("Make narrower") {
-                                    webWidth = (webWidth - 60.dp).coerceIn(WEB_PANEL_MIN, WEB_PANEL_MAX); true
-                                },
-                            )
-                        },
-                    contentAlignment = Alignment.Center,
-                ) {
+                Box(Modifier.fillMaxHeight().width(webWidth)) {
+                    panel(Modifier.fillMaxSize(), null)
                     Box(
                         Modifier
-                            .size(width = 5.dp, height = 56.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.outline.copy(alpha = if (dragging) 0.95f else 0.6f)),
-                    )
+                            .align(Alignment.CenterStart)
+                            .height(120.dp)
+                            .width(20.dp)
+                            .pointerInput(webWidth) {
+                                detectHorizontalDragGestures(
+                                    onDragStart = { draftWebWidth = webWidth },
+                                    onDragEnd = {
+                                        draftWebWidth?.let { webWidth = it }
+                                        draftWebWidth = null
+                                    },
+                                    onDragCancel = {
+                                        draftWebWidth?.let { webWidth = it }
+                                        draftWebWidth = null
+                                    },
+                                ) { change, drag ->
+                                    change.consume()
+                                    draftWebWidth = ((draftWebWidth ?: webWidth) - drag.toDp())
+                                        .coerceIn(WEB_PANEL_MIN, WEB_PANEL_MAX)
+                                }
+                            }
+                            .semantics {
+                                contentDescription = "Resize the web panel"
+                                customActions = listOf(
+                                    CustomAccessibilityAction("Make wider") {
+                                        webWidth = (webWidth + 60.dp).coerceIn(WEB_PANEL_MIN, WEB_PANEL_MAX); true
+                                    },
+                                    CustomAccessibilityAction("Make narrower") {
+                                        webWidth = (webWidth - 60.dp).coerceIn(WEB_PANEL_MIN, WEB_PANEL_MAX); true
+                                    },
+                                )
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            Modifier
+                                .size(width = 5.dp, height = 56.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.outline.copy(alpha = if (dragging) 0.95f else 0.6f)),
+                        )
+                    }
                 }
-                panel(Modifier.fillMaxHeight().width(webWidth).padding(vertical = Ui.Space.s).padding(end = Ui.Space.s), null)
             }
         }
     }
