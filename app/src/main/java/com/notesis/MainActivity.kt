@@ -4239,8 +4239,6 @@ private fun NoteScreen(
             },
             onSite = { webUrl = it },
             insets = onMove == null,
-            // Docked it is flush with the window's edges, so square; floating, its own round corner.
-            corner = if (onMove == null) 0.dp else Ui.Corner.sheet,
             onMove = onMove,
             onFile = { callback ->
                 val ready = pendingAttachment.value
@@ -6289,12 +6287,13 @@ private fun NoteScreen(
         if (!webPopup) {
             webUrl?.let {
                 // Docked, the panel runs to the window's top, right and bottom
-                // edges and meets the note with nothing between them. Its left
-                // edge is the seam: drag the handle on it to give the browser
-                // more room, or less - a pill on the panel's own edge that goes
-                // solid while it is held.
+                // edges and meets the note with nothing between them. Its corners
+                // stay round; what shows past them is the note's own desk, never
+                // bare window. Its left edge is the seam: drag the handle on it
+                // to give the browser more room, or less - a pill on the panel's
+                // own edge that goes solid while it is held.
                 val dragging = draftWebWidth != null
-                Box(Modifier.fillMaxHeight().width(webWidth)) {
+                Box(Modifier.fillMaxHeight().width(webWidth).background(deskColor())) {
                     panel(Modifier.fillMaxSize(), null)
                     Box(
                         Modifier
