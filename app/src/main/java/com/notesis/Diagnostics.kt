@@ -408,7 +408,11 @@ internal fun DiagnosticsSettings(
         SettingsSectionHeader("Device")
         DiagnosticRow("Temperature", snapshot.thermal)
         DiagnosticRow("Background work cut back", if (snapshot.throttled) "Yes, the device is warm" else "No")
-        DiagnosticRow("Battery saver", if (snapshot.powerSave) "On" else "Off")
+        DiagnosticRow("Battery saver", when {
+            snapshot.powerSave -> "On"
+            InteractionGovernor.systemPowerSave -> "On, not followed (Battery optimization is off)"
+            else -> "Off"
+        })
         DiagnosticRow("Display refresh", String.format(Locale.US, "%.0f Hz", refresh))
         DiagnosticRow("Interaction", snapshot.interaction.name.lowercase(Locale.US)
             .replaceFirstChar { it.titlecase(Locale.US) })

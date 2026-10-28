@@ -112,4 +112,20 @@ class SpotiGlassToolbarTest {
         assertEquals(FunctionsDropZone.MIDDLE, functionsDropZone(500f, 1000f))
         assertEquals(FunctionsDropZone.RIGHT, functionsDropZone(900f, 1000f))
     }
+
+    @Test fun `a dragged bar follows the finger and settles on the nearest size`() {
+        // Centred, the bar grows twice what the finger travels, so the button stays under it.
+        assertEquals(400f, liveBarWidth(300f, 50f, 0.5f, 80f, 900f), 0.001f)
+        // From a fixed start, as far as the finger.
+        assertEquals(350f, liveBarWidth(300f, 50f, 1f, 80f, 900f), 0.001f)
+        // Never past the narrowest or the widest size.
+        assertEquals(80f, liveBarWidth(300f, -500f, 0.5f, 80f, 900f), 0.001f)
+        assertEquals(900f, liveBarWidth(300f, 500f, 0.5f, 80f, 900f), 0.001f)
+        val widths = listOf(846f, 569f, 274f, 83f)
+        assertEquals(2, nearestBarSize(300f, 0..3) { widths[it] })
+        assertEquals(1, nearestBarSize(430f, 0..3) { widths[it] })
+        assertEquals(3, nearestBarSize(100f, 0..3) { widths[it] })
+        // Down the side the whole bar is not a size.
+        assertEquals(1, nearestBarSize(846f, 1..3) { widths[it] })
+    }
 }

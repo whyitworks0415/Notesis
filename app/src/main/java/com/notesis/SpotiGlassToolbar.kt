@@ -844,10 +844,13 @@ private fun Modifier.dismissInRoom(room: Dp, onDismiss: () -> Unit): Modifier = 
 }
 
 /**
- * The Functions button, dragged. Across the screen it steps the bar through
- * its sizes - right for longer, toward 1/4, left for shorter - a size for
- * every [FUNCTIONS_DRAG_STEP] the finger has gone from where it came down;
- * carried on to the screen's left or right edge it stands the bar down that
+ * The Functions button, dragged. Across the screen it takes the bar through
+ * its sizes - right for longer, toward 1/4, left for shorter. With a
+ * [LocalBarLiveResize] the bar's width follows the finger, the button staying
+ * under it, the tools change over halfway between two sizes, and let go the
+ * bar settles on the nearest; without one (a preview) it steps a size for
+ * every [FUNCTIONS_DRAG_STEP] the finger has gone from where it came down.
+ * Carried on to the screen's left or right edge it stands the bar down that
  * side. Down the side, dragged up it makes the bar shorter and down longer;
  * let go across the screen it takes the bar to that side, or, let go in the
  * middle, back across the top. With [onMove], a press held still first picks
@@ -865,6 +868,7 @@ private fun Modifier.functionsDrag(
     val level by rememberUpdatedState(sizeLevel)
     val resize by rememberUpdatedState(onSizeLevel)
     val move by rememberUpdatedState(onMove)
+    val live by rememberUpdatedState(if (vertical) null else LocalBarLiveResize.current)
     val haptics = LocalHapticFeedback.current
     val placed = remember { arrayOfNulls<LayoutCoordinates>(1) }
     return onGloballyPositioned { placed[0] = it }.pointerInput(vertical) {
@@ -899,7 +903,10 @@ private fun Modifier.functionsDrag(
             val startLevel = level
             var last = origin
             var zone: FunctionsDropZone? = null
-            while (true) {
+            // Across the top the bar's width follows the finger, and lets go onto the nearest size.
+            val following = if (moving) null else live
+            val startWidth = following?.widthOf(startLevel)?.value ?: 0f
+            try { while (true) {
                 val change = awaitPointerEvent(PointerEventPass.Initial).changes.firstOrNull { it.id == first.id } ?: break
                 // Taken, so lifting the finger after a drag does not also open the menu.
                 change.consume()
@@ -944,6 +951,19 @@ private fun Modifier.functionsDrag(
                         // The bar is laid out again down the side; this button goes with it.
                         break
                     }
+                    if (following != null) {
+                        val sizes = longest..ToolbarConfig.BUTTON_ONLY_STAGE
+                        val width = liveBarWidth(startWidth, travel.x.toDp().value, following.follow,
+                            following.widthOf(ToolbarConfig.BUTTON_ONLY_STAGE).value, following.widthOf(longest).value)
+                        following.onWidth(width.dp)
+                        // The tools change over halfway between two sizes; the width never jumps.
+                        val next = nearestBarSize(width, sizes) { following.widthOf(it).value }
+                        if (next != level) {
+                            resize(next)
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        }
+                        continue
+                    }
                 }
                 val along = if (vertical) travel.y else travel.x
                 val next = functionsDragLevel(startLevel, along, step, longest)
@@ -951,6 +971,9 @@ private fun Modifier.functionsDrag(
                     resize(next)
                     haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 }
+            } } finally {
+                // Let go, cancelled, or gone down the side: the bar settles on its size.
+                following?.onWidth(null)
             }
         }
     }
@@ -974,6 +997,35 @@ internal fun functionsDropZone(x: Float, width: Float): FunctionsDropZone = when
  */
 internal fun functionsDragLevel(startLevel: Int, along: Float, step: Float, longest: Int): Int =
     (startLevel - (along / step).toInt()).coerceIn(longest, ToolbarConfig.BUTTON_ONLY_STAGE)
+
+/**
+ * How the bar across the top follows its Functions button while it is
+ * dragged: the bar's width at each size as it is laid out, how far the button
+ * moves for each dp the bar grows (a half when the bar is centred, all of it
+ * when it grows from a fixed start), and where to send the width the bar
+ * should have now - null when the finger lifts and the bar is to settle on
+ * its size.
+ */
+internal class BarLiveResize(
+    val widthOf: (Int) -> Dp,
+    val follow: Float,
+    val onWidth: (Dp?) -> Unit,
+)
+
+/** The note's bar provides one; a preview of the bar steps through its sizes instead. */
+internal val LocalBarLiveResize = compositionLocalOf<BarLiveResize?> { null }
+
+/**
+ * The width a bar dragged by its Functions button [travel] from where it
+ * came down at [startWidth] follows, so the button stays under the finger,
+ * between the bar's narrowest and widest.
+ */
+internal fun liveBarWidth(startWidth: Float, travel: Float, follow: Float, narrowest: Float, widest: Float): Float =
+    (startWidth + travel / follow.coerceAtLeast(0.1f)).coerceIn(narrowest, widest)
+
+/** The size whose width is nearest [width], among [sizes], each [widthOf]. */
+internal fun nearestBarSize(width: Float, sizes: IntRange, widthOf: (Int) -> Float): Int =
+    sizes.minBy { kotlin.math.abs(widthOf(it) - width) }
 
 /** How far the Functions button is dragged across the screen for each size it steps through. */
 private val FUNCTIONS_DRAG_STEP = 56.dp

@@ -566,6 +566,14 @@ private fun StyleGroup(
     SettingsSectionHeader("Toolbar")
     ToolbarStageSelector(toolbarSize, onSelect = onToolbarSize)
     ToolbarOrientationChoice(toolbarSize)
+    SettingsSectionHeader("Battery")
+    SettingsToggle(
+        "Battery optimization", InteractionGovernor.batteryOptimization, InteractionGovernor::updateBatteryOptimization,
+        hint = (if (InteractionGovernor.batteryOptimization)
+            "In battery saver the glass goes plain and solid, the lens stops moving and fewer pages are read ahead."
+        else "Battery saver changes nothing here: the glass, its motion and reading ahead stay as set. The system's own limits still apply.") +
+            if (InteractionGovernor.systemPowerSave) " Battery saver is on now." else "",
+    )
     SettingsSectionHeader("Preview")
     Row(
         Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),

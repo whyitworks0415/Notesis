@@ -117,8 +117,26 @@ internal object InteractionGovernor {
     @Volatile var state: Interaction = Interaction.IDLE
         private set
 
+    /**
+     * Battery saver as the app follows it: on only while the system's is on
+     * and [batteryOptimization] lets the app save with it.
+     */
     @Volatile var powerSave: Boolean = false
         private set
+
+    /** The system's battery saver, whatever the app makes of it. */
+    var systemPowerSave by mutableStateOf(false)
+        private set
+
+    /**
+     * Whether the app saves power with the system's battery saver: plainer
+     * glass, no lens motion, fewer pages read ahead. Off, battery saver
+     * changes nothing in the app; the system's own limits still apply.
+     */
+    var batteryOptimization by mutableStateOf(true)
+        private set
+
+    private var prefs: android.content.SharedPreferences? = null
 
     /** PowerManager's thermal status, NONE (0) until it reports. */
     @Volatile var thermalStatus: Int = 0
@@ -142,15 +160,16 @@ internal object InteractionGovernor {
         initialized = true
         val app = context.applicationContext
         val power = app.getSystemService(PowerManager::class.java)
-        powerSave = power?.isPowerSaveMode == true
-        observedPowerSave = powerSave
-        applySettle()
+        prefs = app.getSharedPreferences("pens", Context.MODE_PRIVATE).also {
+            batteryOptimization = it.getBoolean(KEY_BATTERY_OPTIMIZATION, true)
+        }
+        systemPowerSave = power?.isPowerSaveMode == true
+        followPowerSave()
         runCatching {
             app.registerReceiver(object : BroadcastReceiver() {
                 override fun onReceive(context: Context, intent: Intent) {
-                    powerSave = power?.isPowerSaveMode == true
-                    observedPowerSave = powerSave
-                    applySettle()
+                    systemPowerSave = power?.isPowerSaveMode == true
+                    followPowerSave()
                     publish()
                 }
             }, IntentFilter(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED))
@@ -163,6 +182,23 @@ internal object InteractionGovernor {
             }
         }
     }
+
+    /** Lets the app save power with battery saver, or keeps it as it is whatever battery saver says. */
+    fun updateBatteryOptimization(on: Boolean) {
+        if (batteryOptimization == on) return
+        batteryOptimization = on
+        prefs?.edit()?.putBoolean(KEY_BATTERY_OPTIMIZATION, on)?.apply()
+        followPowerSave()
+        publish()
+    }
+
+    private fun followPowerSave() {
+        powerSave = systemPowerSave && batteryOptimization
+        observedPowerSave = powerSave
+        applySettle()
+    }
+
+    private const val KEY_BATTERY_OPTIMIZATION = "batteryOptimization"
 
     fun noteRefreshRate(hz: Float?) {
         if (hz != null && hz.isFinite() && hz >= 20f) refreshHz = hz

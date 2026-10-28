@@ -13,6 +13,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.spring
@@ -4124,11 +4125,25 @@ private fun NoteScreen(
     val barRoom = if (barCrowdsBack) acrossRoom else maxBarWidth
     val barClearStartPx = with(density) { if (barCrowdsBack) backReserve.toPx() else 0f }
     val toolbarEffects = rememberLiquidGlassEffectsAllowed() && !LocalSkinSettings.current.highContrast
+    // While the Functions button is dragged the bar's width follows the finger
+    // (see BarLiveResize); let go, it settles on its size with the bar's spring.
+    var liveBarWidth by remember { mutableStateOf<Dp?>(null) }
     val floatingBarWidth = animateDpAsState(
-        minOf(barRoom, wantedBarWidth),
+        liveBarWidth ?: minOf(barRoom, wantedBarWidth),
         // Material and Glassmorphism switch sizes at once; only Liquid glass morphs.
-        if (skin.animatesChrome && toolbarEffects) ToolbarMotion.spec() else tween(0),
+        when {
+            liveBarWidth != null -> snap()
+            skin.animatesChrome && toolbarEffects -> ToolbarMotion.spec()
+            else -> tween(0)
+        },
         label = "Top bar mode width",
+    )
+    // Centred, the button moves half as far as the bar grows; from a fixed start, as far.
+    val barCentred = (barDocked || barOffset == null) && !barCrowdsBack
+    val barLiveResize = BarLiveResize(
+        widthOf = { level -> minOf(barRoom, spotiToolbarWidth(level, chromeScale, ToolbarLayout.config.tools(level).size)) },
+        follow = if (barCentred) 0.5f else 1f,
+        onWidth = { liveBarWidth = it },
     )
     var showLatency by remember { mutableStateOf(false) }
     var confirmClearAll by remember { mutableStateOf(false) }
@@ -4353,6 +4368,7 @@ private fun NoteScreen(
     // With a level, the same bar drawn as a picture for the settings previews:
     // that size, floating, reporting nothing back.
     val toolbar: @Composable (Modifier, Int?) -> Unit = { barModifier, previewLevel ->
+        CompositionLocalProvider(LocalBarLiveResize provides if (previewLevel == null) barLiveResize else null) {
         Toolbar(
             note = note,
             otherNotes = otherNotes,
@@ -4462,6 +4478,7 @@ private fun NoteScreen(
                 penStore.docked = docked
             },
         )
+        }
     }
 
     // The chrome looks through whatever is drawn under it, so the page records
