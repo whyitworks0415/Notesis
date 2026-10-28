@@ -11,8 +11,10 @@ import org.json.JSONObject
 /** One line of a checklist. */
 internal data class CheckItem(val id: Long, val text: String, val done: Boolean = false)
 
-/** The tools panel's three tools besides the clock. */
-internal enum class ToolPanel { CALCULATOR, TODO, CALENDAR }
+/** The tools panel's tabs, in the order it shows them. */
+internal enum class ToolPanel(val label: String) {
+    CALCULATOR("Calc"), CLOCK("Clock"), CALENDAR("Calendar"), TODO("To-do"),
+}
 
 /**
  * The to-do list and the calendar's day lists, kept apart: the to-do list is
@@ -24,6 +26,10 @@ internal object Planner {
 
     /** Which tool panel is open, if any. */
     var open by mutableStateOf<ToolPanel?>(null)
+
+    /** The tab the panel was last on, which the Tools button opens it at again. */
+    var lastPanel = ToolPanel.CALCULATOR
+        private set
 
     var todo by mutableStateOf<List<CheckItem>>(emptyList())
         private set
@@ -48,6 +54,7 @@ internal object Planner {
 
     fun show(panel: ToolPanel) {
         open = panel
+        lastPanel = panel
     }
 
     // ---- the to-do list -------------------------------------------------------------

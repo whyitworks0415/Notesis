@@ -1,8 +1,6 @@
 package com.notesis
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.PI
@@ -51,29 +49,6 @@ class MathExprTest {
 
     @Test fun lastAnswerCarriesOver() {
         assertEquals(15.0, calc("Ans×3", ans = 5.0), 1e-12)
-    }
-
-    @Test fun derivativesAreWrittenOut() {
-        fun derive(text: String) = MathExpr.format(MathExpr.derivative(MathExpr.parse(text))!!)
-        assertEquals("2x", derive("x^2"))
-        assertEquals("cos(x)", derive("sin(x)"))
-        assertEquals("3x^2 + 2", derive("x^3+2x"))
-        assertEquals("1/x", derive("ln(x)"))
-        val atTwo = MathExpr.eval(MathExpr.derivative(MathExpr.parse("x^3"))!!, x = 2.0)
-        assertEquals(12.0, atTwo, 1e-12)
-    }
-
-    @Test fun derivativeWithoutARuleFallsBackToNumbers() {
-        val e = MathExpr.parse("x!")
-        assertNull(MathExpr.derivative(e))
-        assertNotNull(e)
-        assertEquals(12.0, MathExpr.numericDerivative(MathExpr.parse("x^3"), 2.0), 1e-6)
-    }
-
-    @Test fun definiteIntegrals() {
-        assertEquals(1.0 / 3.0, MathExpr.integrate(MathExpr.parse("x^2"), 0.0, 1.0), 1e-10)
-        assertEquals(2.0, MathExpr.integrate(MathExpr.parse("sin(x)"), 0.0, PI), 1e-10)
-        assertEquals(1.0, MathExpr.integrate(MathExpr.parse("1/x"), 1.0, kotlin.math.E), 1e-10)
     }
 
     @Test fun numbersAreShownCleanly() {

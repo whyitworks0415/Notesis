@@ -79,6 +79,8 @@ internal fun ToolPanel(
     state: ToolPanelState,
     onOutside: () -> Unit,
     maxWidth: Dp = TOOL_PANEL_WIDTH,
+    /** Drawn in the title's place, when the head of the panel is a choice rather than a name. */
+    heading: (@Composable RowScope.() -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit,
     content: @Composable ColumnScope.() -> Unit,
 ) {
@@ -126,8 +128,9 @@ internal fun ToolPanel(
                 .padding(TOOL_PANEL_INSET),
             verticalArrangement = Arrangement.spacedBy(GAP),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+                if (heading != null) heading()
+                else Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
                 actions()
             }
             content()

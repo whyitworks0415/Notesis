@@ -70,9 +70,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -122,7 +124,6 @@ internal fun ClockOverlay(modifier: Modifier = Modifier) {
                 // Kept clear of the status bar and any cutout, as the bars are.
                 BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(ChromeInsets)) { ClockPill(current) }
             }
-            if (clock.panelOpen) ClockPanel()
             Planner.open?.let { ToolPanelHost(it) }
         }
     }
@@ -138,6 +139,7 @@ private fun BoxWithConstraintsScope.ClockPill(kind: PillKind) {
     val scheme = MaterialTheme.colorScheme
     val margin = with(LocalDensity.current) { 16.dp.toPx() }
     var size by remember { mutableStateOf(IntSize.Zero) }
+    val pillCenter = remember { arrayOfNulls<Offset>(1) }
     val freeWidth = (constraints.maxWidth - size.width - 2 * margin).coerceAtLeast(1f)
     val freeHeight = (constraints.maxHeight - size.height - 2 * margin).coerceAtLeast(1f)
     val free by rememberUpdatedState(Offset(freeWidth, freeHeight))
@@ -153,6 +155,8 @@ private fun BoxWithConstraintsScope.ClockPill(kind: PillKind) {
                 )
             }
             .onSizeChanged { size = it }
+            // The panel grows out of the pill when the pill opens it.
+            .onGloballyPositioned { pillCenter[0] = it.localToScreen(Offset(it.size.width / 2f, it.size.height / 2f)) }
             .then(if (alert) Modifier.alertGlow(scheme.primary) else Modifier)
             .liquidGlass(
                 shape = shape,
@@ -167,7 +171,10 @@ private fun BoxWithConstraintsScope.ClockPill(kind: PillKind) {
                     clock.moveButton(clock.buttonX + drag.x / free.x, clock.buttonY + drag.y / free.y)
                 }
             }
-            .clickable { clock.openPanel(tabOf(kind)) }
+            .clickable {
+                pillCenter[0]?.let { PenPopupAnchor.tapped(it) }
+                clock.openPanel(tabOf(kind))
+            }
             .height(44.dp)
             .then(if (kind == PillKind.IDLE) Modifier.width(44.dp) else Modifier.padding(start = 14.dp, end = if (alert) 6.dp else 16.dp)),
         verticalAlignment = Alignment.CenterVertically,
@@ -284,86 +291,52 @@ private fun ConfirmChip(onClick: () -> Unit) {
 
 // ---- the panel -----------------------------------------------------------------------
 
+/** The tools panel's clock: the timer, the stopwatch, the alarms and study time. */
 @Composable
-private fun ClockPanel() {
+internal fun ClockSection() {
     val clock = StudyClock
-    GlassSheet(title = "Clock", onClose = { clock.panelOpen = false }) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
-            ClockTab.entries.forEach { option ->
-                ClockChip(option.label, clock.tab == option, Modifier.weight(1f)) { clock.tab = option }
-            }
-        }
-        when (clock.tab) {
-            ClockTab.TIMER -> TimerTab()
-            ClockTab.STOPWATCH -> StopwatchTab()
-            ClockTab.ALARM -> AlarmTab()
-            ClockTab.STUDY -> StudyTab()
-        }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        SettingRow(
-            "Clock button on screen",
-            "Timers and alarms still show on screen when this is off",
-            clock.buttonShown,
-        ) { clock.updateButtonShown(it) }
-    }
-}
-
-/**
- * A panel over the screen on liquid glass: a light scrim that closes it when
- * tapped, back to close as well, and a centred card that scrolls when its
- * content runs taller than the screen. The clock and the tools share it.
- */
-@Composable
-internal fun GlassSheet(
-    title: String,
-    onClose: () -> Unit,
-    maxWidth: androidx.compose.ui.unit.Dp = 440.dp,
-    headerExtra: @Composable RowScope.() -> Unit = {},
-    content: @Composable ColumnScope.() -> Unit,
-) {
-    BackHandler(onBack = onClose)
-    // A tap past the panel closes it.
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.06f))
-            .pointerInput(Unit) { detectTapGestures { onClose() } },
-    )
-    // Kept above the keyboard, which a text field brings up.
-    Box(Modifier.fillMaxSize().windowInsetsPadding(ChromeInsets).imePadding()) {
-        // The same sheet as the pen settings: corner, margin and inset.
-        val shape = Ui.Shape.sheet
-        Column(
-            Modifier
-                .align(Alignment.Center)
-                .padding(Ui.Space.l)
-                .widthIn(max = maxWidth)
-                .fillMaxWidth()
-                .liquidGlass(
-                    shape = shape,
-                    surfaceColor = MaterialTheme.colorScheme.surface,
-                    surfaceOpacity = 0.84f,
-                    useSpotiStyle = false,
-                )
-                .clip(shape)
-                // Taps on the panel's own background stay on the panel.
-                .pointerInput(Unit) { detectTapGestures { } }
-                .verticalScroll(rememberScrollState())
-                .animateContentSize()
-                .padding(horizontal = Ui.Space.xl, vertical = Ui.Space.l),
-            verticalArrangement = Arrangement.spacedBy(Ui.Space.m),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-                headerExtra()
-                IconButton(onClick = onClose) { Icon(Reicons.Close, contentDescription = "Close") }
-            }
-            content()
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+        ClockTab.entries.forEach { option ->
+            ClockChip(option.label, clock.tab == option, Modifier.weight(1f)) { clock.tab = option }
         }
     }
+    when (clock.tab) {
+        ClockTab.TIMER -> TimerTab()
+        ClockTab.STOPWATCH -> StopwatchTab()
+        ClockTab.ALARM -> AlarmTab()
+        ClockTab.STUDY -> StudyTab()
+    }
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    SettingRow(
+        "Clock button on screen",
+        "Timers and alarms still show on screen when this is off",
+        clock.buttonShown,
+    ) { clock.updateButtonShown(it) }
 }
 
 // ---- timer ---------------------------------------------------------------------------
+
+/** The longest timer the slider sets, in minutes. */
+internal const val TIMER_SLIDER_MAX_MINUTES = 180L
+
+/**
+ * The timer's length, in whole minutes, at [position] 0 to 1 along its
+ * slider. The square of the position, so the first quarter of the track
+ * covers a quarter of an hour minute by minute and the rest climbs to three
+ * hours; past the hour it moves in fives.
+ */
+internal fun timerSliderMinutes(position: Float): Long {
+    val p = position.coerceIn(0f, 1f)
+    val minutes = 1.0 + (TIMER_SLIDER_MAX_MINUTES - 1) * p * p
+    val whole = kotlin.math.round(minutes).toLong()
+    return if (whole > 60) (kotlin.math.round(minutes / 5.0) * 5).toLong().coerceAtMost(TIMER_SLIDER_MAX_MINUTES) else whole
+}
+
+/** Where [minutes] sits along the timer's slider: [timerSliderMinutes] the other way. */
+internal fun timerSliderPosition(minutes: Long): Float {
+    val m = minutes.coerceIn(1L, TIMER_SLIDER_MAX_MINUTES).toDouble()
+    return kotlin.math.sqrt((m - 1.0) / (TIMER_SLIDER_MAX_MINUTES - 1)).toFloat()
+}
 
 @Composable
 private fun TimerTab() {
@@ -399,19 +372,20 @@ private fun TimerTab() {
         }
     }
     if (idle) {
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
-            listOf(1, 3, 5, 10, 15, 25, 30, 45, 60).forEach { minutes ->
-                ClockChip("${minutes} min", duration == minutes * StudyClock.MINUTE) {
-                    clock.setTimerDuration(minutes * StudyClock.MINUTE)
-                }
-            }
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
-            listOf(-5 to "−5 min", -1 to "−1 min", 1 to "+1 min", 5 to "+5 min").forEach { (minutes, label) ->
-                ClockChip(label, false, Modifier.weight(1f)) {
-                    clock.setTimerDuration(duration + minutes * StudyClock.MINUTE)
-                }
-            }
+        // One slider for the length: fine in the first minutes, coarser past the hour.
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Ui.Space.m)) {
+            SkinSlider(
+                value = timerSliderPosition(duration / StudyClock.MINUTE),
+                onValueChange = { clock.setTimerDuration(timerSliderMinutes(it) * StudyClock.MINUTE) },
+                valueRange = 0f..1f,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                "${duration / StudyClock.MINUTE} min",
+                style = MaterialTheme.typography.labelLarge.merge(TabularDigits),
+                textAlign = TextAlign.End,
+                modifier = Modifier.widthIn(min = 64.dp),
+            )
         }
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Ui.Space.m)) {

@@ -52,248 +52,124 @@ import java.time.LocalDate
 import java.time.format.TextStyle as DateTextStyle
 import java.util.Locale
 
-/** The open tool's panel. */
+/**
+ * The calculator, the clock, the calendar and the to-do list: one panel with
+ * a tab for each, grown out of the point that opened it and folded back into
+ * it, like every other panel off the bar.
+ */
 @Composable
 internal fun ToolPanelHost(panel: ToolPanel) {
-    val close = { Planner.open = null }
-    when (panel) {
-        ToolPanel.CALCULATOR -> GlassSheet(title = "Calculator", onClose = close, maxWidth = 460.dp) { CalculatorPanel() }
-        ToolPanel.TODO -> GlassSheet(title = "To-do", onClose = close) { TodoPanel() }
-        ToolPanel.CALENDAR -> GlassSheet(title = "Calendar", onClose = close, maxWidth = 480.dp) { CalendarPanel() }
+    val state = rememberToolPanelState()
+    val close = { state.close { Planner.open = null } }
+    ToolPanel(
+        title = "Tools",
+        state = state,
+        onOutside = close,
+        maxWidth = 480.dp,
+        heading = {
+            LiquidSegmentedControl(
+                segments = ToolPanel.entries.map { it.label },
+                selectedIndex = panel.ordinal,
+                onSelected = { Planner.show(ToolPanel.entries[it]) },
+                useLiquidGlass = LocalSkin.current.isRefractive,
+                modifier = Modifier.weight(1f),
+            )
+        },
+        actions = {
+            IconButton(onClick = close) { Icon(Reicons.Close, contentDescription = "Close") }
+        },
+    ) {
+        when (panel) {
+            ToolPanel.CALCULATOR -> CalculatorPanel()
+            ToolPanel.CLOCK -> ClockSection()
+            ToolPanel.CALENDAR -> CalendarPanel()
+            ToolPanel.TODO -> TodoPanel()
+        }
     }
 }
 
-/** The toolbar's and the library's way in: the clock and the three tools in one menu. */
+/** The toolbar's and the library's way in: the clock and the three tools in one panel. */
 @Composable
 internal fun ToolsMenuButton() {
-    var open by remember { mutableStateOf(false) }
-    Box {
-        AppIconButton(onClick = { open = true }, icon = AppIcons.tools, contentDescription = "Tools")
-        DropdownMenu(open, onDismissRequest = { open = false }) {
-            DropdownMenuItem(
-                text = { Text("Clock") },
-                leadingIcon = { Icon(Reicons.Clock, contentDescription = null) },
-                onClick = { open = false; StudyClock.openPanel() },
-            )
-            DropdownMenuItem(
-                text = { Text("Calculator") },
-                leadingIcon = { Icon(Reicons.Calculate, contentDescription = null) },
-                onClick = { open = false; Planner.show(ToolPanel.CALCULATOR) },
-            )
-            DropdownMenuItem(
-                text = { Text("To-do") },
-                leadingIcon = { Icon(Reicons.Checklist, contentDescription = null) },
-                onClick = { open = false; Planner.show(ToolPanel.TODO) },
-            )
-            DropdownMenuItem(
-                text = { Text("Calendar") },
-                leadingIcon = { Icon(Reicons.CalendarMonth, contentDescription = null) },
-                onClick = { open = false; Planner.show(ToolPanel.CALENDAR) },
-            )
-        }
-    }
+    AppIconButton(onClick = { Planner.show(Planner.lastPanel) }, icon = AppIcons.tools, contentDescription = "Tools")
 }
 
 // ---- calculator ----------------------------------------------------------------------
 
-private enum class CalcMode(val label: String) { CALC("Calculate"), DERIVE("Derivative"), INTEGRATE("Integral") }
-
-/** The calculator's fields, kept across opening and closing it. */
+/** The calculator's display and history, kept across opening and closing it. */
 private object CalcState {
-    var mode by mutableStateOf(CalcMode.CALC)
     var degrees by mutableStateOf(true)
-    var second by mutableStateOf(false)
+    /** Whether the row of functions is out above the digits. */
+    var functions by mutableStateOf(false)
     var expression by mutableStateOf("")
-    var function by mutableStateOf("")
-    var point by mutableStateOf("")
-    var lower by mutableStateOf("")
-    var upper by mutableStateOf("")
-    /** Which field the keypad types into: 0 the expression or f(x), 1 the point or lower end, 2 the upper end. */
-    var field by mutableStateOf(0)
     var ans by mutableStateOf(0.0)
     val history = mutableStateListOf<Pair<String, String>>()
 }
 
+/**
+ * A plain calculator: the sum and its answer, the digits and the four
+ * operations. The functions - sin, √, powers, brackets - are one key away,
+ * a short block above the digits, and go again when that key is let go of.
+ */
 @Composable
 private fun CalculatorPanel() {
-    val s = CalcState
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
-        CalcMode.entries.forEach { mode ->
-            ClockChip(mode.label, s.mode == mode, Modifier.weight(1f)) { s.mode = mode; s.field = 0 }
-        }
-    }
-    when (s.mode) {
-        CalcMode.CALC -> CalcDisplay()
-        CalcMode.DERIVE -> DeriveDisplay()
-        CalcMode.INTEGRATE -> IntegrateDisplay()
-    }
-    Keypad(onKey = ::press)
-    if (s.mode == CalcMode.CALC && s.history.isNotEmpty()) {
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Column(verticalArrangement = Arrangement.spacedBy(Ui.Space.xs)) {
-            for ((expr, result) in s.history.asReversed()) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(Ui.Shape.chip)
-                        .clickable { s.expression += result.takeIf { it.first().isDigit() || it.first() == '-' } ?: "" }
-                        .padding(horizontal = 6.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(expr, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                    Text(" = $result", style = MaterialTheme.typography.bodyMedium.merge(TabularDigits))
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CalcDisplay() {
     val s = CalcState
     val preview = remember(s.expression, s.degrees, s.ans) {
         if (s.expression.isBlank()) "" else runCatching {
             formatNumber(MathExpr.eval(MathExpr.parse(s.expression), s.degrees, ans = s.ans))
         }.getOrDefault("")
     }
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
-        ClockChip(if (s.degrees) "DEG" else "RAD", selected = false) { s.degrees = !s.degrees }
-        Text(
-            if (s.degrees) "Angles: degrees (°)" else "Angles: radians",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.outline,
-        )
-    }
-    DisplayBox(focused = true) {
+    DisplayBox {
+        // The last sum, small, above the one being typed.
+        s.history.lastOrNull()?.let { (expr, result) ->
+            Text(
+                "$expr = $result",
+                style = MaterialTheme.typography.bodyMedium.merge(TabularDigits),
+                color = MaterialTheme.colorScheme.outline,
+                textAlign = TextAlign.End,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
         Text(
             s.expression.ifEmpty { "0" },
-            style = MaterialTheme.typography.headlineSmall.merge(TabularDigits),
+            style = MaterialTheme.typography.headlineMedium.merge(TabularDigits),
             textAlign = TextAlign.End,
-            maxLines = 3,
+            maxLines = 2,
             modifier = Modifier.fillMaxWidth(),
         )
         Text(
-            if (preview.isNotEmpty()) "= $preview" else " ",
+            if (preview.isNotEmpty() && preview != s.expression) "= $preview" else " ",
             style = MaterialTheme.typography.titleMedium.merge(TabularDigits),
             color = MaterialTheme.colorScheme.outline,
             textAlign = TextAlign.End,
             modifier = Modifier.fillMaxWidth(),
         )
     }
-}
-
-@Composable
-private fun DeriveDisplay() {
-    val s = CalcState
-    val result = remember(s.function, s.point) { deriveText(s.function, s.point) }
-    Field("f(x) =", s.function, focused = s.field == 0) { s.field = 0 }
-    Field("x =", s.point, focused = s.field == 1, hint = "Point for the slope (blank for the derivative only)") { s.field = 1 }
-    ResultBox(result)
-    Text(
-        "Derivatives and integrals use radians.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.outline,
-    )
-}
-
-@Composable
-private fun IntegrateDisplay() {
-    val s = CalcState
-    val result = remember(s.function, s.lower, s.upper) { integrateText(s.function, s.lower, s.upper) }
-    Field("f(x) =", s.function, focused = s.field == 0) { s.field = 0 }
-    Row(horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
-        Box(Modifier.weight(1f)) { Field("Lower a", s.lower, focused = s.field == 1) { s.field = 1 } }
-        Box(Modifier.weight(1f)) { Field("Upper b", s.upper, focused = s.field == 2) { s.field = 2 } }
-    }
-    ResultBox(result)
-    Text(
-        "Computes ∫ₐᵇ f(x) dx with adaptive Simpson's rule, in radians.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.outline,
-    )
-}
-
-private fun deriveText(function: String, point: String): List<String> {
-    if (function.isBlank()) return listOf("Enter f(x)")
-    val f = runCatching { MathExpr.parse(function) }.getOrElse { return listOf(it.message ?: "Can't read the expression") }
-    val lines = ArrayList<String>()
-    val derived = MathExpr.derivative(f)
-    if (derived != null) lines += "f′(x) = " + MathExpr.format(derived)
-    if (point.isNotBlank()) {
-        val a = runCatching { MathExpr.eval(MathExpr.parse(point), degrees = false, ans = CalcState.ans) }
-            .getOrElse { return lines + (it.message ?: "Can't read the x value") }
-        val value = derived?.let { runCatching { MathExpr.eval(it, degrees = false, x = a, ans = CalcState.ans) }.getOrNull() }
-            ?.takeIf { it.isFinite() }
-            ?: runCatching { MathExpr.numericDerivative(f, a, CalcState.ans) }.getOrNull()
-        lines += "f′(${formatNumber(a)}) = " + (value?.let(::formatNumber) ?: "Undefined")
-        runCatching { MathExpr.eval(f, degrees = false, x = a, ans = CalcState.ans) }.getOrNull()?.let {
-            lines += "f(${formatNumber(a)}) = " + formatNumber(it)
+    if (s.functions) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+            ClockChip(if (s.degrees) "DEG" else "RAD", selected = false) { s.degrees = !s.degrees }
+            Text(
+                if (s.degrees) "Angles in degrees" else "Angles in radians",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.outline,
+            )
         }
-    } else if (derived == null) {
-        lines += "Can't build a derivative formula for this. Enter an x value to get the slope at that point"
+        KeyRows(FUNCTION_KEYS)
     }
-    return lines
-}
-
-private fun integrateText(function: String, lower: String, upper: String): List<String> {
-    if (function.isBlank()) return listOf("Enter f(x)")
-    if (lower.isBlank() || upper.isBlank()) return listOf("Enter the lower and upper bounds")
-    return runCatching {
-        val f = MathExpr.parse(function)
-        val a = MathExpr.eval(MathExpr.parse(lower), degrees = false, ans = CalcState.ans)
-        val b = MathExpr.eval(MathExpr.parse(upper), degrees = false, ans = CalcState.ans)
-        listOf("∫ = " + formatNumber(MathExpr.integrate(f, a, b, CalcState.ans)))
-    }.getOrElse { listOf(it.message ?: "Can't calculate") }
+    KeyRows(DIGIT_KEYS)
 }
 
 @Composable
-private fun DisplayBox(focused: Boolean, content: @Composable () -> Unit) {
-    val scheme = MaterialTheme.colorScheme
+private fun DisplayBox(content: @Composable () -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
             .clip(Ui.Shape.control)
-            .background(scheme.onSurface.copy(alpha = 0.05f))
-            .border(
-                width = if (focused) 1.5.dp else 0.dp,
-                color = if (focused) scheme.primary.copy(alpha = 0.6f) else Color.Transparent,
-                shape = Ui.Shape.control,
-            )
+            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
             .padding(horizontal = Ui.Space.l, vertical = Ui.Space.m),
     ) { content() }
-}
-
-@Composable
-private fun Field(label: String, value: String, focused: Boolean, hint: String = "", onFocus: () -> Unit) {
-    Box(Modifier.clip(Ui.Shape.control).clickable(onClick = onFocus)) {
-        DisplayBox(focused) {
-            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.outline)
-            Text(
-                value.ifEmpty { hint.ifEmpty { " " } },
-                style = MaterialTheme.typography.titleLarge.merge(TabularDigits),
-                color = if (value.isEmpty()) MaterialTheme.colorScheme.outline.copy(alpha = 0.6f) else Color.Unspecified,
-                maxLines = 2,
-            )
-        }
-    }
-}
-
-@Composable
-private fun ResultBox(lines: List<String>) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .clip(Ui.Shape.control)
-            .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f))
-            .padding(horizontal = Ui.Space.l, vertical = Ui.Space.m),
-        verticalArrangement = Arrangement.spacedBy(Ui.Space.hair),
-    ) {
-        lines.forEach { line ->
-            Text(line, style = MaterialTheme.typography.titleMedium.merge(TabularDigits),
-                color = MaterialTheme.colorScheme.onPrimaryContainer)
-        }
-    }
 }
 
 /** A keypad key: what it shows and what it does. */
@@ -304,35 +180,27 @@ private const val KEY_FUNCTION = 1
 private const val KEY_OPERATOR = 2
 private const val KEY_ACTION = 3
 
-private val FIRST_KEYS = listOf(
-    listOf(Key("2nd", "", KEY_ACTION), Key("sin", "sin(", KEY_FUNCTION), Key("cos", "cos(", KEY_FUNCTION),
-        Key("tan", "tan(", KEY_FUNCTION), Key("(", "(", KEY_OPERATOR), Key(")", ")", KEY_OPERATOR)),
-    listOf(Key("√", "√(", KEY_FUNCTION), Key("xʸ", "^", KEY_OPERATOR), Key("x²", "^2", KEY_OPERATOR),
-        Key("ln", "ln(", KEY_FUNCTION), Key("log", "log(", KEY_FUNCTION), Key("logₙ", "logb(", KEY_FUNCTION)),
-    listOf(Key("7"), Key("8"), Key("9"), Key("÷", "÷", KEY_OPERATOR), Key("⌫", "", KEY_ACTION), Key("AC", "", KEY_ACTION)),
-    listOf(Key("4"), Key("5"), Key("6"), Key("×", "×", KEY_OPERATOR), Key("π", "π", KEY_FUNCTION), Key("e", "e", KEY_FUNCTION)),
-    listOf(Key("1"), Key("2"), Key("3"), Key("−", "-", KEY_OPERATOR), Key("x", "x", KEY_FUNCTION), Key(",", ",", KEY_OPERATOR)),
-    listOf(Key("0"), Key("."), Key("Ans", "Ans", KEY_FUNCTION), Key("+", "+", KEY_OPERATOR), Key("x!", "!", KEY_OPERATOR),
-        Key("=", "", KEY_ACTION)),
+/** Four across, as on any calculator; "f(x)" brings the functions out above. */
+private val DIGIT_KEYS = listOf(
+    listOf(Key("AC", "", KEY_ACTION), Key("⌫", "", KEY_ACTION), Key("%", "%", KEY_OPERATOR), Key("÷", "÷", KEY_OPERATOR)),
+    listOf(Key("7"), Key("8"), Key("9"), Key("×", "×", KEY_OPERATOR)),
+    listOf(Key("4"), Key("5"), Key("6"), Key("−", "-", KEY_OPERATOR)),
+    listOf(Key("1"), Key("2"), Key("3"), Key("+", "+", KEY_OPERATOR)),
+    listOf(Key("f(x)", "", KEY_ACTION), Key("0"), Key("."), Key("=", "", KEY_ACTION)),
 )
 
-/** With 2nd held: the inverse and hyperbolic functions, and the rarer ones. */
-private val SECOND_KEYS = listOf(
-    listOf(Key("2nd", "", KEY_ACTION), Key("sin⁻¹", "asin(", KEY_FUNCTION), Key("cos⁻¹", "acos(", KEY_FUNCTION),
-        Key("tan⁻¹", "atan(", KEY_FUNCTION), Key("(", "(", KEY_OPERATOR), Key(")", ")", KEY_OPERATOR)),
-    listOf(Key("∛", "cbrt(", KEY_FUNCTION), Key("eˣ", "exp(", KEY_FUNCTION), Key("10ˣ", "10^", KEY_OPERATOR),
-        Key("sinh", "sinh(", KEY_FUNCTION), Key("cosh", "cosh(", KEY_FUNCTION), Key("tanh", "tanh(", KEY_FUNCTION)),
-    listOf(Key("log₂", "log2(", KEY_FUNCTION), Key("|x|", "abs(", KEY_FUNCTION), Key("%", "%", KEY_OPERATOR),
-        Key("÷", "÷", KEY_OPERATOR), Key("⌫", "", KEY_ACTION), Key("AC", "", KEY_ACTION)),
-) + FIRST_KEYS.drop(3)
+private val FUNCTION_KEYS = listOf(
+    listOf(Key("(", "(", KEY_OPERATOR), Key(")", ")", KEY_OPERATOR), Key("xʸ", "^", KEY_OPERATOR), Key("√", "√(", KEY_FUNCTION)),
+    listOf(Key("sin", "sin(", KEY_FUNCTION), Key("cos", "cos(", KEY_FUNCTION), Key("tan", "tan(", KEY_FUNCTION), Key("π", "π", KEY_FUNCTION)),
+    listOf(Key("ln", "ln(", KEY_FUNCTION), Key("log", "log(", KEY_FUNCTION), Key("x²", "^2", KEY_OPERATOR), Key("Ans", "Ans", KEY_FUNCTION)),
+)
 
 @Composable
-private fun Keypad(onKey: (Key) -> Unit) {
-    val rows = if (CalcState.second) SECOND_KEYS else FIRST_KEYS
+private fun KeyRows(rows: List<List<Key>>) {
     Column(verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
         rows.forEach { row ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
-                row.forEach { key -> KeyButton(key, Modifier.weight(1f)) { onKey(key) } }
+                row.forEach { key -> KeyButton(key, Modifier.weight(1f)) { press(key) } }
             }
         }
     }
@@ -342,22 +210,22 @@ private fun Keypad(onKey: (Key) -> Unit) {
 private fun KeyButton(key: Key, modifier: Modifier, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     val equals = key.label == "="
-    val secondOn = key.label == "2nd" && CalcState.second
+    val functionsOut = key.label == "f(x)" && CalcState.functions
     val background = when {
-        equals || secondOn -> scheme.primary
+        equals || functionsOut -> scheme.primary
         key.kind == KEY_ACTION -> scheme.secondaryContainer
         key.kind == KEY_OPERATOR -> scheme.onSurface.copy(alpha = 0.1f)
         key.kind == KEY_FUNCTION -> scheme.onSurface.copy(alpha = 0.07f)
         else -> scheme.onSurface.copy(alpha = 0.04f)
     }
     val content = when {
-        equals || secondOn -> scheme.onPrimary
+        equals || functionsOut -> scheme.onPrimary
         key.kind == KEY_ACTION -> scheme.onSecondaryContainer
         else -> scheme.onSurface
     }
     Box(
         modifier
-            .height(46.dp)
+            .height(52.dp)
             .clip(Ui.Shape.control)
             .background(background)
             .clickable(onClick = onClick),
@@ -368,7 +236,7 @@ private fun KeyButton(key: Key, modifier: Modifier, onClick: () -> Unit) {
         } else {
             Text(
                 key.label,
-                style = if (key.kind == KEY_INPUT) MaterialTheme.typography.titleMedium else MaterialTheme.typography.labelLarge,
+                style = if (key.kind == KEY_INPUT) MaterialTheme.typography.titleLarge else MaterialTheme.typography.titleMedium,
                 color = content,
                 maxLines = 1,
             )
@@ -379,49 +247,11 @@ private fun KeyButton(key: Key, modifier: Modifier, onClick: () -> Unit) {
 private fun press(key: Key) {
     val s = CalcState
     when (key.label) {
-        "2nd" -> {
-            s.second = !s.second
-            return
-        }
-        "AC" -> {
-            setField("")
-            return
-        }
-        "⌫" -> {
-            setField(backspace(currentField()))
-            return
-        }
-        "=" -> {
-            if (s.mode == CalcMode.CALC) commit() else s.field = (s.field + 1) % (if (s.mode == CalcMode.INTEGRATE) 3 else 2)
-            return
-        }
-    }
-    setField(currentField() + key.insert)
-    // A second function was for one key, as on a calculator.
-    if (s.second && key.kind == KEY_FUNCTION) s.second = false
-}
-
-private fun currentField(): String = with(CalcState) {
-    when (mode) {
-        CalcMode.CALC -> expression
-        CalcMode.DERIVE -> if (field == 1) point else function
-        CalcMode.INTEGRATE -> when (field) {
-            1 -> lower
-            2 -> upper
-            else -> function
-        }
-    }
-}
-
-private fun setField(value: String) = with(CalcState) {
-    when (mode) {
-        CalcMode.CALC -> expression = value
-        CalcMode.DERIVE -> if (field == 1) point = value else function = value
-        CalcMode.INTEGRATE -> when (field) {
-            1 -> lower = value
-            2 -> upper = value
-            else -> function = value
-        }
+        "f(x)" -> s.functions = !s.functions
+        "AC" -> s.expression = ""
+        "⌫" -> s.expression = backspace(s.expression)
+        "=" -> commit()
+        else -> s.expression += key.insert
     }
 }
 

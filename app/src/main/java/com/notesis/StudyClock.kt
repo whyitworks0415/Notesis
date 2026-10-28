@@ -62,7 +62,6 @@ internal object StudyClock {
 
     // ---- on screen ------------------------------------------------------------
 
-    var panelOpen by mutableStateOf(false)
     var tab by mutableStateOf(ClockTab.TIMER)
 
     /** Whether the small clock button stays on screen when nothing is running. */
@@ -225,9 +224,10 @@ internal object StudyClock {
         saveAlarms()
     }
 
+    /** The tools panel at its clock, on [at] if given. */
     fun openPanel(at: ClockTab? = null) {
         if (at != null) tab = at
-        panelOpen = true
+        Planner.show(ToolPanel.CLOCK)
     }
 
     // ---- button ------------------------------------------------------------------

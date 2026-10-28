@@ -88,7 +88,7 @@ internal enum class TopRowItem(val label: String, val removable: Boolean = true)
     ZOOM("Zoom level"),
     SKIN("UI style"),
     RESET_BAR("Reset bar position"),
-    PLANNER("Clock & planner"),
+    PLANNER("Tools"),
     GESTURES("Touch & gestures"),
     ADD_PAGE("Add page"),
     NOTE_MENU("Note & view"),

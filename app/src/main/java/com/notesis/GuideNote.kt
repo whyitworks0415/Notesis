@@ -91,9 +91,9 @@ internal object GuideNote {
                 "with colours and width. 4/4 is a single button you can drag aside."),
             Block.Body("Tap a tool to pick it. Tap the tool in hand again\n" +
                 "to open its settings: colour, width and nib."),
-            Block.Tip("Functions holds the rest: picture, camera, layers,\n" +
-                "recording, capture, text, clock, calendar, to-do,\n" +
-                "calculator, other notes, add page and Settings."),
+            Block.Tip("Functions holds the rest: picture, Tools (calculator,\n" +
+                "clock, calendar, to-do), layers, recording, capture,\n" +
+                "text, other notes, add page and Settings."),
             Block.Tip("With a keyboard, Ctrl+1 to Ctrl+9 pick the tools\n" +
                 "in the order the bar shows them."),
         )),
@@ -144,7 +144,7 @@ internal object GuideNote {
         GuidePage("More on the page", listOf(
             Block.Body("Layers keep ink apart: lock one to protect it,\n" +
                 "dim it with opacity, or hide it."),
-            Block.Body("Pictures come from the gallery or the camera. Text boxes take\n" +
+            Block.Body("Pictures come from the gallery. Text boxes take\n" +
                 "typing, and Capture saves a region at high resolution."),
             Block.Body("Recording ties audio to what you write: in the Read tool,\n" +
                 "tap your writing to hear that moment."),

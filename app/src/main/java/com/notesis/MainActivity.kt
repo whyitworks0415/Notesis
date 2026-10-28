@@ -4013,10 +4013,10 @@ private fun NoteScreen(
     val wantedBarWidth = spotiToolbarWidth(shownToolbarSize, chromeScale)
     val crowdsAcross = shownToolbarSize > 0 && (maxBarWidth - wantedBarWidth) / 2 < backReserve
     val acrossRoom = if (crowdsAcross) (maxBarWidth - backReserve - 12.dp).coerceAtLeast(120.dp) else maxBarWidth
-    // Too narrow for the tools in one row, a bar across would fold onto a
-    // second: it runs down the side instead until the window is wide again.
+    // Too narrow for the bar's rows, a bar across would fold onto one more:
+    // it runs down the side instead until the window is wide again.
     val barWraps = shownToolbarSize > 0 && !ToolbarOrientation.vertical &&
-        spotiBarWraps(ToolbarLayout.config.tools(shownToolbarSize), minOf(acrossRoom, wantedBarWidth), chromeScale)
+        spotiBarWraps(ToolbarLayout.config.tools(shownToolbarSize), acrossRoom, wantedBarWidth, chromeScale)
     // The smaller bars may run down the side (see ToolbarOrientation); the whole bar never does.
     val barVertical = (ToolbarOrientation.vertical || barWraps) && shownToolbarSize > 0
     val barRight = barVertical && ToolbarOrientation.right
@@ -4086,14 +4086,6 @@ private fun NoteScreen(
                 canvas?.putTextBox(result.first, result.second, result.third, content)
                 edits++
             }
-        }
-    }
-    val takePhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { taken ->
-        val file = java.io.File(context.cacheDir, "shared/camera.jpg")
-        if (!taken || !file.isFile) return@rememberLauncherForActivityResult
-        scope.launch {
-            val added = withContext(Dispatchers.IO) { file.inputStream().use { store.addImage(note.id, it) } }
-            if (added != null) { canvas?.insertImage(added.first, added.second); edits++ }
         }
     }
     if (rulerAngle) {
@@ -4325,14 +4317,9 @@ private fun NoteScreen(
                 canvas?.let { it.addPage(it.currentPageIndex()); it.scrollToPage(it.currentPageIndex() + 1) }
                 edits++
             },
-            onClock = { StudyClock.openPanel() },
             onLayers = { showLayers = true },
             onSplit = { choosingSplit = true },
             split = split != null,
-            onCamera = {
-                val file = java.io.File(context.cacheDir, "shared/camera.jpg").apply { parentFile?.mkdirs() }
-                takePhoto.launch(androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".files", file))
-            },
             onQuickColor = { rgb ->
                 val alpha = pen.colorArgb and 0xFF000000.toInt()
                 settings = settings + (mode to pen.copy(colorArgb = (rgb and 0xFFFFFF) or alpha))
@@ -8390,9 +8377,7 @@ private fun Toolbar(
     onDragBar: (Offset) -> Unit,
     modifier: Modifier = Modifier,
     onAddPage: () -> Unit = {},
-    onClock: () -> Unit = {},
     onQuickColor: (Int) -> Unit = {},
-    onCamera: () -> Unit = {},
     onLayers: () -> Unit = {},
     /** Opens the split panel; [split] says whether the screen is split now. */
     onSplit: () -> Unit = {},
@@ -8512,24 +8497,20 @@ private fun Toolbar(
             } },
             // Exactly these, in these groups; everything else is in Settings.
             functions = listOf(
+                // No reason under a greyed one: both buttons keep one height.
                 listOf(
-                    SpotiToolbarAction("Undo", AppIcons.undo, enabled = canUndo, disabledReason = undoReason, onClick = onUndo),
-                    SpotiToolbarAction("Redo", AppIcons.redo, enabled = canRedo, disabledReason = redoReason, onClick = onRedo),
+                    SpotiToolbarAction("Undo", AppIcons.undo, enabled = canUndo, onClick = onUndo),
+                    SpotiToolbarAction("Redo", AppIcons.redo, enabled = canRedo, onClick = onRedo),
                 ),
                 listOf(
                     SpotiToolbarAction("Picture", AppIcons.picture, onClick = onPickImage),
-                    SpotiToolbarAction("Camera", AppIcons.camera, onClick = onCamera),
+                    // The calculator, the clock, the calendar and the to-do list, one panel.
+                    SpotiToolbarAction("Tools", AppIcons.tools, onClick = { Planner.show(Planner.lastPanel) }),
                     SpotiToolbarAction("Layers", AppIcons.layers, onClick = onLayers),
                     SpotiToolbarAction("Microphone", AppIcons.mic, selected = recording, onClick = onVoice),
                     SpotiToolbarAction("Capture", AppIcons.capture, selected = mode == EditMode.CAPTURE,
                         onClick = { onMode(EditMode.CAPTURE) }),
                     SpotiToolbarAction("Text", AppIcons.text, selected = mode == EditMode.TEXT, onClick = onText),
-                ),
-                listOf(
-                    SpotiToolbarAction("Clock", AppIcons.clock, onClick = onClock),
-                    SpotiToolbarAction("Calendar", AppIcons.calendar, onClick = { Planner.show(ToolPanel.CALENDAR) }),
-                    SpotiToolbarAction("To-do", AppIcons.todo, onClick = { Planner.show(ToolPanel.TODO) }),
-                    SpotiToolbarAction("Calculator", AppIcons.tools, onClick = { Planner.show(ToolPanel.CALCULATOR) }),
                 ),
                 listOf(
                     SpotiToolbarAction("Notes", AppIcons.otherNotes, opensNotes = true, onClick = {}),

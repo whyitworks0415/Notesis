@@ -243,7 +243,7 @@ internal val NOTE_MARKS = listOf(
     CoachMark(CoachTarget.TOP_ROW, "The note's buttons",
         "Back to the notes, undo and redo, recording, zoom and more. Choose which ones show in Settings › Customize toolbar."),
     CoachMark(CoachTarget.FUNCTIONS, "Functions",
-        "Pictures, camera, layers, text, capture, the clock and planner, other notes, add page, the tutorial and Settings. The bar's size, 1/4 to 4/4, is chosen here too."),
+        "Pictures, Tools (calculator, clock, calendar, to-do), layers, text, capture, other notes, add page, the tutorial and Settings. The bar's size, 1/4 to 4/4, is chosen here too, or by dragging this button left and right."),
 )
 
 /**

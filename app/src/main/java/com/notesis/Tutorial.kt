@@ -129,8 +129,8 @@ private val LESSONS: List<Lesson> = listOf(
         "Functions",
         listOf(
             "The round button on the bar opens Functions.",
-            "Pictures, camera, layers, recording, capture, text, the clock, calendar, to-do and calculator, other notes, add page and Settings.",
-            "The bar's size is chosen at its top: 1/4 is the whole bar, 4/4 a single button you can drag aside.",
+            "Pictures, Tools (calculator, clock, calendar and to-do in one panel), layers, recording, capture, text, other notes, add page and Settings.",
+            "The bar's size is chosen at its top, or drag the round button: left for a shorter bar, right for a longer one. 1/4 is the whole bar, 4/4 a single button.",
         ),
     ) { FunctionsPicture() },
     Lesson(
@@ -567,10 +567,10 @@ private fun FunctionsPicture() {
         }
         IconGrid(
             listOf(
-                AppIcons.picture, AppIcons.camera, AppIcons.layers, AppIcons.mic, AppIcons.capture, AppIcons.text,
-                AppIcons.clock, AppIcons.calendar, AppIcons.todo, AppIcons.tools, AppIcons.otherNotes, AppIcons.settings,
+                AppIcons.picture, AppIcons.tools, AppIcons.layers, AppIcons.mic, AppIcons.capture,
+                AppIcons.text, AppIcons.otherNotes, AppIcons.split, AppIcons.addPage, AppIcons.settings,
             ),
-            columns = 6,
+            columns = 5,
             cell = 34.dp,
         )
     }
