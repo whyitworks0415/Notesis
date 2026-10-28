@@ -3401,7 +3401,7 @@ class InkCanvasView @JvmOverloads constructor(
     fun addPageAttachment(index: Int, attachment: PageAttachment) {
         val page = document.pages.getOrNull(index) ?: return
         page.attachments += attachment
-        page.attachmentsHidden = false
+        document.hostOf(page).attachmentsHidden = false
         attachmentsChanged()
     }
 
@@ -3498,7 +3498,7 @@ class InkCanvasView @JvmOverloads constructor(
         val unit = resources.displayMetrics.density / currentScale().coerceAtLeast(0.001f)
         for (index in document.pagesIntersecting(y, y)) {
             val page = document.pages.getOrNull(index) ?: continue
-            if (page.attachments.isEmpty() || page.attachmentsHidden || !document.isShown(index)) continue
+            if (page.attachments.isEmpty() || document.hostOf(page).attachmentsHidden || !document.isShown(index)) continue
             val localX = x - document.leftOf(index)
             val localY = y - document.topOf(index)
             memosOf(index)?.let { memos ->
@@ -3506,7 +3506,7 @@ class InkCanvasView @JvmOverloads constructor(
             }
             var tab = 0
             for (at in page.attachments.indices) {
-                if (page.attachments[at].kind != PageAttachment.Kind.PAGE) continue
+                if (!hasTab(page.attachments[at])) continue
                 attachmentTab(page, tab++, unit, tabRect)
                 // A little more than the tab, for a fingertip.
                 tabRect.inset(-ATTACHMENT_TAB_REACH_DP * unit, -ATTACHMENT_TAB_REACH_DP * unit)
@@ -3535,9 +3535,19 @@ class InkCanvasView @JvmOverloads constructor(
      * processors set them: each box as near the height of what it points at
      * as the one above it allows, the words wrapped to the margin.
      */
+    /**
+     * Comments have a margin only down the column: pages side by side or in a
+     * grid have none to spare, and there a comment is a tab on its page's edge.
+     */
+    private fun commentsInMargin() = document.layoutMode == PageLayoutMode.VERTICAL
+
+    private fun hasTab(attachment: PageAttachment) =
+        attachment.kind == PageAttachment.Kind.PAGE || !commentsInMargin()
+
     private fun memosOf(index: Int): MemoLayout? {
+        if (!commentsInMargin()) return null
         val page = document.pages.getOrNull(index) ?: return null
-        if (page.attachmentsHidden || !document.isShown(index)) return null
+        if (document.hostOf(page).attachmentsHidden || !document.isShown(index)) return null
         if (page.attachments.none { it.kind == PageAttachment.Kind.COMMENT }) return null
         val left = document.memoLeftOf(index)
         memoLayouts[page]?.takeIf { it.stamp == page.attachments && it.left == left }?.let { return it }
@@ -9347,7 +9357,7 @@ class InkCanvasView @JvmOverloads constructor(
                         scoped.restore()
                     }
                     if (showLinkOverlay && page.links.isNotEmpty()) drawLinks(scoped, page)
-                    if (page.attachments.isNotEmpty() && !page.attachmentsHidden) {
+                    if (page.attachments.isNotEmpty() && !document.hostOf(page).attachmentsHidden) {
                         drawMemos(scoped, page, i)
                         drawAttachmentTabs(scoped, page)
                     }
@@ -9548,9 +9558,9 @@ class InkCanvasView @JvmOverloads constructor(
             var tab = 0
             for (at in page.attachments.indices) {
                 // Comments are in the margin; only an attached page of another note is a tab.
-                if (page.attachments[at].kind != PageAttachment.Kind.PAGE) continue
+                if (!hasTab(page.attachments[at])) continue
                 attachmentTab(page, tab++, unit, tabRect)
-                val comment = false
+                val comment = page.attachments[at].kind == PageAttachment.Kind.COMMENT
                 tabPaint.color = if (comment) ATTACHMENT_COMMENT_COLOR else ATTACHMENT_PAGE_COLOR
                 // Begun under the page's edge, so only its rounded end shows past it.
                 canvas.drawRoundRect(tabRect.left - radius, tabRect.top, tabRect.right, tabRect.bottom, radius, radius, tabPaint)
