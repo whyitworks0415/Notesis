@@ -1874,15 +1874,21 @@ class NoteStore(context: Context) {
                 (w * budget).toInt().coerceAtLeast(1) to (h * budget).toInt().coerceAtLeast(1)
             }
         }
-        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bitmap)
-        canvas.drawColor(Color.WHITE)
         val scale = minOf(width / page.width, height / page.height)
-        canvas.save()
-        canvas.translate((width - page.width * scale) / 2f,
-            (height - page.height * scale) / 2f)
-        drawWholePage(id, page, layers, canvas, source, renderer, scale)
-        canvas.restore()
+        val paint = { canvas: Canvas, spent: MutableList<Bitmap> ->
+            canvas.drawColor(Color.WHITE)
+            canvas.save()
+            canvas.translate((width - page.width * scale) / 2f,
+                (height - page.height * scale) / 2f)
+            drawWholePage(id, page, layers, canvas, source, renderer, scale, spent)
+            canvas.restore()
+        }
+        // Through the GPU, as the page is seen: see [renderOnGpu].
+        val bitmap = renderOnGpu(width, height, paint) ?: Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also {
+            val spent = ArrayList<Bitmap>()
+            paint(Canvas(it), spent)
+            spent.forEach(Bitmap::recycle)
+        }
         if (invert) invertColours(bitmap)
         val degrees = ((rotation % 360) + 360) % 360
         if (degrees == 0) return bitmap
@@ -1905,6 +1911,8 @@ class NoteStore(context: Context) {
         source: PdfSource?,
         renderer: CanvasStrokeRenderer,
         scale: Float,
+        /** Bitmaps drawn here, to be recycled once the canvas has been rendered. */
+        spent: MutableList<Bitmap>,
     ) {
         canvas.drawColor(Color.WHITE)
         val width = (page.width * scale).toInt().coerceAtLeast(1)
@@ -1918,7 +1926,7 @@ class NoteStore(context: Context) {
             page.templateId?.let { BitmapFactory.decodeFile(templateFile(it).path) }?.let { bitmap ->
                 canvas.drawBitmap(bitmap, null,
                     android.graphics.Rect(0, 0, width, height), null)
-                bitmap.recycle()
+                spent += bitmap
             }
         }
         if (page.background !in listOf(PageBackground.BLANK, PageBackground.PDF,
@@ -1981,6 +1989,7 @@ class NoteStore(context: Context) {
                 (image.y + image.height) * scale,
             )
             canvas.drawBitmap(bitmap, null, target, null)
+            spent += bitmap
         }
         val strokes = if (page.loaded) {
             page.strokes
@@ -2006,39 +2015,42 @@ class NoteStore(context: Context) {
         runCatching {
             val width = THUMB_WIDTH
             val height = (width * page.height / page.width).toInt().coerceAtLeast(1)
-            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(bitmap)
-            canvas.drawColor(Color.WHITE)
-            if (page.background == PageBackground.PDF && page.pdfPageIndex >= 0) {
-                val source = PdfSource.open(pdfFile(id))
-                source?.renderNow(page.pdfPageIndex, width)?.let {
-                    canvas.drawBitmap(it, null, android.graphics.Rect(0, 0, width, height), null)
+            val paint = { canvas: Canvas, _: MutableList<Bitmap> ->
+                canvas.drawColor(Color.WHITE)
+                if (page.background == PageBackground.PDF && page.pdfPageIndex >= 0) {
+                    val source = PdfSource.open(pdfFile(id))
+                    source?.renderNow(page.pdfPageIndex, width)?.let {
+                        canvas.drawBitmap(it, null, android.graphics.Rect(0, 0, width, height), null)
+                    }
+                    source?.close()
                 }
-                source?.close()
+                // A page not loaded this session still has its strokes on disk, and
+                // an unopened note is exactly the case this picture is drawn for.
+                val strokes = if (page.loaded) {
+                    page.strokes
+                } else {
+                    readStrokes(File(root, "$id/pages/${page.id}.bin"))
+                }
+                val scale = width / page.width
+                val transform = Matrix().apply { setScale(scale, scale) }
+                // Masking tape covers the page for a reader, so it covers the
+                // thumbnail too - a picture of what is under the tape is a picture
+                // of a page that does not exist.
+                val masks = if (page.loaded) {
+                    page.masks.map { it.stroke }
+                } else {
+                    readStrokes(File(root, "$id/pages/${page.id}.mask"))
+                }
+                val renderer = CanvasStrokeRenderer.create(PencilTextureStore)
+                val layers = document.layers
+                drawLayered(canvas, layers.shownInOrder(strokes, StrokeLayers::of), layers.translucentLook(), null) {
+                    renderer.draw(canvas, it, transform)
+                }
+                for (stroke in masks) renderer.draw(canvas, stroke, transform)
             }
-            // A page not loaded this session still has its strokes on disk, and
-            // an unopened note is exactly the case this picture is drawn for.
-            val strokes = if (page.loaded) {
-                page.strokes
-            } else {
-                readStrokes(File(root, "$id/pages/${page.id}.bin"))
-            }
-            val scale = width / page.width
-            val transform = Matrix().apply { setScale(scale, scale) }
-            // Masking tape covers the page for a reader, so it covers the
-            // thumbnail too - a picture of what is under the tape is a picture
-            // of a page that does not exist.
-            val masks = if (page.loaded) {
-                page.masks.map { it.stroke }
-            } else {
-                readStrokes(File(root, "$id/pages/${page.id}.mask"))
-            }
-            val renderer = CanvasStrokeRenderer.create(PencilTextureStore)
-            val layers = document.layers
-            drawLayered(canvas, layers.shownInOrder(strokes, StrokeLayers::of), layers.translucentLook(), null) {
-                renderer.draw(canvas, it, transform)
-            }
-            for (stroke in masks) renderer.draw(canvas, stroke, transform)
+            // Through the GPU, as the page is seen: see [renderOnGpu].
+            val bitmap = renderOnGpu(width, height, paint)
+                ?: Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { paint(Canvas(it), ArrayList()) }
             val tmp = File(root, "$id/$AUTO_THUMB.tmp")
             tmp.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 90, it) }
             tmp.renameTo(File(root, "$id/$AUTO_THUMB"))

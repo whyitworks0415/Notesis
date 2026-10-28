@@ -38,6 +38,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -66,6 +67,16 @@ internal const val SETTINGS_SIDEBAR_MIN_DP = 300f
 internal const val SETTINGS_SIDEBAR_MAX_DP = 720f
 /** Narrower than this, the sidebar takes the whole width: half a phone is not a panel. */
 internal const val SETTINGS_SIDEBAR_FULL_BELOW_DP = 560f
+
+/**
+ * How far past its narrowest a panel along an edge - settings, pages, the web
+ * - is pulled, in dp, for letting go to put it away rather than keep it at
+ * that width. Short of it the panel springs back to its narrowest.
+ */
+internal const val PANEL_PULL_TO_CLOSE_DP = 72f
+
+/** Whether a panel pulled [past] its narrowest, in dp, goes away when let go. */
+internal fun pulledToClose(past: Float): Boolean = past > PANEL_PULL_TO_CLOSE_DP
 
 /**
  * How wide the sidebar is for a [requested] width on a [screen] that wide, both
@@ -148,6 +159,10 @@ internal fun SettingsSidebarFrame(
         val screen = maxWidth.value
         val full = screen < SETTINGS_SIDEBAR_FULL_BELOW_DP
         var draft by remember { mutableStateOf<Float?>(null) }
+        // Where the finger has taken the edge, unclamped, and how far that is past the narrowest.
+        var reach by remember { mutableStateOf<Float?>(null) }
+        var past by remember { mutableFloatStateOf(0f) }
+        val latestClose by rememberUpdatedState(onClose)
         val shown = settingsSidebarWidth(draft ?: widthDp, screen)
         val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
         val latestShown by rememberUpdatedState(shown)
@@ -159,7 +174,8 @@ internal fun SettingsSidebarFrame(
             // Read in the layer, so a frame of the slide is a redraw only.
             .graphicsLayer {
                 val outside = 1f - appear().coerceIn(0f, 1f)
-                translationX = outside * size.width * (if (rtl) -1f else 1f)
+                // Pulled past its narrowest it follows the finger out, to be let go of.
+                translationX = (outside * size.width + past.dp.toPx()) * (if (rtl) -1f else 1f)
             }) {
             if (!full) {
                 Box(
@@ -167,21 +183,28 @@ internal fun SettingsSidebarFrame(
                         .width(24.dp)
                         .fillMaxHeight()
                         .pointerInput(rtl) {
+                            fun letGo() {
+                                // Pulled far enough past its narrowest, it goes; it slides
+                                // the rest of the way out from where the finger left it.
+                                if (pulledToClose(past)) latestClose() else {
+                                    draft?.let { latestCommit(it) }
+                                    past = 0f
+                                }
+                                draft = null
+                                reach = null
+                            }
                             detectHorizontalDragGestures(
-                                onDragStart = { draft = latestShown },
-                                onDragEnd = {
-                                    draft?.let { latestCommit(it) }
-                                    draft = null
-                                },
-                                onDragCancel = {
-                                    draft?.let { latestCommit(it) }
-                                    draft = null
-                                },
+                                onDragStart = { draft = latestShown; reach = latestShown },
+                                onDragEnd = { letGo() },
+                                onDragCancel = { letGo() },
                             ) { change, dragAmount ->
                                 change.consume()
                                 // Pulling the inner edge toward the middle widens the panel.
                                 val grow = (if (rtl) dragAmount else -dragAmount) / density
-                                draft = settingsSidebarWidth((draft ?: latestShown) + grow, latestScreen)
+                                val wanted = (reach ?: latestShown) + grow
+                                reach = wanted
+                                draft = settingsSidebarWidth(wanted, latestScreen)
+                                past = (SETTINGS_SIDEBAR_MIN_DP - wanted).coerceAtLeast(0f)
                             }
                         }
                         .semantics {

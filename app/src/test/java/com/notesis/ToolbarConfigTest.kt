@@ -7,9 +7,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ToolbarConfigTest {
-    @Test fun `defaults match the bar as it was`() {
+    @Test fun `defaults hold every tool at the two larger sizes`() {
         val config = ToolbarConfig()
-        assertEquals(SpotiToolbarTool.entries.toList(), config.tools(0))
+        assertEquals(SpotiToolbarTool.entries.size, config.tools(0).size)
         assertEquals(config.tools(0), config.tools(1))
         assertEquals(listOf(EditMode.READ, EditMode.PEN, EditMode.HIGHLIGHTER, EditMode.MASK),
             config.tools(2).map { it.mode })
@@ -76,5 +76,21 @@ class ToolbarConfigTest {
         assertEquals(SETTINGS_SIDEBAR_MAX_DP, settingsSidebarWidth(5000f, 2000f))
         assertEquals(700f - 48f, settingsSidebarWidth(5000f, 700f))
         assertEquals(SETTINGS_SIDEBAR_DEFAULT_DP, settingsSidebarWidth(Float.NaN, 1200f))
+    }
+
+    @Test fun `a panel pulled well past its narrowest is put away, a little past springs back`() {
+        assertFalse(pulledToClose(0f))
+        assertFalse(pulledToClose(PANEL_PULL_TO_CLOSE_DP / 2))
+        assertTrue(pulledToClose(PANEL_PULL_TO_CLOSE_DP + 1f))
+    }
+
+    @Test fun `a fresh bar has the chosen rows`() {
+        val fresh = ToolbarConfig()
+        assertEquals(listOf(TopRowItem.BACK, TopRowItem.TITLE, TopRowItem.UNDO, TopRowItem.REDO, TopRowItem.MIC, TopRowItem.PAGES),
+            fresh.topRow)
+        assertEquals(listOf(PenRowItem.WIDTH, PenRowItem.PALETTE, PenRowItem.PAGE_LABEL), fresh.penRow)
+        // Every tool is on the full bar, the masking tape just before AI.
+        assertEquals(SpotiToolbarTool.entries.toSet(), fresh.tools(0).toSet())
+        assertEquals(listOf(SpotiToolbarTool.CAPTURE, SpotiToolbarTool.MASK, SpotiToolbarTool.AI), fresh.tools(0).takeLast(3))
     }
 }

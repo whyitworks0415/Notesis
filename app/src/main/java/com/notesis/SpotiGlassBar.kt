@@ -139,6 +139,13 @@ fun SpotiGlassBar(
      * the other axis, one cell per tool from the top. Its length is its own.
      */
     vertical: Boolean = false,
+    /**
+     * Whether the selection rises into a lens as it moves. A bar drawn on a
+     * surface that is already there - the full toolbar's strip - keeps it
+     * flat: its lens rose past the strip, onto the rows above and below, and
+     * stayed darker than the pill for a moment after the finger lifted.
+     */
+    lift: Boolean = surface != SpotiBarSurface.NONE,
 ) {
     require(items.isNotEmpty())
     val look = LocalSkinSettings.current
@@ -152,7 +159,7 @@ fun SpotiGlassBar(
     val rtl = !vertical && LocalLayoutDirection.current == LayoutDirection.Rtl
     val latestSelect by rememberUpdatedState(onSelected)
     val selected = selectedIndex.takeIf { it in items.indices }
-    val motion = remember(items.size, rtl) { SpotiGlassMotion((selected ?: 0).toFloat()) }
+    val motion = remember(items.size, rtl, lift) { SpotiGlassMotion((selected ?: 0).toFloat(), lifts = lift) }
     var wake by remember { mutableIntStateOf(0) }
     var frameRevision by remember { mutableIntStateOf(0) }
     fun choose(index: Int) {
@@ -290,7 +297,8 @@ fun SpotiGlassBar(
         // The same frosted capsule remains in the source at rest and on press.
         // Refract the capsule and both icon shells in the same optical scene.
         // or swap between two backdrop surfaces during animation.
-        val scene = Modifier.spillOver(room, vertical).spotiGlassLens(lensAllowed, active = { moving() }) { _, _ ->
+        // A pill that only slides has no lens to draw: it is the flat pill, moved.
+        val scene = Modifier.spillOver(room, vertical).spotiGlassLens(lensAllowed && lift, active = { moving() }) { _, _ ->
             // The layer starts [room] before the bar; the frame is the bar's.
             lensFrame().let {
                 if (roomPx == 0f) it else it.copy(center = it.center + if (vertical) Offset(0f, roomPx) else Offset(roomPx, 0f))

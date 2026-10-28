@@ -8,7 +8,14 @@ import kotlin.math.sqrt
 // Kotlin port of liquid_glass_easy 4.3.2's animated nav-bar ticker,
 // liquidGlassSpringStep and LiquidGlassLensMotion. Copyright (c) 2025 Ahmed
 // Gamil, MIT. Full license and source provenance: assets/spotiglass/upstream.
-internal class SpotiGlassMotion(initial: Float, private val control: Boolean = false) {
+internal class SpotiGlassMotion(
+    initial: Float, private val control: Boolean = false,
+    /**
+     * Whether the selection lifts into a lens while it travels. Without, it
+     * slides across as the flat pill it rests as, and nothing grows or stretches.
+     */
+    private val lifts: Boolean = true,
+) {
     private class Spring(var x: Double = 0.0, var velocity: Double = 0.0) {
         fun step(target: Double, dt: Double, stiffness: Double, damping: Double) {
             var remaining = dt
@@ -52,11 +59,11 @@ internal class SpotiGlassMotion(initial: Float, private val control: Boolean = f
         dragging = false
         from = travel.x; target = index.toDouble()
         travelSign = sign(target - from)
-        lifted = true; running = true
+        lifted = lifts; running = true
     }
     fun grab(index: Float) {
         dragging = true; followTarget = index.toDouble()
-        lifted = true; running = true
+        lifted = lifts; running = true
         travel.velocity = 0.0; travelSign = 0.0
     }
     fun follow(index: Float) { followTarget = index.toDouble() }
@@ -104,7 +111,7 @@ internal class SpotiGlassMotion(initial: Float, private val control: Boolean = f
             easedSign += (travelSign - easedSign) * (1 - exp(-step / 0.25))
             if (abs(easedSign - travelSign) < 0.01) easedSign = travelSign
         }
-        deviation = (rawDeviation * (1 - abs(easedSign)) - easedSign * abs(rawDeviation)).toFloat()
+        deviation = if (!lifts) 0f else (rawDeviation * (1 - abs(easedSign)) - easedSign * abs(rawDeviation)).toFloat()
         val handoverTarget = if (lifted) 0.0 else 1.0
         val tau = if (handoverTarget > handover) 0.09 else 0.05
         handover += (handoverTarget - handover) * (1 - exp(-step / tau))

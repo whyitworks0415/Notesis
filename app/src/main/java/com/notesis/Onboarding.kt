@@ -239,9 +239,9 @@ internal val NOTE_MARKS = listOf(
     CoachMark(CoachTarget.TOOLS, "Your tools",
         "Pen, pencil, highlighter, eraser, lasso, shapes and more. Tap one to pick it; tap the one in hand again for its settings."),
     CoachMark(CoachTarget.PEN_ROW, "Colour and width",
-        "For the tool in hand. Tap the colour in use for every setting; + keeps a new colour; hold one to move or remove it."),
+        "For the tool in hand: its width, the colour palette, and the page you are on. More is in Settings › Customize toolbar."),
     CoachMark(CoachTarget.TOP_ROW, "The note's buttons",
-        "Back to the notes, undo and redo, recording, zoom and more. Choose which ones show in Settings › Customize toolbar."),
+        "Back to the notes, undo and redo, recordings, and search. Choose which ones show in Settings › Customize toolbar."),
     CoachMark(CoachTarget.FUNCTIONS, "Functions",
         "Pictures, Tools (calculator, clock, calendar, to-do), layers, text, capture, other notes, add page, the tutorial and Settings. The bar's size, 1/4 to 4/4, is chosen here too, or by dragging this button left and right."),
 )

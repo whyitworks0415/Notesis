@@ -2831,19 +2831,21 @@ class InkCanvasView @JvmOverloads constructor(
             thumbnailWorker.execute {
                 val bitmap = runCatching {
                     val height = (widthPx * pageHeight / pageWidth).toInt().coerceAtLeast(1)
-                    val picture = Bitmap.createBitmap(widthPx, height, Bitmap.Config.ARGB_8888)
-                    val canvas = Canvas(picture)
-                    canvas.drawColor(Color.WHITE)
-                    pdfPicture?.takeIf { !it.isRecycled }?.let {
-                        canvas.drawBitmap(it, null, RectF(0f, 0f, widthPx.toFloat(), height.toFloat()), thumbnailPaint)
+                    val paint = { canvas: Canvas, _: MutableList<Bitmap> ->
+                        canvas.drawColor(Color.WHITE)
+                        pdfPicture?.takeIf { !it.isRecycled }?.let {
+                            canvas.drawBitmap(it, null, RectF(0f, 0f, widthPx.toFloat(), height.toFloat()), thumbnailPaint)
+                        }
+                        val scale = widthPx / pageWidth
+                        val transform = Matrix().apply { setScale(scale, scale) }
+                        canvas.scale(scale, scale)
+                        drawLayered(canvas, strokes, look, null) { stroke ->
+                            runCatching { thumbnailRenderer.draw(canvas, stroke, transform) }
+                        }
                     }
-                    val scale = widthPx / pageWidth
-                    val transform = Matrix().apply { setScale(scale, scale) }
-                    canvas.scale(scale, scale)
-                    drawLayered(canvas, strokes, look, null) { stroke ->
-                        runCatching { thumbnailRenderer.draw(canvas, stroke, transform) }
-                    }
-                    picture
+                    // Through the GPU, so pencil and the particle brushes show: see [renderOnGpu].
+                    renderOnGpu(widthPx, height, paint)
+                        ?: Bitmap.createBitmap(widthPx, height, Bitmap.Config.ARGB_8888).also { paint(Canvas(it), ArrayList()) }
                 }.getOrNull()
                 post {
                     thumbnailsPending -= key
@@ -7967,7 +7969,12 @@ class InkCanvasView @JvmOverloads constructor(
     fun renderCapture(region: CaptureRegion, scale: Float): Bitmap? = renderRegion(
         region.rect, region.pageWidth, region.pageHeight, region.pdfIndex, region.strokes, region.images, scale)
 
-    /** Draws one page's [rect] into a bitmap at [requestedScale]: background, pictures, then ink. */
+    /**
+     * Draws one page's [rect] into a bitmap at [requestedScale]: background,
+     * pictures, then ink. Through the GPU, as the page on screen is, so every
+     * brush comes out as it is seen; on a bitmap of its own only where that
+     * is not available.
+     */
     private fun renderRegion(
         rect: RectF,
         pageWidth: Float,
@@ -7983,8 +7990,32 @@ class InkCanvasView @JvmOverloads constructor(
         // Counted the way the capture dialog counts, so what it promised is what comes out.
         val width = capturePixels(rect.width(), scale)
         val height = capturePixels(rect.height(), scale)
-        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bitmap)
+        val paint = { canvas: Canvas, spent: MutableList<Bitmap> ->
+            paintRegion(canvas, rect, pageWidth, pageHeight, pdfIndex, strokes, images, scale, width, height, spent)
+        }
+        renderOnGpu(width, height, paint) ?: run {
+            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            val spent = ArrayList<Bitmap>()
+            paint(Canvas(bitmap), spent)
+            spent.forEach { it.recycle() }
+            bitmap
+        }
+    }.getOrNull()
+
+    /** [renderRegion]'s drawing, on whichever canvas it is given; see [renderOnGpu] for [spent]. */
+    private fun paintRegion(
+        canvas: Canvas,
+        rect: RectF,
+        pageWidth: Float,
+        pageHeight: Float,
+        pdfIndex: Int,
+        strokes: List<Stroke>,
+        images: List<Pair<PageImage, Bitmap?>>,
+        scale: Float,
+        width: Int,
+        height: Int,
+        spent: MutableList<Bitmap>,
+    ) {
         canvas.drawColor(Color.WHITE)
         canvas.scale(scale, scale)
         canvas.translate(-rect.left, -rect.top)
@@ -7996,7 +8027,7 @@ class InkCanvasView @JvmOverloads constructor(
             val crop = pdf?.renderCropNow(pdfIndex, rect, width, height)
             if (crop != null) {
                 canvas.drawBitmap(crop, null, rect, null)
-                crop.recycle()
+                spent += crop
             } else {
                 pdf?.renderNow(pdfIndex, (pageWidth * scale).toInt().coerceIn(1, PdfSource.baseWidthLimit()))?.let {
                     canvas.drawBitmap(it, null, RectF(0f, 0f, pageWidth, pageHeight), null)
@@ -8005,6 +8036,8 @@ class InkCanvasView @JvmOverloads constructor(
         }
         for ((placement, picture) in images) {
             if (picture == null) continue
+            // A picture kept on the GPU cannot be drawn on a bitmap's own canvas.
+            if (!canvas.isHardwareAccelerated && picture.config == Bitmap.Config.HARDWARE) continue
             canvas.drawBitmap(
                 picture,
                 null,
@@ -8034,8 +8067,7 @@ class InkCanvasView @JvmOverloads constructor(
             } else stroke
             renderer.draw(canvas, drawn, transform)
         }
-        bitmap
-    }.getOrNull()
+    }
 
     private fun eraseAlong(event: MotionEvent, pointerIndex: Int, force: Boolean = false) {
         val page = activePage ?: return

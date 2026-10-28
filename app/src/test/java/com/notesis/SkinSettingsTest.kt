@@ -6,15 +6,22 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SkinSettingsTest {
-    @Test fun `a fresh install has the glass of the reference photo, clearer and brighter than before`() {
+    @Test fun `a fresh install starts from the chosen glass`() {
         val now = SkinSettings()
-        val before = SkinSettings.ORIGINAL
-        assertTrue(now.spotiglassClarity > before.spotiglassClarity)
-        assertTrue(now.reflection > before.reflection)
-        assertTrue(now.depth > before.depth)
-        assertTrue(now.blur > before.blur)
+        assertEquals(0.12f, now.frost, 0.001f)
+        assertEquals(1f, now.transparency, 0f)
+        assertEquals(1f, now.reflection, 0f)
+        assertEquals(10f, now.depth, 0f)
+        assertEquals(32f, now.spotiglassCorner, 0f)
+        assertEquals(1f, now.spotiglassResponse, 0f)
+        assertEquals(RefractionDirection.RAISED, now.refractionDirection)
+        // Each pair is what its combined slider sets, so the slider reads back where it stands.
+        val again = now.withFrost(now.frost).withTransparency(now.transparency).withDepth(now.depth)
+        assertEquals(now.vibrancy, again.vibrancy, 0.001f)
+        assertEquals(now.spotiglassToolbarOpacity, again.spotiglassToolbarOpacity, 0.001f)
+        assertEquals(now.refraction, again.refraction, 0.001f)
         assertTrue(!now.hasOriginalOptics())
-        assertTrue(before.hasOriginalOptics())
+        assertTrue(SkinSettings.ORIGINAL.hasOriginalOptics())
     }
 
     @Test fun `settings saved at the old defaults move to the new ones, set ones stay`() {

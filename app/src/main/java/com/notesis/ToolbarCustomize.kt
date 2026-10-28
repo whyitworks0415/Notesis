@@ -157,19 +157,25 @@ internal data class ToolbarConfig(
         const val BUTTON_ONLY_STAGE = 3
         val STAGE_NAMES = listOf("Full", "One row", "Compact", "Button")
 
+        /** A fresh install's tools along the bar: masking tape after capture, AI last. */
+        private val DEFAULT_TOOLS = listOf(
+            SpotiToolbarTool.READ, SpotiToolbarTool.PEN, SpotiToolbarTool.PENCIL, SpotiToolbarTool.HIGHLIGHTER,
+            SpotiToolbarTool.ERASE, SpotiToolbarTool.SHAPE, SpotiToolbarTool.TEXT, SpotiToolbarTool.LASSO,
+            SpotiToolbarTool.CAPTURE, SpotiToolbarTool.MASK, SpotiToolbarTool.AI,
+        )
+
         val DEFAULT_STAGES: List<List<SpotiToolbarTool>> = listOf(
-            SpotiToolbarTool.entries.toList(),
-            SpotiToolbarTool.entries.toList(),
+            DEFAULT_TOOLS,
+            DEFAULT_TOOLS,
             listOf(SpotiToolbarTool.READ, SpotiToolbarTool.PEN, SpotiToolbarTool.HIGHLIGHTER, SpotiToolbarTool.MASK),
             emptyList(),
         )
+        /** The way back and the note's name, then undo, redo, recordings and search at the far end. */
         val DEFAULT_TOP_ROW = listOf(
-            TopRowItem.BACK, TopRowItem.PAGES, TopRowItem.TITLE, TopRowItem.UNDO, TopRowItem.REDO,
-            TopRowItem.MIC, TopRowItem.ROTATE, TopRowItem.ZOOM, TopRowItem.SKIN, TopRowItem.RESET_BAR,
-            TopRowItem.PLANNER, TopRowItem.GESTURES, TopRowItem.ADD_PAGE, TopRowItem.NOTE_MENU,
-            TopRowItem.OTHER_NOTES,
+            TopRowItem.BACK, TopRowItem.TITLE, TopRowItem.UNDO, TopRowItem.REDO, TopRowItem.MIC, TopRowItem.PAGES,
         )
-        val DEFAULT_PEN_ROW = PenRowItem.entries.toList()
+        /** Beside the tools: the width, the colours and the page; the Functions button ends the row. */
+        val DEFAULT_PEN_ROW = listOf(PenRowItem.WIDTH, PenRowItem.PALETTE, PenRowItem.PAGE_LABEL)
 
         /** Null for nothing stored; a section missing or unreadable falls back to its default. */
         fun decode(raw: String?): ToolbarConfig? {

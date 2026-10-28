@@ -25,3 +25,59 @@ internal fun rasterizeInk(width: Int, height: Int, scale: Float, strokes: List<S
         throw error
     }
 }
+
+/**
+ * A [width] x [height] picture of what [draw] puts on a canvas, drawn by the
+ * GPU as the page on screen is: Ink paints the pencil's graphite and the
+ * particle brushes only on a hardware canvas, and on a bitmap's own canvas
+ * they came out blank. [draw] gets the canvas and a list to hand bitmaps it
+ * drew that may be recycled once the picture is taken - not before: the GPU
+ * reads them only then. Null where the GPU could not produce it; the caller
+ * then draws on a bitmap of its own.
+ */
+internal fun renderOnGpu(width: Int, height: Int, draw: (Canvas, MutableList<Bitmap>) -> Unit): Bitmap? {
+    if (width <= 0 || height <= 0) return null
+    val spent = ArrayList<Bitmap>()
+    val reader = runCatching {
+        android.media.ImageReader.newInstance(width, height, android.graphics.PixelFormat.RGBA_8888, 1,
+            android.hardware.HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or android.hardware.HardwareBuffer.USAGE_GPU_COLOR_OUTPUT)
+    }.getOrNull() ?: return null
+    val node = android.graphics.RenderNode("capture")
+    val renderer = android.graphics.HardwareRenderer()
+    return try {
+        node.setPosition(0, 0, width, height)
+        val canvas = node.beginRecording(width, height)
+        try {
+            draw(canvas, spent)
+        } finally {
+            node.endRecording()
+        }
+        renderer.setSurface(reader.surface)
+        renderer.setContentRoot(node)
+        renderer.createRenderRequest().setWaitForPresent(true).syncAndDraw()
+        val image = reader.acquireNextImage()
+        try {
+            val buffer = image?.hardwareBuffer
+            try {
+                val shared = buffer?.let {
+                    Bitmap.wrapHardwareBuffer(it, android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.SRGB))
+                }
+                // Mutable, so a caller can still draw over it - the export's inversion does.
+                val copy = shared?.copy(Bitmap.Config.ARGB_8888, true)
+                shared?.recycle()
+                copy
+            } finally {
+                buffer?.close()
+            }
+        } finally {
+            image?.close()
+        }
+    } catch (error: Throwable) {
+        null
+    } finally {
+        renderer.destroy()
+        node.discardDisplayList()
+        reader.close()
+        spent.forEach { it.recycle() }
+    }
+}

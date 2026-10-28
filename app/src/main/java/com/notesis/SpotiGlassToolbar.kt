@@ -111,14 +111,17 @@ internal object ToolbarScale {
     const val MAX = 1.4f
     const val STEP = 0.05f
 
-    var scale by mutableFloatStateOf(1f)
+    /** Until the reader picks one: a touch under full size, which a small tablet needs and a large one does not miss. */
+    const val DEFAULT = 0.9f
+
+    var scale by mutableFloatStateOf(DEFAULT)
         private set
 
     fun init(context: android.content.Context) {
         if (prefs != null) return
         val p = context.getSharedPreferences("pens", android.content.Context.MODE_PRIVATE)
         prefs = p
-        scale = p.getFloat(KEY, 1f).coerceIn(MIN, MAX)
+        scale = p.getFloat(KEY, DEFAULT).coerceIn(MIN, MAX)
     }
 
     fun choose(value: Float) {

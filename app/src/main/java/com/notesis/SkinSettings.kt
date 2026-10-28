@@ -19,21 +19,21 @@ enum class RefractionDirection(val label: String) {
 
 /**
  * Every number the glass is made of, in one place, so the look can be tuned
- * from inside the app rather than from a rebuild. The defaults are the values
- * measured off the reference file - a fresh install looks the way the last
- * release did, and the settings screen is somewhere to go from there.
+ * from inside the app rather than from a rebuild. The defaults are what a
+ * fresh install starts from: frost 12%, transparency 100%, reflection 100%,
+ * depth 10 dp, a 32 dp corner, raised, full interaction strength.
  */
 data class SkinSettings(
     /** 시스템 설정과 무관하게 앱에서 선택한 라이트/다크 모드입니다. */
     val themeMode: AppThemeMode = AppThemeMode.LIGHT,
-    /** How far the backdrop is scattered behind a panel. This is the frost. */
-    val blur: Float = 30f,
-    /** Saturation lift on the blurred backdrop; glass makes colour, not mud. */
-    val vibrancy: Float = 0.6f,
+    /** How far the backdrop is scattered behind a panel. This is the frost: 12% of [BLUR_RANGE]. */
+    val blur: Float = 7.2f,
+    /** Saturation lift on the blurred backdrop; glass makes colour, not mud. Goes with the frost (see [withFrost]). */
+    val vibrancy: Float = 0.296f,
     /** 굴절이 가장자리에서 안쪽으로 파고드는 깊이(dp). */
-    val depth: Float = 16f,
-    /** 렌즈가 배경 픽셀을 휘게 하는 거리(dp). */
-    val refraction: Float = 32f,
+    val depth: Float = 10f,
+    /** 렌즈가 배경 픽셀을 휘게 하는 거리(dp). Twice the depth (see [withDepth]). */
+    val refraction: Float = 20f,
     /** 가장자리의 배경 픽셀을 바깥/안쪽 어느 방향으로 굴절할지 정합니다. */
     val refractionDirection: RefractionDirection = RefractionDirection.RAISED,
     /** RGB 파장이 갈라지는 색수차의 체감 강도(0~1). */
@@ -53,9 +53,9 @@ data class SkinSettings(
      */
     val corner: Float = 26f,
     /** Spotiglass의 투명도. 0은 불투명, 1은 가장 맑은 유리입니다. */
-    val spotiglassClarity: Float = 0.9f,
-    /** 도구바 배경의 불투명도. 렌즈 굴절과 아이콘에는 적용하지 않습니다. */
-    val spotiglassToolbarOpacity: Float = 0.08f,
+    val spotiglassClarity: Float = 1f,
+    /** 도구바 배경의 불투명도. 렌즈 굴절과 아이콘에는 적용하지 않습니다. Follows the clarity (see [withTransparency]). */
+    val spotiglassToolbarOpacity: Float = 0f,
     /** 누름/슬라이드에 따른 렌즈의 늘어남과 들림 강도입니다. */
     val spotiglassResponse: Float = 1f,
     /** The corner of every skin's chrome; the name is from when only Liquid glass had one. */
@@ -64,7 +64,7 @@ data class SkinSettings(
      * How strongly the glass catches the light along its edge - the bright
      * rim and the sheen down from the top. 0 is a plain edge.
      */
-    val reflection: Float = 0.75f,
+    val reflection: Float = 1f,
     /**
      * Everything legible before everything pretty. Darkens the accent, makes
      * the glass solid, thickens every edge and gives the outlines their weight

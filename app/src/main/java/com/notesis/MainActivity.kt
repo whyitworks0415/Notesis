@@ -3819,6 +3819,9 @@ private fun NoteScreen(
     var browserGeneration by remember { mutableIntStateOf(0) }
     var webWidth by remember { mutableStateOf(WEB_PANEL_WIDTH) }
     var draftWebWidth by remember { mutableStateOf<Dp?>(null) }
+    // Where the finger has taken the panel's edge, unclamped: past the narrowest, letting go closes it.
+    var webReach by remember { mutableStateOf<Dp?>(null) }
+    val webPulledShut = webReach?.let { pulledToClose((WEB_PANEL_MIN - it).value) } == true
     var webPopup by remember { mutableStateOf(false) }
     // Where the floating web window is, once it has been moved or sized; and
     // the size a handle is being dragged to, laid out once when it is let go.
@@ -4353,6 +4356,11 @@ private fun NoteScreen(
             layerChip = { LayerTargetChip(canvas) { showLayers = true } },
             preview = previewLevel != null,
             modifier = barModifier,
+            pinned = docked,
+            onTogglePin = {
+                docked = !docked
+                penStore.docked = docked
+            },
         )
     }
 
@@ -4382,7 +4390,8 @@ private fun NoteScreen(
         draftWebWidth?.let { draft ->
             val left = size.width - draft.toPx()
             drawRect(
-                color = Color(0x773B7DDD),
+                // Red once letting go would put the panel away.
+                color = if (webPulledShut) Color(0x77E5484D) else Color(0x773B7DDD),
                 topLeft = Offset(left, 0f),
                 size = Size(draft.toPx(), size.height),
                 style = Stroke(width = 2.dp.toPx()),
@@ -6288,20 +6297,25 @@ private fun NoteScreen(
                             .height(120.dp)
                             .width(20.dp)
                             .pointerInput(webWidth) {
+                                fun letGo() {
+                                    // Pulled well past its narrowest, the panel is put away.
+                                    if (webReach?.let { pulledToClose((WEB_PANEL_MIN - it).value) } == true) {
+                                        webUrl = null
+                                        webPopup = false
+                                    } else draftWebWidth?.let { webWidth = it.coerceIn(WEB_PANEL_MIN, WEB_PANEL_MAX) }
+                                    draftWebWidth = null
+                                    webReach = null
+                                }
                                 detectHorizontalDragGestures(
-                                    onDragStart = { draftWebWidth = webWidth },
-                                    onDragEnd = {
-                                        draftWebWidth?.let { webWidth = it }
-                                        draftWebWidth = null
-                                    },
-                                    onDragCancel = {
-                                        draftWebWidth?.let { webWidth = it }
-                                        draftWebWidth = null
-                                    },
+                                    onDragStart = { draftWebWidth = webWidth; webReach = webWidth },
+                                    onDragEnd = { letGo() },
+                                    onDragCancel = { letGo() },
                                 ) { change, drag ->
                                     change.consume()
-                                    draftWebWidth = ((draftWebWidth ?: webWidth) - drag.toDp())
-                                        .coerceIn(WEB_PANEL_MIN, WEB_PANEL_MAX)
+                                    val reach = (webReach ?: webWidth) - drag.toDp()
+                                    webReach = reach
+                                    // The outline follows the finger below the narrowest, to show where it would close.
+                                    draftWebWidth = reach.coerceIn(0.dp, WEB_PANEL_MAX)
                                 }
                             }
                             .semantics {
@@ -8376,6 +8390,9 @@ private fun Toolbar(
     onSettings: (SettingsPage) -> Unit,
     onDragBar: (Offset) -> Unit,
     modifier: Modifier = Modifier,
+    /** Whether the bar is pinned along the top rather than floating, and the switch between the two. */
+    pinned: Boolean = false,
+    onTogglePin: () -> Unit = {},
     onAddPage: () -> Unit = {},
     onQuickColor: (Int) -> Unit = {},
     onLayers: () -> Unit = {},
@@ -8518,6 +8535,8 @@ private fun Toolbar(
                     SpotiToolbarAction("Add page", AppIcons.addPage, onClick = onAddPage),
                 ),
                 listOf(
+                    SpotiToolbarAction(if (pinned) "Unpin bar" else "Pin to top", if (pinned) AppIcons.undock else AppIcons.dock,
+                        selected = pinned, onClick = onTogglePin),
                     SpotiToolbarAction("Tutorial", AppIcons.tutorial, onClick = { Onboarding.tutorialOpen = true }),
                     SpotiToolbarAction("Settings", AppIcons.settings, onClick = { onSettings(SettingsPage.ROOT) }),
                 ),
