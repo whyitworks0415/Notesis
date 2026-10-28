@@ -97,13 +97,13 @@ internal fun spotiToolbarTools(level: Int): List<SpotiToolbarTool> = ToolbarLayo
  * across: its top row and pen row are rows.
  */
 /**
- * The size the note's chrome - the smaller bars, their icons, the Functions
- * button and the way back - is drawn at: [ToolbarScale]'s, where it is
- * provided; 1 elsewhere.
+ * The size the note's chrome - the bars, their icons, the Functions button
+ * and the way back - is drawn at: [ToolbarScale]'s, where it is provided;
+ * 1 elsewhere. The whole bar (1/4) takes it as one row, in spotiFitRow.
  */
 internal val LocalChromeScale = staticCompositionLocalOf { 1f }
 
-/** How big the smaller bars are drawn, as the reader sets it. Kept between runs. */
+/** How big the bars are drawn, as the reader sets it. Kept between runs. */
 internal object ToolbarScale {
     private var prefs: android.content.SharedPreferences? = null
 
@@ -213,7 +213,7 @@ internal fun ToolbarOrientationChoice(sizeLevel: Int, inMenu: Boolean = false) {
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
         return
     }
-    // How big the 2/4 to 4/4 bars are drawn, with their buttons and the way back.
+    // How big the bars are drawn, with their buttons and the way back.
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
         Text("Scale", style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -312,9 +312,9 @@ private fun Modifier.toolbarAnimatedHeight(enabled: Boolean): Modifier {
     }
 }
 
-/** The bar's width at each size; the smaller bars grow and shrink with the chrome ([LocalChromeScale]). */
+/** The bar's width at each size; every size grows and shrinks with the chrome ([LocalChromeScale]). */
 internal fun spotiToolbarWidth(level: Int, scale: Float = 1f) = when (level) {
-    0 -> 940.dp
+    0 -> 940.dp * scale
     1 -> 632.dp * scale
     2 -> 304.dp * scale
     else -> 92.dp * scale
@@ -326,10 +326,13 @@ internal fun Modifier.spotiToolbarAnimatedWidth(width: State<Dp>): Modifier = la
     layout(child.width, child.height) { child.placeRelative(0, 0) }
 }
 
-/** Keep a complete row visible, including hit testing, on a narrower canvas. */
-internal fun Modifier.spotiFitRow(minWidth: Dp): Modifier = layout { measurable, constraints ->
+/**
+ * Keep a complete row visible, including hit testing, on a narrower canvas;
+ * drawn at [chrome] of its size besides, as the reader's toolbar scale says.
+ */
+internal fun Modifier.spotiFitRow(minWidth: Dp, chrome: Float = 1f): Modifier = layout { measurable, constraints ->
     val available = constraints.maxWidth
-    val logical = maxOf(available, minWidth.roundToPx())
+    val logical = maxOf((available / chrome.coerceAtLeast(0.1f)).toInt(), minWidth.roundToPx())
     val scale = available.toFloat() / logical
     val child = measurable.measure(constraints.copy(minWidth = logical, maxWidth = logical, minHeight = 0))
     layout(available, (child.height * scale).toInt()) {
@@ -586,6 +589,7 @@ internal fun SpotiGlassToolbar(
     val outer = skin.tokens().corner
     val outline = RoundedCornerShape(outer)
     val full = sizeLevel == 0
+    val chrome = LocalChromeScale.current
     // The smaller bars may run down the side; the whole bar is always across.
     val vertical = allowVertical && (ToolbarOrientation.vertical || autoVertical) && !full
     // animateContentSize clips its layer, including stable corner shadows.
@@ -631,7 +635,9 @@ internal fun SpotiGlassToolbar(
         // The full bar is one surface. The strip on it is content, not a
         // second pane of glass, so the page shows through both the same way.
         if (full) Box(Modifier.matchParentSize().skinMaterial(outline))
-        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides androidx.compose.ui.unit.Dp.Unspecified) {
+        // The whole bar is scaled as one row (see spotiFitRow), so nothing in it scales again.
+        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides androidx.compose.ui.unit.Dp.Unspecified,
+            LocalChromeScale provides if (full) 1f else chrome) {
             Column(Modifier.toolbarAnimatedHeight(effects && ToolbarMotion.durationMs > 0)
                 .graphicsLayer { alpha = fade.value }
                 .then(if (docked && full) Modifier.windowInsetsPadding(
@@ -640,7 +646,7 @@ internal fun SpotiGlassToolbar(
                 // strip's corners can follow the bar's.
                 .padding(horizontal = TOOLBAR_INSET, vertical = if (full) 0.dp else 2.dp)) {
                 if (full) {
-                    Box(Modifier.fillMaxWidth().spotiFitRow(800.dp)
+                    Box(Modifier.fillMaxWidth().spotiFitRow(800.dp, chrome)
                         .coachTargetWhileShown(coachTargets, CoachTarget.TOP_ROW)) { topRow() }
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
@@ -686,7 +692,7 @@ internal fun SpotiGlassToolbar(
                                 onClick = { menu(ToolbarMenu.FUNCTIONS) })
                         }
                     } else {
-                        Row(Modifier.fillMaxWidth().then(if (full) Modifier.spotiFitRow(800.dp) else Modifier),
+                        Row(Modifier.fillMaxWidth().then(if (full) Modifier.spotiFitRow(800.dp, chrome) else Modifier),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(if (full) Ui.Space.xs else Ui.Space.s)) {
                             Box(Modifier.weight(1f).coachTargetWhileShown(coachTargets, CoachTarget.TOOLS)) {

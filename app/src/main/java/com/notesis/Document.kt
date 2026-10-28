@@ -168,6 +168,48 @@ enum class PageLayoutMode {
 }
 
 /**
+ * Something kept with a page but apart from what is written on it, shown as a
+ * tab on the page's edge: a comment, which may carry a link, or another page
+ * to work on beside this one - a practice sheet, or any page of any note.
+ */
+data class PageAttachment(
+    val kind: Kind,
+    /** A comment's words; for a page, what to call it. */
+    val text: String = "",
+    /** A link the comment carries, or blank. */
+    val url: String = "",
+    /** The note the attached page is in, and which of its pages. */
+    val noteId: String = "",
+    val pageIndex: Int = 0,
+) {
+    enum class Kind { COMMENT, PAGE }
+
+    fun toJson(): JSONObject = JSONObject()
+        .put("kind", kind.name)
+        .put("text", text)
+        .put("url", url)
+        .put("note", noteId)
+        .put("page", pageIndex)
+
+    companion object {
+        fun fromJson(json: JSONObject): PageAttachment? {
+            val kind = runCatching { Kind.valueOf(json.optString("kind")) }.getOrNull() ?: return null
+            val attachment = PageAttachment(
+                kind = kind,
+                text = json.optString("text"),
+                url = json.optString("url"),
+                noteId = json.optString("note"),
+                pageIndex = json.optInt("page", 0).coerceAtLeast(0),
+            )
+            // A page with no note, or a comment with nothing in it, is nothing to show.
+            return attachment.takeIf {
+                if (kind == Kind.PAGE) it.noteId.isNotBlank() else it.text.isNotBlank() || it.url.isNotBlank()
+            }
+        }
+    }
+}
+
+/**
  * One page of a note. Strokes are kept in page-local coordinates, so a page can
  * be reordered or deleted without touching a single stroke, and a PDF page maps
  * onto its own coordinates directly.
@@ -191,6 +233,10 @@ class Page(
      * where it goes - an https URL, "page:<pageId>" or "note:<noteId>#<pageIndex>".
      */
     val links: MutableMap<Int, String> = mutableMapOf(),
+    /** Comments and pages kept with this page, as tabs on its edge. */
+    val attachments: MutableList<PageAttachment> = mutableListOf(),
+    /** The tabs put away: the attachments are kept, only not shown on the page. */
+    var attachmentsHidden: Boolean = false,
     /** Pictures, drawn over the background and under the ink. */
     val images: MutableList<PageImage> = mutableListOf(),
     /** Masking tape, drawn over everything, because covering is the job. */
@@ -1014,7 +1060,8 @@ class NoteStore(context: Context) {
                         else old.background,
                     templateId = old.templateId, pdfPageIndex = pdfIndex, tocTitle = old.tocTitle,
                     tocHighlighted = old.tocHighlighted, tocLevel = old.tocLevel, bookmarked = old.bookmarked,
-                    links = old.links.toMutableMap(), images = images,
+                    links = old.links.toMutableMap(), attachments = old.attachments.toMutableList(),
+                    attachmentsHidden = old.attachmentsHidden, images = images,
                 ).also {
                     it.loaded = false
                     it.dirty = false
@@ -1077,7 +1124,8 @@ class NoteStore(context: Context) {
                             pdfPageIndex = pdfIndex, tocTitle = old.tocTitle,
                             tocHighlighted = old.tocHighlighted, tocLevel = old.tocLevel,
                             bookmarked = old.bookmarked, images = images,
-                            links = old.links.toMutableMap(),
+                            links = old.links.toMutableMap(), attachments = old.attachments.toMutableList(),
+                            attachmentsHidden = old.attachmentsHidden,
                         ).also {
                             it.loaded = false
                             it.dirty = false
@@ -1270,6 +1318,8 @@ class NoteStore(context: Context) {
                 tocLevel = entry.optInt("tocLevel", 0),
                 bookmarked = entry.optBoolean("bookmark", false),
                 links = linksFrom(entry),
+                attachments = attachmentsFrom(entry),
+                attachmentsHidden = entry.optBoolean("attachmentsHidden", false),
             )
             page.images.addAll(imagesFrom(entry))
             // Strokes are left on disk until the page is actually needed.
@@ -1400,6 +1450,8 @@ class NoteStore(context: Context) {
                 tocLevel = live.tocLevel,
                 bookmarked = live.bookmarked,
                 links = live.links.toMutableMap(),
+                attachments = live.attachments.toMutableList(),
+                attachmentsHidden = live.attachmentsHidden,
                 images = live.images.map { image ->
                     image.copy()
                 }.toMutableList(),
@@ -1451,6 +1503,7 @@ class NoteStore(context: Context) {
             copy.tocLevel != live.tocLevel || copy.bookmarked != live.bookmarked ||
             copy.tessellatedFor != live.tessellatedFor || copy.savedOnDisk != live.savedOnDisk ||
             copy.savedStrokeCount != strokeCountOf(live) || copy.links != live.links ||
+            copy.attachments != live.attachments || copy.attachmentsHidden != live.attachmentsHidden ||
             copy.images.size != live.images.size
         ) return false
         for (i in live.images.indices) if (!copy.images[i].sameState(live.images[i])) return false
@@ -1557,6 +1610,13 @@ class NoteStore(context: Context) {
             )
         }
         return array
+    }
+
+    private fun attachmentsFrom(entry: JSONObject): MutableList<PageAttachment> {
+        val array = entry.optJSONArray("attachments") ?: return mutableListOf()
+        return (0 until array.length()).mapNotNull { i ->
+            array.optJSONObject(i)?.let(PageAttachment::fromJson)
+        }.toMutableList()
     }
 
     private fun linksFrom(entry: JSONObject): MutableMap<Int, String> {
@@ -2106,6 +2166,8 @@ class NoteStore(context: Context) {
                     .put("tocLevel", page.tocLevel)
                     .put("bookmark", page.bookmarked)
                     .put("links", JSONObject(page.links.mapKeys { it.key.toString() }))
+                    .put("attachments", JSONArray(page.attachments.map { it.toJson() }))
+                    .put("attachmentsHidden", page.attachmentsHidden)
                     .put("strokes", strokeCountOf(page))
                     .put("images", imagesToJson(page)),
             )

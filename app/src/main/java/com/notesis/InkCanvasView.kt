@@ -713,6 +713,26 @@ private fun Tool.isFreehandPen(): Boolean =
         this == Tool.VANISHING_PEN || isDabbed()
 
 /**
+ * Where attachment [at]'s tab is on [page], in page units, at [unit] page units
+ * to a dp: out from the page's right edge, one under another from near its
+ * top, the same size on screen at any zoom.
+ */
+internal fun attachmentTab(page: Page, at: Int, unit: Float, out: RectF) {
+    val top = (ATTACHMENT_TAB_TOP_DP + at * (ATTACHMENT_TAB_HEIGHT_DP + ATTACHMENT_TAB_GAP_DP)) * unit
+    out.set(page.width, top, page.width + ATTACHMENT_TAB_WIDTH_DP * unit, top + ATTACHMENT_TAB_HEIGHT_DP * unit)
+}
+
+private const val ATTACHMENT_TAB_TOP_DP = 40f
+private const val ATTACHMENT_TAB_WIDTH_DP = 22f
+private const val ATTACHMENT_TAB_HEIGHT_DP = 40f
+private const val ATTACHMENT_TAB_GAP_DP = 8f
+private const val ATTACHMENT_TAB_CORNER_DP = 8f
+/** How far past a tab a touch still counts as on it. */
+private const val ATTACHMENT_TAB_REACH_DP = 6f
+private const val ATTACHMENT_PAGE_COLOR = 0xFFF5A623.toInt()
+private const val ATTACHMENT_COMMENT_COLOR = 0xFF3B82F6.toInt()
+
+/**
  * Whether a round, solid head ahead of the line - the softened prediction, the
  * sub-frame lead - looks like the line it leads. Not for a cut nib, whose line
  * is thin across and broad down while the head was a full-width round blob at
@@ -3238,6 +3258,7 @@ class InkCanvasView @JvmOverloads constructor(
             id = page.id, width = page.width, height = page.height, background = page.background,
             templateId = page.templateId, pdfPageIndex = page.pdfPageIndex, tocTitle = page.tocTitle,
             tocHighlighted = page.tocHighlighted, tocLevel = page.tocLevel, bookmarked = page.bookmarked,
+            attachments = page.attachments.toMutableList(), attachmentsHidden = page.attachmentsHidden,
             links = page.links.toMutableMap(),
             images = page.images.map { it.copy() }.toMutableList(),
             masks = page.masks.map { PageMask(it.stroke) }.toMutableList(),
@@ -3361,6 +3382,83 @@ class InkCanvasView @JvmOverloads constructor(
         redoStack.clear()
         document.invalidateLayout()
         afterEdit(*document.pages.toTypedArray())
+    }
+
+    /** Keeps [attachment] with page [index], and shows the page's tabs if they were put away. */
+    fun addPageAttachment(index: Int, attachment: PageAttachment) {
+        val page = document.pages.getOrNull(index) ?: return
+        page.attachments += attachment
+        page.attachmentsHidden = false
+        afterEdit()
+    }
+
+    fun updatePageAttachment(index: Int, at: Int, attachment: PageAttachment) {
+        val page = document.pages.getOrNull(index) ?: return
+        if (at !in page.attachments.indices || page.attachments[at] == attachment) return
+        page.attachments[at] = attachment
+        afterEdit()
+    }
+
+    fun removePageAttachment(index: Int, at: Int) {
+        val page = document.pages.getOrNull(index) ?: return
+        if (at !in page.attachments.indices) return
+        page.attachments.removeAt(at)
+        afterEdit()
+    }
+
+    /** Puts page [index]'s tabs away, or back; the attachments themselves are kept either way. */
+    fun setPageAttachmentsHidden(index: Int, hidden: Boolean) {
+        val page = document.pages.getOrNull(index) ?: return
+        if (page.attachmentsHidden == hidden) return
+        page.attachmentsHidden = hidden
+        afterEdit()
+    }
+
+    /** A tab on a page's edge was tapped: the page and which of its attachments. */
+    var onAttachmentTapped: ((pageIndex: Int, attachment: Int) -> Unit)? = null
+
+    /**
+     * The tab under a point on screen, as page and attachment, or null. The
+     * tabs stand out from a page's right edge at a size fixed on screen, see
+     * [attachmentTab].
+     */
+    private fun attachmentTabAt(screenX: Float, screenY: Float): Pair<Int, Int>? {
+        if (onAttachmentTapped == null) return null
+        scratch[0] = screenX
+        scratch[1] = screenY
+        screenToDocument.mapPoints(scratch)
+        val x = scratch[0]
+        val y = scratch[1]
+        val unit = resources.displayMetrics.density / currentScale().coerceAtLeast(0.001f)
+        for (index in document.pagesIntersecting(y, y)) {
+            val page = document.pages.getOrNull(index) ?: continue
+            if (page.attachments.isEmpty() || page.attachmentsHidden) continue
+            val localX = x - document.leftOf(index)
+            val localY = y - document.topOf(index)
+            for (at in page.attachments.indices) {
+                attachmentTab(page, at, unit, tabRect)
+                // A little more than the tab, for a fingertip.
+                tabRect.inset(-ATTACHMENT_TAB_REACH_DP * unit, -ATTACHMENT_TAB_REACH_DP * unit)
+                if (tabRect.contains(localX, localY)) return index to at
+            }
+        }
+        return null
+    }
+
+    private val tabRect = RectF()
+
+    /** Opens the attachment whose tab is under a pen or a tap. True when there was one. */
+    private fun openAttachmentAt(screenX: Float, screenY: Float): Boolean {
+        val (page, at) = attachmentTabAt(screenX, screenY) ?: return false
+        onAttachmentTapped?.invoke(page, at)
+        performClick()
+        return true
+    }
+
+    private fun attachmentTap(event: MotionEvent): Boolean {
+        val duration = System.currentTimeMillis() - gestureStartTime
+        if (gestureMaxPointers != 1 || duration >= TAP_MAX_MS || gestureMoved >= TAP_SLOP_PX) return false
+        return openAttachmentAt(event.x, event.y)
     }
 
     fun setPageBookmarked(index: Int, bookmarked: Boolean) {
@@ -3821,6 +3919,8 @@ class InkCanvasView @JvmOverloads constructor(
                 // Unbuffered dispatch is what gets the S Pen's full sample rate
                 // instead of one point per display frame.
                 requestUnbufferedDispatch(event)
+                // A tab on a page's edge opens what is kept there, in any tool.
+                if (openAttachmentAt(event.getX(event.actionIndex), event.getY(event.actionIndex))) return true
                 val index = pageUnder(event, event.actionIndex)
                 if (index < 0) return true
                 val pointerId = event.getPointerId(event.actionIndex)
@@ -4968,7 +5068,7 @@ class InkCanvasView @JvmOverloads constructor(
                 }
                 pullPastEnd = 0f
                 val endedZoom = zooming
-                val openedLink = !longPressFired && (unfoldTap(event) || objectLinkTap(event) ||
+                val openedLink = !longPressFired && (unfoldTap(event) || attachmentTap(event) || objectLinkTap(event) ||
                     maybeOpenPdfLink(event.x, event.y))
                 // Three fingers never move the page, so they never fling it: the
                 // last finger off after moving the reference panel flung the
@@ -9128,6 +9228,7 @@ class InkCanvasView @JvmOverloads constructor(
                         scoped.restore()
                     }
                     if (showLinkOverlay && page.links.isNotEmpty()) drawLinks(scoped, page)
+                    if (page.attachments.isNotEmpty() && !page.attachmentsHidden) drawAttachmentTabs(scoped, page)
                     if (i == lassoPage) drawLasso(scoped)
                     if (i == selectingPage) {
                         selection?.boxes?.forEach { scoped.drawRect(it, selectionPaint) }
@@ -9312,6 +9413,42 @@ class InkCanvasView @JvmOverloads constructor(
                 linkBox.inset(-pad, -pad)
                 canvas.drawRoundRect(linkBox, pad, pad, linkWash)
             }
+        }
+
+        /**
+         * A tab for each of the page's attachments, standing out from its
+         * right edge at a fixed size on screen: orange for a page to work on,
+         * blue for a comment, with a mark on it saying which.
+         */
+        private fun drawAttachmentTabs(canvas: Canvas, page: Page) {
+            val unit = resources.displayMetrics.density / currentScale().coerceAtLeast(0.001f)
+            val radius = ATTACHMENT_TAB_CORNER_DP * unit
+            for (at in page.attachments.indices) {
+                attachmentTab(page, at, unit, tabRect)
+                val comment = page.attachments[at].kind == PageAttachment.Kind.COMMENT
+                tabPaint.color = if (comment) ATTACHMENT_COMMENT_COLOR else ATTACHMENT_PAGE_COLOR
+                // Begun under the page's edge, so only its rounded end shows past it.
+                canvas.drawRoundRect(tabRect.left - radius, tabRect.top, tabRect.right, tabRect.bottom, radius, radius, tabPaint)
+                tabMark.strokeWidth = 1.6f * unit
+                val cx = tabRect.left + tabRect.width() * 0.55f
+                val cy = tabRect.centerY()
+                val half = tabRect.width() * 0.22f
+                if (comment) {
+                    // Two lines of text.
+                    canvas.drawLine(cx - half, cy - half * 0.6f, cx + half, cy - half * 0.6f, tabMark)
+                    canvas.drawLine(cx - half, cy + half * 0.6f, cx + half * 0.5f, cy + half * 0.6f, tabMark)
+                } else {
+                    // A sheet of paper.
+                    canvas.drawRect(cx - half * 0.8f, cy - half * 1.1f, cx + half * 0.8f, cy + half * 1.1f, tabMark)
+                }
+            }
+        }
+
+        private val tabPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val tabMark = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
         }
 
         /** The loop as it is drawn, and the box around what it caught. */

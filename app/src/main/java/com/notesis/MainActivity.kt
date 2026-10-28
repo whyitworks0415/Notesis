@@ -3945,7 +3945,9 @@ private fun NoteScreen(
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
     var barSize by remember { mutableStateOf(IntSize.Zero) }
     val density = LocalDensity.current
-    val otherNotes = remember(note.id) { store.list().filter { it.id != note.id } }
+    // Bumped when a note is made from inside this one - a practice page - so the lists below find it.
+    var notesRevision by remember { mutableIntStateOf(0) }
+    val otherNotes = remember(note.id, notesRevision) { store.list().filter { it.id != note.id } }
     val referenceNotes = remember(note, otherNotes) { listOf(note) + otherNotes }
     val initialReferenceNoteId = remember(note.id, referenceNotes) {
         penStore.referenceNote?.takeIf { saved -> referenceNotes.any { it.id == saved } } ?: note.id
@@ -4021,6 +4023,31 @@ private fun NoteScreen(
             containerSize.width.toFloat(), containerSize.height.toFloat(),
         )
         referenceOffset = Offset(x, y)
+    }
+    // A page's attachments: the page being attached to, and the comment open in its card.
+    var attachingPage by remember { mutableStateOf<Int?>(null) }
+    var openComment by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    /**
+     * An attached page, opened where another note is opened over this one: in
+     * the popup, or in the second part of a split.
+     */
+    fun openAttachedPage(attachment: PageAttachment) {
+        val target = referenceNotes.firstOrNull { it.id == attachment.noteId }
+            ?: store.list().firstOrNull { it.id == attachment.noteId }?.also { notesRevision++ }
+        if (target == null) {
+            Toast.makeText(context, "The attached note is gone", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val page = attachment.pageIndex.coerceIn(0, (target.pageCount - 1).coerceAtLeast(0))
+        if (split != null) {
+            paneNotes[1] = target.id
+            panePages[1] = page
+            return
+        }
+        referenceNoteId = target.id
+        penStore.referenceNote = target.id
+        referencePage = page
+        referenceOpen = true
     }
     val maxBarWidth = with(density) {
         (containerSize.width.takeIf { it > 0 } ?: Int.MAX_VALUE).toDp()
@@ -4642,6 +4669,13 @@ private fun NoteScreen(
                         } ?: Toast.makeText(context, "Couldn't find the linked note", Toast.LENGTH_SHORT).show()
                     }
                     view.onLongPressCanvas = if (gestures.longPressMenu) { x, y -> pressMenu = Offset(x, y) } else null
+                    view.onAttachmentTapped = { pageIndex, at ->
+                        val attachment = view.document.pages.getOrNull(pageIndex)?.attachments?.getOrNull(at)
+                        if (attachment != null) when (attachment.kind) {
+                            PageAttachment.Kind.PAGE -> openAttachedPage(attachment)
+                            PageAttachment.Kind.COMMENT -> openComment = pageIndex to at
+                        }
+                    }
                     view.rulerKind = ruler
                     view.onRulerClosed = { ruler = null }
                     view.autoShapeRecognitionEnabled = autoShapes
@@ -5965,8 +5999,54 @@ private fun NoteScreen(
                     if (inkClip == null && pastedText == null && uri == null) {
                         DropdownMenuItem(text = { Text("Nothing to paste") }, onClick = { pressMenu = null }, enabled = false)
                     }
+                    DropdownMenuItem(text = { Text("Attach to this page…") }, onClick = {
+                        pressMenu = null
+                        attachingPage = currentPage
+                    })
                 }
             }
+        }
+
+        attachingPage?.let { index ->
+            AttachToPageDialog(
+                pageNumber = index + 1,
+                notes = otherNotes,
+                onPractice = {
+                    attachingPage = null
+                    scope.launch {
+                        val practice = withContext(Dispatchers.IO) { store.create("Practice · ${note.title} p.${index + 1}") }
+                        notesRevision++
+                        val attachment = PageAttachment(PageAttachment.Kind.PAGE, text = "Practice page", noteId = practice.id)
+                        canvas?.addPageAttachment(index, attachment)
+                        edits++
+                        openAttachedPage(attachment)
+                    }
+                },
+                onOtherPage = { other, page ->
+                    attachingPage = null
+                    canvas?.addPageAttachment(index,
+                        PageAttachment(PageAttachment.Kind.PAGE, text = other.title, noteId = other.id, pageIndex = page))
+                    edits++
+                },
+                onComment = { text, url ->
+                    attachingPage = null
+                    canvas?.addPageAttachment(index, PageAttachment(PageAttachment.Kind.COMMENT, text = text, url = url))
+                    edits++
+                },
+                onDismiss = { attachingPage = null },
+            )
+        }
+        openComment?.let { (index, at) ->
+            val attachment = canvas?.document?.pages?.getOrNull(index)?.attachments?.getOrNull(at)
+            if (attachment == null) SideEffect { openComment = null } else PageCommentDialog(
+                pageNumber = index + 1,
+                attachment = attachment,
+                onOpenLink = { webUrl = it; openComment = null },
+                onSave = { canvas?.updatePageAttachment(index, at, it); edits++; openComment = null },
+                onRemove = { canvas?.removePageAttachment(index, at); edits++; openComment = null },
+                onHideTabs = { canvas?.setPageAttachmentsHidden(index, true); edits++; openComment = null },
+                onDismiss = { openComment = null },
+            )
         }
 
         if (zoomMenu) {
@@ -6175,6 +6255,11 @@ private fun NoteScreen(
                         showPages = false
                         onOpenNote(created)
                     }
+                },
+                onAttach = { attachingPage = it },
+                onAttachmentsHidden = { index, hidden ->
+                    canvas?.setPageAttachmentsHidden(index, hidden)
+                    edits++
                 },
                 search = noteSearch,
                 searchView = canvas,
@@ -7676,6 +7761,8 @@ private fun PageSidebar(
     onOpenNote: (NoteMeta) -> Unit = {},
     onOpenBeside: (NoteMeta) -> Unit = {},
     onNewNote: () -> Unit = {},
+    onAttach: (Int) -> Unit = {},
+    onAttachmentsHidden: (Int, Boolean) -> Unit = { _, _ -> },
 ) {
     val pages = document?.pages ?: return
     // Kept with the search, so a panel that writing put away opens again on
@@ -7913,6 +8000,8 @@ private fun PageSidebar(
                                         onRotate = { clockwise -> onRotate(index, clockwise) },
                                         onBackgroundAll = { onBackgroundAll(page.background, page.templateId) },
                                         onPageSize = { sizingPage = index },
+                                        onAttach = { onAttach(index) },
+                                        onAttachmentsHidden = { onAttachmentsHidden(index, it) },
                                     )
                                 }
                             }
@@ -8467,6 +8556,10 @@ private fun PageCard(
     onRotate: (Boolean) -> Unit = {},
     onBackgroundAll: () -> Unit = {},
     onPageSize: () -> Unit = {},
+    /** Keeps a comment or another page with this one. */
+    onAttach: () -> Unit = {},
+    /** Puts the page's attachment tabs away, or back. */
+    onAttachmentsHidden: (Boolean) -> Unit = {},
 ) {
     var menu by remember { mutableStateOf(false) }
     val scheme = MaterialTheme.colorScheme
@@ -8495,6 +8588,12 @@ private fun PageCard(
                     modifier = Modifier.align(Alignment.TopEnd).padding(2.dp).size(16.dp),
                 )
                 if (choosing) Checkbox(checked = chosen, onCheckedChange = null, modifier = Modifier.align(Alignment.TopStart))
+                // Its attachments, as the tab they are on the page.
+                if (page.attachments.isNotEmpty()) Box(
+                    Modifier.align(Alignment.TopEnd).padding(top = 22.dp).size(width = 6.dp, height = 14.dp)
+                        .background(Color(0xFFF5A623).copy(alpha = if (page.attachmentsHidden) 0.4f else 1f),
+                            RoundedCornerShape(topStart = 3.dp, bottomStart = 3.dp)),
+                )
             }
             Text("${index + 1}", style = MaterialTheme.typography.labelMedium,
                 color = if (selected) scheme.primary else scheme.onSurfaceVariant)
@@ -8508,6 +8607,14 @@ private fun PageCard(
             DropdownMenuItem(
                 text = { Text(if (page.bookmarked) "Remove bookmark" else "Bookmark") },
                 onClick = { menu = false; onBookmark() },
+            )
+            DropdownMenuItem(
+                text = { Text("Attach…") },
+                onClick = { menu = false; onAttach() },
+            )
+            if (page.attachments.isNotEmpty()) DropdownMenuItem(
+                text = { Text(if (page.attachmentsHidden) "Show attachment tabs" else "Hide attachment tabs") },
+                onClick = { menu = false; onAttachmentsHidden(!page.attachmentsHidden) },
             )
             DropdownMenuItem(
                 text = { Text(if (page.tocTitle == null) "Set contents entry" else "Rename contents entry") },
