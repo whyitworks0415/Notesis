@@ -231,7 +231,7 @@ internal val HOME_MARKS = listOf(
     CoachMark(CoachTarget.SEARCH, "Search", "Finds titles, words in PDFs and your own handwriting."),
     CoachMark(CoachTarget.TUTORIAL, "Tutorial", "The pen and its settings, gestures, pages, shapes, the AI panel and every setting, a page each. Open it any time."),
     CoachMark(CoachTarget.LOOK, "The look", "Skin, colours, corners and dark mode, any time."),
-    CoachMark(CoachTarget.HELP, "About & help", "The guide note and these tips, whenever you want them again."),
+    CoachMark(CoachTarget.HELP, "More", "The trash, the library's picture, and About · Help: the guide note and these tips, whenever you want them again."),
 )
 
 /** The note's bar, part by part, the first time a note is opened. */

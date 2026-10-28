@@ -114,6 +114,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.Button
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.TopAppBar
@@ -137,6 +138,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.contentDescription
@@ -705,7 +707,6 @@ private fun NoteListScreen(
     var creatingFolder by remember { mutableStateOf(false) }
     var renamingFolder by remember { mutableStateOf(false) }
     var deletingFolder by remember { mutableStateOf(false) }
-    var folderMenu by remember { mutableStateOf(false) }
     val folders = remember(revision) { store.folders() }
     // Favourites first, then the chosen order within each group.
     val shown = (results ?: if (tagFilter != null) notes.filter { tagFilter in it.tags }
@@ -1001,115 +1002,132 @@ private fun NoteListScreen(
         topBar = {
             // Flush to the window edge, and the notes pass underneath it.
             SkinSurface(flush = true) {
-            TopAppBar(
-                actions = {
-                    TextButton(onClick = {
-                        selectionMode = !selectionMode
-                        selectedIds.clear()
-                    }) { Text(if (selectionMode) "Done" else "Select notes") }
-                    ToolsMenuButton()
-                    IconButton(onClick = { creatingFolder = true }) {
-                        Icon(Reicons.Folder, contentDescription = "New folder")
+            var homeMore by remember { mutableStateOf(false) }
+            Column(Modifier.windowInsetsPadding(TopAppBarDefaults.windowInsets)) {
+            // One line for where you are and what you can do here; the search under it, as wide as it reads well.
+            Row(
+                Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(start = Ui.Space.xs, end = Ui.Space.xs),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // Only inside a folder: at the top level there is nowhere
+                // to go back to, and an arrow that does nothing is a lie.
+                if (folder.isNotBlank()) {
+                    IconButton(onClick = { folder = "" }) {
+                        Icon(Reicons.ArrowBack, contentDescription = "All notes")
                     }
-                    if (folder.isNotBlank()) Box {
-                        IconButton(onClick = { folderMenu = true }) {
-                            Icon(Reicons.MoreVert, contentDescription = "Folder options")
-                        }
-                        DropdownMenu(folderMenu, onDismissRequest = { folderMenu = false }) {
-                            DropdownMenuItem(text = { Text("Rename folder") }, onClick = {
-                                folderMenu = false; renamingFolder = true
-                            })
-                            DropdownMenuItem(text = { Text("Delete folder") }, onClick = {
-                                folderMenu = false; deletingFolder = true
-                            })
-                        }
-                    }
-                    Box {
-                        IconButton(onClick = { sortMenu = true }) {
-                            Icon(LibraryIcons.Sort, contentDescription = "Sort")
-                        }
-                        DropdownMenu(sortMenu, onDismissRequest = { sortMenu = false }) {
-                            listOf(
-                                LIBRARY_SORT_MODIFIED to "Last modified",
-                                LIBRARY_SORT_TITLE to "Name",
-                                LIBRARY_SORT_PAGES to "Most pages",
-                            ).forEach { (mode, label) ->
-                                DropdownMenuItem(
-                                    text = { Text(label) },
-                                    leadingIcon = if (librarySort == mode) {
-                                        { Icon(Reicons.Check, contentDescription = null) }
-                                    } else null,
-                                    onClick = {
-                                        librarySort = mode
-                                        homeStore.librarySort = mode
-                                        sortMenu = false
-                                    },
-                                )
-                            }
-                        }
-                    }
-                    IconButton(onClick = { showTrash = true }) {
-                        Icon(Reicons.Delete, contentDescription = "Trash")
-                    }
-                    IconButton(onClick = { showHomeBackground = true }) {
-                        Icon(Reicons.Image, contentDescription = "Library background")
-                    }
-                    AppIconButton(
-                        onClick = { Onboarding.tutorialOpen = true },
-                        icon = AppIcons.tutorial,
-                        contentDescription = "Tutorial",
-                        modifier = Modifier.coachTarget(coachTargets, CoachTarget.TUTORIAL),
+                } else Spacer(Modifier.width(Ui.Space.m))
+                Column(Modifier.weight(1f).semantics { heading() }) {
+                    Text(
+                        if (folder.isNotBlank()) folder else "Notes",
+                        style = MaterialTheme.typography.headlineSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
-                    IconButton(onClick = onSettings, modifier = Modifier.coachTarget(coachTargets, CoachTarget.LOOK)) {
-                        Icon(Reicons.Tune, contentDescription = "Display settings")
+                    Text(
+                        if (selectionMode) "${selectedIds.size} selected" else countNoun(shown.size, "note"),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                TextButton(onClick = {
+                    selectionMode = !selectionMode
+                    selectedIds.clear()
+                }) { Text(if (selectionMode) "Done" else "Select") }
+                Box {
+                    IconButton(onClick = { sortMenu = true }) {
+                        Icon(LibraryIcons.Sort, contentDescription = "Sort")
                     }
-                    IconButton(onClick = { showHelp = true }, modifier = Modifier.coachTarget(coachTargets, CoachTarget.HELP)) {
-                        Icon(Reicons.BugReport, contentDescription = "About · Help")
-                    }
-                },
-                navigationIcon = {
-                    // Only inside a folder: at the top level there is nowhere
-                    // to go back to, and an arrow that does nothing is a lie.
-                    if (folder.isNotBlank()) {
-                        IconButton(onClick = { folder = "" }) {
-                            Icon(
-                                Reicons.ArrowBack,
-                                contentDescription = "All notes",
+                    DropdownMenu(sortMenu, onDismissRequest = { sortMenu = false }) {
+                        listOf(
+                            LIBRARY_SORT_MODIFIED to "Last modified",
+                            LIBRARY_SORT_TITLE to "Name",
+                            LIBRARY_SORT_PAGES to "Most pages",
+                        ).forEach { (mode, label) ->
+                            DropdownMenuItem(
+                                text = { Text(label) },
+                                leadingIcon = if (librarySort == mode) {
+                                    { Icon(Reicons.Check, contentDescription = null) }
+                                } else null,
+                                onClick = {
+                                    librarySort = mode
+                                    homeStore.librarySort = mode
+                                    sortMenu = false
+                                },
                             )
                         }
                     }
-                },
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                }
+                IconButton(onClick = { creatingFolder = true }) {
+                    Icon(Reicons.Folder, contentDescription = "New folder")
+                }
+                ToolsMenuButton()
+                AppIconButton(
+                    onClick = { Onboarding.tutorialOpen = true },
+                    icon = AppIcons.tutorial,
+                    contentDescription = "Tutorial",
+                    modifier = Modifier.coachTarget(coachTargets, CoachTarget.TUTORIAL),
+                )
+                IconButton(onClick = onSettings, modifier = Modifier.coachTarget(coachTargets, CoachTarget.LOOK)) {
+                    Icon(Reicons.Tune, contentDescription = "Display settings")
+                }
+                // The rest, used now and then, in one menu: the trash, the
+                // library's picture, help, and the open folder's own options.
+                Box(Modifier.coachTarget(coachTargets, CoachTarget.HELP)) {
+                    IconButton(onClick = { homeMore = true }) {
+                        Icon(Reicons.MoreVert, contentDescription = "More")
+                    }
+                    DropdownMenu(homeMore, onDismissRequest = { homeMore = false }) {
                         if (folder.isNotBlank()) {
-                            Icon(Reicons.Folder, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text(folder, style = MaterialTheme.typography.titleMedium)
-                            Spacer(Modifier.width(16.dp))
+                            DropdownMenuItem(text = { Text("Rename folder") }, onClick = {
+                                homeMore = false; renamingFolder = true
+                            })
+                            DropdownMenuItem(text = { Text("Delete folder") }, onClick = {
+                                homeMore = false; deletingFolder = true
+                            })
+                            HorizontalDivider()
                         }
-                        OutlinedTextField(
-                            value = query,
-                            onValueChange = { query = it },
-                            singleLine = true,
-                            placeholder = { Text("Search all notes · titles · PDFs · handwriting") },
-                            leadingIcon = {
-                                Icon(Reicons.Search, contentDescription = null)
-                            },
-                            modifier = Modifier
-                                .focusRequester(searchFocus)
-                                .weight(1f)
-                                .padding(end = 16.dp, top = 4.dp, bottom = 4.dp)
-                                .coachTarget(coachTargets, CoachTarget.SEARCH),
+                        DropdownMenuItem(
+                            text = { Text("Trash") },
+                            leadingIcon = { Icon(Reicons.Delete, contentDescription = null) },
+                            onClick = { homeMore = false; showTrash = true },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Library background") },
+                            leadingIcon = { Icon(Reicons.Image, contentDescription = null) },
+                            onClick = { homeMore = false; showHomeBackground = true },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("About · Help") },
+                            leadingIcon = { Icon(Reicons.BugReport, contentDescription = null) },
+                            onClick = { homeMore = false; showHelp = true },
                         )
                     }
-                },
-                // The surface underneath is the skin's, so the bar itself
-                // paints nothing: two containers stacked is what turned the
-                // frost into a flat wash.
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                ),
-            )
+                }
+            }
+            Box(Modifier.fillMaxWidth().padding(horizontal = Ui.Space.l).padding(bottom = Ui.Space.s),
+                contentAlignment = Alignment.Center) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    singleLine = true,
+                    shape = RoundedCornerShape(28.dp),
+                    placeholder = { Text("Search titles, PDFs and handwriting") },
+                    leadingIcon = { Icon(Reicons.Search, contentDescription = null) },
+                    trailingIcon = if (query.isNotEmpty()) {
+                        {
+                            IconButton(onClick = { query = "" }) {
+                                Icon(Reicons.Close, contentDescription = "Clear search")
+                            }
+                        }
+                    } else null,
+                    modifier = Modifier
+                        .widthIn(max = 720.dp)
+                        .fillMaxWidth()
+                        .focusRequester(searchFocus)
+                        .coachTarget(coachTargets, CoachTarget.SEARCH),
+                )
+            }
+            }
             }
         },
         floatingActionButton = {
@@ -1173,26 +1191,53 @@ private fun NoteListScreen(
                     .padding(padding),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    when {
-                        query.isNotBlank() -> "No results for \"$query\""
-                        folder.isNotBlank() -> "This folder is empty"
-                        else -> "No notes yet"
-                    },
-                    color = MaterialTheme.colorScheme.outline,
-                )
+                // What is missing, and the one thing to do about it.
+                Column(
+                    Modifier.widthIn(max = 420.dp).padding(Ui.Space.l),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(Ui.Space.s),
+                ) {
+                    Icon(
+                        if (query.isNotBlank()) Reicons.Search else if (folder.isNotBlank()) Reicons.Folder else Reicons.Edit,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(48.dp),
+                    )
+                    Text(
+                        when {
+                            query.isNotBlank() -> "No results for \"$query\""
+                            folder.isNotBlank() -> "This folder is empty"
+                            else -> "No notes yet"
+                        },
+                        style = MaterialTheme.typography.titleLarge,
+                        textAlign = TextAlign.Center,
+                    )
+                    Text(
+                        when {
+                            query.isNotBlank() -> "Try other words, or fewer of them."
+                            folder.isNotBlank() -> "Move a note here from its menu, or start a new one."
+                            else -> "Start a blank note, or bring in a PDF, pictures or a web page with the + button."
+                        },
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
+                    if (query.isBlank()) Button(onClick = { naming = true },
+                        modifier = Modifier.padding(top = Ui.Space.s).heightIn(min = 48.dp)) { Text("New note") }
+                }
             }
         } else {
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 168.dp),
+                columns = GridCells.Adaptive(minSize = 176.dp),
                 // The bar's height is padding inside the list rather than
                 // around it, so the notes scroll under the glass instead of
                 // stopping politely below it with nothing to frost.
                 contentPadding = PaddingValues(
-                    start = 16.dp,
-                    end = 16.dp,
-                    top = padding.calculateTopPadding() + 16.dp,
-                    bottom = padding.calculateBottomPadding() + 16.dp,
+                    start = Ui.Space.l,
+                    end = Ui.Space.l,
+                    top = padding.calculateTopPadding() + Ui.Space.m,
+                    // Clear of the + button, so the last row can be scrolled out from under it.
+                    bottom = padding.calculateBottomPadding() + 96.dp,
                 ),
                 horizontalArrangement = Arrangement.spacedBy(Ui.Space.m),
                 verticalArrangement = Arrangement.spacedBy(Ui.Space.m),
@@ -1201,6 +1246,7 @@ private fun NoteListScreen(
                 // Folders sit above the notes rather than beside them: they
                 // are a place, not another note.
                 if (results == null && folder.isBlank() && folders.isNotEmpty() && tagFilter == null) {
+                    item(span = { GridItemSpan(maxLineSpan) }) { LibraryHeading("Folders") }
                     item(span = { GridItemSpan(maxLineSpan) }) {
                         FolderRow(folders) { folder = it }
                     }
@@ -1224,11 +1270,7 @@ private fun NoteListScreen(
                 // straight to that page.
                 if (results != null && pageHits.isNotEmpty()) {
                     item(span = { GridItemSpan(maxLineSpan) }) {
-                        Text(
-                            "Matches in pages",
-                            style = MaterialTheme.typography.titleSmall,
-                            modifier = Modifier.padding(top = 4.dp),
-                        )
+                        LibraryHeading("Matches in pages")
                     }
                     shown.forEach { note ->
                         pageHits[note.id]?.take(MAX_HITS_PER_NOTE)?.forEach { hit ->
@@ -1240,13 +1282,9 @@ private fun NoteListScreen(
                             }
                         }
                     }
-                    item(span = { GridItemSpan(maxLineSpan) }) {
-                        Text(
-                            "Notes",
-                            style = MaterialTheme.typography.titleSmall,
-                            modifier = Modifier.padding(top = 4.dp),
-                        )
-                    }
+                    item(span = { GridItemSpan(maxLineSpan) }) { LibraryHeading("Notes") }
+                } else if (results == null && folder.isBlank() && folders.isNotEmpty() && tagFilter == null && shown.isNotEmpty()) {
+                    item(span = { GridItemSpan(maxLineSpan) }) { LibraryHeading("Notes") }
                 }
                 items(shown, key = { it.id }) { note ->
                     // The guide's card is where the welcome folds into, and what its first mark points at.
@@ -2169,7 +2207,8 @@ private fun NoteCard(
                     Text(
                         "${dateFormat.format(Date(note.modified))} · ${countNoun(note.pageCount, "page")}",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.outline,
+                        // Read at a glance on frost as well: the stronger of the two greys.
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     if (note.tags.isNotEmpty()) Text(
                         note.tags.joinToString(" ") { "#$it" },
@@ -2183,8 +2222,8 @@ private fun NoteCard(
                     IconButton(onClick = { menuOpen = true }) {
                         Icon(
                             Reicons.MoreVert,
-                            contentDescription = "More",
-                            tint = MaterialTheme.colorScheme.outline,
+                            contentDescription = "Options for ${note.title}",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                     DropdownMenu(menuOpen, onDismissRequest = { menuOpen = false }) {
@@ -2327,6 +2366,17 @@ private fun indexNote(store: NoteStore, indexer: InkIndexer, id: String): Int {
         done++
     }
     return done
+}
+
+/** A section's name in the library, read out as a heading. */
+@Composable
+private fun LibraryHeading(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.titleMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = Ui.Space.xs).semantics { heading() },
+    )
 }
 
 /** The folders that exist, as somewhere to go. */
