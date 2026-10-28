@@ -181,7 +181,17 @@ data class PageAttachment(
     /** The note the attached page is in, and which of its pages. */
     val noteId: String = "",
     val pageIndex: Int = 0,
+    /**
+     * Where on the page a comment points, in page units, as a memo in the
+     * margin is drawn back to what it is about; negative for nowhere in
+     * particular, when it hangs from the page's edge.
+     */
+    val x: Float = -1f,
+    val y: Float = -1f,
 ) {
+    /** Whether the comment points at a place on the page. */
+    val anchored: Boolean get() = x >= 0f && y >= 0f
+
     enum class Kind { COMMENT, PAGE }
 
     fun toJson(): JSONObject = JSONObject()
@@ -190,6 +200,8 @@ data class PageAttachment(
         .put("url", url)
         .put("note", noteId)
         .put("page", pageIndex)
+        .put("x", x.toDouble())
+        .put("y", y.toDouble())
 
     companion object {
         fun fromJson(json: JSONObject): PageAttachment? {
@@ -200,6 +212,8 @@ data class PageAttachment(
                 url = json.optString("url"),
                 noteId = json.optString("note"),
                 pageIndex = json.optInt("page", 0).coerceAtLeast(0),
+                x = json.optDouble("x", -1.0).toFloat().takeIf { it.isFinite() } ?: -1f,
+                y = json.optDouble("y", -1.0).toFloat().takeIf { it.isFinite() } ?: -1f,
             )
             // A page with no note, or a comment with nothing in it, is nothing to show.
             return attachment.takeIf {
@@ -237,6 +251,12 @@ class Page(
     val attachments: MutableList<PageAttachment> = mutableListOf(),
     /** The tabs put away: the attachments are kept, only not shown on the page. */
     var attachmentsHidden: Boolean = false,
+    /**
+     * The page this one is a practice sheet for, by id: laid beside it, as
+     * the other half of a spread, rather than below. Null for a page of the
+     * note's own run.
+     */
+    var besideOf: String? = null,
     /** Pictures, drawn over the background and under the ink. */
     val images: MutableList<PageImage> = mutableListOf(),
     /** Masking tape, drawn over everything, because covering is the job. */
@@ -359,18 +379,26 @@ class Document(val pages: MutableList<Page>) {
         laidOutFor = -1
     }
 
+    private var memoLefts = FloatArray(0)
+    private var shown = BooleanArray(0)
+
     private fun layout() {
         val signature = pages.size * 10 + layoutMode.ordinal
         if (laidOutFor == signature) return
         tops = FloatArray(pages.size)
         lefts = FloatArray(pages.size)
+        memoLefts = FloatArray(pages.size) { pages[it].width + PAGE_GAP }
+        shown = BooleanArray(pages.size) { true }
         val cellWidth = pages.maxOfOrNull { it.width } ?: Page.A4_WIDTH
         val cellHeight = pages.maxOfOrNull { it.height } ?: Page.A4_HEIGHT
+        if (layoutMode == PageLayoutMode.VERTICAL) {
+            widest = layoutRows(cellWidth, cellHeight)
+            total = pages.indices.maxOfOrNull { tops[it] + pages[it].height } ?: Page.A4_HEIGHT
+            laidOutFor = signature
+            return
+        }
         for (i in pages.indices) when (layoutMode) {
-            PageLayoutMode.VERTICAL -> {
-                tops[i] = i * (cellHeight + PAGE_GAP)
-                lefts[i] = (cellWidth - pages[i].width) / 2f
-            }
+            PageLayoutMode.VERTICAL -> Unit
             PageLayoutMode.HORIZONTAL -> {
                 lefts[i] = i * (cellWidth + PAGE_GAP)
                 tops[i] = 0f
@@ -396,6 +424,76 @@ class Document(val pages: MutableList<Page>) {
         widest = pages.indices.maxOfOrNull { lefts[it] + pages[it].width } ?: Page.A4_WIDTH
         total = pages.indices.maxOfOrNull { tops[it] + pages[it].height } ?: Page.A4_HEIGHT
         laidOutFor = signature
+    }
+
+    /**
+     * The single column, in rows: a page, the practice pages laid beside it,
+     * and a margin for its comments when it has some, each row centred on the
+     * widest. A note with neither is the column it always was. Returns the
+     * column's width.
+     */
+    private fun layoutRows(cellWidth: Float, cellHeight: Float): Float {
+        val rows = ArrayList<IntArray>()
+        var row = ArrayList<Int>()
+        var hostId: String? = null
+        for (i in pages.indices) {
+            val page = pages[i]
+            if (page.besideOf != null && page.besideOf == hostId && row.isNotEmpty()) {
+                row += i
+            } else {
+                if (row.isNotEmpty()) rows += row.toIntArray()
+                row = arrayListOf(i)
+                hostId = page.id
+            }
+        }
+        if (row.isNotEmpty()) rows += row.toIntArray()
+        // Put away with the host's other attachments, practice pages and comments leave no room.
+        fun open(r: IntArray) = !pages[r[0]].attachmentsHidden
+        fun memos(r: IntArray) = open(r) && r.any { i -> pages[i].attachments.any { it.kind == PageAttachment.Kind.COMMENT } }
+        val widths = rows.map { r ->
+            var w = pages[r[0]].width
+            if (open(r)) for (k in 1 until r.size) w += PAGE_GAP + pages[r[k]].width
+            if (memos(r)) w += PAGE_GAP + MEMO_COLUMN
+            w
+        }
+        val width = maxOf(cellWidth, widths.maxOrNull() ?: cellWidth)
+        rows.forEachIndexed { at, r ->
+            val top = at * (cellHeight + PAGE_GAP)
+            var x = (width - widths[at]) / 2f
+            for (k in r.indices) {
+                val i = r[k]
+                tops[i] = top
+                if (k > 0 && !open(r)) {
+                    shown[i] = false
+                    lefts[i] = lefts[r[0]]
+                    continue
+                }
+                lefts[i] = x
+                x += pages[i].width + PAGE_GAP
+            }
+            // The margin starts past the last page of the row, for every page in it.
+            for (i in r) if (shown[i]) memoLefts[i] = x - lefts[i]
+        }
+        return width
+    }
+
+    /** The page a practice page is laid beside, or [page] itself. */
+    fun hostOf(page: Page): Page = page.besideOf?.let { id -> pages.firstOrNull { it.id == id } } ?: page
+
+    /** Whether page [index] has anything to put away: comments, tabs, or practice pages beside it. */
+    fun hasAttachments(index: Int): Boolean {
+        val page = pages.getOrNull(index) ?: return false
+        val host = hostOf(page)
+        return host.attachments.isNotEmpty() || page.attachments.isNotEmpty() || pages.any { it.besideOf == host.id }
+    }
+
+    /** Whether page [index] is laid out to be seen: a practice page put away with its host's attachments is not. */
+    fun isShown(index: Int): Boolean { layout(); return shown.getOrElse(index) { true } }
+
+    /** Where page [index]'s comments start, page-local: past the last page of its row. */
+    fun memoLeftOf(index: Int): Float {
+        layout()
+        return memoLefts.getOrElse(index) { (pages.getOrNull(index)?.width ?: Page.A4_WIDTH) + PAGE_GAP }
     }
 
     fun topOf(index: Int): Float {
@@ -432,7 +530,10 @@ class Document(val pages: MutableList<Page>) {
             val middle = (low + high).ushr(1)
             if (tops[middle] <= documentY) low = middle + 1 else high = middle - 1
         }
-        return high.coerceIn(0, pages.lastIndex)
+        // A practice page shares its host's top; the row is the host's.
+        var at = high.coerceIn(0, pages.lastIndex)
+        while (at > 0 && pages[at].besideOf != null && tops[at] == tops[at - 1]) at--
+        return at
     }
 
     /** The few pages that can intersect a vertical viewport, without scanning all pages. */
@@ -467,12 +568,12 @@ class Document(val pages: MutableList<Page>) {
         // pinch on a long note asked all of them.
         return pagesIntersecting(documentY, documentY).firstOrNull { index ->
             val page = pages[index]
-            documentX in leftOf(index)..(leftOf(index) + page.width) &&
+            isShown(index) && documentX in leftOf(index)..(leftOf(index) + page.width) &&
                 documentY in topOf(index)..(topOf(index) + page.height)
         } ?: -1
     }
 
-    fun nearestPage(documentX: Float, documentY: Float): Int = nearbyCandidates(documentY).minByOrNull { index ->
+    fun nearestPage(documentX: Float, documentY: Float): Int = nearbyCandidates(documentY).filter(::isShown).minByOrNull { index ->
         val page = pages[index]
         val dx = documentX - (leftOf(index) + page.width / 2f)
         val dy = documentY - (topOf(index) + page.height / 2f)
@@ -492,6 +593,8 @@ class Document(val pages: MutableList<Page>) {
 
     companion object {
         const val PAGE_GAP = 48f
+        /** The margin a row keeps for its comments, in page units: about a third of an A4 page. */
+        const val MEMO_COLUMN = 400f
         private val nextSaveSession = AtomicLong(1L)
     }
 }
@@ -1320,6 +1423,7 @@ class NoteStore(context: Context) {
                 links = linksFrom(entry),
                 attachments = attachmentsFrom(entry),
                 attachmentsHidden = entry.optBoolean("attachmentsHidden", false),
+                besideOf = entry.optString("beside", "").ifBlank { null },
             )
             page.images.addAll(imagesFrom(entry))
             // Strokes are left on disk until the page is actually needed.
@@ -1452,6 +1556,7 @@ class NoteStore(context: Context) {
                 links = live.links.toMutableMap(),
                 attachments = live.attachments.toMutableList(),
                 attachmentsHidden = live.attachmentsHidden,
+                besideOf = live.besideOf,
                 images = live.images.map { image ->
                     image.copy()
                 }.toMutableList(),
@@ -1504,6 +1609,7 @@ class NoteStore(context: Context) {
             copy.tessellatedFor != live.tessellatedFor || copy.savedOnDisk != live.savedOnDisk ||
             copy.savedStrokeCount != strokeCountOf(live) || copy.links != live.links ||
             copy.attachments != live.attachments || copy.attachmentsHidden != live.attachmentsHidden ||
+            copy.besideOf != live.besideOf ||
             copy.images.size != live.images.size
         ) return false
         for (i in live.images.indices) if (!copy.images[i].sameState(live.images[i])) return false
@@ -2168,6 +2274,7 @@ class NoteStore(context: Context) {
                     .put("links", JSONObject(page.links.mapKeys { it.key.toString() }))
                     .put("attachments", JSONArray(page.attachments.map { it.toJson() }))
                     .put("attachmentsHidden", page.attachmentsHidden)
+                    .put("beside", page.besideOf ?: "")
                     .put("strokes", strokeCountOf(page))
                     .put("images", imagesToJson(page)),
             )

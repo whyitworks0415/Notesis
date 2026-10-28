@@ -28,6 +28,7 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.findRootCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -208,8 +209,8 @@ internal fun ToolbarOrientationChoice(sizeLevel: Int, inMenu: Boolean = false) {
     }
     if (inMenu) {
         Text(
-            if (ToolbarOrientation.vertical) "Drag the round button across the screen to put the bar on the other side, or up and down for a shorter or longer bar."
-            else "Drag the round button left for a shorter bar, right for a longer one.",
+            if (ToolbarOrientation.vertical) "Drag the round button up or down for a shorter or longer bar. Let go across the screen to put the bar on that side, or in the middle to put it back across the top."
+            else "Drag the round button left for a shorter bar, right for a longer one. Carry it to the screen's edge to stand the bar down that side.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
         return
     }
@@ -312,13 +313,26 @@ private fun Modifier.toolbarAnimatedHeight(enabled: Boolean): Modifier {
     }
 }
 
-/** The bar's width at each size; every size grows and shrinks with the chrome ([LocalChromeScale]). */
-internal fun spotiToolbarWidth(level: Int, scale: Float = 1f) = when (level) {
+/**
+ * The bar's width at each size; every size grows and shrinks with the chrome
+ * ([LocalChromeScale]). The 2/4 and 3/4 bars widen past their own width to
+ * hold [tools] tools in one row, see [spotiToolRows].
+ */
+internal fun spotiToolbarWidth(level: Int, scale: Float = 1f, tools: Int = 0): Dp = when (level) {
     0 -> 940.dp * scale
-    1 -> 632.dp * scale
-    2 -> 304.dp * scale
+    1 -> maxOf(632.dp, oneRowWidth(tools)) * scale
+    2 -> maxOf(304.dp, oneRowWidth(tools)) * scale
     else -> 92.dp * scale
 }
+
+/** A row of [tools] tool cells with its padding, beside the Functions button; a hair over, so rounding never folds it. */
+private fun oneRowWidth(tools: Int): Dp = (BAR_BESIDE_TOOLS + TOOL_ROW_PAD + tools * TOOL_CELL + 4f).dp
+
+/** What the bar holds beside its tools: the Functions button and the gaps round it. */
+private const val BAR_BESIDE_TOOLS = 100f
+private const val TOOL_ROW_PAD = 12f
+/** A tool's least width in a row across, at chrome scale 1. */
+private const val TOOL_CELL = 44f
 
 internal fun Modifier.spotiToolbarAnimatedWidth(width: State<Dp>): Modifier = layout { measurable, constraints ->
     val pixels = width.value.roundToPx().coerceIn(constraints.minWidth, constraints.maxWidth)
@@ -343,10 +357,17 @@ internal fun Modifier.spotiFitRow(minWidth: Dp, chrome: Float = 1f): Modifier = 
     }
 }
 
-/** Responsive rows preserve every tool and a 44 dp hit area without scrolling. */
-internal fun spotiToolRows(tools: List<SpotiToolbarTool>, widthDp: Float, cellDp: Float = 44f): List<List<SpotiToolbarTool>> {
+/**
+ * Responsive rows preserve every tool and its hit area without scrolling. The
+ * cell and padding are at chrome scale 1 unless given: a bar drawn smaller
+ * has smaller cells, and folding it at the full-size cell gave a 3/4 bar two
+ * rows with room to spare in one.
+ */
+internal fun spotiToolRows(
+    tools: List<SpotiToolbarTool>, widthDp: Float, cellDp: Float = TOOL_CELL, padDp: Float = TOOL_ROW_PAD,
+): List<List<SpotiToolbarTool>> {
     if (tools.isEmpty()) return emptyList()
-    val capacity = ((widthDp - 12f) / cellDp).toInt().coerceAtLeast(2)
+    val capacity = ((widthDp - padDp) / cellDp).toInt().coerceAtLeast(2)
     val rows = (tools.size + capacity - 1) / capacity
     // Balance the rows instead of leaving almost all the tools in the first.
     var start = 0
@@ -362,10 +383,14 @@ internal fun spotiToolRows(tools: List<SpotiToolbarTool>, widthDp: Float, cellDp
  * Functions button. The 3/4 bar is two rows by design; only a window too
  * narrow for the bar as it is meant to be turns it down the side.
  */
-internal fun spotiBarWraps(tools: List<SpotiToolbarTool>, room: Dp, width: Dp, scale: Float): Boolean {
-    fun rows(across: Dp) = spotiToolRows(tools, (across.value - 100f * scale).coerceAtLeast(100f)).size
-    return rows(minOf(room, width)) > rows(width)
+internal fun spotiBarWraps(tools: List<SpotiToolbarTool>, room: Dp, width: Dp, scale: Float, base: Dp = width): Boolean {
+    fun rows(across: Dp) = spotiToolRows(tools, spotiToolWidth(across, scale), TOOL_CELL * scale, TOOL_ROW_PAD * scale).size
+    // Widened to keep its tools on one row, it may still fold where its own width would have.
+    return rows(minOf(room, width)) > rows(minOf(base, width))
 }
+
+/** The room for tools in a bar [width] across, beside its Functions button. */
+internal fun spotiToolWidth(width: Dp, scale: Float): Float = (width.value - BAR_BESIDE_TOOLS * scale).coerceAtLeast(100f)
 
 internal fun SpotiToolbarTool.icon(): ImageVector = when (this) {
     SpotiToolbarTool.READ -> AppIcons.read
@@ -698,13 +723,13 @@ internal fun SpotiGlassToolbar(
                             Box(Modifier.weight(1f).coachTargetWhileShown(coachTargets, CoachTarget.TOOLS)) {
                               // Freeze wrapping at the destination width while the
                               // spring grows the bar; avoid 6 -> 3 -> 2 -> 1 rows.
-                              val toolWidth = (targetWidth.value - 100f * LocalChromeScale.current).coerceAtLeast(100f)
+                              val toolWidth = spotiToolWidth(targetWidth, LocalChromeScale.current)
                               // On the full bar the strip is inset in it; alone it is the bar.
                               val stripCorner = if (full) Ui.concentric(outer, TOOLBAR_INSET) else outer
                               Column {
                                 val shown = config.tools(sizeLevel)
                                 val rows = if (full) listOf(shown).filter { it.isNotEmpty() }
-                                    else spotiToolRows(shown, toolWidth)
+                                    else LocalChromeScale.current.let { s -> spotiToolRows(shown, toolWidth, TOOL_CELL * s, TOOL_ROW_PAD * s) }
                                 rows.forEach { tools ->
                                   val selected = if (open && page == ToolbarMenu.AI) tools.indexOf(SpotiToolbarTool.AI)
                                       else tools.indexOfFirst { it.mode == mode }
@@ -819,12 +844,18 @@ private fun Modifier.dismissInRoom(room: Dp, onDismiss: () -> Unit): Modifier = 
 }
 
 /**
- * The Functions button, dragged. Along the bar it makes the bar shorter -
- * toward its start, left or up the side - or longer, a size for every
- * [FUNCTIONS_DRAG_STEP]; down the side, dragged [FUNCTIONS_SIDE_DRAG] across
- * the screen it takes the bar to that side. With [onMove], a press held still
- * first picks the bar up and moves it instead. A tap is still a tap: nothing
- * is taken until the finger has moved, or been held.
+ * The Functions button, dragged. Across the screen it steps the bar through
+ * its sizes - right for longer, toward 1/4, left for shorter - a size for
+ * every [FUNCTIONS_DRAG_STEP] the finger has gone from where it came down;
+ * carried on to the screen's left or right edge it stands the bar down that
+ * side. Down the side, dragged up it makes the bar shorter and down longer;
+ * let go across the screen it takes the bar to that side, or, let go in the
+ * middle, back across the top. With [onMove], a press held still first picks
+ * the bar up and moves it instead. A tap is still a tap: nothing is taken
+ * until the finger has moved, or been held.
+ *
+ * The finger is followed in the window, not on the button: the bar changes
+ * size under it, and the button moves with the bar.
  */
 @Composable
 private fun Modifier.functionsDrag(
@@ -835,15 +866,21 @@ private fun Modifier.functionsDrag(
     val resize by rememberUpdatedState(onSizeLevel)
     val move by rememberUpdatedState(onMove)
     val haptics = LocalHapticFeedback.current
-    return pointerInput(vertical) {
+    val placed = remember { arrayOfNulls<LayoutCoordinates>(1) }
+    return onGloballyPositioned { placed[0] = it }.pointerInput(vertical) {
         val step = FUNCTIONS_DRAG_STEP.toPx()
         val across = FUNCTIONS_SIDE_DRAG.toPx()
+        val edge = FUNCTIONS_EDGE.toPx()
         // Down the side the whole bar (1/4) is not a size it can take.
         val longest = if (vertical) 1 else 0
         awaitEachGesture {
             // Ahead of the button's own click, so a drag can keep the lift from opening the menu.
             val first = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
             val slop = viewConfiguration.touchSlop
+            // In the window; the button's own coordinates move as the bar resizes.
+            fun inWindow(local: Offset): Offset? = placed[0]?.takeIf { it.isAttached }?.localToRoot(local)
+            fun windowWidth(): Float? = placed[0]?.takeIf { it.isAttached }?.findRootCoordinates()?.size?.width?.toFloat()
+            val origin = inWindow(first.position) ?: return@awaitEachGesture
             // True once past the slop, false when let go first, null when held.
             suspend fun AwaitPointerEventScope.leaves(): Boolean {
                 var travel = Offset.Zero
@@ -859,34 +896,57 @@ private fun Modifier.functionsDrag(
             if (moved == false) return@awaitEachGesture
             val moving = moved == null
             if (moving) haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-            var gathered = Offset.Zero
+            val startLevel = level
+            var last = origin
+            var zone: FunctionsDropZone? = null
             while (true) {
                 val change = awaitPointerEvent(PointerEventPass.Initial).changes.firstOrNull { it.id == first.id } ?: break
                 // Taken, so lifting the finger after a drag does not also open the menu.
                 change.consume()
-                if (!change.pressed) break
-                val delta = change.positionChange()
                 if (moving) {
-                    move?.invoke(delta)
+                    if (!change.pressed) break
+                    move?.invoke(change.positionChange())
                     continue
                 }
-                gathered += delta
-                if (vertical && kotlin.math.abs(gathered.x) > across && kotlin.math.abs(gathered.x) > kotlin.math.abs(gathered.y)) {
-                    val toRight = gathered.x > 0
-                    if (toRight != ToolbarOrientation.right) {
-                        ToolbarOrientation.setSide(toRight)
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                val at = inWindow(change.position) ?: last
+                last = at
+                val width = windowWidth() ?: break
+                val travel = at - origin
+                if (vertical) {
+                    val sideways = kotlin.math.abs(travel.x) > across && kotlin.math.abs(travel.x) > kotlin.math.abs(travel.y)
+                    val now = if (sideways) functionsDropZone(at.x, width) else null
+                    if (!change.pressed) {
+                        when (now) {
+                            FunctionsDropZone.LEFT -> if (ToolbarOrientation.right) ToolbarOrientation.setSide(false)
+                            FunctionsDropZone.RIGHT -> if (!ToolbarOrientation.right) ToolbarOrientation.setSide(true)
+                            FunctionsDropZone.MIDDLE -> ToolbarOrientation.set(false)
+                            null -> Unit
+                        }
+                        break
                     }
-                    gathered = Offset.Zero
-                    continue
+                    if (now != zone) {
+                        zone = now
+                        if (now != null) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    }
+                    if (sideways) continue
+                } else {
+                    if (!change.pressed) break
+                    // At the screen's edge, having been carried toward it: the bar goes down that side.
+                    val toRight = travel.x > 0
+                    val atEdge = kotlin.math.abs(travel.x) > step &&
+                        (if (toRight) at.x >= width - edge else at.x <= edge)
+                    if (atEdge) {
+                        // A size the side takes, and one with tools to show there.
+                        level.coerceIn(1, ToolbarConfig.BUTTON_ONLY_STAGE - 1).let { if (it != level) resize(it) }
+                        ToolbarOrientation.setSide(toRight)
+                        ToolbarOrientation.set(true)
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        // The bar is laid out again down the side; this button goes with it.
+                        break
+                    }
                 }
-                val along = if (vertical) gathered.y else gathered.x
-                val next = when {
-                    along <= -step -> (level + 1).coerceAtMost(ToolbarConfig.BUTTON_ONLY_STAGE)
-                    along >= step -> (level - 1).coerceAtLeast(longest)
-                    else -> continue
-                }
-                gathered = Offset.Zero
+                val along = if (vertical) travel.y else travel.x
+                val next = functionsDragLevel(startLevel, along, step, longest)
                 if (next != level) {
                     resize(next)
                     haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -896,11 +956,33 @@ private fun Modifier.functionsDrag(
     }
 }
 
-/** How far the Functions button is dragged along the bar for each size it steps through. */
-private val FUNCTIONS_DRAG_STEP = 44.dp
+/** Where a bar down the side lands when its Functions button is let go [x] across a window [width] wide. */
+internal enum class FunctionsDropZone { LEFT, MIDDLE, RIGHT }
 
-/** How far across the screen the button of a bar down the side is dragged to take it to the other side. */
+internal fun functionsDropZone(x: Float, width: Float): FunctionsDropZone = when {
+    x < width * 0.35f -> FunctionsDropZone.LEFT
+    x > width * 0.65f -> FunctionsDropZone.RIGHT
+    else -> FunctionsDropZone.MIDDLE
+}
+
+/**
+ * The size the bar takes with the Functions button dragged [along] its length
+ * from where it was at [startLevel]: a size shorter for every [step] toward
+ * the bar's start, longer for every step back, between [longest] and the
+ * button alone. Counted from where the finger came down, so a bar that moves
+ * as it resizes does not count twice.
+ */
+internal fun functionsDragLevel(startLevel: Int, along: Float, step: Float, longest: Int): Int =
+    (startLevel - (along / step).toInt()).coerceIn(longest, ToolbarConfig.BUTTON_ONLY_STAGE)
+
+/** How far the Functions button is dragged across the screen for each size it steps through. */
+private val FUNCTIONS_DRAG_STEP = 56.dp
+
+/** How far across the screen the button of a bar down the side is dragged before it can be let go on another side. */
 private val FUNCTIONS_SIDE_DRAG = 96.dp
+
+/** How near the screen's edge the Functions button is carried to stand the bar down that side. */
+private val FUNCTIONS_EDGE = 40.dp
 
 /** Room a bar down the side leaves on the screen's height: its Functions button, and a margin above and below. */
 private const val VERTICAL_BAR_RESERVE_DP = 150

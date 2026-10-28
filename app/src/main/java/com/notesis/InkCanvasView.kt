@@ -730,6 +730,19 @@ private const val ATTACHMENT_TAB_CORNER_DP = 8f
 /** How far past a tab a touch still counts as on it. */
 private const val ATTACHMENT_TAB_REACH_DP = 6f
 private const val ATTACHMENT_PAGE_COLOR = 0xFFF5A623.toInt()
+
+/** A comment in the margin, in page units: its words, its box, and the line back to its place. */
+private const val MEMO_TEXT = 22f
+private const val MEMO_PAD = 14f
+private const val MEMO_GAP = 16f
+private const val MEMO_TOP = 24f
+private const val MEMO_CORNER = 10f
+private const val MEMO_DOT = 6f
+private const val MEMO_ELBOW = 24f
+private const val MEMO_MAX_LINES = 12
+private const val MEMO_INK = 0xFF3A3324.toInt()
+private const val MEMO_PAPER = 0xFFFFF6D5.toInt()
+private const val MEMO_LINE = 0xFFE0A93B.toInt()
 private const val ATTACHMENT_COMMENT_COLOR = 0xFF3B82F6.toInt()
 
 /**
@@ -3389,29 +3402,82 @@ class InkCanvasView @JvmOverloads constructor(
         val page = document.pages.getOrNull(index) ?: return
         page.attachments += attachment
         page.attachmentsHidden = false
-        afterEdit()
+        attachmentsChanged()
     }
 
     fun updatePageAttachment(index: Int, at: Int, attachment: PageAttachment) {
         val page = document.pages.getOrNull(index) ?: return
         if (at !in page.attachments.indices || page.attachments[at] == attachment) return
         page.attachments[at] = attachment
-        afterEdit()
+        attachmentsChanged()
     }
 
     fun removePageAttachment(index: Int, at: Int) {
         val page = document.pages.getOrNull(index) ?: return
         if (at !in page.attachments.indices) return
         page.attachments.removeAt(at)
-        afterEdit()
+        attachmentsChanged()
     }
 
-    /** Puts page [index]'s tabs away, or back; the attachments themselves are kept either way. */
+    /**
+     * Puts away page [index]'s attachments - its comments in the margin, the
+     * practice pages beside it, any tabs - or brings them back. Nothing is
+     * deleted either way.
+     */
     fun setPageAttachmentsHidden(index: Int, hidden: Boolean) {
         val page = document.pages.getOrNull(index) ?: return
-        if (page.attachmentsHidden == hidden) return
-        page.attachmentsHidden = hidden
+        // A practice page's attachments go with its host's.
+        val host = document.hostOf(page)
+        if (host.attachmentsHidden == hidden) return
+        host.attachmentsHidden = hidden
+        attachmentsChanged()
+    }
+
+    /** Whether page [index] has anything to put away: comments, tabs, or practice pages beside it. */
+    fun hasAttachments(index: Int): Boolean = document.hasAttachments(index)
+
+    /** Whether page [index]'s attachments, or its host's, are put away. */
+    fun attachmentsHidden(index: Int): Boolean {
+        val page = document.pages.getOrNull(index) ?: return false
+        return document.hostOf(page).attachmentsHidden
+    }
+
+    /** A margin opened or closed, a practice page shown or put away: the column is laid out again. */
+    private fun attachmentsChanged() {
+        document.invalidateLayout()
+        memoLayouts.clear()
         afterEdit()
+        onTransformChanged()
+    }
+
+    /**
+     * Lays a blank practice page beside page [index] - beside its host, if it
+     * is a practice page itself - after any it already has there, as the other
+     * half of a spread for that page alone. Undone like any added page.
+     * Returns where it went, or -1.
+     */
+    fun addSidePage(index: Int): Int {
+        val page = document.pages.getOrNull(index) ?: return -1
+        val hostId = page.besideOf ?: page.id
+        val hostIndex = document.pages.indexOfFirst { it.id == hostId }.takeIf { it >= 0 } ?: return -1
+        val host = document.pages[hostIndex]
+        var at = hostIndex + 1
+        while (at < document.pages.size && document.pages[at].besideOf == hostId) at++
+        host.attachmentsHidden = false
+        insertPage(Page(width = host.width, height = host.height, besideOf = hostId), at)
+        memoLayouts.clear()
+        onTransformChanged()
+        return at
+    }
+
+    /** The page under a point in this view and the point on it, page-local; null off every page. */
+    fun pagePointAt(viewX: Float, viewY: Float): Pair<Int, android.graphics.PointF>? {
+        scratch[0] = viewX
+        scratch[1] = viewY
+        screenToDocument.mapPoints(scratch)
+        val index = document.pageAt(scratch[0], scratch[1])
+        if (index < 0) return null
+        return index to android.graphics.PointF(scratch[0] - document.leftOf(index), scratch[1] - document.topOf(index))
     }
 
     /** A tab on a page's edge was tapped: the page and which of its attachments. */
@@ -3432,11 +3498,16 @@ class InkCanvasView @JvmOverloads constructor(
         val unit = resources.displayMetrics.density / currentScale().coerceAtLeast(0.001f)
         for (index in document.pagesIntersecting(y, y)) {
             val page = document.pages.getOrNull(index) ?: continue
-            if (page.attachments.isEmpty() || page.attachmentsHidden) continue
+            if (page.attachments.isEmpty() || page.attachmentsHidden || !document.isShown(index)) continue
             val localX = x - document.leftOf(index)
             val localY = y - document.topOf(index)
+            memosOf(index)?.let { memos ->
+                memos.boxes.forEachIndexed { k, box -> if (box.contains(localX, localY)) return index to memos.indices[k] }
+            }
+            var tab = 0
             for (at in page.attachments.indices) {
-                attachmentTab(page, at, unit, tabRect)
+                if (page.attachments[at].kind != PageAttachment.Kind.PAGE) continue
+                attachmentTab(page, tab++, unit, tabRect)
                 // A little more than the tab, for a fingertip.
                 tabRect.inset(-ATTACHMENT_TAB_REACH_DP * unit, -ATTACHMENT_TAB_REACH_DP * unit)
                 if (tabRect.contains(localX, localY)) return index to at
@@ -3446,6 +3517,52 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private val tabRect = RectF()
+
+    /** A page's comments as laid in its margin, in page units: each one's box, its words, and which attachment it is. */
+    private class MemoLayout(
+        val stamp: List<PageAttachment>, val left: Float,
+        val boxes: List<RectF>, val texts: List<StaticLayout>, val indices: IntArray,
+    )
+
+    private val memoLayouts = java.util.WeakHashMap<Page, MemoLayout>()
+    private val memoText = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = MEMO_TEXT
+        color = MEMO_INK
+    }
+
+    /**
+     * Page [index]'s comments in the margin past its row, as the word
+     * processors set them: each box as near the height of what it points at
+     * as the one above it allows, the words wrapped to the margin.
+     */
+    private fun memosOf(index: Int): MemoLayout? {
+        val page = document.pages.getOrNull(index) ?: return null
+        if (page.attachmentsHidden || !document.isShown(index)) return null
+        if (page.attachments.none { it.kind == PageAttachment.Kind.COMMENT }) return null
+        val left = document.memoLeftOf(index)
+        memoLayouts[page]?.takeIf { it.stamp == page.attachments && it.left == left }?.let { return it }
+        val comments = page.attachments.withIndex()
+            .filter { it.value.kind == PageAttachment.Kind.COMMENT }
+            .sortedBy { if (it.value.anchored) it.value.y else -1f }
+        val boxes = ArrayList<RectF>(comments.size)
+        val texts = ArrayList<StaticLayout>(comments.size)
+        var floor = MEMO_TOP
+        for ((_, comment) in comments) {
+            val words = listOf(comment.text, comment.url).filter { it.isNotBlank() }.joinToString("\n")
+            val inner = (Document.MEMO_COLUMN - 2 * MEMO_PAD).toInt()
+            val text = StaticLayout.Builder.obtain(words, 0, words.length, memoText, inner)
+                .setAlignment(Layout.Alignment.ALIGN_NORMAL).setIncludePad(false).setMaxLines(MEMO_MAX_LINES)
+                .setEllipsize(android.text.TextUtils.TruncateAt.END).build()
+            val wanted = if (comment.anchored) comment.y - MEMO_PAD - memoText.textSize * 0.6f else floor
+            val top = maxOf(wanted, floor)
+            val box = RectF(left, top, left + Document.MEMO_COLUMN, top + text.height + 2 * MEMO_PAD)
+            boxes += box
+            texts += text
+            floor = box.bottom + MEMO_GAP
+        }
+        return MemoLayout(page.attachments.toList(), left, boxes, texts, comments.map { it.index }.toIntArray())
+            .also { memoLayouts[page] = it }
+    }
 
     /** Opens the attachment whose tab is under a pen or a tap. True when there was one. */
     private fun openAttachmentAt(screenX: Float, screenY: Float): Boolean {
@@ -9118,6 +9235,7 @@ class InkCanvasView @JvmOverloads constructor(
             visiblePdfPages = 0
             for (i in document.pagesIntersecting(viewport[1], viewport[3])) {
                 val page = document.pages.getOrNull(i) ?: continue
+                if (!document.isShown(i)) continue
                 val top = document.topOf(i)
                 if (top > viewport[3] || top + page.height < viewport[1]) continue
                 val left = document.leftOf(i)
@@ -9127,6 +9245,7 @@ class InkCanvasView @JvmOverloads constructor(
             renderer.drawWithStrokes(canvas) { scoped, scope ->
                 for (i in document.pagesIntersecting(viewport[1], viewport[3])) {
                     val page = document.pages.getOrNull(i) ?: continue
+                    if (!document.isShown(i)) continue
                     val top = document.topOf(i)
                     if (top > viewport[3] || top + page.height < viewport[1]) continue
                     val left = document.leftOf(i)
@@ -9228,7 +9347,10 @@ class InkCanvasView @JvmOverloads constructor(
                         scoped.restore()
                     }
                     if (showLinkOverlay && page.links.isNotEmpty()) drawLinks(scoped, page)
-                    if (page.attachments.isNotEmpty() && !page.attachmentsHidden) drawAttachmentTabs(scoped, page)
+                    if (page.attachments.isNotEmpty() && !page.attachmentsHidden) {
+                        drawMemos(scoped, page, i)
+                        drawAttachmentTabs(scoped, page)
+                    }
                     if (i == lassoPage) drawLasso(scoped)
                     if (i == selectingPage) {
                         selection?.boxes?.forEach { scoped.drawRect(it, selectionPaint) }
@@ -9423,9 +9545,12 @@ class InkCanvasView @JvmOverloads constructor(
         private fun drawAttachmentTabs(canvas: Canvas, page: Page) {
             val unit = resources.displayMetrics.density / currentScale().coerceAtLeast(0.001f)
             val radius = ATTACHMENT_TAB_CORNER_DP * unit
+            var tab = 0
             for (at in page.attachments.indices) {
-                attachmentTab(page, at, unit, tabRect)
-                val comment = page.attachments[at].kind == PageAttachment.Kind.COMMENT
+                // Comments are in the margin; only an attached page of another note is a tab.
+                if (page.attachments[at].kind != PageAttachment.Kind.PAGE) continue
+                attachmentTab(page, tab++, unit, tabRect)
+                val comment = false
                 tabPaint.color = if (comment) ATTACHMENT_COMMENT_COLOR else ATTACHMENT_PAGE_COLOR
                 // Begun under the page's edge, so only its rounded end shows past it.
                 canvas.drawRoundRect(tabRect.left - radius, tabRect.top, tabRect.right, tabRect.bottom, radius, radius, tabPaint)
@@ -9442,6 +9567,52 @@ class InkCanvasView @JvmOverloads constructor(
                     canvas.drawRect(cx - half * 0.8f, cy - half * 1.1f, cx + half * 0.8f, cy + half * 1.1f, tabMark)
                 }
             }
+        }
+
+        /**
+         * The page's comments in its margin, each in a box with a line back
+         * to the place it points at - a dot there, along to the margin and
+         * across to the box - as a word processor draws its memos.
+         */
+        private fun drawMemos(canvas: Canvas, page: Page, index: Int) {
+            val memos = memosOf(index) ?: return
+            for (k in memos.boxes.indices) {
+                val comment = page.attachments.getOrNull(memos.indices[k]) ?: continue
+                val box = memos.boxes[k]
+                val endY = box.top + MEMO_PAD + memoText.textSize * 0.6f
+                memoPath.reset()
+                if (comment.anchored) {
+                    canvas.drawCircle(comment.x, comment.y, MEMO_DOT, memoDot)
+                    memoPath.moveTo(comment.x, comment.y)
+                    memoPath.lineTo(box.left - MEMO_ELBOW, comment.y)
+                } else {
+                    memoPath.moveTo(page.width, endY)
+                    memoPath.lineTo(box.left - MEMO_ELBOW, endY)
+                }
+                memoPath.lineTo(box.left, endY)
+                canvas.drawPath(memoPath, memoLine)
+                canvas.drawRoundRect(box, MEMO_CORNER, MEMO_CORNER, memoFill)
+                canvas.drawRoundRect(box, MEMO_CORNER, MEMO_CORNER, memoBorder)
+                canvas.save()
+                canvas.translate(box.left + MEMO_PAD, box.top + MEMO_PAD)
+                memos.texts[k].draw(canvas)
+                canvas.restore()
+            }
+        }
+
+        private val memoPath = Path()
+        private val memoLine = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = MEMO_LINE
+            style = Paint.Style.STROKE
+            strokeWidth = 2f
+            pathEffect = android.graphics.DashPathEffect(floatArrayOf(10f, 6f), 0f)
+        }
+        private val memoDot = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = MEMO_LINE }
+        private val memoFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = MEMO_PAPER }
+        private val memoBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = MEMO_LINE
+            style = Paint.Style.STROKE
+            strokeWidth = 2f
         }
 
         private val tabPaint = Paint(Paint.ANTI_ALIAS_FLAG)

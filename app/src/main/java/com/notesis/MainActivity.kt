@@ -4026,6 +4026,8 @@ private fun NoteScreen(
     }
     // A page's attachments: the page being attached to, and the comment open in its card.
     var attachingPage by remember { mutableStateOf<Int?>(null) }
+    // Where on the page a comment points, when it was asked for from a long press there.
+    var attachAnchor by remember { mutableStateOf<android.graphics.PointF?>(null) }
     var openComment by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     /**
      * An attached page, opened where another note is opened over this one: in
@@ -4057,13 +4059,14 @@ private fun NoteScreen(
     // starts past the button instead, and is no wider than the room left.
     val backReserve = 12.dp + barButtonSize() + Ui.Space.s
     val chromeScale = LocalChromeScale.current
-    val wantedBarWidth = spotiToolbarWidth(shownToolbarSize, chromeScale)
+    val wantedBarWidth = spotiToolbarWidth(shownToolbarSize, chromeScale, ToolbarLayout.config.tools(shownToolbarSize).size)
     val crowdsAcross = shownToolbarSize > 0 && (maxBarWidth - wantedBarWidth) / 2 < backReserve
     val acrossRoom = if (crowdsAcross) (maxBarWidth - backReserve - 12.dp).coerceAtLeast(120.dp) else maxBarWidth
     // Too narrow for the bar's rows, a bar across would fold onto one more:
     // it runs down the side instead until the window is wide again.
     val barWraps = shownToolbarSize > 0 && !ToolbarOrientation.vertical &&
-        spotiBarWraps(ToolbarLayout.config.tools(shownToolbarSize), acrossRoom, wantedBarWidth, chromeScale)
+        spotiBarWraps(ToolbarLayout.config.tools(shownToolbarSize), acrossRoom, wantedBarWidth, chromeScale,
+            base = spotiToolbarWidth(shownToolbarSize, chromeScale))
     // The smaller bars may run down the side (see ToolbarOrientation); the whole bar never does.
     val barVertical = (ToolbarOrientation.vertical || barWraps) && shownToolbarSize > 0
     val barRight = barVertical && ToolbarOrientation.right
@@ -4306,8 +4309,9 @@ private fun NoteScreen(
             pen = pen,
             toolPens = settings,
             autoVertical = barWraps && previewLevel == null,
-            toolbarTargetWidth = if (previewLevel != null) spotiToolbarWidth(previewLevel, LocalChromeScale.current)
-                else minOf(barRoom, spotiToolbarWidth(toolbarSize, LocalChromeScale.current)),
+            toolbarTargetWidth = if (previewLevel != null)
+                    spotiToolbarWidth(previewLevel, LocalChromeScale.current, ToolbarLayout.config.tools(previewLevel).size)
+                else minOf(barRoom, spotiToolbarWidth(toolbarSize, LocalChromeScale.current, ToolbarLayout.config.tools(toolbarSize).size)),
             mode = mode,
             shapeKind = shapeKind,
             straightLine = straightLine,
@@ -6001,7 +6005,9 @@ private fun NoteScreen(
                     }
                     DropdownMenuItem(text = { Text("Attach to this page…") }, onClick = {
                         pressMenu = null
-                        attachingPage = currentPage
+                        val pressed = canvas?.pagePointAt(at.x, at.y)
+                        attachingPage = pressed?.first ?: currentPage
+                        attachAnchor = pressed?.second
                     })
                 }
             }
@@ -6010,30 +6016,20 @@ private fun NoteScreen(
         attachingPage?.let { index ->
             AttachToPageDialog(
                 pageNumber = index + 1,
-                notes = otherNotes,
                 onPractice = {
                     attachingPage = null
-                    scope.launch {
-                        val practice = withContext(Dispatchers.IO) { store.create("Practice · ${note.title} p.${index + 1}") }
-                        notesRevision++
-                        val attachment = PageAttachment(PageAttachment.Kind.PAGE, text = "Practice page", noteId = practice.id)
-                        canvas?.addPageAttachment(index, attachment)
-                        edits++
-                        openAttachedPage(attachment)
-                    }
-                },
-                onOtherPage = { other, page ->
-                    attachingPage = null
-                    canvas?.addPageAttachment(index,
-                        PageAttachment(PageAttachment.Kind.PAGE, text = other.title, noteId = other.id, pageIndex = page))
-                    edits++
+                    attachAnchor = null
+                    if ((canvas?.addSidePage(index) ?: -1) >= 0) edits++
                 },
                 onComment = { text, url ->
+                    val anchor = attachAnchor
                     attachingPage = null
-                    canvas?.addPageAttachment(index, PageAttachment(PageAttachment.Kind.COMMENT, text = text, url = url))
+                    attachAnchor = null
+                    canvas?.addPageAttachment(index, PageAttachment(PageAttachment.Kind.COMMENT, text = text, url = url,
+                        x = anchor?.x ?: -1f, y = anchor?.y ?: -1f))
                     edits++
                 },
-                onDismiss = { attachingPage = null },
+                onDismiss = { attachingPage = null; attachAnchor = null },
             )
         }
         openComment?.let { (index, at) ->
@@ -7764,7 +7760,8 @@ private fun PageSidebar(
     onAttach: (Int) -> Unit = {},
     onAttachmentsHidden: (Int, Boolean) -> Unit = { _, _ -> },
 ) {
-    val pages = document?.pages ?: return
+    val doc = document ?: return
+    val pages = doc.pages
     // Kept with the search, so a panel that writing put away opens again on
     // the tab it was left on.
     var tab by remember { mutableIntStateOf((search?.panelTab ?: 0).coerceIn(0, PAGE_PANEL_TABS.lastIndex)) }
@@ -7959,7 +7956,9 @@ private fun PageSidebar(
                                 TextButton(onClick = { goingTo = true }) { Text("Go to") }
                                 ColumnsStepper(columns, onColumns)
                             }
-                            val shownPages = if (bookmarksOnly) pages.filter { it.bookmarked } else pages
+                            // A practice page put away with its host's attachments is left out, as it is on the canvas.
+                            val laidOut = pages.filterIndexed { i, _ -> doc.isShown(i) }
+                            val shownPages = if (bookmarksOnly) laidOut.filter { it.bookmarked } else laidOut
                             val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
                             // Opened on the page in hand rather than at the first.
                             LaunchedEffect(Unit) {
@@ -8000,6 +7999,9 @@ private fun PageSidebar(
                                         onRotate = { clockwise -> onRotate(index, clockwise) },
                                         onBackgroundAll = { onBackgroundAll(page.background, page.templateId) },
                                         onPageSize = { sizingPage = index },
+                                        practice = page.besideOf != null,
+                                        hasAttachments = doc.hasAttachments(index),
+                                        attachmentsHidden = doc.hostOf(page).attachmentsHidden,
                                         onAttach = { onAttach(index) },
                                         onAttachmentsHidden = { onAttachmentsHidden(index, it) },
                                     )
@@ -8556,9 +8558,14 @@ private fun PageCard(
     onRotate: (Boolean) -> Unit = {},
     onBackgroundAll: () -> Unit = {},
     onPageSize: () -> Unit = {},
-    /** Keeps a comment or another page with this one. */
+    /** A practice page laid beside another. */
+    practice: Boolean = false,
+    /** Whether there are comments or practice pages to put away. */
+    hasAttachments: Boolean = page.attachments.isNotEmpty(),
+    attachmentsHidden: Boolean = page.attachmentsHidden,
+    /** Lays a practice page beside this one, or keeps a comment with it. */
     onAttach: () -> Unit = {},
-    /** Puts the page's attachment tabs away, or back. */
+    /** Puts the page's comments and practice pages away, or back. */
     onAttachmentsHidden: (Boolean) -> Unit = {},
 ) {
     var menu by remember { mutableStateOf(false) }
@@ -8589,13 +8596,13 @@ private fun PageCard(
                 )
                 if (choosing) Checkbox(checked = chosen, onCheckedChange = null, modifier = Modifier.align(Alignment.TopStart))
                 // Its attachments, as the tab they are on the page.
-                if (page.attachments.isNotEmpty()) Box(
+                if (hasAttachments && !practice) Box(
                     Modifier.align(Alignment.TopEnd).padding(top = 22.dp).size(width = 6.dp, height = 14.dp)
-                        .background(Color(0xFFF5A623).copy(alpha = if (page.attachmentsHidden) 0.4f else 1f),
+                        .background(Color(0xFFF5A623).copy(alpha = if (attachmentsHidden) 0.4f else 1f),
                             RoundedCornerShape(topStart = 3.dp, bottomStart = 3.dp)),
                 )
             }
-            Text("${index + 1}", style = MaterialTheme.typography.labelMedium,
+            Text(if (practice) "${index + 1} · Practice" else "${index + 1}", style = MaterialTheme.typography.labelMedium,
                 color = if (selected) scheme.primary else scheme.onSurfaceVariant)
             page.tocTitle?.let { title ->
                 Text(title, style = MaterialTheme.typography.labelSmall,
@@ -8612,9 +8619,9 @@ private fun PageCard(
                 text = { Text("Attach…") },
                 onClick = { menu = false; onAttach() },
             )
-            if (page.attachments.isNotEmpty()) DropdownMenuItem(
-                text = { Text(if (page.attachmentsHidden) "Show attachment tabs" else "Hide attachment tabs") },
-                onClick = { menu = false; onAttachmentsHidden(!page.attachmentsHidden) },
+            if (hasAttachments) DropdownMenuItem(
+                text = { Text(if (attachmentsHidden) "Show comments and practice pages" else "Hide comments and practice pages") },
+                onClick = { menu = false; onAttachmentsHidden(!attachmentsHidden) },
             )
             DropdownMenuItem(
                 text = { Text(if (page.tocTitle == null) "Set contents entry" else "Rename contents entry") },

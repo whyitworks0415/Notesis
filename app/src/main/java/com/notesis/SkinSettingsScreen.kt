@@ -299,11 +299,11 @@ private fun InteractiveToolbarPreview(sizeLevel: Int, onSizeLevel: (Int) -> Unit
     ) {
         // Down the side the bar is as long as its tools, so it is shrunk to the stage both ways.
         val vertical = ToolbarOrientation.vertical && sizeLevel > 0
-        Box(if (vertical) Modifier.weight(1f, fill = false).fitInside() else Modifier.previewFit(spotiToolbarWidth(sizeLevel, LocalChromeScale.current))) {
+        Box(if (vertical) Modifier.weight(1f, fill = false).fitInside() else Modifier.previewFit(spotiToolbarWidth(sizeLevel, LocalChromeScale.current, currentToolbarConfig().tools(sizeLevel).size))) {
             SpotiGlassToolbar(
                 sizeLevel = sizeLevel, onSizeLevel = onSizeLevel, mode = mode,
                 toolColors = toolColors,
-                targetWidth = spotiToolbarWidth(sizeLevel, LocalChromeScale.current), docked = false, modifier = Modifier, onDrag = {},
+                targetWidth = spotiToolbarWidth(sizeLevel, LocalChromeScale.current, currentToolbarConfig().tools(sizeLevel).size), docked = false, modifier = Modifier, onDrag = {},
                 onTool = { tool -> tool.mode?.let { mode = it } },
                 functions = listOf(
                     listOf(

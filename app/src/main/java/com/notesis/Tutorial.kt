@@ -132,7 +132,7 @@ private val LESSONS: List<Lesson> = listOf(
         listOf(
             "The round button on the bar opens Functions.",
             "Pictures, Tools (calculator, clock, calendar and to-do in one panel), layers, recording, capture, text, Pages & notes, split notes, pinning the bar to the top, and Settings.",
-            "The bar's size is chosen at its top, or drag the round button: left for a shorter bar, right for a longer one. 1/4 is the whole bar, 4/4 a single button.",
+            "The bar's size is chosen at its top, or drag the round button: left for a shorter bar, right for a longer one, all the way to the edge to stand it down the side. 1/4 is the whole bar, 4/4 a single button.",
         ),
     ) { FunctionsPicture() },
     Lesson(

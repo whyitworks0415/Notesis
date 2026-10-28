@@ -77,4 +77,39 @@ class SpotiGlassToolbarTest {
         // Only a window narrower than the bar itself folds it further.
         assertTrue(spotiBarWraps(tools, dp(150f), dp(304f), 1f))
     }
+
+    @Test fun `the smaller bars hold their tools on one row at every chrome scale`() {
+        for (scale in listOf(0.7f, 0.8f, 0.9f, 1f, 1.2f)) for (level in 1..2) for (count in 1..11) {
+            val tools = SpotiToolbarTool.entries.take(count)
+            val width = spotiToolbarWidth(level, scale, count)
+            val rows = spotiToolRows(tools, spotiToolWidth(width, scale), 44f * scale, 12f * scale)
+            assertEquals("level $level, $count tools at $scale", 1, rows.size)
+        }
+    }
+
+    @Test fun `a widened bar folds only where its own width would have`() {
+        val tools = SpotiToolbarTool.entries.take(8)
+        val dp = { v: Float -> androidx.compose.ui.unit.Dp(v) }
+        val wide = spotiToolbarWidth(2, 1f, tools.size)
+        assertTrue(wide > spotiToolbarWidth(2, 1f))
+        assertFalse(spotiBarWraps(tools, dp(320f), wide, 1f, base = spotiToolbarWidth(2, 1f)))
+        assertTrue(spotiBarWraps(tools, dp(150f), wide, 1f, base = spotiToolbarWidth(2, 1f)))
+    }
+
+    @Test fun `dragging the Functions button steps sizes from where it came down`() {
+        // Right is longer, toward the whole bar; left shorter, toward the button alone.
+        assertEquals(2, functionsDragLevel(2, 30f, 56f, 0))
+        assertEquals(1, functionsDragLevel(2, 60f, 56f, 0))
+        assertEquals(0, functionsDragLevel(2, 500f, 56f, 0))
+        assertEquals(3, functionsDragLevel(2, -60f, 56f, 0))
+        assertEquals(3, functionsDragLevel(0, -500f, 56f, 0))
+        // Down the side the whole bar is not a size.
+        assertEquals(1, functionsDragLevel(2, 500f, 56f, 1))
+    }
+
+    @Test fun `a side bar let go across the screen lands on a side or back across the top`() {
+        assertEquals(FunctionsDropZone.LEFT, functionsDropZone(100f, 1000f))
+        assertEquals(FunctionsDropZone.MIDDLE, functionsDropZone(500f, 1000f))
+        assertEquals(FunctionsDropZone.RIGHT, functionsDropZone(900f, 1000f))
+    }
 }

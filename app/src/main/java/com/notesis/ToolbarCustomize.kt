@@ -401,7 +401,7 @@ internal fun ToolbarCustomizeScreen(
             })
             ToolbarPreviewStage(PreviewBackground.PAGE, null, Modifier.fillMaxWidth().height(112.dp)) {
                 CompositionLocalProvider(LocalToolbarConfig provides draft) {
-                    Box(Modifier.padding(8.dp).previewFit(spotiToolbarWidth(stage))) { preview(stage) }
+                    Box(Modifier.padding(8.dp).previewFit(spotiToolbarWidth(stage, tools = draft.tools(stage).size))) { preview(stage) }
                 }
             }
             if (stage == 0) {
