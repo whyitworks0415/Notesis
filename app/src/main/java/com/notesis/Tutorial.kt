@@ -120,8 +120,9 @@ private val LESSONS: List<Lesson> = listOf(
     Lesson(
         "Pages",
         listOf(
-            "Pull up past the last page to add a new one, or use Add page in Functions.",
-            "The page panel lists the pages, the outline and masks. Its Search tab finds words in PDFs, text boxes and handwriting.",
+            "Pull up past the last page to add a new one, or use + Page in the page panel.",
+            "The page panel (the search button, or Pages & notes in Functions) shows the pages as pictures, two to five a row, the contents beside their pages, every strip of tape where it lies, and your other notes.",
+            "Its search field finds words in PDFs, text boxes and handwriting; on the other tabs it narrows the list. Drag its inner edge to widen it, or pull it right off to close it.",
             "Ctrl+F searches; Ctrl+Alt+G goes to a page.",
         ),
     ) { PagesPicture() },
@@ -129,7 +130,7 @@ private val LESSONS: List<Lesson> = listOf(
         "Functions",
         listOf(
             "The round button on the bar opens Functions.",
-            "Pictures, Tools (calculator, clock, calendar and to-do in one panel), layers, recording, capture, text, other notes, add page and Settings.",
+            "Pictures, Tools (calculator, clock, calendar and to-do in one panel), layers, recording, capture, text, Pages & notes, split notes, pinning the bar to the top, and Settings.",
             "The bar's size is chosen at its top, or drag the round button: left for a shorter bar, right for a longer one. 1/4 is the whole bar, 4/4 a single button.",
         ),
     ) { FunctionsPicture() },
@@ -568,7 +569,7 @@ private fun FunctionsPicture() {
         IconGrid(
             listOf(
                 AppIcons.picture, AppIcons.tools, AppIcons.layers, AppIcons.mic, AppIcons.capture,
-                AppIcons.text, AppIcons.otherNotes, AppIcons.split, AppIcons.addPage, AppIcons.settings,
+                AppIcons.text, AppIcons.search, AppIcons.split, AppIcons.dock, AppIcons.settings,
             ),
             columns = 5,
             cell = 34.dp,

@@ -218,6 +218,17 @@ class PenStore(context: Context) {
             .takeIf { it.isFinite() && it > 0f } ?: SETTINGS_SIDEBAR_DEFAULT_DP
         set(value) = prefs.edit().putFloat("settingsSidebarWidth", value).apply()
 
+    /** How wide the page panel was left, in dp; clamped to the window when it opens. */
+    var pageSidebarWidth: Float
+        get() = prefs.getFloat("pageSidebarWidth", PAGE_SIDEBAR_DEFAULT_DP)
+            .takeIf { it.isFinite() && it > 0f } ?: PAGE_SIDEBAR_DEFAULT_DP
+        set(value) = prefs.edit().putFloat("pageSidebarWidth", value).apply()
+
+    /** How many page pictures the page panel puts on a row. */
+    var pageGridColumns: Int
+        get() = prefs.getInt("pageGridColumns", PAGE_GRID_COLUMNS.first).coerceIn(PAGE_GRID_COLUMNS)
+        set(value) = prefs.edit().putInt("pageGridColumns", value.coerceIn(PAGE_GRID_COLUMNS)).apply()
+
     /** What the appearance preview sits on: an ordinal of [PreviewBackground]. */
     var previewBackground: Int
         get() = prefs.getInt("appearancePreviewBackground", 0)

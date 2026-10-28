@@ -2040,13 +2040,10 @@ private fun NoteCard(
     onMoveFavorite: ((Int) -> Unit)? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
-    // Keyed on the file's timestamp, so replacing the picture redraws the card
-    // instead of showing the decoded copy of the old one.
-    val preview = remember(note.thumbnail?.path, note.thumbnail?.lastModified()) {
-        note.thumbnail?.let { file ->
-            runCatching { android.graphics.BitmapFactory.decodeFile(file.path) }.getOrNull()
-        }
-    }
+    // Read off the main thread and scaled down to the card, keyed on the file's
+    // timestamp so a replaced picture is read again. Decoded whole in
+    // composition, one per card as it scrolled in, it made a long list stutter.
+    val preview = rememberFileBitmap(note.thumbnail, NOTE_CARD_PICTURE_PX)
     val skin = LocalSkin.current
     val cardShape = Ui.Shape.card
     Card(
@@ -4038,6 +4035,8 @@ private fun NoteScreen(
     var ruler by remember { mutableStateOf<RulerKind?>(null) }
     var rulerAngle by remember { mutableStateOf(false) }
     var showPages by remember { mutableStateOf(false) }
+    var pageSidebarWidth by remember { mutableFloatStateOf(penStore.pageSidebarWidth) }
+    var pageGridColumns by remember { mutableIntStateOf(penStore.pageGridColumns) }
     // Whether the pen put the panel away. It then goes in one frame, without
     // the slide: a panel of glass and thumbnails animating out is GPU and UI
     // thread work landing on the very first frames of the stroke.
@@ -4670,8 +4669,9 @@ private fun NoteScreen(
                                 true
                             }
                             command && keyCode == android.view.KeyEvent.KEYCODE_F -> {
-                                // Find means the body search: open the panel on it.
-                                noteSearch.panelTab = PAGE_PANEL_SEARCH_TAB
+                                // Find means the body search: the panel, on its pages, ready to type.
+                                noteSearch.panelTab = 0
+                                noteSearch.wantsFocus = true
                                 showPages = true
                                 true
                             }
@@ -6129,6 +6129,32 @@ private fun NoteScreen(
                     if (exportingPages != null) savePagesPdf.launch(safeFileName(note.title) + "-pages.pdf")
                 },
                 onSendPages = { indices, move -> sendingPages = indices to move },
+                pageThumbnail = { index -> canvas?.pageThumbnail(index, PAGE_GRID_THUMBNAIL_PX, renderPdf = true) },
+                widthDp = pageSidebarWidth,
+                onWidthChange = { pageSidebarWidth = it; penStore.pageSidebarWidth = it },
+                onClose = { showPages = false },
+                columns = pageGridColumns,
+                onColumns = { pageGridColumns = it; penStore.pageGridColumns = it },
+                notes = referenceNotes,
+                currentNoteId = note.id,
+                onOpenNote = { picked ->
+                    showPages = false
+                    onOpenNote(picked)
+                },
+                onOpenBeside = { picked ->
+                    // The note beside this one: the first other part of a split, made if need be.
+                    if (split == null) applySplit(SplitPreset.SIDE_BY_SIDE)
+                    paneNotes[1] = picked.id
+                    panePages[1] = restoredPage(penStore.lastPage(picked.id), picked.pageCount)
+                    showPages = false
+                },
+                onNewNote = {
+                    scope.launch {
+                        val created = withContext(Dispatchers.IO) { store.create("Untitled note") }
+                        showPages = false
+                        onOpenNote(created)
+                    }
+                },
                 search = noteSearch,
                 searchView = canvas,
                 onSearchHit = { hit ->
@@ -7557,15 +7583,23 @@ private fun PageScrubber(
 }
 
 private val SCRUBBER_PREVIEW_WIDTH = 120.dp
-/** The page panel's tabs: pages, contents, masks, then the body search. */
-private const val PAGE_PANEL_SEARCH_TAB = 3
 private const val SCRUBBER_THUMBNAIL_PX = 240
+/** About the widest a note's card in the list is drawn, in pixels. */
+private const val NOTE_CARD_PICTURE_PX = 480
+/** The page panel's pictures: sharp at two to a row on a wide panel, small enough to keep many. */
+private const val PAGE_GRID_THUMBNAIL_PX = 320
 private const val THUMBNAIL_ATTEMPTS = 40
 private const val THUMBNAIL_RETRY_MS = 80L
 
 /** Within this many degrees of a quarter turn, a turned note settles onto it. */
 private const val ROTATION_SNAP_DEGREES = 4f
 
+/**
+ * The panel along the right edge for finding your way: the pages as pictures,
+ * the contents beside the pages they open, every strip of tape where it lies,
+ * and the other notes - with one search field over all four. Its inner edge
+ * drags its width; pulled well past its narrowest and let go, it closes.
+ */
 @Composable
 private fun PageSidebar(
     pdfOutline: List<NoteStore.PdfOutlineEntry> = emptyList(),
@@ -7602,18 +7636,37 @@ private fun PageSidebar(
     onRenameMask: (Int, Int) -> Unit = { _, _ -> },
     onAnswerMask: (Int, Int, Boolean) -> Unit = { _, _, _ -> },
     onStudy: (Int, Boolean) -> Unit = { _, _ -> },
-    /** The in-note body search, kept by the note screen; null leaves the Search tab out. */
+    /** The in-note body search, kept by the note screen; its query is the panel's search field. */
     search: NoteSearchState? = null,
     searchView: InkCanvasView? = null,
     onSearchHit: (NoteSearchHit) -> Unit = {},
+    /** Page n's picture, null until it has been drawn; asked again until it is. */
+    pageThumbnail: (Int) -> Bitmap? = { null },
+    widthDp: Float = PAGE_SIDEBAR_DEFAULT_DP,
+    onWidthChange: (Float) -> Unit = {},
+    onClose: () -> Unit = {},
+    /** How many page pictures go on a row of the grid. */
+    columns: Int = 2,
+    onColumns: (Int) -> Unit = {},
+    /** Every note but those in the trash, this one among them. */
+    notes: List<NoteMeta> = emptyList(),
+    currentNoteId: String = "",
+    onOpenNote: (NoteMeta) -> Unit = {},
+    onOpenBeside: (NoteMeta) -> Unit = {},
+    onNewNote: () -> Unit = {},
 ) {
     val pages = document?.pages ?: return
     // Kept with the search, so a panel that writing put away opens again on
-    // the tab it was left on - the search, most of all.
-    var tab by remember { mutableIntStateOf(search?.panelTab ?: 0) }
+    // the tab it was left on.
+    var tab by remember { mutableIntStateOf((search?.panelTab ?: 0).coerceIn(0, PAGE_PANEL_TABS.lastIndex)) }
     var editingPage by remember { mutableStateOf<Page?>(null) }
     var bookmarksOnly by remember { mutableStateOf(false) }
-    var tocQuery by remember { mutableStateOf("") }
+    var ownQuery by remember { mutableStateOf("") }
+    // One field over every tab: on the pages it searches what is written in
+    // the note, elsewhere it narrows the list in front of it.
+    val query = search?.query ?: ownQuery
+    fun setQuery(text: String) { if (search != null) search.query = text else ownQuery = text }
+    val needle = query.trim()
     var showPdfOutline by remember { mutableStateOf(true) }
     var sizingPage by remember { mutableStateOf<Int?>(null) }
     sizingPage?.let { index ->
@@ -7658,220 +7711,388 @@ private fun PageSidebar(
             },
         )
     }
-    SkinSurface(
-        modifier = Modifier
-            .windowInsetsPadding(ChromeInsets)
-            .padding(12.dp)
-            .width(240.dp)
-            .fillMaxHeight(0.8f),
-    ) {
-        Column {
-            LiquidSegmentedControl(
-                segments = if (search != null) listOf("Pages", "TOC", "Masks", "Search")
-                    else listOf("Pages", "TOC", "Masks"),
-                selectedIndex = tab,
-                onSelected = { tab = it; search?.panelTab = it },
-                useLiquidGlass = LocalSkin.current.isRefractive,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp),
-            )
-            val listState = androidx.compose.foundation.lazy.rememberLazyListState()
-            if (tab == PAGE_PANEL_SEARCH_TAB && search != null) NoteSearchPanel(
-                state = search,
-                view = searchView,
-                onOpen = onSearchHit,
-                modifier = Modifier.weight(1f),
-            ) else LazyColumn(
-                Modifier.weight(1f).glassEdges(listState),
-                state = listState,
-                contentPadding = PaddingValues(Ui.Space.m),
-                verticalArrangement = Arrangement.spacedBy(Ui.Space.s),
-            ) {
-                if (tab == 1 && pages.any { it.tocTitle != null }) {
-                    item {
-                        OutlinedTextField(
-                            value = tocQuery,
-                            onValueChange = { tocQuery = it },
-                            placeholder = { Text("Search contents") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-                }
-                if (tab == 0) {
-                    item {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            FilterChip(
-                                selected = bookmarksOnly,
-                                onClick = { bookmarksOnly = !bookmarksOnly },
-                                label = { Text("Bookmarks") },
-                            )
-                            Spacer(Modifier.weight(1f))
-                            TextButton(onClick = { choosing = !choosing; chosen.clear() }) {
-                                Text(if (choosing) "Done" else "Select")
+    /** The picture of page [index] as it is now: written on, it is pictured afresh. */
+    @Composable
+    fun picture(index: Int): Bitmap? {
+        val page = pages.getOrNull(index) ?: return null
+        return rememberPageThumbnail("${page.id}:${page.strokes.size}:${page.loaded}") { pageThumbnail(index) }
+    }
+    BoxWithConstraints(Modifier.fillMaxHeight().windowInsetsPadding(ChromeInsets)) {
+        val screen = maxWidth.value
+        var draft by remember { mutableStateOf<Float?>(null) }
+        var reach by remember { mutableStateOf<Float?>(null) }
+        var past by remember { mutableFloatStateOf(0f) }
+        val shown = pageSidebarWidth(draft ?: widthDp, screen)
+        val latestShown by rememberUpdatedState(shown)
+        val latestScreen by rememberUpdatedState(screen)
+        val latestCommit by rememberUpdatedState(onWidthChange)
+        val latestClose by rememberUpdatedState(onClose)
+        Row(
+            Modifier
+                .fillMaxHeight()
+                .padding(vertical = 12.dp)
+                .padding(end = 12.dp)
+                // Pulled past its narrowest it follows the finger out, to be let go of.
+                .graphicsLayer { translationX = past.dp.toPx() },
+        ) {
+            // The inner edge: drag it for a wider or narrower panel.
+            Box(
+                Modifier
+                    .width(20.dp)
+                    .fillMaxHeight()
+                    .pointerInput(Unit) {
+                        fun letGo() {
+                            if (pulledToClose(past)) latestClose() else {
+                                draft?.let { latestCommit(it) }
+                                past = 0f
                             }
-                            TextButton(onClick = { goingTo = true }) { Text("Go to") }
+                            draft = null
+                            reach = null
+                        }
+                        detectHorizontalDragGestures(
+                            onDragStart = { draft = latestShown; reach = latestShown },
+                            onDragEnd = { letGo() },
+                            onDragCancel = { letGo() },
+                        ) { change, dragAmount ->
+                            change.consume()
+                            val wanted = (reach ?: latestShown) - dragAmount / density
+                            reach = wanted
+                            draft = pageSidebarWidth(wanted, latestScreen)
+                            past = (PAGE_SIDEBAR_MIN_DP - wanted).coerceAtLeast(0f)
                         }
                     }
-                }
-                // The PDF's own outline: shown or filtered out, followed with a tap, never deleted.
-                if (tab == 1 && pdfOutline.isNotEmpty()) {
-                    item {
-                        FilterChip(selected = showPdfOutline, onClick = { showPdfOutline = !showPdfOutline },
-                            label = { Text("PDF contents ${pdfOutline.size}") })
-                    }
-                    if (showPdfOutline) items(pdfOutline.filter {
-                        tocQuery.isBlank() || it.title.contains(tocQuery.trim(), ignoreCase = true)
-                    }) { entry ->
-                        val target = pages.indexOfFirst { it.background == PageBackground.PDF && it.pdfPageIndex == entry.pdfPage }
-                        Text(
-                            entry.title.ifBlank { "(Untitled)" } + "  · ${entry.pdfPage + 1}",
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable(enabled = target >= 0) { onJump(target) }
-                                .padding(start = (8 + entry.level.coerceAtMost(4) * 12).dp, top = 4.dp, bottom = 4.dp),
+                    .semantics {
+                        contentDescription = "Resize the page panel"
+                        customActions = listOf(
+                            CustomAccessibilityAction("Make wider") {
+                                latestCommit(pageSidebarWidth(latestShown + 60f, latestScreen)); true
+                            },
+                            CustomAccessibilityAction("Make narrower") {
+                                latestCommit(pageSidebarWidth(latestShown - 60f, latestScreen)); true
+                            },
                         )
-                    }
-                }
-                if (tab == 1 && pages.any { it.tocTitle != null } && pdfOutline.isNotEmpty()) {
-                    item { Text("My contents", style = MaterialTheme.typography.labelMedium) }
-                }
-                if (tab == 1 && pages.none { it.tocTitle != null } && pdfOutline.isEmpty()) {
-                    item {
-                        Text(
-                            "No contents yet. Add the current page, or long-press a page to set one.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.outline,
-                            modifier = Modifier.padding(8.dp),
-                        )
-                    }
-                }
-                items(
-                    when {
-                        tab == 1 -> pages.filter { page ->
-                            val title = page.tocTitle
-                            title != null && (tocQuery.isBlank() || title.contains(tocQuery.trim(), ignoreCase = true))
-                        }
-                        tab == 0 && bookmarksOnly -> pages.filter { it.bookmarked }
-                        else -> pages
                     },
-                    key = { it.id },
-                ) { page ->
-                    val index = pages.indexOf(page)
-                    if (tab == 0 && choosing) {
-                        Row(
-                            Modifier.fillMaxWidth().clickable {
-                                if (page.id in chosen) chosen.remove(page.id) else chosen.add(page.id)
-                            },
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Checkbox(checked = page.id in chosen, onCheckedChange = null)
-                            Text("Page ${index + 1}", style = MaterialTheme.typography.titleSmall)
-                        }
-                    } else if (tab == 0) {
-                        PageChip(
-                            index = index,
-                            page = page,
-                            selected = index == currentPage,
-                            deletable = pages.size > 1,
-                            onJump = { onJump(index) },
-                            onDelete = { onDelete(index) },
-                            onMove = { delta -> onMove(index, delta) },
-                            onDuplicate = { onDuplicate(index) },
-                            onBackground = { onBackground(index, it) },
-                            userTemplates = userTemplates,
-                            onTemplate = { onTemplate(index, it) },
-                            onEditToc = { editToc(page) },
-                            onBookmark = { onBookmark(index, !page.bookmarked) },
-                            onRotate = { clockwise -> onRotate(index, clockwise) },
-                            onBackgroundAll = { onBackgroundAll(page.background, page.templateId) },
-                            onPageSize = { sizingPage = index },
-                        )
-                    } else if (tab == 1) {
-                        TocChip(
-                            index = index,
-                            page = page,
-                            selected = index == currentPage,
-                            onJump = { onJump(index) },
-                            onEdit = { editToc(page) },
-                            onHighlight = { onHighlightToc(index, !page.tocHighlighted) },
-                            onDelete = { onSetToc(index, null) },
-                            onIndent = { onTocLevel(index, page.tocLevel + 1) },
-                            onOutdent = { onTocLevel(index, page.tocLevel - 1) },
-                        )
-                    } else {
-                        MaskChip(
-                            index = index,
-                            page = page,
-                            selected = index == currentPage,
-                            onJump = { onJump(index) },
-                            onReveal = { onReveal(index, it) },
-                            onClear = { onClearMasks(index) },
-                            onRevealMask = { maskIndex, revealed ->
-                                onRevealMask(index, maskIndex, revealed)
-                            },
-                            onDeleteMask = { maskIndex -> onDeleteMask(index, maskIndex) },
-                            study = study,
-                            studyRevision = studyRevision,
-                            onRenameMask = { maskIndex -> onRenameMask(index, maskIndex) },
-                            onAnswerMask = { maskIndex, right -> onAnswerMask(index, maskIndex, right) },
-                            onStudy = { wrongOnly -> onStudy(index, wrongOnly) },
-                        )
-                    }
-                }
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    Modifier
+                        .size(width = 5.dp, height = 56.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.outline.copy(alpha = if (draft != null) 0.95f else 0.6f)),
+                )
             }
-            if (tab == 0 && choosing) {
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 6.dp)) {
-                    val any = chosen.isNotEmpty()
-                    TextButton(enabled = any && chosen.size < pages.size, onClick = {
-                        onDeletePages(chosenIndices()); chosen.clear()
-                    }) { Text("Delete") }
-                    TextButton(enabled = any, onClick = { onDuplicatePages(chosenIndices()); chosen.clear() }) { Text("Duplicate") }
-                    TextButton(enabled = any, onClick = { onExportPages(chosenIndices()) }) { Text("PDF") }
-                    TextButton(enabled = any, onClick = { onSendPages(chosenIndices(), false) }) { Text("Copy to…") }
-                    TextButton(enabled = any && chosen.size < pages.size, onClick = {
-                        onSendPages(chosenIndices(), true); chosen.clear()
-                    }) { Text("Move to…") }
-                }
-            } else if (tab == 0) {
-                TextButton(
-                    onClick = onAdd,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 6.dp),
-                ) {
-                    Icon(Reicons.Add, contentDescription = null)
-                    Text(" Page")
-                }
-            } else if (tab == 1) {
-                TextButton(
-                    onClick = { pages.getOrNull(currentPage)?.let(::editToc) },
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
-                ) {
-                    Icon(Reicons.Add, contentDescription = null)
-                    Text(" Add current page")
-                }
-            } else if (tab == 2) {
-                // Whole-note switches, which is how a page of covered answers
-                // actually gets used: cover everything, then go looking.
-                Row(Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
-                    TextButton(
-                        onClick = { pages.indices.forEach { onReveal(it, false) } },
-                        modifier = Modifier.weight(1f),
-                    ) { Text("Cover all") }
-                    TextButton(
-                        onClick = { pages.indices.forEach { onReveal(it, true) } },
-                        modifier = Modifier.weight(1f),
-                    ) { Text("Reveal all") }
+            SkinSurface(modifier = Modifier.width(shown.dp).fillMaxHeight()) {
+                Column {
+                    LiquidSegmentedControl(
+                        segments = PAGE_PANEL_TABS,
+                        selectedIndex = tab,
+                        onSelected = { tab = it; search?.panelTab = it },
+                        useLiquidGlass = LocalSkin.current.isRefractive,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp),
+                    )
+                    val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+                    LaunchedEffect(Unit) {
+                        // Ctrl+F opens the panel to type in straight away.
+                        if (search?.wantsFocus == true) {
+                            search.wantsFocus = false
+                            runCatching { focus.requestFocus() }
+                        }
+                    }
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = ::setQuery,
+                        placeholder = {
+                            Text(when (tab) {
+                                PAGE_PANEL_PAGES -> "Search this note"
+                                PAGE_PANEL_TOC -> "Search contents"
+                                PAGE_PANEL_MASKS -> "Search masks"
+                                else -> "Search notes"
+                            })
+                        },
+                        singleLine = true,
+                        leadingIcon = { Icon(Reicons.Search, contentDescription = null) },
+                        trailingIcon = if (query.isNotEmpty()) {
+                            { IconButton(onClick = { setQuery("") }) { Icon(Reicons.Close, contentDescription = "Clear search") } }
+                        } else null,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = Ui.Space.m)
+                            .focusRequester(focus),
+                    )
+                    when (tab) {
+                        PAGE_PANEL_PAGES -> if (needle.isNotEmpty() && search != null) {
+                            // A query on the pages is a search of what is written in them.
+                            NoteSearchPanel(
+                                state = search,
+                                view = searchView,
+                                onOpen = onSearchHit,
+                                showField = false,
+                                modifier = Modifier.weight(1f),
+                            )
+                        } else {
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState())
+                                    .padding(horizontal = Ui.Space.s),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                FilterChip(
+                                    selected = bookmarksOnly,
+                                    onClick = { bookmarksOnly = !bookmarksOnly },
+                                    label = { Text("Bookmarks") },
+                                )
+                                TextButton(onClick = { choosing = !choosing; chosen.clear() }) {
+                                    Text(if (choosing) "Done" else "Select")
+                                }
+                                TextButton(onClick = { goingTo = true }) { Text("Go to") }
+                                ColumnsStepper(columns, onColumns)
+                            }
+                            val shownPages = if (bookmarksOnly) pages.filter { it.bookmarked } else pages
+                            val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+                            // Opened on the page in hand rather than at the first.
+                            LaunchedEffect(Unit) {
+                                val at = shownPages.indexOfFirst { pages.indexOf(it) == currentPage }
+                                if (at > 0) gridState.scrollToItem(at)
+                            }
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(columns.coerceIn(PAGE_GRID_COLUMNS)),
+                                state = gridState,
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(Ui.Space.m),
+                                horizontalArrangement = Arrangement.spacedBy(Ui.Space.s),
+                                verticalArrangement = Arrangement.spacedBy(Ui.Space.s),
+                            ) {
+                                items(shownPages, key = { it.id }) { page ->
+                                    val index = pages.indexOf(page)
+                                    PageCard(
+                                        index = index,
+                                        page = page,
+                                        picture = picture(index),
+                                        selected = index == currentPage,
+                                        choosing = choosing,
+                                        chosen = page.id in chosen,
+                                        deletable = pages.size > 1,
+                                        onJump = {
+                                            if (choosing) {
+                                                if (page.id in chosen) chosen.remove(page.id) else chosen.add(page.id)
+                                            } else onJump(index)
+                                        },
+                                        onDelete = { onDelete(index) },
+                                        onMove = { delta -> onMove(index, delta) },
+                                        onDuplicate = { onDuplicate(index) },
+                                        onBackground = { onBackground(index, it) },
+                                        userTemplates = userTemplates,
+                                        onTemplate = { onTemplate(index, it) },
+                                        onEditToc = { editToc(page) },
+                                        onBookmark = { onBookmark(index, !page.bookmarked) },
+                                        onRotate = { clockwise -> onRotate(index, clockwise) },
+                                        onBackgroundAll = { onBackgroundAll(page.background, page.templateId) },
+                                        onPageSize = { sizingPage = index },
+                                    )
+                                }
+                            }
+                            if (choosing) {
+                                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 6.dp)) {
+                                    val any = chosen.isNotEmpty()
+                                    TextButton(enabled = any && chosen.size < pages.size, onClick = {
+                                        onDeletePages(chosenIndices()); chosen.clear()
+                                    }) { Text("Delete") }
+                                    TextButton(enabled = any, onClick = { onDuplicatePages(chosenIndices()); chosen.clear() }) { Text("Duplicate") }
+                                    TextButton(enabled = any, onClick = { onExportPages(chosenIndices()) }) { Text("PDF") }
+                                    TextButton(enabled = any, onClick = { onSendPages(chosenIndices(), false) }) { Text("Copy to…") }
+                                    TextButton(enabled = any && chosen.size < pages.size, onClick = {
+                                        onSendPages(chosenIndices(), true); chosen.clear()
+                                    }) { Text("Move to…") }
+                                }
+                            } else {
+                                TextButton(onClick = onAdd, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+                                    Icon(Reicons.Add, contentDescription = null)
+                                    Text(" Page")
+                                }
+                            }
+                        }
+                        PAGE_PANEL_TOC -> {
+                            val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+                            LazyColumn(
+                                Modifier.weight(1f).glassEdges(listState),
+                                state = listState,
+                                contentPadding = PaddingValues(Ui.Space.m),
+                                verticalArrangement = Arrangement.spacedBy(Ui.Space.s),
+                            ) {
+                                // The PDF's own outline: followed with a tap, never deleted.
+                                if (pdfOutline.isNotEmpty()) {
+                                    item {
+                                        FilterChip(selected = showPdfOutline, onClick = { showPdfOutline = !showPdfOutline },
+                                            label = { Text("PDF contents ${pdfOutline.size}") })
+                                    }
+                                    if (showPdfOutline) items(pdfOutline.filter {
+                                        needle.isEmpty() || it.title.contains(needle, ignoreCase = true)
+                                    }) { entry ->
+                                        val target = pages.indexOfFirst { it.background == PageBackground.PDF && it.pdfPageIndex == entry.pdfPage }
+                                        Row(
+                                            Modifier
+                                                .fillMaxWidth()
+                                                .padding(start = (entry.level.coerceAtMost(4) * 12).dp)
+                                                .clip(Ui.Shape.chip)
+                                                .clickable(enabled = target >= 0) { onJump(target) }
+                                                .padding(4.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(Ui.Space.s),
+                                        ) {
+                                            val page = pages.getOrNull(target)
+                                            Box(Modifier.width(TOC_PICTURE)) {
+                                                if (page != null) PagePicture(picture(target), page.width / page.height, target + 1)
+                                            }
+                                            Text(
+                                                entry.title.ifBlank { "(Untitled)" } + "  · ${entry.pdfPage + 1}",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                maxLines = 3,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f),
+                                            )
+                                        }
+                                    }
+                                }
+                                val entries = pages.filter { page ->
+                                    val title = page.tocTitle
+                                    title != null && (needle.isEmpty() || title.contains(needle, ignoreCase = true))
+                                }
+                                if (entries.isNotEmpty() && pdfOutline.isNotEmpty()) {
+                                    item { Text("My contents", style = MaterialTheme.typography.labelMedium) }
+                                }
+                                if (pages.none { it.tocTitle != null } && pdfOutline.isEmpty()) {
+                                    item {
+                                        Text(
+                                            "No contents yet. Add the current page, or hold a page in Pages to set one.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.outline,
+                                            modifier = Modifier.padding(8.dp),
+                                        )
+                                    }
+                                }
+                                items(entries, key = { it.id }) { page ->
+                                    val index = pages.indexOf(page)
+                                    TocChip(
+                                        index = index,
+                                        page = page,
+                                        picture = picture(index),
+                                        selected = index == currentPage,
+                                        onJump = { onJump(index) },
+                                        onEdit = { editToc(page) },
+                                        onHighlight = { onHighlightToc(index, !page.tocHighlighted) },
+                                        onDelete = { onSetToc(index, null) },
+                                        onIndent = { onTocLevel(index, page.tocLevel + 1) },
+                                        onOutdent = { onTocLevel(index, page.tocLevel - 1) },
+                                    )
+                                }
+                            }
+                            TextButton(
+                                onClick = { pages.getOrNull(currentPage)?.let(::editToc) },
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                            ) {
+                                Icon(Reicons.Add, contentDescription = null)
+                                Text(" Add current page")
+                            }
+                        }
+                        PAGE_PANEL_MASKS -> {
+                            val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+                            // Only pages with tape; a search narrows them to the strips whose names match.
+                            val taped = pages.filter { page ->
+                                page.masks.isNotEmpty() && (needle.isEmpty() || page.masks.any { mask ->
+                                    study?.record(MaskStudy.keyOf(page.id, mask.stroke))?.name
+                                        ?.contains(needle, ignoreCase = true) == true
+                                })
+                            }
+                            LazyColumn(
+                                Modifier.weight(1f).glassEdges(listState),
+                                state = listState,
+                                contentPadding = PaddingValues(Ui.Space.m),
+                                verticalArrangement = Arrangement.spacedBy(Ui.Space.s),
+                            ) {
+                                if (taped.isEmpty()) item {
+                                    Text(
+                                        if (needle.isEmpty()) "No masking tape in this note yet." else "No masks named like that.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.outline,
+                                        modifier = Modifier.padding(8.dp),
+                                    )
+                                }
+                                items(taped, key = { it.id }) { page ->
+                                    val index = pages.indexOf(page)
+                                    MaskChip(
+                                        index = index,
+                                        page = page,
+                                        picture = picture(index),
+                                        selected = index == currentPage,
+                                        onJump = { onJump(index) },
+                                        onReveal = { onReveal(index, it) },
+                                        onClear = { onClearMasks(index) },
+                                        onRevealMask = { maskIndex, revealed -> onRevealMask(index, maskIndex, revealed) },
+                                        onDeleteMask = { maskIndex -> onDeleteMask(index, maskIndex) },
+                                        study = study,
+                                        studyRevision = studyRevision,
+                                        onRenameMask = { maskIndex -> onRenameMask(index, maskIndex) },
+                                        onAnswerMask = { maskIndex, right -> onAnswerMask(index, maskIndex, right) },
+                                        onStudy = { wrongOnly -> onStudy(index, wrongOnly) },
+                                    )
+                                }
+                            }
+                            // Whole-note switches, which is how a page of covered answers
+                            // actually gets used: cover everything, then go looking.
+                            Row(Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+                                TextButton(
+                                    onClick = { pages.indices.forEach { onReveal(it, false) } },
+                                    modifier = Modifier.weight(1f),
+                                ) { Text("Cover all") }
+                                TextButton(
+                                    onClick = { pages.indices.forEach { onReveal(it, true) } },
+                                    modifier = Modifier.weight(1f),
+                                ) { Text("Reveal all") }
+                            }
+                        }
+                        else -> {
+                            // The other notes, to change to or open beside this one.
+                            val shownNotes = notes.filter { needle.isEmpty() || it.title.contains(needle, ignoreCase = true) }
+                            LazyVerticalGrid(
+                                columns = GridCells.Adaptive(NOTE_TILE_MIN),
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(Ui.Space.m),
+                                horizontalArrangement = Arrangement.spacedBy(Ui.Space.s),
+                                verticalArrangement = Arrangement.spacedBy(Ui.Space.s),
+                            ) {
+                                if (needle.isEmpty()) item { NewNoteTile(onNewNote) }
+                                items(shownNotes, key = { it.id }) { other ->
+                                    NoteTile(
+                                        note = other,
+                                        current = other.id == currentNoteId,
+                                        onOpen = { onOpenNote(other) },
+                                        onOpenBeside = { onOpenBeside(other) },
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
     }
 }
+
+/** The page panel's tabs, in order. */
+private val PAGE_PANEL_TABS = listOf("Pages", "TOC", "Masks", "Notes")
+private const val PAGE_PANEL_PAGES = 0
+private const val PAGE_PANEL_TOC = 1
+private const val PAGE_PANEL_MASKS = 2
+/** How small a note's picture gets in the Notes tab before a row holds one fewer. */
+private val NOTE_TILE_MIN = 96.dp
+/** The page picture at the start of a contents entry. */
+private val TOC_PICTURE = 44.dp
+/** A strip of tape's part of its page, in the Masks tab. */
+private val MASK_CROP_WIDTH = 88.dp
+private val MASK_CROP_HEIGHT = 56.dp
 
 /**
  * The body of a chip in a panel. Solid under Material, and under glass a wash
@@ -7981,6 +8202,8 @@ internal fun GoToPageDialog(pageCount: Int, onGo: (Int) -> Unit, onDismiss: () -
 private fun TocChip(
     index: Int,
     page: Page,
+    /** The page the entry opens, pictured at its start. */
+    picture: Bitmap?,
     selected: Boolean,
     onJump: () -> Unit,
     onEdit: () -> Unit,
@@ -8003,9 +8226,11 @@ private fun TocChip(
                 Ui.Shape.chip,
             )
             .clickable(onClick = onJump)
-            .padding(start = 10.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+            .padding(start = 6.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        Box(Modifier.width(TOC_PICTURE)) { PagePicture(picture, page.width / page.height, index + 1) }
+        Spacer(Modifier.width(Ui.Space.s))
         Column(Modifier.weight(1f)) {
             Text(page.tocTitle.orEmpty(), style = MaterialTheme.typography.titleSmall,
                 color = if (highlighted) colors.onTertiaryContainer else colors.onSurface,
@@ -8052,6 +8277,8 @@ private fun TocChip(
 private fun MaskChip(
     index: Int,
     page: Page,
+    /** The page's picture, from which each strip's part is cut. */
+    picture: Bitmap?,
     selected: Boolean,
     onJump: () -> Unit,
     onReveal: (Boolean) -> Unit,
@@ -8130,30 +8357,46 @@ private fun MaskChip(
         }
         for ((maskIndex, mask) in masks.withIndex()) {
             val record = records.getOrNull(maskIndex) ?: MaskRecord()
+            val box = remember(mask.stroke) { mask.stroke.shape.computeBoundingBox() }
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(start = 24.dp, end = 4.dp),
+                    .padding(start = 8.dp, end = 4.dp, bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    when (record.last) {
-                        MaskRecord.RESULT_RIGHT -> "✓ "
-                        MaskRecord.RESULT_WRONG -> "✗ "
-                        else -> ""
-                    } + record.name.ifBlank { "Mask ${maskIndex + 1}" },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = when (record.last) {
-                        MaskRecord.RESULT_RIGHT -> Color(0xFF2E7D32)
-                        MaskRecord.RESULT_WRONG -> MaterialTheme.colorScheme.error
-                        else -> Color.Unspecified
-                    },
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .weight(1f)
-                        .clickable(enabled = study != null) { onRenameMask(maskIndex) },
-                )
+                // Where the strip lies on the page, and what is under it once it is lifted.
+                if (box != null) {
+                    MaskCrop(
+                        picture, page.width, page.height, box.xMin, box.yMin, box.xMax, box.yMax,
+                        covered = !mask.revealed,
+                        modifier = Modifier.size(width = MASK_CROP_WIDTH, height = MASK_CROP_HEIGHT)
+                            .clickable(onClick = onJump),
+                    )
+                    Spacer(Modifier.width(Ui.Space.s))
+                }
+                Column(Modifier.weight(1f).clickable(enabled = study != null) { onRenameMask(maskIndex) }) {
+                    Text(
+                        when (record.last) {
+                            MaskRecord.RESULT_RIGHT -> "✓ "
+                            MaskRecord.RESULT_WRONG -> "✗ "
+                            else -> ""
+                        } + record.name.ifBlank { "Mask ${maskIndex + 1}" },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = when (record.last) {
+                            MaskRecord.RESULT_RIGHT -> Color(0xFF2E7D32)
+                            MaskRecord.RESULT_WRONG -> MaterialTheme.colorScheme.error
+                            else -> Color.Unspecified
+                        },
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (box != null) Text(
+                        maskPlace((box.xMin + box.xMax) / 2f, (box.yMin + box.yMax) / 2f, page.width, page.height) +
+                            " · p. ${index + 1}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline,
+                    )
+                }
                 IconButton(
                     onClick = { onRevealMask(maskIndex, !mask.revealed) },
                     modifier = Modifier.size(32.dp),
@@ -8181,10 +8424,14 @@ private fun MaskChip(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun PageChip(
+private fun PageCard(
     index: Int,
     page: Page,
+    picture: Bitmap?,
     selected: Boolean,
+    /** Picking pages for a batch action: a tap ticks the page instead of going to it. */
+    choosing: Boolean,
+    chosen: Boolean,
     deletable: Boolean,
     onJump: () -> Unit,
     onDelete: () -> Unit,
@@ -8200,66 +8447,46 @@ private fun PageChip(
     onPageSize: () -> Unit = {},
 ) {
     var menu by remember { mutableStateOf(false) }
+    val scheme = MaterialTheme.colorScheme
     Box {
         Column(
             Modifier
                 .fillMaxWidth()
                 .clip(Ui.Shape.chip)
-                .background(chipFill(selected))
-                .border(
-                    width = if (selected) 2.dp else 1.dp,
-                    color = if (selected) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.outlineVariant
-                    },
-                    shape = Ui.Shape.chip,
-                )
+                .background(if (selected) scheme.primaryContainer.copy(alpha = 0.55f) else Color.Transparent)
                 .combinedClickable(
                     onClick = onJump,
-                    // Long press for the page menu. It used to be an invisible
-                    // hotspot in the corner, which nobody would ever find.
-                    onLongClick = { menu = true },
+                    // Long press for the page menu.
+                    onLongClick = { if (!choosing) menu = true },
                 )
-                .padding(vertical = 14.dp),
+                .padding(Ui.Space.xs),
             horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(Ui.Space.hair),
         ) {
-            Text("${index + 1}", style = MaterialTheme.typography.titleMedium)
-            Text(
-                when (page.background) {
-                    PageBackground.BLANK -> "Blank"
-                    PageBackground.LINED -> "Lined"
-                    PageBackground.GRID -> "Grid"
-                    PageBackground.PDF -> "PDF"
-                    PageBackground.DOT -> "Dot"
-                    PageBackground.NARROW_LINED -> "Narrow lined"
-                    PageBackground.CORNELL -> "Cornell"
-                    PageBackground.CUSTOM -> "Custom"
-                    PageBackground.INFINITE -> "Infinite"
-                },
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.outline,
-            )
+            Box {
+                PagePicture(
+                    picture, page.width / page.height, index + 1,
+                    Modifier.border(if (selected) 2.dp else 0.dp, if (selected) scheme.primary else Color.Transparent, Ui.Shape.preview),
+                )
+                if (page.bookmarked) Icon(
+                    Icons.Filled.Bookmark, contentDescription = "Bookmarked", tint = scheme.primary,
+                    modifier = Modifier.align(Alignment.TopEnd).padding(2.dp).size(16.dp),
+                )
+                if (choosing) Checkbox(checked = chosen, onCheckedChange = null, modifier = Modifier.align(Alignment.TopStart))
+            }
+            Text("${index + 1}", style = MaterialTheme.typography.labelMedium,
+                color = if (selected) scheme.primary else scheme.onSurfaceVariant)
             page.tocTitle?.let { title ->
                 Text(title, style = MaterialTheme.typography.labelSmall,
-                    color = if (page.tocHighlighted) MaterialTheme.colorScheme.tertiary
-                        else MaterialTheme.colorScheme.primary,
+                    color = if (page.tocHighlighted) scheme.tertiary else scheme.primary,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-        IconButton(
-            onClick = onBookmark,
-            modifier = Modifier.align(Alignment.TopEnd).size(36.dp),
-        ) {
-            Icon(
-                if (page.bookmarked) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
-                contentDescription = if (page.bookmarked) "Remove bookmark" else "Bookmark",
-                tint = if (page.bookmarked) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.outline,
-                modifier = Modifier.size(18.dp),
-            )
-        }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            DropdownMenuItem(
+                text = { Text(if (page.bookmarked) "Remove bookmark" else "Bookmark") },
+                onClick = { menu = false; onBookmark() },
+            )
             DropdownMenuItem(
                 text = { Text(if (page.tocTitle == null) "Set contents entry" else "Rename contents entry") },
                 onClick = { menu = false; onEditToc() },
@@ -8530,9 +8757,10 @@ private fun Toolbar(
                     SpotiToolbarAction("Text", AppIcons.text, selected = mode == EditMode.TEXT, onClick = onText),
                 ),
                 listOf(
-                    SpotiToolbarAction("Notes", AppIcons.otherNotes, opensNotes = true, onClick = {}),
+                    // The pages, contents, tape and other notes, with one search over them;
+                    // a new page and a new note are added there.
+                    SpotiToolbarAction("Pages & notes", AppIcons.search, onClick = onTogglePages),
                     SpotiToolbarAction("Split notes", AppIcons.split, selected = split, onClick = onSplit),
-                    SpotiToolbarAction("Add page", AppIcons.addPage, onClick = onAddPage),
                 ),
                 listOf(
                     SpotiToolbarAction(if (pinned) "Unpin bar" else "Pin to top", if (pinned) AppIcons.undock else AppIcons.dock,

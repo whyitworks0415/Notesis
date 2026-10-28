@@ -93,7 +93,7 @@ internal object GuideNote {
                 "to open its settings: colour, width and nib."),
             Block.Tip("Functions holds the rest: picture, Tools (calculator,\n" +
                 "clock, calendar, to-do), layers, recording, capture,\n" +
-                "text, other notes, add page and Settings."),
+                "text, Pages & notes, split notes and Settings."),
             Block.Tip("With a keyboard, Ctrl+1 to Ctrl+9 pick the tools\n" +
                 "in the order the bar shows them."),
         )),
@@ -134,11 +134,11 @@ internal object GuideNote {
                 "Settings › Touch & gestures, three-finger gestures included."),
         )),
         GuidePage("Pages and search", listOf(
-            Block.Body("The page panel lists pages, the outline and masks.\n" +
-                "Its Search tab finds words in PDFs, text boxes and handwriting.\n" +
-                "It closes by itself as soon as you start writing."),
+            Block.Body("The page panel shows the pages as pictures, the contents,\n" +
+                "every strip of tape, and your other notes. Its search field finds\n" +
+                "words in PDFs, text boxes and handwriting. Writing closes it."),
             Block.Body("Pull past the last page to add a new one,\n" +
-                "or use Add page in Functions."),
+                "or use + Page in the page panel."),
             Block.Tip("Ctrl+F opens search; Ctrl+Alt+G goes to a page."),
         )),
         GuidePage("More on the page", listOf(

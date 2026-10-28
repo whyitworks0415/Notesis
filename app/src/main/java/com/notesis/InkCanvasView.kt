@@ -2794,7 +2794,11 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private val thumbnailRenderer by lazy { CanvasStrokeRenderer.create(PencilTextureStore) }
-    private val thumbnailCache = android.util.LruCache<String, Bitmap>(THUMBNAIL_CACHE_COUNT)
+    // By size, not count: the page panel's grid holds a screenful of pages, and a
+    // dozen pictures went round and round as it scrolled.
+    private val thumbnailCache = object : android.util.LruCache<String, Bitmap>(THUMBNAIL_CACHE_BYTES) {
+        override fun sizeOf(key: String, value: Bitmap): Int = value.allocationByteCount
+    }
     private val thumbnailPaint = Paint(Paint.FILTER_BITMAP_FLAG)
 
     /** Draws thumbnails off the UI thread: a dense page's ink took long enough to stall a pinch. */
@@ -2809,20 +2813,27 @@ class InkCanvasView @JvmOverloads constructor(
      * drawn, which happens on a worker; ask again shortly. Kept per page,
      * stroke count and size, so a page drawn on is pictured afresh.
      */
-    fun pageThumbnail(index: Int, widthPx: Int): Bitmap? {
+    fun pageThumbnail(index: Int, widthPx: Int, renderPdf: Boolean = false): Bitmap? {
         val page = document.pages.getOrNull(index) ?: return null
         if (page.width <= 0f || page.height <= 0f || widthPx <= 0) return null
         val key = "${page.id}:${page.strokes.size}:${page.loaded}:$widthPx"
         thumbnailCache.get(key)?.let { return it }
         if (key in thumbnailsPending) return null
-        // Only a page already in memory: a thumbnail that asked for renders put
-        // them in the queue ahead of the pages actually on screen, and every page
-        // the scrubber passed over slowed the PDF that came after.
-        val pdfPicture = if (page.background == PageBackground.PDF) {
-            pdf?.cachedPage(page.pdfPageIndex) ?: return null
-        } else null
-        // Snapshot on the UI thread; the drawing happens on the worker.
-        val strokes = if (page.loaded) page.strokes.toList() else emptyList()
+        // Only a page already in memory, unless [renderPdf] asks: a thumbnail
+        // that asked for renders put them in the queue ahead of the pages
+        // actually on screen, and every page the scrubber passed over slowed
+        // the PDF that came after. The page panel's grid, held open to be
+        // looked at, does ask - one small page at a time, on the worker.
+        val pdfIndex = if (page.background == PageBackground.PDF) page.pdfPageIndex else -1
+        val pdfPicture = if (pdfIndex >= 0) pdf?.cachedPage(pdfIndex) else null
+        if (pdfIndex >= 0 && pdfPicture == null && !renderPdf) return null
+        val source = pdf
+        // Snapshot on the UI thread; the drawing happens on the worker. A page
+        // not read in yet has its ink read there for the picture alone, coarse,
+        // and left off the page: the canvas reads it properly when it is shown.
+        val strokes = if (page.loaded) page.strokes.toList() else null
+        val loader = if (page.loaded) null else pageLoader
+        val coarse = epsilonFor(THUMBNAIL_TESSELLATION_SCALE)
         val look = document.layers.translucentLook()
         val pageWidth = page.width
         val pageHeight = page.height
@@ -2831,21 +2842,30 @@ class InkCanvasView @JvmOverloads constructor(
             thumbnailWorker.execute {
                 val bitmap = runCatching {
                     val height = (widthPx * pageHeight / pageWidth).toInt().coerceAtLeast(1)
-                    val paint = { canvas: Canvas, _: MutableList<Bitmap> ->
+                    val ink = strokes ?: loader?.let { read -> runCatching { read(page, coarse) }.getOrNull() }.orEmpty()
+                    val rendered = if (pdfIndex >= 0 && pdfPicture == null) {
+                        runCatching { source?.renderNow(pdfIndex, widthPx) }.getOrNull()
+                    } else null
+                    val paint = { canvas: Canvas, spent: MutableList<Bitmap> ->
                         canvas.drawColor(Color.WHITE)
-                        pdfPicture?.takeIf { !it.isRecycled }?.let {
+                        (pdfPicture ?: rendered)?.takeIf { !it.isRecycled }?.let {
                             canvas.drawBitmap(it, null, RectF(0f, 0f, widthPx.toFloat(), height.toFloat()), thumbnailPaint)
                         }
+                        rendered?.let { spent += it }
                         val scale = widthPx / pageWidth
                         val transform = Matrix().apply { setScale(scale, scale) }
                         canvas.scale(scale, scale)
-                        drawLayered(canvas, strokes, look, null) { stroke ->
+                        drawLayered(canvas, ink, look, null) { stroke ->
                             runCatching { thumbnailRenderer.draw(canvas, stroke, transform) }
                         }
                     }
                     // Through the GPU, so pencil and the particle brushes show: see [renderOnGpu].
                     renderOnGpu(widthPx, height, paint)
-                        ?: Bitmap.createBitmap(widthPx, height, Bitmap.Config.ARGB_8888).also { paint(Canvas(it), ArrayList()) }
+                        ?: Bitmap.createBitmap(widthPx, height, Bitmap.Config.ARGB_8888).also {
+                            val spent = ArrayList<Bitmap>()
+                            paint(Canvas(it), spent)
+                            spent.forEach(Bitmap::recycle)
+                        }
                 }.getOrNull()
                 post {
                     thumbnailsPending -= key
@@ -9663,7 +9683,9 @@ class InkCanvasView @JvmOverloads constructor(
         private const val ROTATE_START_DEGREES = 12f
         private const val MAX_TURN_POINTERS = 10
         private const val PI_F = Math.PI.toFloat()
-        private const val THUMBNAIL_CACHE_COUNT = 12
+        private const val THUMBNAIL_CACHE_BYTES = 24 * 1024 * 1024
+        /** The zoom a page's ink is read at for its picture alone: far coarser than any page on screen. */
+        private const val THUMBNAIL_TESSELLATION_SCALE = 0.25f
         const val GESTURE_TRAIL_COLOR = 0xFF3B7DDD.toInt()
         const val MEASURED_LATENCY_REFRESH_MS = 500L
         /** How far outside a checkbox, in screen pixels, a tap still ticks it. */

@@ -186,6 +186,8 @@ internal class NoteSearchState(pagesDir: File) {
     val extracted = HashMap<Int, String>()
     /** The page panel's tab when it was last open; not state, read once as the panel opens. */
     var panelTab = 0
+    /** Whether the panel should put the cursor in its search field as it opens; read once, then cleared. */
+    var wantsFocus = false
 }
 
 /**
@@ -200,6 +202,8 @@ internal fun NoteSearchPanel(
     view: InkCanvasView?,
     onOpen: (NoteSearchHit) -> Unit,
     modifier: Modifier = Modifier,
+    /** False where the query is typed somewhere else, as the page panel's own field. */
+    showField: Boolean = true,
 ) {
     val latestView by rememberUpdatedState(view)
     LaunchedEffect(state) {
@@ -278,7 +282,7 @@ internal fun NoteSearchPanel(
     }
 
     Column(modifier) {
-        OutlinedTextField(
+        if (showField) OutlinedTextField(
             value = state.query,
             onValueChange = { state.query = it },
             placeholder = { Text("Search this note") },
