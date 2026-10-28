@@ -67,6 +67,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -219,6 +220,7 @@ internal fun PenDialog(
     var linePattern by remember(pen) { mutableIntStateOf(pen.linePattern) }
     var autoShapes by remember(pen) { mutableStateOf(pen.autoShapes) }
     var straightLine by remember(pen) { mutableStateOf(pen.straightLine) }
+    var nibAngle by remember(pen) { mutableStateOf(pen.nibAngle) }
     var details by remember { mutableStateOf(false) }
     val joined = remember { store.colorPickerJoined }
     val opacity = allowsOpacity(mode)
@@ -238,6 +240,7 @@ internal fun PenDialog(
         linePattern = linePattern,
         autoShapes = autoShapes,
         straightLine = straightLine,
+        nibAngle = nibAngle,
     )
 
     // Open: grow from the bar. Close: fold back, and only then hand the
@@ -329,6 +332,7 @@ internal fun PenDialog(
                 if (mode == EditMode.PEN) {
                     PanelSwitchRow("Pressure", pressure, hint = "Pressing harder draws a wider line") { pressure = it }
                 }
+                if (drawing.hasNib()) NibAngleRow(drawing, nibAngle) { nibAngle = it }
             }
 
             if (freehand && !drawing.isDabbed()) {
@@ -1282,3 +1286,51 @@ private fun WidthCeilings(mode: EditMode, range: ClosedFloatingPointRange<Float>
 
 /** The tools whose strokes can be drawn as straight lines instead. */
 internal val STRAIGHT_LINE_MODES = setOf(EditMode.PEN, EditMode.PENCIL, EditMode.HIGHLIGHTER, EditMode.MASK)
+
+/**
+ * The angle a cut nib is held at: a slider from flat to upright, either way,
+ * with the default a tap away, and a stroke drawn with the nib so the angle
+ * is seen as the line it makes - broad where the pen moves across the nib,
+ * thin where it moves along it.
+ */
+@Composable
+private fun NibAngleRow(tool: Tool, angle: Int?, onAngle: (Int?) -> Unit) {
+    val shown = angle ?: tool.defaultNibAngle()
+    val scheme = MaterialTheme.colorScheme
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Nib angle", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Text("$shown°", style = MaterialTheme.typography.labelLarge)
+        if (angle != null) TextButton(onClick = { onAngle(null) }) { Text("Reset") }
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Ui.Space.m)) {
+        SkinSlider(
+            value = shown.toFloat(),
+            onValueChange = { onAngle(it.roundToInt().coerceIn(Tool.NIB_ANGLES)) },
+            valueRange = Tool.NIB_ANGLES.first.toFloat()..Tool.NIB_ANGLES.last.toFloat(),
+            step = NIB_ANGLE_STEP,
+            modifier = Modifier.weight(1f),
+        )
+        // The nib's own proportions: the calligraphy nib is far flatter than the fountain's.
+        val flat = if (tool == Tool.CALLIGRAPHY) 0.18f else 0.55f
+        androidx.compose.foundation.Canvas(Modifier.size(width = 72.dp, height = 40.dp)) {
+            val nib = size.height * 0.36f
+            val steps = 48
+            for (i in 0..steps) {
+                val t = i / steps.toFloat()
+                // One wave across: it goes up, across and down, so every direction is drawn.
+                val x = size.width * (0.1f + 0.8f * t)
+                val y = size.height * (0.5f - 0.32f * kotlin.math.sin(t * 2f * kotlin.math.PI.toFloat()))
+                rotate(shown.toFloat(), pivot = androidx.compose.ui.geometry.Offset(x, y)) {
+                    drawOval(
+                        scheme.onSurface,
+                        topLeft = androidx.compose.ui.geometry.Offset(x - nib / 2f, y - nib * flat / 2f),
+                        size = androidx.compose.ui.geometry.Size(nib, nib * flat),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** The nib angle's slider moves in steps of this many degrees. */
+private const val NIB_ANGLE_STEP = 5f

@@ -469,7 +469,59 @@ enum class Tool {
         else -> pen
     }
 
+    /** A cut nib, whose angle can be set: the fountain pens and the calligraphy pen. */
+    fun hasNib(): Boolean = this == FOUNTAIN || this == SPEED_FOUNTAIN || this == CALLIGRAPHY
+
+    /** The angle the nib is held at when none has been chosen, in degrees. */
+    fun defaultNibAngle(): Int = if (this == CALLIGRAPHY) CALLIGRAPHY_NIB_DEGREES else FOUNTAIN_NIB_DEGREES
+
+    /**
+     * [brushFamily] with the nib turned to [nibAngle] degrees. Null, the
+     * default angle or a tool without a nib is the family as it always was, so
+     * notes written before the angle could be set draw exactly as they did.
+     */
+    fun brushFamily(nibAngle: Int?): BrushFamily {
+        if (nibAngle == null || !hasNib() || nibAngle == defaultNibAngle()) return brushFamily()
+        return angled(this, nibAngle.coerceIn(NIB_ANGLES))
+    }
+
     companion object {
+        /** No angle of its own: the nib at its tool's default, or no nib. Fits a signed byte, as it is saved. */
+        const val NO_NIB = -128
+        const val FOUNTAIN_NIB_DEGREES = -30
+        const val CALLIGRAPHY_NIB_DEGREES = -45
+        /** The angles a nib can be turned to, in degrees from the page's horizontal. */
+        val NIB_ANGLES = -90..90
+
+        /** Written into an angled family's id, before its angle. */
+        private const val NIB_MARK = "@nib"
+        private val angledFamilies = java.util.concurrent.ConcurrentHashMap<Pair<Tool, Int>, BrushFamily>()
+
+        @OptIn(ExperimentalInkCustomBrushApi::class)
+        private fun angled(tool: Tool, angle: Int): BrushFamily = angledFamilies.getOrPut(tool to angle) {
+            val base = tool.brushFamily()
+            val coat = base.coats.first()
+            base.copy(coat = coat.copy(tip = coat.tip.copy(rotationDegrees = angle.toFloat())))
+                .copy(clientBrushFamilyId = base.clientBrushFamilyId + NIB_MARK + angle)
+        }
+
+        /** The angle [family]'s nib was turned to, or null for a family at its tool's own angle. */
+        fun nibAngleOf(family: BrushFamily): Int? {
+            val id = family.clientBrushFamilyId
+            val at = id.indexOf(NIB_MARK)
+            if (at < 0) return null
+            return id.substring(at + NIB_MARK.length).toIntOrNull()
+        }
+
+        /** The tool an angled family belongs to, by the id it was given; null for any other. */
+        private fun ofAngled(family: BrushFamily): Tool? {
+            val id = family.clientBrushFamilyId
+            val at = id.indexOf(NIB_MARK)
+            if (at < 0) return null
+            val base = id.substring(0, at)
+            return entries.firstOrNull { it.hasNib() && it.brushFamily().clientBrushFamilyId == base }
+        }
+
         @OptIn(ExperimentalInkCustomBrushApi::class)
         private fun roundTip(stock: BrushFamily): BrushFamily {
             val coat = stock.coats.first()
@@ -650,7 +702,7 @@ enum class Tool {
             speedFountain -> SPEED_FOUNTAIN
             PencilBrushes.soft -> SOFT_PENCIL
             vanishing -> VANISHING_PEN
-            else -> PEN
+            else -> ofAngled(family) ?: PEN
         }
     }
 }
@@ -659,6 +711,14 @@ private fun Tool.isFreehandPen(): Boolean =
     this == Tool.PEN || this == Tool.PRESSURE_PEN || this == Tool.PENCIL || this == Tool.FOUNTAIN ||
         this == Tool.CALLIGRAPHY || this == Tool.WATERCOLOR || this == Tool.OIL || this == Tool.SPEED_FOUNTAIN ||
         this == Tool.VANISHING_PEN || isDabbed()
+
+/**
+ * Whether a round, solid head ahead of the line - the softened prediction, the
+ * sub-frame lead - looks like the line it leads. Not for a cut nib, whose line
+ * is thin across and broad down while the head was a full-width round blob at
+ * the tip, nor for graphite, pale and grainy where the head was solid.
+ */
+private fun Tool.takesRoundHead(): Boolean = !hasNib() && this != Tool.PENCIL
 
 /**
  * Drawn as scattered particles rather than one line. A line pattern would
@@ -941,6 +1001,12 @@ class InkCanvasView @JvmOverloads constructor(
     /** How round a polygon shape's corners are drawn, in page units; 0 is sharp. */
     var shapeCornerRadius: Float = 0f
     var dottedPattern: Int = 0
+
+    /**
+     * The angle the fountain and calligraphy nibs are held at, in degrees, or
+     * null for each nib's own default. Only those pens read it.
+     */
+    var nibAngle: Int? = null
     private var playbackPage = -1
     private var playbackStrokeCount: Int? = null
 
@@ -1787,6 +1853,7 @@ class InkCanvasView @JvmOverloads constructor(
     private var cachedBrushSize = Float.NaN
     private var cachedBrushEpsilon = Float.NaN
     private var cachedBrushPattern = -1
+    private var cachedBrushNib = Tool.NO_NIB
     private var cachedBrush: Brush? = null
     /** Brushes recently made by [currentBrush], behind the one-entry check above. */
     private val recentBrushes = RecentCache<BrushKey, Brush>(RECENT_BRUSHES)
@@ -4559,7 +4626,7 @@ class InkCanvasView @JvmOverloads constructor(
         // Decoration only, and a redraw of its own every pen frame: battery
         // saver goes without it. The setting itself is left as chosen.
         if (InteractionGovernor.powerSave || !softPredictionHead || viewRotation != 0f ||
-            !tool.isFreehandPen() || tool.isDabbed() || dottedPattern != 0) {
+            !tool.isFreehandPen() || tool.isDabbed() || !tool.takesRoundHead() || dottedPattern != 0) {
             subframe.clear()
             return
         }
@@ -4585,7 +4652,7 @@ class InkCanvasView @JvmOverloads constructor(
         leadMs: Int,
     ) {
         if (predicted == null || !softPredictionHead || !predictionPolicy.shouldShowSoftHead(leadMs) ||
-            !tool.isFreehandPen() || tool.isDabbed() || dottedPattern != 0
+            !tool.isFreehandPen() || tool.isDabbed() || !tool.takesRoundHead() || dottedPattern != 0
         ) {
             predictionHead.clear()
             return
@@ -5332,19 +5399,21 @@ class InkCanvasView @JvmOverloads constructor(
         // just after the pen lifted - a visible hitch for broad pencil strokes.
         val epsilon = if (brushTool.isDabbed()) dabEpsilon(strokeWidth)
             else strokeEpsilon(strokeWidth, epsilonFor(tessellationBucket(currentScale())))
+        val nib = nibAngle?.takeIf { brushTool.hasNib() } ?: Tool.NO_NIB
         cachedBrush?.takeIf {
             cachedBrushTool == brushTool &&
                 cachedBrushColor == colorArgb &&
                 cachedBrushSize == strokeWidth &&
                 cachedBrushEpsilon == epsilon &&
-                cachedBrushPattern == dottedPattern
+                cachedBrushPattern == dottedPattern &&
+                cachedBrushNib == nib
         }?.let { return it }
         // Not the last one: perhaps one of the last few - a pen and a highlighter
         // taken in turn, or the zoom that was in use a moment ago.
-        val key = BrushKey(brushTool.ordinal, colorArgb, strokeWidth, epsilon, dottedPattern)
+        val key = BrushKey(brushTool.ordinal, colorArgb, strokeWidth, epsilon, dottedPattern, nib)
         return recentBrushes.getOrPut(key) {
             Brush.createWithColorIntArgb(
-                family = brushTool.brushFamily(),
+                family = brushTool.brushFamily(nib.takeIf { it != Tool.NO_NIB }),
                 // Alpha included: a highlighter is a saved pen that happens to be
                 // translucent and wide, not a tool with its own hidden rules.
                 colorIntArgb = colorArgb,
@@ -5361,6 +5430,7 @@ class InkCanvasView @JvmOverloads constructor(
             cachedBrushSize = strokeWidth
             cachedBrushEpsilon = epsilon
             cachedBrushPattern = dottedPattern
+            cachedBrushNib = nib
             cachedBrush = it
         }
     }
@@ -8807,11 +8877,19 @@ class InkCanvasView @JvmOverloads constructor(
             }?.let { return it.weight }
             var weight = 0
             for (stroke in strokes) {
-                weight += if (!PencilBrushes.isDab(stroke.brush.family)) 1 else {
-                    val shape = stroke.shape
-                    var outlines = 0
-                    for (group in 0 until shape.getRenderGroupCount()) outlines += shape.getOutlineCount(group)
-                    dabDrawWeight(outlines)
+                val family = stroke.brush.family
+                weight += when {
+                    PencilBrushes.isDab(family) -> {
+                        val shape = stroke.shape
+                        var outlines = 0
+                        for (group in 0 until shape.getRenderGroupCount()) outlines += shape.getOutlineCount(group)
+                        dabDrawWeight(outlines)
+                    }
+                    // Graphite is sampled through its paper texture and blended
+                    // at a pressure-set opacity, every vertex, every frame: a
+                    // page of pencil cost several pages of pen to replay.
+                    PencilBrushes.isGraphite(family) -> GRAPHITE_DRAW_WEIGHT
+                    else -> 1
                 }
             }
             inkWeights[page] = InkWeight(page.revision, page.meshRevision, strokes.size, weight)
@@ -9620,6 +9698,8 @@ class InkCanvasView @JvmOverloads constructor(
 
         /** Pen strokes' worth of ink (see inkDrawWeight) from which a page is drawn from cached tiles. */
         const val TILED_INK_WEIGHT = 256
+        /** What one graphite pencil stroke counts for in [TILED_INK_WEIGHT], in pen strokes. */
+        const val GRAPHITE_DRAW_WEIGHT = 4
         const val BASE_TESSELLATION_SCALE = 1f
         /** The finest zoom a page is first read in at; see refineVisiblePages. */
         const val LOAD_TESSELLATION_SCALE = 2f

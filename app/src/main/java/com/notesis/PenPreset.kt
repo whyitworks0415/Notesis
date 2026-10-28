@@ -41,6 +41,11 @@ data class PenPreset(
     val autoShapes: Boolean = false,
     /** Every stroke a straight line from where the pen lands to where it lifts. */
     val straightLine: Boolean = false,
+    /**
+     * The angle a fountain or calligraphy nib is held at, in degrees from the
+     * page's horizontal; null for the nib's own. See [Tool.brushFamily].
+     */
+    val nibAngle: Int? = null,
 ) {
     /** The tool as it actually draws, which is where pressure and the nib are decided. */
     fun drawingTool(): Tool = when {
@@ -555,6 +560,7 @@ class PenStore(context: Context) {
                     linePattern = item.optInt("linePattern", fallback.linePattern).coerceIn(0, 3),
                     autoShapes = item.optBoolean("autoShapes", fallback.autoShapes),
                     straightLine = item.optBoolean("straightLine", fallback.straightLine),
+                    nibAngle = if (item.has("nibAngle")) item.optInt("nibAngle").coerceIn(Tool.NIB_ANGLES) else null,
                 )
             }.toMap()
         }.getOrNull().orEmpty()
@@ -585,7 +591,8 @@ class PenStore(context: Context) {
                     .put("stabilizer", pen.stabilizer)
                     .put("linePattern", pen.linePattern)
                     .put("autoShapes", pen.autoShapes)
-                    .put("straightLine", pen.straightLine),
+                    .put("straightLine", pen.straightLine)
+                    .apply { pen.nibAngle?.let { put("nibAngle", it) } },
             )
         }
         prefs.edit().putString(KEY, json.toString()).apply()

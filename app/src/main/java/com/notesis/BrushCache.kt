@@ -13,6 +13,8 @@ internal data class BrushKey(
     val size: Float,
     val epsilon: Float,
     val pattern: Int,
+    /** The nib's angle for a pen with one, else [Tool.NO_NIB]. */
+    val nib: Int = Tool.NO_NIB,
 )
 
 /**

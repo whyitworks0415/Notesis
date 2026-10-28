@@ -359,6 +359,26 @@ class MainActivity : ComponentActivity() {
                             pickedDocument = null
                             openNote = created
                         },
+                        // The document set as PDF pages, kept as a note to write on.
+                        onImportPdf = { title, pdf ->
+                            lifecycleScope.launch {
+                                val created = withContext(Dispatchers.IO) {
+                                    try {
+                                        runCatching { pdf.inputStream().use { store.createFromPdf(title.ifBlank { "Imported document" }, it) } }
+                                            .getOrNull()
+                                    } finally {
+                                        pdf.delete()
+                                    }
+                                }
+                                if (created == null) {
+                                    Toast.makeText(this@MainActivity, "Couldn't import the PDF", Toast.LENGTH_SHORT).show()
+                                    return@launch
+                                }
+                                incomingViewerRequest = null
+                                pickedDocument = null
+                                openNote = created
+                            }
+                        },
                     )
                 } else if (settingsOpen) {
                     BackHandler { settingsOpen = false }
@@ -4627,6 +4647,7 @@ private fun NoteScreen(
                     view.autoShapeRecognitionEnabled = autoShapes
                     view.axisSnapEnabled = axisSnap
                     view.dottedPattern = dottedPattern
+                    view.nibAngle = pen.nibAngle
                     view.setPageLayout(pageLayout)
                     view.tool = tool
                     view.readMode = mode == EditMode.READ
@@ -7281,6 +7302,7 @@ private fun ReferencePanel(
                             v.autoShapeRecognitionEnabled = autoShapes
                             v.axisSnapEnabled = axisSnap
                             v.dottedPattern = dottedPattern
+                            v.nibAngle = pen.nibAngle
                         },
                     )
                     if (popupLassoCount > 0) {

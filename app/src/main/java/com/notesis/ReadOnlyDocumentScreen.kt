@@ -123,6 +123,11 @@ internal fun ReadOnlyDocumentScreen(
     onBack: () -> Unit,
     /** Keeps the document's text as a note: its title and Markdown. Null hides the action. */
     onImport: ((String, String) -> Unit)? = null,
+    /**
+     * Keeps the document as a PDF note to write on: its title and the PDF,
+     * set as A4 pages in a file the callee takes over. Null hides the action.
+     */
+    onImportPdf: ((String, java.io.File) -> Unit)? = null,
 ) {
     val importScope = androidx.compose.runtime.rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -196,6 +201,22 @@ internal fun ReadOnlyDocumentScreen(
                                 else android.widget.Toast.makeText(context, "Import failed", android.widget.Toast.LENGTH_SHORT).show()
                             }
                         }) { Text("Import as note") }
+                        if (onImportPdf != null) TextButton(onClick = {
+                            importScope.launch {
+                                val pdf = withContext(Dispatchers.IO) {
+                                    runCatching {
+                                        val bytes = context.contentResolver.openInputStream(request.uri)?.use(::readDocumentBytes)
+                                            ?: error("Can't open the file.")
+                                        val parsed = OfficeDocumentParser.parse(request.name, bytes)
+                                        java.io.File.createTempFile("converted", ".pdf", context.cacheDir).also { file ->
+                                            file.outputStream().use { writeDocumentPdf(parsed, it) }
+                                        }
+                                    }.getOrNull()
+                                }
+                                if (pdf != null) onImportPdf(request.name.substringBeforeLast('.'), pdf)
+                                else android.widget.Toast.makeText(context, "Couldn't convert to PDF", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        }) { Text("Convert to PDF") }
                         if (hasLayout) {
                             TextButton(onClick = { textOnly = !textOnly }) {
                                 Text(if (textOnly) "Document view" else "Text view")

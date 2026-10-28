@@ -68,7 +68,7 @@ internal object PencilBrushes {
                     ),
                 ),
             ),
-            clientBrushFamilyId = "notesis.pencil.graphite",
+            clientBrushFamilyId = GRAPHITE_ID,
         )
     }
 
@@ -268,6 +268,11 @@ internal object PencilBrushes {
     fun isDab(family: BrushFamily): Boolean = family.clientBrushFamilyId.let {
         it == STAMP_ID || it == BUBBLE_ID || it == SPRAY_ID || it == SOFT_ID
     }
+
+    /** Whether [family] is the graphite pencil, by its id. */
+    fun isGraphite(family: BrushFamily): Boolean = family.clientBrushFamilyId == GRAPHITE_ID
+
+    private const val GRAPHITE_ID = "notesis.pencil.graphite"
 
     /** Graphite tooth tile size on the page, in page units. */
     private const val GRAPHITE_TILE_UNITS = 48f

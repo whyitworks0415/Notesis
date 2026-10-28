@@ -2210,6 +2210,8 @@ class NoteStore(context: Context) {
         if (inputs.size() > MAX_SCRATCH_BYTES) strokeScratch.remove()
         // Version 3: the layer the stroke is on, after everything version 2 had.
         out.writeByte(StrokeLayers.of(stroke))
+        // Version 4: the angle a fountain or calligraphy nib was turned to.
+        out.writeByte(Tool.nibAngleOf(brush.family) ?: Tool.NO_NIB)
     }
 
     /** False when the rename failed and [file] still holds what it held before. */
@@ -2234,7 +2236,7 @@ class NoteStore(context: Context) {
         val records = mutableListOf<StoredStroke>()
         // One Brush per tool, colour and size: a page of the same pen
         // otherwise made a native brush for every stroke.
-        val brushes = HashMap<Triple<Tool, Int, Float>, Brush>()
+        val brushes = HashMap<BrushKey, Brush>()
         runCatching {
             DataInputStream(file.inputStream().buffered()).use { input ->
                 if (input.readInt() != MAGIC) return emptyList()
@@ -2256,8 +2258,9 @@ class NoteStore(context: Context) {
                     input.readFloat()
                     val bytes = ByteArray(input.readInt()).also { input.readFully(it) }
                     val layer = if (storedVersion >= 3) input.readUnsignedByte() else NoteLayers.BASE
-                    val brush = brushes.getOrPut(Triple(tool, color, size)) {
-                        val family = tool.brushFamily()
+                    val nib = if (storedVersion >= 4) input.readByte().toInt() else Tool.NO_NIB
+                    val brush = brushes.getOrPut(BrushKey(tool.ordinal, color, size, 0f, 0, nib)) {
+                        val family = tool.brushFamily(nib.takeIf { it != Tool.NO_NIB })
                         Brush.createWithColorIntArgb(family, color, size, inkEpsilon(family, size, epsilon))
                     }
                     records += StoredStroke(tool, rawTool, brush, bytes, layer)
@@ -2300,8 +2303,11 @@ class NoteStore(context: Context) {
         /** A per-thread stroke buffer that grew past this is dropped after use. */
         private const val MAX_SCRATCH_BYTES = 1 shl 20
         private val strokeScratch = ThreadLocal<ByteArrayOutputStream>()
-        /** 3 added a layer byte to each stroke; 1 and 2 still read, as layer 0. */
-        const val VERSION = 3
+        /**
+         * 3 added a layer byte to each stroke; 1 and 2 still read, as layer 0.
+         * 4 added the nib's angle after it; 3 reads as every nib at its default.
+         */
+        const val VERSION = 4
     }
 }
 
