@@ -315,6 +315,25 @@ class MainActivity : ComponentActivity() {
                     incomingImportedNote = null
                 }
                 var pickedDocument by remember { mutableStateOf<ViewerRequest?>(null) }
+                // A folder of Markdown files opened as a vault, and the file open in it.
+                var vaultTree by remember { mutableStateOf<Uri?>(null) }
+                var vaultFile by remember { mutableStateOf<VaultFile?>(null) }
+                // The notes a followed [[link]] came from, for the way back.
+                val vaultBack = remember { mutableStateListOf<VaultFile>() }
+                val markdownBack = remember { mutableStateListOf<NoteMeta>() }
+                val vault = remember(vaultTree) { vaultTree?.let { MarkdownVault(this@MainActivity, it) } }
+                val pickVault = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+                    if (uri != null) {
+                        MarkdownVault.adopt(this@MainActivity, uri)
+                        vaultFile = null
+                        vaultBack.clear()
+                        vaultTree = uri
+                    }
+                }
+                fun openVault() {
+                    val last = MarkdownVault.last(this@MainActivity)
+                    if (last != null) vaultTree = last else pickVault.launch(null)
+                }
                 // A locked note opens only past the master password, once per run of the app.
                 val noteLock = remember { NoteLock(this@MainActivity) }
                 val unlocked = remember { mutableStateListOf<String>() }
@@ -402,6 +421,25 @@ class MainActivity : ComponentActivity() {
                         },
                         onBack = { settingsOpen = false },
                     )
+                } else if (vault != null) {
+                    val file = vaultFile
+                    if (file != null) {
+                        key(file.uri) {
+                            MarkdownNoteScreen(
+                                source = remember(file.uri) {
+                                    VaultMarkdownSource(vault, file) { next -> vaultBack += file; vaultFile = next }
+                                },
+                                onBack = { vaultFile = vaultBack.removeLastOrNull() },
+                            )
+                        }
+                    } else {
+                        MarkdownVaultScreen(
+                            vault = vault,
+                            onOpen = { vaultBack.clear(); vaultFile = it },
+                            onChangeFolder = { pickVault.launch(null) },
+                            onBack = { vaultTree = null },
+                        )
+                    }
                 } else if (note == null) {
                     NoteListScreen(
                         store = store,
@@ -411,17 +449,23 @@ class MainActivity : ComponentActivity() {
                         },
                         onSettings = { settingsOpen = true },
                         onOpenDocument = { pickedDocument = it },
-                        onOpen = { incomingImportedNote = null; requestOpen(it) },
+                        onOpen = { incomingImportedNote = null; markdownBack.clear(); requestOpen(it) },
                         noteLock = noteLock,
                         initialFolder = libraryFolder,
                         onFolder = { libraryFolder = it },
+                        onOpenVault = ::openVault,
                     )
                 } else if (note.kind == NoteKind.MARKDOWN) {
                     key(note.id) {
                         MarkdownNoteScreen(
-                            store = store,
-                            note = note,
-                            onBack = { closeNote(note) },
+                            source = remember(note.id) {
+                                StoreMarkdownSource(store, note) { next -> markdownBack += note; requestOpen(next) }
+                            },
+                            // Back along the links followed, then to the library.
+                            onBack = {
+                                val previous = markdownBack.removeLastOrNull()
+                                if (previous != null) requestOpen(previous) else closeNote(note)
+                            },
                         )
                     }
                 } else {
@@ -449,7 +493,7 @@ class MainActivity : ComponentActivity() {
                 // The library and the ink note float the clock on their own
                 // glass; anywhere else, a finished timer or a ringing alarm
                 // still has to be seen.
-                val clockHosted = viewedDocument == null && !settingsOpen &&
+                val clockHosted = viewedDocument == null && !settingsOpen && vault == null &&
                     (note == null || note.kind != NoteKind.MARKDOWN)
                 if (!clockHosted) ClockOverlay()
                 }
@@ -553,6 +597,8 @@ private fun NoteListScreen(
     noteLock: NoteLock? = null,
     initialFolder: String = "",
     onFolder: (String) -> Unit = {},
+    /** Opens the folder of Markdown files kept as a vault, asking for one the first time. */
+    onOpenVault: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1161,6 +1207,7 @@ private fun NoteListScreen(
                         DialOption("Import PDF", AppIconStyle.pick(Lucide.File, Reicons.PictureAsPdf)) {
                             pickPdf.launch(arrayOf("application/pdf"))
                         },
+                        DialOption("Markdown folder (vault)", AppIconStyle.pick(Lucide.FolderOpen, Reicons.FolderOpen)) { onOpenVault() },
                         DialOption("New note", AppIconStyle.pick(Lucide.NotebookPen, Reicons.Edit)) { naming = true },
                     ),
                 )
