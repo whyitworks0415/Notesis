@@ -139,6 +139,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.onLongClick
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
@@ -6293,7 +6297,8 @@ private fun NoteScreen(
                     if (exportingPages != null) savePagesPdf.launch(safeFileName(note.title) + "-pages.pdf")
                 },
                 onSendPages = { indices, move -> sendingPages = indices to move },
-                pageThumbnail = { index -> canvas?.pageThumbnail(index, PAGE_GRID_THUMBNAIL_PX, renderPdf = true) },
+                pageThumbnail = { index, widthPx, onReady -> canvas?.requestPageThumbnail(index, widthPx, renderPdf = true, onReady) },
+                stalePageThumbnail = { index -> canvas?.stalePageThumbnail(index) },
                 widthDp = pageSidebarWidth,
                 onWidthChange = { pageSidebarWidth = it; penStore.pageSidebarWidth = it },
                 onClose = { showPages = false },
@@ -7757,7 +7762,23 @@ private const val SCRUBBER_THUMBNAIL_PX = 240
 /** About the widest a note's card in the list is drawn, in pixels. */
 private const val NOTE_CARD_PICTURE_PX = 480
 /** The page panel's pictures: sharp at two to a row on a wide panel, small enough to keep many. */
-private const val PAGE_GRID_THUMBNAIL_PX = 320
+/**
+ * How wide, in pixels, a page's picture is drawn for a grid of [columns]
+ * across a panel [panelDp] wide: as wide as a card, rounded up to a step of
+ * [PAGE_THUMB_STEP_PX] so neighbouring panel widths share pictures, and kept
+ * between [PAGE_THUMB_MIN_PX] and [PAGE_THUMB_MAX_PX].
+ */
+internal fun pageThumbnailWidthPx(panelDp: Float, columns: Int, density: Float): Int {
+    // The grid's padding each side, the gaps between cards and each card's own padding.
+    val card = (panelDp - 2 * 12f - (columns - 1) * 8f) / columns.coerceAtLeast(1) - 2 * 4f
+    val px = (card * density).coerceAtLeast(1f)
+    val stepped = ((px + PAGE_THUMB_STEP_PX - 1) / PAGE_THUMB_STEP_PX).toInt() * PAGE_THUMB_STEP_PX
+    return stepped.coerceIn(PAGE_THUMB_MIN_PX, PAGE_THUMB_MAX_PX)
+}
+
+private const val PAGE_THUMB_STEP_PX = 64
+private const val PAGE_THUMB_MIN_PX = 192
+private const val PAGE_THUMB_MAX_PX = 768
 private const val THUMBNAIL_ATTEMPTS = 40
 private const val THUMBNAIL_RETRY_MS = 80L
 
@@ -7810,8 +7831,10 @@ private fun PageSidebar(
     search: NoteSearchState? = null,
     searchView: InkCanvasView? = null,
     onSearchHit: (NoteSearchHit) -> Unit = {},
-    /** Page n's picture, null until it has been drawn; asked again until it is. */
-    pageThumbnail: (Int) -> Bitmap? = { null },
+    /** Page n's picture [widthPx] wide, or a call back once it has been drawn. */
+    pageThumbnail: (index: Int, widthPx: Int, onReady: () -> Unit) -> InkCanvasView.ThumbnailRequest? = { _, _, _ -> null },
+    /** The last picture drawn of page n, at any size, to show while a new one is drawn. */
+    stalePageThumbnail: (Int) -> Bitmap? = { null },
     widthDp: Float = PAGE_SIDEBAR_DEFAULT_DP,
     onWidthChange: (Float) -> Unit = {},
     onClose: () -> Unit = {},
@@ -7853,6 +7876,21 @@ private fun PageSidebar(
     var choosing by remember { mutableStateOf(false) }
     val chosen = remember { mutableStateListOf<String>() }
     fun chosenIndices() = pages.indices.filter { pages[it].id in chosen }
+    val sweep = remember { PageGridSweep() }
+    val scope = rememberCoroutineScope()
+    var choosingRange by remember { mutableStateOf(false) }
+    // The page whose menu the selection bar's More opened.
+    var menuFor by remember { mutableStateOf<String?>(null) }
+    fun choose(ids: List<String>) {
+        chosen.clear()
+        chosen.addAll(ids)
+    }
+    if (choosingRange) PageRangeDialog(pages.size, onDismiss = { choosingRange = false }) { from, to ->
+        choosingRange = false
+        choosing = true
+        val range = pageRange(from, to, pages.size)
+        choose((chosen.toSet() + range.map { pages[it].id }).let { set -> pages.map { it.id }.filter { it in set } })
+    }
     var goingTo by remember { mutableStateOf(false) }
     if (goingTo) GoToPageDialog(pages.size, onGo = { onJump(it) }, onDismiss = { goingTo = false })
     var tocName by remember { mutableStateOf("") }
@@ -7884,11 +7922,18 @@ private fun PageSidebar(
             },
         )
     }
+    // The pictures are drawn as wide as a card is on this screen, in steps so a
+    // small change of the panel's width does not draw them all again: drawn at
+    // a fixed 320 px, they were stretched on any card wider than that and blurred.
+    val density = LocalDensity.current.density
+    val thumbWidthPx = pageThumbnailWidthPx(pageSidebarWidth(widthDp, LocalConfiguration.current.screenWidthDp.toFloat()),
+        columns.coerceIn(PAGE_GRID_COLUMNS), density)
     /** The picture of page [index] as it is now: written on, it is pictured afresh. */
     @Composable
     fun picture(index: Int): Bitmap? {
         val page = pages.getOrNull(index) ?: return null
-        return rememberPageThumbnail("${page.id}:${page.strokes.size}:${page.loaded}") { pageThumbnail(index) }
+        return rememberPageThumbnail("${page.id}:${page.strokes.size}:${page.loaded}:$thumbWidthPx",
+            stale = { stalePageThumbnail(index) }) { onReady -> pageThumbnail(index, thumbWidthPx, onReady) }
     }
     BoxWithConstraints(Modifier.fillMaxHeight().windowInsetsPadding(ChromeInsets)) {
         val screen = maxWidth.value
@@ -7915,10 +7960,12 @@ private fun PageSidebar(
                     .fillMaxHeight()
                     .pointerInput(Unit) {
                         fun letGo() {
-                            if (pulledToClose(past)) latestClose() else {
-                                draft?.let { latestCommit(it) }
-                                past = 0f
-                            }
+                            // Let go well past its narrowest, it slides out from where the
+                            // finger left it, still that narrow: put back to its own width
+                            // first, it grew for a moment on the way out.
+                            if (pulledToClose(past)) { latestClose(); return }
+                            draft?.let { latestCommit(it) }
+                            past = 0f
                             draft = null
                             reach = null
                         }
@@ -8017,9 +8064,10 @@ private fun PageSidebar(
                                     onClick = { bookmarksOnly = !bookmarksOnly },
                                     label = { Text("Bookmarks") },
                                 )
-                                TextButton(onClick = { choosing = !choosing; chosen.clear() }) {
+                                TextButton(onClick = { choosing = !choosing; chosen.clear(); sweep.anchor = null }) {
                                     Text(if (choosing) "Done" else "Select")
                                 }
+                                TextButton(onClick = { choosingRange = true }) { Text("Range") }
                                 TextButton(onClick = { goingTo = true }) { Text("Go to") }
                                 ColumnsStepper(columns, onColumns)
                             }
@@ -8032,16 +8080,26 @@ private fun PageSidebar(
                                 val at = shownPages.indexOfFirst { pages.indexOf(it) == currentPage }
                                 if (at > 0) gridState.scrollToItem(at)
                             }
+                            val haptics = LocalHapticFeedback.current
+                            val order by rememberUpdatedState(shownPages.map { it.id })
                             LazyVerticalGrid(
                                 columns = GridCells.Fixed(columns.coerceIn(PAGE_GRID_COLUMNS)),
                                 state = gridState,
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.weight(1f).pageGridSelection(
+                                    sweep, gridState, haptics,
+                                    order = { order },
+                                    choosing = { choosing },
+                                    chosen = { chosen.toList() },
+                                    onChoose = { ids -> choosing = true; choose(ids) },
+                                ),
                                 contentPadding = PaddingValues(Ui.Space.m),
                                 horizontalArrangement = Arrangement.spacedBy(Ui.Space.s),
                                 verticalArrangement = Arrangement.spacedBy(Ui.Space.s),
                             ) {
                                 items(shownPages, key = { it.id }) { page ->
                                     val index = pages.indexOf(page)
+                                    DisposableEffect(page.id) { onDispose { sweep.bounds.remove(page.id) } }
+                                    Box(Modifier.onGloballyPositioned { sweep.bounds[page.id] = it.boundsInRoot() }) {
                                     PageCard(
                                         index = index,
                                         page = page,
@@ -8053,7 +8111,19 @@ private fun PageSidebar(
                                         onJump = {
                                             if (choosing) {
                                                 if (page.id in chosen) chosen.remove(page.id) else chosen.add(page.id)
+                                                sweep.anchor = page.id
                                             } else onJump(index)
+                                        },
+                                        menuOpen = menuFor == page.id,
+                                        onMenuOpenChange = { menuFor = if (it) page.id else null },
+                                        onHold = {
+                                            // TalkBack's hold: start choosing here, or reach back to the page tapped last.
+                                            val ids = shownPages.map { it.id }
+                                            val at = ids.indexOf(page.id)
+                                            val from = sweep.anchor?.takeIf { choosing }?.let(ids::indexOf)?.takeIf { it >= 0 } ?: at
+                                            choosing = true
+                                            choose(sweptSelection(ids, chosen.toSet(), from, at, adding = true))
+                                            sweep.anchor = page.id
                                         },
                                         onDelete = { onDelete(index) },
                                         onMove = { delta -> onMove(index, delta) },
@@ -8072,11 +8142,27 @@ private fun PageSidebar(
                                         onAttach = { onAttach(index) },
                                         onAttachmentsHidden = { onAttachmentsHidden(index, it) },
                                     )
+                                    }
                                 }
                             }
                             if (choosing) {
-                                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 6.dp)) {
+                                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically) {
                                     val any = chosen.isNotEmpty()
+                                    Text("${chosen.size} selected", style = MaterialTheme.typography.labelLarge,
+                                        modifier = Modifier.padding(horizontal = Ui.Space.s))
+                                    val allIds = shownPages.map { it.id }
+                                    TextButton(onClick = {
+                                        if (chosen.containsAll(allIds)) chosen.clear() else choose(allIds)
+                                    }) { Text(if (chosen.containsAll(allIds) && allIds.isNotEmpty()) "None" else "All") }
+                                    if (chosen.size == 1) TextButton(onClick = {
+                                        val id = chosen.first()
+                                        val at = shownPages.indexOfFirst { it.id == id }
+                                        scope.launch {
+                                            if (at >= 0) gridState.animateScrollToItem(at)
+                                            menuFor = id
+                                        }
+                                    }) { Text("More") }
                                     TextButton(enabled = any && chosen.size < pages.size, onClick = {
                                         onDeletePages(chosenIndices()); chosen.clear()
                                     }) { Text("Delete") }
@@ -8353,6 +8439,35 @@ internal fun PageSizeDialog(width: Float, height: Float, onDismiss: () -> Unit, 
 }
 
 /** Page number in, page index out. Shared by the page panel and the Ctrl+Alt+G shortcut. */
+@Composable
+internal fun PageRangeDialog(pageCount: Int, onDismiss: () -> Unit, onChoose: (Int, Int) -> Unit) {
+    var from by remember { mutableStateOf("1") }
+    var to by remember { mutableStateOf("$pageCount") }
+    val a = from.toIntOrNull()?.takeIf { it in 1..pageCount }
+    val b = to.toIntOrNull()?.takeIf { it in 1..pageCount }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Select pages") },
+        text = {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+                OutlinedTextField(from, { from = it.filter(Char::isDigit).take(6) }, label = { Text("From") },
+                    singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.weight(1f))
+                Text("–")
+                OutlinedTextField(to, { to = it.filter(Char::isDigit).take(6) }, label = { Text("To") },
+                    singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.weight(1f))
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { if (a != null && b != null) onChoose(a, b) }, enabled = a != null && b != null) {
+                Text("Select")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
 @Composable
 internal fun GoToPageDialog(pageCount: Int, onGo: (Int) -> Unit, onDismiss: () -> Unit) {
     var text by remember { mutableStateOf("") }
@@ -8634,20 +8749,33 @@ private fun PageCard(
     onAttach: () -> Unit = {},
     /** Puts the page's comments and practice pages away, or back. */
     onAttachmentsHidden: (Boolean) -> Unit = {},
+    /** The page's menu, opened from the panel (the selection bar's More) rather than by a hold. */
+    menuOpen: Boolean = false,
+    onMenuOpenChange: (Boolean) -> Unit = {},
+    /** What a hold does, for TalkBack: the panel's grid reads the hold itself (see PageGridSelection). */
+    onHold: () -> Unit = {},
 ) {
     var menu by remember { mutableStateOf(false) }
+    LaunchedEffect(menuOpen) { if (menuOpen) menu = true }
+    LaunchedEffect(menu) { if (!menu && menuOpen) onMenuOpenChange(false) }
     val scheme = MaterialTheme.colorScheme
     Box {
         Column(
             Modifier
                 .fillMaxWidth()
                 .clip(Ui.Shape.chip)
-                .background(if (selected) scheme.primaryContainer.copy(alpha = 0.55f) else Color.Transparent)
-                .combinedClickable(
-                    onClick = onJump,
-                    // Long press for the page menu.
-                    onLongClick = { if (!choosing) menu = true },
-                )
+                .background(when {
+                    chosen -> scheme.primary.copy(alpha = 0.22f)
+                    selected -> scheme.primaryContainer.copy(alpha = 0.55f)
+                    else -> Color.Transparent
+                })
+                // A tap only: holding a card is the grid's, so a hold can go on into
+                // a drag across the pages (see PageGridSelection).
+                .clickable(onClick = onJump)
+                .semantics {
+                    onLongClick(if (choosing) "Select pages up to here" else "Select pages") { onHold(); true }
+                    if (choosing) stateDescription = if (chosen) "Selected" else "Not selected"
+                }
                 .padding(Ui.Space.xs),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(Ui.Space.hair),

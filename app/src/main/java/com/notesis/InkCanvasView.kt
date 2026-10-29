@@ -2901,11 +2901,64 @@ class InkCanvasView @JvmOverloads constructor(
     }
     private val thumbnailPaint = Paint(Paint.FILTER_BITMAP_FLAG)
 
-    /** Draws thumbnails off the UI thread: a dense page's ink took long enough to stall a pinch. */
-    private val thumbnailWorker = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
-        Thread(runnable, "notesis-thumbnails").apply { priority = Thread.MIN_PRIORITY }
-    }
+    /**
+     * Draws thumbnails off the UI thread: a dense page's ink took long enough to
+     * stall a pinch. Newest first: after a fling through the page panel the
+     * cards now on screen are drawn before the ones it passed. Background
+     * priority rather than the lowest, at which the panel waited on every
+     * other thread in the app.
+     */
+    private val thumbnailWorker = java.util.concurrent.ThreadPoolExecutor(
+        1, 1, 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
+        object : java.util.concurrent.LinkedBlockingDeque<Runnable>() {
+            override fun offer(e: Runnable): Boolean = offerFirst(e)
+        },
+    ) { runnable -> Thread(runnable, "notesis-thumbnails").apply { priority = THUMBNAIL_THREAD_PRIORITY } }
     private val thumbnailsPending = HashSet<String>()
+    /** Who is waiting on each picture being drawn, by key; main thread only. */
+    private val thumbnailWaiters = HashMap<String, MutableList<() -> Unit>>()
+    /** Pictures someone still waits on; the worker skips one nobody wants any more. */
+    private val thumbnailsWanted = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    /** The last picture drawn of each page, by page id: shown while a newer one is drawn. */
+    private val lastThumbnailKey = HashMap<String, String>()
+
+    /** A thumbnail asked for with [requestPageThumbnail]: the picture if it is ready, and a way to stop waiting. */
+    class ThumbnailRequest(val picture: Bitmap?, val cancel: () -> Unit)
+
+    /**
+     * [pageThumbnail] for a list that shows many: [onReady] is called on the
+     * main thread once the picture is drawn, instead of being asked again and
+     * again; [ThumbnailRequest.cancel] when the card leaves, so a page scrolled
+     * past is not drawn at all.
+     */
+    fun requestPageThumbnail(index: Int, widthPx: Int, renderPdf: Boolean, onReady: () -> Unit): ThumbnailRequest {
+        val key = thumbnailKey(index, widthPx) ?: return ThumbnailRequest(null) {}
+        // Wanted before it is queued, so the worker cannot pass it over in between.
+        thumbnailsWanted += key
+        val ready = pageThumbnail(index, widthPx, renderPdf, skipWhenUnwanted = true)
+        if (ready != null || key !in thumbnailsPending) {
+            if (thumbnailWaiters[key].isNullOrEmpty()) thumbnailsWanted -= key
+            return ThumbnailRequest(ready) {}
+        }
+        thumbnailWaiters.getOrPut(key) { mutableListOf() } += onReady
+        return ThumbnailRequest(null) {
+            thumbnailWaiters[key]?.let { waiting ->
+                waiting.remove(onReady)
+                if (waiting.isEmpty()) { thumbnailWaiters.remove(key); thumbnailsWanted -= key }
+            }
+        }
+    }
+
+    /** The last picture drawn of page [index], at any width or count of strokes; null if none is kept. */
+    fun stalePageThumbnail(index: Int): Bitmap? {
+        val page = document.pages.getOrNull(index) ?: return null
+        return lastThumbnailKey[page.id]?.let { thumbnailCache.get(it) }?.takeIf { !it.isRecycled }
+    }
+
+    private fun thumbnailKey(index: Int, widthPx: Int): String? {
+        val page = document.pages.getOrNull(index) ?: return null
+        return "${page.id}:${page.strokes.size}:${page.loaded}:$widthPx"
+    }
 
     /**
      * A small picture of page [index] - its paper or PDF and its ink - [widthPx]
@@ -2913,7 +2966,7 @@ class InkCanvasView @JvmOverloads constructor(
      * drawn, which happens on a worker; ask again shortly. Kept per page,
      * stroke count and size, so a page drawn on is pictured afresh.
      */
-    fun pageThumbnail(index: Int, widthPx: Int, renderPdf: Boolean = false): Bitmap? {
+    fun pageThumbnail(index: Int, widthPx: Int, renderPdf: Boolean = false, skipWhenUnwanted: Boolean = false): Bitmap? {
         val page = document.pages.getOrNull(index) ?: return null
         if (page.width <= 0f || page.height <= 0f || widthPx <= 0) return null
         val key = "${page.id}:${page.strokes.size}:${page.loaded}:$widthPx"
@@ -2938,8 +2991,15 @@ class InkCanvasView @JvmOverloads constructor(
         val pageWidth = page.width
         val pageHeight = page.height
         thumbnailsPending += key
+        if (skipWhenUnwanted) skippable += key
+        val pageId = page.id
         val accepted = runCatching {
             thumbnailWorker.execute {
+                // Asked for by a card that has since left: nobody to show it to.
+                if (key in skippable && key !in thumbnailsWanted) {
+                    post { thumbnailsPending -= key; skippable -= key }
+                    return@execute
+                }
                 val bitmap = runCatching {
                     val height = (widthPx * pageHeight / pageWidth).toInt().coerceAtLeast(1)
                     val ink = strokes ?: loader?.let { read -> runCatching { read(page, coarse) }.getOrNull() }.orEmpty()
@@ -2960,22 +3020,34 @@ class InkCanvasView @JvmOverloads constructor(
                         }
                     }
                     // Through the GPU, so pencil and the particle brushes show: see [renderOnGpu].
-                    renderOnGpu(widthPx, height, paint)
+                    val drawn = renderOnGpu(widthPx, height, paint)
                         ?: Bitmap.createBitmap(widthPx, height, Bitmap.Config.ARGB_8888).also {
                             val spent = ArrayList<Bitmap>()
                             paint(Canvas(it), spent)
                             spent.forEach(Bitmap::recycle)
                         }
+                    // On white paper, so nothing is lost without alpha; half the memory,
+                    // and twice the pages the cache holds.
+                    drawn.copy(Bitmap.Config.RGB_565, false)?.also { drawn.recycle() } ?: drawn
                 }.getOrNull()
                 post {
                     thumbnailsPending -= key
-                    if (bitmap != null) thumbnailCache.put(key, bitmap)
+                    skippable -= key
+                    thumbnailsWanted -= key
+                    if (bitmap != null) {
+                        thumbnailCache.put(key, bitmap)
+                        lastThumbnailKey[pageId] = key
+                    }
+                    thumbnailWaiters.remove(key)?.forEach { runCatching { it() } }
                 }
             }
         }.isSuccess
-        if (!accepted) thumbnailsPending -= key
+        if (!accepted) { thumbnailsPending -= key; skippable -= key }
         return null
     }
+
+    /** Keys whose drawing is skipped if no card waits on them by then; main thread writes, worker reads. */
+    private val skippable = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     /** The part of page [index] on screen, in page units clamped to the page, or null if none of it is. */
     fun visiblePartOf(index: Int): RectF? {
@@ -10082,6 +10154,8 @@ class InkCanvasView @JvmOverloads constructor(
         private const val MAX_TURN_POINTERS = 10
         private const val PI_F = Math.PI.toFloat()
         private const val THUMBNAIL_CACHE_BYTES = 24 * 1024 * 1024
+        /** Java priority 4: Android's background priority, below the UI but not starved by it. */
+        private const val THUMBNAIL_THREAD_PRIORITY = 4
         /** The zoom a page's ink is read at for its picture alone: far coarser than any page on screen. */
         private const val THUMBNAIL_TESSELLATION_SCALE = 0.25f
         const val GESTURE_TRAIL_COLOR = 0xFF3B7DDD.toInt()

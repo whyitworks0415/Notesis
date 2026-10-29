@@ -186,10 +186,11 @@ internal fun SettingsSidebarFrame(
                             fun letGo() {
                                 // Pulled far enough past its narrowest, it goes; it slides
                                 // the rest of the way out from where the finger left it.
-                                if (pulledToClose(past)) latestClose() else {
-                                    draft?.let { latestCommit(it) }
-                                    past = 0f
-                                }
+                                // Kept at the width it was pulled to: put back to its own
+                                // width first, it grew for a moment on the way out.
+                                if (pulledToClose(past)) { latestClose(); return }
+                                draft?.let { latestCommit(it) }
+                                past = 0f
                                 draft = null
                                 reach = null
                             }

@@ -25,7 +25,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -45,7 +45,6 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.roundToInt
@@ -88,29 +87,36 @@ internal fun maskPlace(centerX: Float, centerY: Float, width: Float, height: Flo
 }
 
 /**
- * A page's picture from [ask], which draws it on a worker and answers null
- * until it has: asked again a little later until it comes, for as long as
- * [key] stays the same. Keyed on what the picture shows, so a page written
- * on is pictured afresh.
+ * A page's picture from [ask], which draws it on a worker: it answers the
+ * picture if it has it, and otherwise calls back when it is drawn. Keyed on
+ * what the picture shows, so a page written on is pictured afresh; until the
+ * new picture comes, the one before it ([stale], or the last one shown here)
+ * stays rather than the card going blank. Leaving stops the wait, so a page
+ * scrolled past is not drawn.
  */
 @Composable
-internal fun rememberPageThumbnail(key: Any, ask: () -> Bitmap?): Bitmap? {
-    var picture by remember(key) { mutableStateOf(ask()) }
-    LaunchedEffect(key) {
-        if (picture != null) return@LaunchedEffect
-        repeat(PAGE_THUMB_ATTEMPTS) {
-            delay(PAGE_THUMB_RETRY_MS)
-            ask()?.let {
-                picture = it
-                return@LaunchedEffect
-            }
+internal fun rememberPageThumbnail(
+    key: Any,
+    stale: () -> Bitmap?,
+    ask: (onReady: () -> Unit) -> InkCanvasView.ThumbnailRequest?,
+): Bitmap? {
+    var picture by remember { mutableStateOf(stale()) }
+    DisposableEffect(key) {
+        var live = true
+        var cancel: () -> Unit = {}
+        fun fetch() {
+            val request = ask { if (live) fetch() } ?: return
+            cancel = request.cancel
+            request.picture?.let { picture = it }
+        }
+        fetch()
+        onDispose {
+            live = false
+            cancel()
         }
     }
     return picture
 }
-
-private const val PAGE_THUMB_ATTEMPTS = 60
-private const val PAGE_THUMB_RETRY_MS = 120L
 
 /**
  * A picture file read off the main thread, scaled down on the way in to about
@@ -168,7 +174,10 @@ internal fun PagePicture(picture: Bitmap?, aspect: Float, number: Int, modifier:
         contentAlignment = Alignment.Center,
     ) {
         if (picture != null && !picture.isRecycled) {
+            // Drawn at the card's own width (see pageThumbnailWidthPx); the last few
+            // pixels of scaling are filtered rather than sampled.
             Image(picture.asImageBitmap(), contentDescription = null, contentScale = ContentScale.FillBounds,
+                filterQuality = androidx.compose.ui.graphics.FilterQuality.High,
                 modifier = Modifier.fillMaxSize())
         } else {
             Text("$number", style = MaterialTheme.typography.titleMedium, color = Color(0xFF9AA0A6))
