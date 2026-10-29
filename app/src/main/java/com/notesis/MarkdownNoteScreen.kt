@@ -143,7 +143,12 @@ private fun headingSize(level: Int): TextUnit = when (level) {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun MarkdownNoteScreen(source: MarkdownSource, onBack: () -> Unit) {
+internal fun MarkdownNoteScreen(
+    source: MarkdownSource,
+    onBack: () -> Unit,
+    /** Lays the note's text out as PDF pages; null hides the action. */
+    onPdf: ((String) -> Unit)? = null,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var value by remember(source.key) { mutableStateOf(TextFieldValue("")) }
@@ -231,6 +236,7 @@ internal fun MarkdownNoteScreen(source: MarkdownSource, onBack: () -> Unit) {
                             showLinks = true
                             scope.launch { backlinks = runCatching { source.backlinks() }.getOrDefault(emptyList()) }
                         }, enabled = loaded) { Text("Links") }
+                        if (onPdf != null) TextButton(onClick = { saveNow(); onPdf(value.text) }, enabled = loaded) { Text("PDF") }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                 )

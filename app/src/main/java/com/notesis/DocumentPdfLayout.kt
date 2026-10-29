@@ -171,13 +171,17 @@ internal fun PdfLayoutBar(
     busy: Boolean,
     onPreview: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Undoes every page break and pull made by hand; null where the document has none to undo. */
+    onReset: (() -> Unit)? = null,
 ) {
     Surface(modifier, tonalElevation = 3.dp, shadowElevation = 6.dp) {
         Column(Modifier.fillMaxWidth().padding(horizontal = Ui.Space.m, vertical = Ui.Space.s),
             verticalArrangement = Arrangement.spacedBy(Ui.Space.xs)) {
             Text(
                 when (kind) {
-                    LayoutKind.FLOW -> "Tap a paragraph to start it on a new page; tap it again to undo."
+                    LayoutKind.FLOW -> if (onReset != null) "Tap a block to start a new page there. Tap a page's first block to pull it " +
+                        "back onto the page before, which shrinks to fit it. Tap again to undo."
+                    else "Tap a paragraph to start it on a new page; tap it again to undo."
                     LayoutKind.PAGES -> "Each page keeps its own size and layout."
                     LayoutKind.SHEET -> "The sheet on show is shrunk to fit the page's width; landscape gives it more room."
                     LayoutKind.NONE -> "Laying out the document…"
@@ -187,6 +191,8 @@ internal fun PdfLayoutBar(
             )
             PdfOptionControls(kind, options, onOptions)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                if (onReset != null) TextButton(onClick = onReset, enabled = !busy && kind != LayoutKind.NONE) { Text("Reset pages") }
+                Box(Modifier.weight(1f))
                 if (busy) {
                     CircularProgressIndicator(Modifier.padding(end = Ui.Space.s).size(20.dp), strokeWidth = 2.dp)
                     Text("Preparing pages…", style = MaterialTheme.typography.labelLarge)
@@ -232,7 +238,7 @@ internal fun PdfOptionControls(kind: LayoutKind, options: PdfLayoutOptions, onOp
  * back to change the layout, or on to make the note.
  */
 @Composable
-internal fun PdfPreviewDialog(file: File, onAdjust: () -> Unit, onCreate: () -> Unit) {
+internal fun PdfPreviewDialog(file: File, onAdjust: () -> Unit, onCreate: () -> Unit, onSave: (() -> Unit)? = null) {
     val pages = remember(file) { mutableStateListOf<Bitmap>() }
     var count by remember(file) { mutableStateOf<Int?>(null) }
     val widthPx = with(LocalDensity.current) { (LocalConfiguration.current.screenWidthDp.dp - 48.dp).toPx() }
@@ -272,6 +278,7 @@ internal fun PdfPreviewDialog(file: File, onAdjust: () -> Unit, onCreate: () -> 
                         style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f),
                     )
                     TextButton(onClick = onAdjust) { Text("Adjust") }
+                    if (onSave != null) TextButton(onClick = onSave, enabled = count != 0) { Text("Save PDF") }
                     Button(onClick = onCreate, enabled = count != 0) { Text("Create note") }
                 }
                 LazyColumn(

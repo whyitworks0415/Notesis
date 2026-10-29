@@ -32,7 +32,7 @@ internal fun DocumentLayoutView(
     name: String,
     bytes: ByteArray,
     modifier: Modifier = Modifier,
-    /** Laying the document out for a PDF: a tap on a paragraph starts it on a new page (see notesis-print.js). */
+    /** Laying the document out for a PDF: a tap on a paragraph starts it on a new page (see notesis-print.js, md-print.js). */
     arrange: Boolean = false,
     /** The view while it is up, then null: the PDF is printed from it. */
     onWebView: ((WebView?) -> Unit)? = null,
@@ -100,7 +100,9 @@ internal fun DocumentLayoutView(
                     }
                 }
                 val extension = name.substringAfterLast('.').lowercase(Locale.ROOT)
-                loadUrl("$DOCUMENT_ORIGIN/viewer/index.html?format=$extension" + if (arrange) "&arrange=1" else "")
+                // Markdown is laid out for a PDF on real pages, styled as GitHub shows it (see md-print.js).
+                if (arrange && extension in setOf("md", "markdown")) loadUrl("$DOCUMENT_ORIGIN/viewer/md-print.html?arrange=1")
+                else loadUrl("$DOCUMENT_ORIGIN/viewer/index.html?format=$extension" + if (arrange) "&arrange=1" else "")
                 onWebView?.invoke(this)
             }
         },

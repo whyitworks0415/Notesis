@@ -430,6 +430,7 @@ class MainActivity : ComponentActivity() {
                                     VaultMarkdownSource(vault, file) { next -> vaultBack += file; vaultFile = next }
                                 },
                                 onBack = { vaultFile = vaultBack.removeLastOrNull() },
+                                onPdf = { text -> pickedDocument = markdownPdfRequest(this@MainActivity, file.name, text) },
                             )
                         }
                     } else {
@@ -466,6 +467,7 @@ class MainActivity : ComponentActivity() {
                                 val previous = markdownBack.removeLastOrNull()
                                 if (previous != null) requestOpen(previous) else closeNote(note)
                             },
+                            onPdf = { text -> pickedDocument = markdownPdfRequest(this@MainActivity, note.title, text) },
                         )
                     }
                 } else {

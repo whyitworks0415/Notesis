@@ -1,0 +1,49 @@
+/* Markdown laid on pages for a PDF. The look of the text is GitHub's
+   (github-markdown-css); this is the paper round it and the edit marks. */
+html, body { margin: 0; background: #e8ecf1; }
+body { font-family: -apple-system, 'Segoe UI', 'Noto Sans KR', 'Noto Sans CJK KR', Arial, sans-serif; }
+#status { margin: 0; padding: 12px 16px; font: 13px Arial, sans-serif; color: #44515f; background: #fff; border-bottom: 1px solid #d1d8e0; }
+#status:empty { display: none; }
+#measure { position: absolute; left: -100000px; top: 0; visibility: hidden; }
+#pages { padding: 16px 0 40px; transform-origin: top left; }
+.page {
+  position: relative; box-sizing: border-box; background: #fff; margin: 0 auto 18px;
+  box-shadow: 0 3px 18px #25354b33; overflow: hidden;
+}
+.page-body { box-sizing: border-box; transform-origin: top left; }
+.page-body > :first-child { margin-top: 0 !important; }
+.page-body > :last-child { margin-bottom: 0 !important; }
+.markdown-body { background: transparent !important; color: #1f2328; }
+.markdown-body .cont-before { margin-top: 0 !important; }
+.markdown-body .cont-after { margin-bottom: 0 !important; }
+.page-number { position: absolute; left: 0; right: 0; text-align: center; font: 11px Arial, sans-serif; color: #8a94a3; }
+/* Obsidian's own marks. */
+.markdown-body mark { background: #fff3a3; color: inherit; padding: 0 2px; border-radius: 2px; }
+.markdown-body .wikilink { color: #0969da; }
+.markdown-body .embed { color: #57606a; font-style: italic; }
+.markdown-body .tag { color: #0969da; background: #ddf4ff; border-radius: 10px; padding: 0 7px; font-size: .9em; }
+.markdown-body .callout { border-left: 4px solid var(--callout, #0969da); background: color-mix(in srgb, var(--callout, #0969da) 9%, white);
+  border-radius: 6px; padding: 10px 14px; margin: 0 0 16px; }
+.markdown-body .callout-title { font-weight: 600; color: var(--callout, #0969da); margin-bottom: 4px; }
+.markdown-body .callout > :last-child { margin-bottom: 0; }
+.markdown-body .katex-display { margin: .6em 0; overflow-x: auto; overflow-y: hidden; }
+/* Editing the pages: where a page was made to start, and what was pulled back onto a page.
+   The marks float, taking no room, so the page laid out here is the page printed. */
+.arrange .page-body > * { cursor: pointer; }
+.arrange .forced, .arrange .pulled { position: relative; }
+.arrange .forced::before, .arrange .pulled::before {
+  position: absolute; left: 0; right: 0; top: -15px; height: 0; padding-top: 1px;
+  font: 600 11px Arial, sans-serif; white-space: nowrap; pointer-events: none;
+}
+.arrange .forced::before { content: 'New page from here'; color: #2764ce; border-top: 2px dashed #2764ce; }
+.arrange .pulled::before { content: 'Pulled back onto this page'; color: #b25e00; border-top: 2px dashed #b25e00; }
+.page-note { position: absolute; top: 4px; right: 8px; font: 600 11px Arial, sans-serif; color: #b25e00; background: #fff5e6;
+  padding: 2px 6px; border-radius: 4px; }
+@media print {
+  html, body { background: #fff !important; }
+  #status, .page-note { display: none !important; }
+  #pages { padding: 0 !important; transform: none !important; zoom: 1 !important; width: auto !important; }
+  .page { margin: 0 !important; box-shadow: none !important; break-after: page; }
+  .page:last-child { break-after: auto; }
+  .forced::before, .pulled::before { content: none !important; display: none !important; }
+}

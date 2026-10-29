@@ -59,7 +59,8 @@ import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
 import java.util.Locale
 
-internal data class ViewerRequest(val uri: Uri, val name: String)
+/** A document to show; [layOut] opens it laid out for a PDF straight away. */
+internal data class ViewerRequest(val uri: Uri, val name: String, val layOut: Boolean = false)
 
 internal val SUPPORTED_DOCUMENT_MIME_TYPES = arrayOf(
     "text/plain",
@@ -109,6 +110,18 @@ internal fun viewerRequest(context: Context, uri: Uri): ViewerRequest {
     return ViewerRequest(uri, name)
 }
 
+/**
+ * A Markdown note's text, as a file of its own in the cache, opened laid out
+ * for a PDF. One file per title, written over each time.
+ */
+internal fun markdownPdfRequest(context: Context, title: String, text: String): ViewerRequest {
+    val dir = java.io.File(context.cacheDir, "markdown-pdf").apply { mkdirs() }
+    val name = title.ifBlank { "Note" }.replace(Regex("[\\\\/:*?\"<>|]"), " ").trim().take(80).ifBlank { "Note" }
+    val file = java.io.File(dir, "$name.md")
+    file.writeText(text)
+    return ViewerRequest(Uri.fromFile(file), file.name, layOut = true)
+}
+
 private sealed interface ViewerLoadState {
     data object Loading : ViewerLoadState
     data class Ready(val document: PreviewDocument) : ViewerLoadState
@@ -137,7 +150,7 @@ internal fun ReadOnlyDocumentScreen(
     val hasLayout = supportsDocumentLayout(request.name)
     // Laying the document out for a PDF note: as the document view shows it,
     // with the paper, text size and page breaks set here, then a preview.
-    var laying by remember(request.uri) { mutableStateOf(false) }
+    var laying by remember(request.uri) { mutableStateOf(request.layOut && hasLayout) }
     var pdfOptions by remember { mutableStateOf(PdfLayoutOptions()) }
     var layoutView by remember { mutableStateOf<android.webkit.WebView?>(null) }
     var layoutKind by remember(request.uri) { mutableStateOf(LayoutKind.NONE) }
@@ -146,7 +159,9 @@ internal fun ReadOnlyDocumentScreen(
     // A Word file has no document view: its options are asked in a dialog.
     var askingOptions by remember { mutableStateOf(false) }
     val title = request.name.substringBeforeLast('.')
-    BackHandler(onBack = { if (laying) laying = false else onBack() })
+    // Opened to lay out straight away: leaving the layout leaves the document too.
+    fun leaveLayout() { if (request.layOut) onBack() else laying = false }
+    BackHandler(onBack = { if (laying) leaveLayout() else onBack() })
     LaunchedEffect(layoutView, laying) {
         val view = layoutView ?: return@LaunchedEffect
         if (!laying) return@LaunchedEffect
@@ -174,6 +189,30 @@ internal fun ReadOnlyDocumentScreen(
             }
         }
     }
+    // The previewed PDF kept as a file wherever the person picks.
+    var saving by remember { mutableStateOf<java.io.File?>(null) }
+    val savePdf = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/pdf"),
+    ) { target ->
+        val file = saving ?: return@rememberLauncherForActivityResult
+        saving = null
+        if (target == null) return@rememberLauncherForActivityResult
+        importScope.launch {
+            val saved = withContext(Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openOutputStream(target, "wt")?.use { out -> file.inputStream().use { it.copyTo(out) } }
+                        ?: error("Can't write the file")
+                }.isSuccess
+            }
+            android.widget.Toast.makeText(context, if (saved) "PDF saved" else "Couldn't save the PDF",
+                android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+    /** The pages as the document gives them: every break and pull made here undone. */
+    fun resetPages() {
+        val view = layoutView ?: return
+        importScope.launch { view.evalJs("window.notesisLayout && notesisLayout.reset && notesisLayout.reset()") }
+    }
     fun previewText(options: PdfLayoutOptions) {
         importScope.launch {
             val pdf = withContext(Dispatchers.IO) {
@@ -194,6 +233,10 @@ internal fun ReadOnlyDocumentScreen(
         PdfPreviewDialog(
             file = file,
             onAdjust = { preview = null; file.delete() },
+            onSave = {
+                saving = file
+                savePdf.launch("$title.pdf")
+            },
             onCreate = {
                 preview = null
                 laying = false
@@ -243,7 +286,7 @@ internal fun ReadOnlyDocumentScreen(
             SkinSurface(flush = true) {
                 TopAppBar(
                     navigationIcon = {
-                        IconButton(onClick = { if (laying) laying = false else onBack() }) {
+                        IconButton(onClick = { if (laying) leaveLayout() else onBack() }) {
                             Icon(Reicons.ArrowBack, contentDescription = if (laying) "Back to the document" else "Close document")
                         }
                     },
@@ -267,7 +310,7 @@ internal fun ReadOnlyDocumentScreen(
                     },
                     actions = {
                         if (laying) {
-                            TextButton(onClick = { laying = false }) { Text("Cancel") }
+                            TextButton(onClick = ::leaveLayout) { Text("Cancel") }
                             return@TopAppBar
                         }
                         if (onImport != null) TextButton(onClick = {
@@ -322,6 +365,7 @@ internal fun ReadOnlyDocumentScreen(
                         arrange = true, onWebView = { layoutView = it },
                     )
                     PdfLayoutBar(layoutKind, pdfOptions, { pdfOptions = it }, busy = printing, onPreview = ::previewLayout,
+                        onReset = if (isMarkdownName(request.name)) ::resetPages else null,
                         modifier = Modifier.fillMaxWidth())
                 }
             } else DocumentLayoutView(
