@@ -3,6 +3,7 @@ package com.notesis
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset

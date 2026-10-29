@@ -28,7 +28,15 @@ import java.util.Locale
 /** Offline renderer. No JavaScript bridge, file access, network access or source mutation. */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-internal fun DocumentLayoutView(name: String, bytes: ByteArray, modifier: Modifier = Modifier) {
+internal fun DocumentLayoutView(
+    name: String,
+    bytes: ByteArray,
+    modifier: Modifier = Modifier,
+    /** Laying the document out for a PDF: a tap on a paragraph starts it on a new page (see notesis-print.js). */
+    arrange: Boolean = false,
+    /** The view while it is up, then null: the PDF is printed from it. */
+    onWebView: ((WebView?) -> Unit)? = null,
+) {
     var processFailed by remember(bytes) { mutableStateOf(false) }
     if (processFailed) {
         Box(modifier.padding(24.dp), contentAlignment = Alignment.Center) {
@@ -36,7 +44,7 @@ internal fun DocumentLayoutView(name: String, bytes: ByteArray, modifier: Modifi
         }
         return
     }
-    key(bytes) {
+    key(bytes, arrange) {
       AndroidView(
         modifier = modifier,
         factory = { context ->
@@ -92,10 +100,12 @@ internal fun DocumentLayoutView(name: String, bytes: ByteArray, modifier: Modifi
                     }
                 }
                 val extension = name.substringAfterLast('.').lowercase(Locale.ROOT)
-                loadUrl("$DOCUMENT_ORIGIN/viewer/index.html?format=$extension")
+                loadUrl("$DOCUMENT_ORIGIN/viewer/index.html?format=$extension" + if (arrange) "&arrange=1" else "")
+                onWebView?.invoke(this)
             }
         },
         onRelease = { view ->
+            onWebView?.invoke(null)
             view.stopLoading()
             view.removeAllViews()
             view.destroy()

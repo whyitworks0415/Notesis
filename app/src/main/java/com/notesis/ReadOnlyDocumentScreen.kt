@@ -135,7 +135,84 @@ internal fun ReadOnlyDocumentScreen(
     var sectionIndex by remember(request.uri) { mutableIntStateOf(0) }
     var textOnly by remember(request.uri) { mutableStateOf(false) }
     val hasLayout = supportsDocumentLayout(request.name)
-    BackHandler(onBack = onBack)
+    // Laying the document out for a PDF note: as the document view shows it,
+    // with the paper, text size and page breaks set here, then a preview.
+    var laying by remember(request.uri) { mutableStateOf(false) }
+    var pdfOptions by remember { mutableStateOf(PdfLayoutOptions()) }
+    var layoutView by remember { mutableStateOf<android.webkit.WebView?>(null) }
+    var layoutKind by remember(request.uri) { mutableStateOf(LayoutKind.NONE) }
+    var printing by remember { mutableStateOf(false) }
+    var preview by remember { mutableStateOf<java.io.File?>(null) }
+    // A Word file has no document view: its options are asked in a dialog.
+    var askingOptions by remember { mutableStateOf(false) }
+    val title = request.name.substringBeforeLast('.')
+    BackHandler(onBack = { if (laying) laying = false else onBack() })
+    LaunchedEffect(layoutView, laying) {
+        val view = layoutView ?: return@LaunchedEffect
+        if (!laying) return@LaunchedEffect
+        layoutKind = LayoutKind.NONE
+        while (layoutKind == LayoutKind.NONE) {
+            layoutKind = layoutKindOf(view.evalJs("window.notesisLayout ? notesisLayout.kind() : 'none'"))
+            if (layoutKind == LayoutKind.NONE) kotlinx.coroutines.delay(300)
+        }
+    }
+    LaunchedEffect(layoutView, layoutKind, pdfOptions) {
+        val view = layoutView ?: return@LaunchedEffect
+        if (laying && layoutKind != LayoutKind.NONE) view.evalJs("notesisLayout.set(${pdfOptions.toJson()})")
+    }
+    fun previewLayout() {
+        val view = layoutView ?: return
+        importScope.launch {
+            printing = true
+            val result = printLayoutToPdf(view, title, context.cacheDir)
+            printing = false
+            when (result) {
+                is LayoutPrint.Written -> preview = result.file
+                LayoutPrint.HandedToSystem -> android.widget.Toast.makeText(context,
+                    "Save it as a PDF from the print screen, then open that PDF in Notesis", android.widget.Toast.LENGTH_LONG).show()
+                LayoutPrint.Failed -> android.widget.Toast.makeText(context, "Couldn't make the PDF", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+    fun previewText(options: PdfLayoutOptions) {
+        importScope.launch {
+            val pdf = withContext(Dispatchers.IO) {
+                runCatching {
+                    val bytes = context.contentResolver.openInputStream(request.uri)?.use(::readDocumentBytes)
+                        ?: error("Can't open the file.")
+                    val parsed = OfficeDocumentParser.parse(request.name, bytes)
+                    java.io.File.createTempFile("converted", ".pdf", context.cacheDir).also { file ->
+                        file.outputStream().use { writeDocumentPdf(parsed, it, options) }
+                    }
+                }.getOrNull()
+            }
+            if (pdf != null) preview = pdf
+            else android.widget.Toast.makeText(context, "Couldn't convert to PDF", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+    preview?.let { file ->
+        PdfPreviewDialog(
+            file = file,
+            onAdjust = { preview = null; file.delete() },
+            onCreate = {
+                preview = null
+                laying = false
+                onImportPdf?.invoke(title, file)
+            },
+        )
+    }
+    if (askingOptions) {
+        var options by remember { mutableStateOf(pdfOptions) }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { askingOptions = false },
+            title = { Text("PDF layout") },
+            text = { PdfOptionControls(LayoutKind.FLOW, options) { options = it } },
+            confirmButton = {
+                TextButton(onClick = { askingOptions = false; pdfOptions = options; previewText(options) }) { Text("Preview") }
+            },
+            dismissButton = { TextButton(onClick = { askingOptions = false }) { Text("Cancel") } },
+        )
+    }
 
     LaunchedEffect(request.uri, textOnly) {
         state = ViewerLoadState.Loading
@@ -166,8 +243,8 @@ internal fun ReadOnlyDocumentScreen(
             SkinSurface(flush = true) {
                 TopAppBar(
                     navigationIcon = {
-                        IconButton(onClick = onBack) {
-                            Icon(Reicons.ArrowBack, contentDescription = "Close document")
+                        IconButton(onClick = { if (laying) laying = false else onBack() }) {
+                            Icon(Reicons.ArrowBack, contentDescription = if (laying) "Back to the document" else "Close document")
                         }
                     },
                     title = {
@@ -179,7 +256,8 @@ internal fun ReadOnlyDocumentScreen(
                                 style = MaterialTheme.typography.titleMedium,
                             )
                             Text(
-                                if (hasLayout) {
+                                if (laying) "PDF layout"
+                                else if (hasLayout) {
                                     if (textOnly) "Text view · Read-only" else "Document view · Read-only"
                                 } else document?.let { "${it.kind.label} · Read-only" } ?: "Read-only",
                                 style = MaterialTheme.typography.labelSmall,
@@ -188,6 +266,10 @@ internal fun ReadOnlyDocumentScreen(
                         }
                     },
                     actions = {
+                        if (laying) {
+                            TextButton(onClick = { laying = false }) { Text("Cancel") }
+                            return@TopAppBar
+                        }
                         if (onImport != null) TextButton(onClick = {
                             importScope.launch {
                                 val markdown = withContext(Dispatchers.IO) {
@@ -202,20 +284,11 @@ internal fun ReadOnlyDocumentScreen(
                             }
                         }) { Text("Import as note") }
                         if (onImportPdf != null) TextButton(onClick = {
-                            importScope.launch {
-                                val pdf = withContext(Dispatchers.IO) {
-                                    runCatching {
-                                        val bytes = context.contentResolver.openInputStream(request.uri)?.use(::readDocumentBytes)
-                                            ?: error("Can't open the file.")
-                                        val parsed = OfficeDocumentParser.parse(request.name, bytes)
-                                        java.io.File.createTempFile("converted", ".pdf", context.cacheDir).also { file ->
-                                            file.outputStream().use { writeDocumentPdf(parsed, it) }
-                                        }
-                                    }.getOrNull()
-                                }
-                                if (pdf != null) onImportPdf(request.name.substringBeforeLast('.'), pdf)
-                                else android.widget.Toast.makeText(context, "Couldn't convert to PDF", android.widget.Toast.LENGTH_SHORT).show()
-                            }
+                            // Laid out as the document view shows it, where there is one.
+                            if (hasLayout) {
+                                textOnly = false
+                                laying = true
+                            } else askingOptions = true
                         }) { Text("Convert to PDF") }
                         if (hasLayout) {
                             TextButton(onClick = { textOnly = !textOnly }) {
@@ -242,7 +315,16 @@ internal fun ReadOnlyDocumentScreen(
         when (val current = state) {
             ViewerLoadState.Loading -> LoadingDocument(Modifier.padding(padding))
             is ViewerLoadState.Failed -> FailedDocument(current.message, Modifier.padding(padding))
-            is ViewerLoadState.Layout -> DocumentLayoutView(
+            is ViewerLoadState.Layout -> if (laying) {
+                Column(Modifier.padding(padding).fillMaxSize()) {
+                    DocumentLayoutView(
+                        request.name, current.bytes, Modifier.weight(1f).fillMaxWidth(),
+                        arrange = true, onWebView = { layoutView = it },
+                    )
+                    PdfLayoutBar(layoutKind, pdfOptions, { pdfOptions = it }, busy = printing, onPreview = ::previewLayout,
+                        modifier = Modifier.fillMaxWidth())
+                }
+            } else DocumentLayoutView(
                 request.name, current.bytes, Modifier.padding(padding).fillMaxSize(),
             )
             is ViewerLoadState.Ready -> {

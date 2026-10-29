@@ -11,15 +11,18 @@ import java.io.OutputStream
 
 /**
  * A document opened from a file - text, Markdown, Word, PowerPoint, Excel,
- * HWP - set as A4 pages of a PDF, to be written on like any imported PDF.
+ * HWP - set as pages of a PDF ([options]: paper, turn, text size, margins),
+ * to be written on like any imported PDF. Used where the document view
+ * cannot lay the file out itself (Word); the rest print from that view, as
+ * they look there (see printLayoutToPdf).
  * Its text as the parser read it, not its original layout: headings, body,
  * list items, code and tables, each section starting a new page when the
  * document has several (a slide, a sheet), the rest flowing on.
  */
-internal fun writeDocumentPdf(document: PreviewDocument, out: OutputStream) {
+internal fun writeDocumentPdf(document: PreviewDocument, out: OutputStream, options: PdfLayoutOptions = PdfLayoutOptions()) {
     val pdf = PdfDocument()
     try {
-        DocumentPdfWriter(pdf).apply {
+        DocumentPdfWriter(pdf, options).apply {
             title(document.title.substringBeforeLast('.'))
             document.sections.forEachIndexed { index, section ->
                 if (index > 0 && document.sections.size > 1) newPage()
@@ -38,7 +41,19 @@ internal fun writeDocumentPdf(document: PreviewDocument, out: OutputStream) {
 }
 
 /** Lays text down the page, turning to a new one when the next part does not fit. */
-private class DocumentPdfWriter(private val pdf: PdfDocument) {
+private class DocumentPdfWriter(private val pdf: PdfDocument, options: PdfLayoutOptions) {
+    // The paper and its turn, in points; the margins and the type as asked.
+    private val PAGE_W = (if (options.landscape) options.paper.heightMm else options.paper.widthMm) * PT_PER_MM
+    private val PAGE_H = (if (options.landscape) options.paper.widthMm else options.paper.heightMm) * PT_PER_MM
+    private val MARGIN = options.margin.mm * PT_PER_MM
+    private val scale = options.scale
+    private val BODY_PT = BASE_BODY_PT * scale
+    private val TITLE_PT = BASE_TITLE_PT * scale
+    private val HEADING_PT = BASE_HEADING_PT * scale
+    private val CELL_PT = BASE_CELL_PT * scale
+    private val GAP = BASE_GAP * scale
+    private val INDENT = BASE_INDENT * scale
+
     private var page: PdfDocument.Page? = null
     private var number = 0
     private var y = 0f
@@ -175,16 +190,13 @@ private class DocumentPdfWriter(private val pdf: PdfDocument) {
     }
 
     private companion object {
-        /** A4 in points. */
-        const val PAGE_W = 595f
-        const val PAGE_H = 842f
-        const val MARGIN = 56f
-        const val GAP = 8f
-        const val INDENT = 18f
-        const val TITLE_PT = 20f
-        const val HEADING_PT = 15f
-        const val BODY_PT = 11f
-        const val CELL_PT = 9f
+        const val PT_PER_MM = 72f / 25.4f
+        const val BASE_GAP = 8f
+        const val BASE_INDENT = 18f
+        const val BASE_TITLE_PT = 20f
+        const val BASE_HEADING_PT = 15f
+        const val BASE_BODY_PT = 11f
+        const val BASE_CELL_PT = 9f
         const val CELL_PAD = 4f
         /** Past this many columns a table's cells are too narrow to read; the rest are left out. */
         const val MAX_COLUMNS = 12
