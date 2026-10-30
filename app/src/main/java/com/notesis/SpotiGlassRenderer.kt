@@ -225,9 +225,8 @@ internal fun Modifier.spotiGlassSurface(
     // The rim and sheen, measured against the edge as it was first drawn.
     val reflectionLevel = settings.reflection.coerceIn(0f, 1f)
     val shine = reflectionLevel / SkinSettings.LEGACY_REFLECTION
-    var result = this.shadow(elevation, shape, clip = false,
-        ambientColor = Color.Black.copy(alpha = if (dark) 0.14f else 0.08f),
-        spotColor = Color.Black.copy(alpha = if (dark) 0.14f else 0.08f))
+    // Round the glass, never under it (see [glassShadow]), and only where shadows are on.
+    var result = if (settings.shadows) this.glassShadow(shape, elevation, dark) else this
     result = if (useBlur) result.drawBackdrop(backdrop!!, shape = { shape }, effects = {
         blur(sigma * density)
         if (dark) colorFilter(dimFilter)

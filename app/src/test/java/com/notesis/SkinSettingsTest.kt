@@ -11,7 +11,8 @@ class SkinSettingsTest {
         assertEquals(0.12f, now.frost, 0.001f)
         assertEquals(1f, now.transparency, 0f)
         assertEquals(1f, now.reflection, 0f)
-        assertEquals(10f, now.depth, 0f)
+        assertEquals(14f, now.depth, 0f)
+        assertTrue(now.shadows)
         assertEquals(32f, now.spotiglassCorner, 0f)
         assertEquals(1f, now.spotiglassResponse, 0f)
         assertEquals(RefractionDirection.RAISED, now.refractionDirection)
@@ -73,5 +74,24 @@ class SkinSettingsTest {
         // The defaults sit on their own sliders' marks.
         assertEquals(s.blur, s.withFrost(s.frost).blur, 0.001f)
         assertEquals(s.refraction, s.withDepth(s.depth).refraction, 0.001f)
+    }
+
+    @Test fun `version 2's lens moves to the deeper one, a lens set by hand stays`() {
+        fun saved(depth: Double, refraction: Double) = JSONObject(SkinSettings().toJson())
+            .put("opticsVersion", 2).put("depth", depth).put("refraction", refraction).toString()
+        val untouched = SkinSettings.fromJson(saved(10.0, 20.0))
+        assertEquals(SkinSettings().depth, untouched.depth, 0f)
+        assertEquals(SkinSettings().refraction, untouched.refraction, 0f)
+        val tuned = SkinSettings.fromJson(saved(6.0, 12.0))
+        assertEquals(6f, tuned.depth, 0f)
+        assertEquals(12f, tuned.refraction, 0f)
+    }
+
+    @Test fun `shadows can be turned off and stay off`() {
+        val off = SkinSettings(shadows = false)
+        assertEquals(false, SkinSettings.fromJson(off.toJson()).shadows)
+        assertEquals(false, off.controlOptics().shadows)
+        // Saved before the switch existed: shadows on.
+        assertEquals(true, SkinSettings.fromJson(JSONObject(off.toJson()).apply { remove("shadows") }.toString()).shadows)
     }
 }

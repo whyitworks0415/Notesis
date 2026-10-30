@@ -385,7 +385,7 @@ fun SkinSurface(
             modifier = modifier,
             shape = shape,
             tonalElevation = tokens.tonalElevation,
-            shadowElevation = tokens.shadow,
+            shadowElevation = if (LocalSkinSettings.current.shadows) tokens.shadow else 0.dp,
             content = content,
         )
         return
@@ -450,10 +450,15 @@ internal fun Modifier.skinMaterial(
 
 /** The shadow [skinMaterial] casts for this [shape], on its own. */
 @Composable
-internal fun Modifier.skinShadow(shape: Shape, panel: Boolean = false): Modifier = when (val skin = LocalSkin.current) {
-    Skin.MATERIAL -> shadow(if (panel) 6.dp else 3.dp, shape, clip = false)
-    Skin.GLASSMORPHISM -> shadow(skin.tokens().shadow, shape, clip = false)
-    Skin.SPOTIGLASS -> shadow(liquidGlassPaneShadow(panel), lensSafeShape(shape), clip = false)
+internal fun Modifier.skinShadow(shape: Shape, panel: Boolean = false): Modifier {
+    if (!LocalSkinSettings.current.shadows) return this
+    return when (val skin = LocalSkin.current) {
+        Skin.MATERIAL -> shadow(if (panel) 6.dp else 3.dp, shape, clip = false)
+        Skin.GLASSMORPHISM -> shadow(skin.tokens().shadow, shape, clip = false)
+        // Round the glass, never under it; see [glassShadow].
+        Skin.SPOTIGLASS -> glassShadow(lensSafeShape(shape), liquidGlassPaneShadow(panel),
+            dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f)
+    }
 }
 
 /**
@@ -464,7 +469,7 @@ internal fun Modifier.skinShadow(shape: Shape, panel: Boolean = false): Modifier
 private fun Modifier.frostedGlass(tokens: SkinTokens, shape: Shape, shadow: Boolean = true, fill: Color? = null): Modifier {
     val body = fill ?: tokens.fill ?: MaterialTheme.colorScheme.surface.copy(alpha = tokens.fillAlpha)
     return this
-        .then(if (shadow) Modifier.shadow(tokens.shadow, shape, clip = false) else Modifier)
+        .then(if (shadow && LocalSkinSettings.current.shadows) Modifier.shadow(tokens.shadow, shape, clip = false) else Modifier)
         .clip(shape)
         .frost()
         // Battery saver stops the frost, and before Android 12 there is no
@@ -908,7 +913,8 @@ private fun Thumb(
     solid: Boolean = false,
 ) {
     val coat = modifier
-        .shadow(THUMB_SHADOW, shape, clip = false, ambientColor = glow, spotColor = glow)
+        .then(if (LocalSkinSettings.current.shadows) Modifier.shadow(THUMB_SHADOW, shape, clip = false, ambientColor = glow, spotColor = glow)
+            else Modifier)
         .clip(shape)
     if (solid) {
         Box(

@@ -707,6 +707,10 @@ private fun ColorsGroup(settings: SkinSettings, onChange: (SkinSettings) -> Unit
         "High contrast", settings.highContrast, { onChange(settings.copy(highContrast = it)) },
         hint = "Darker text, solid glass, thicker edges. Colors stay; only the contrast goes up.",
     )
+    SettingsToggle(
+        "Shadows", settings.shadows, { onChange(settings.copy(shadows = it)) },
+        hint = "Shadows under the toolbar, panels, menus, buttons and dialogs, in every look. Off, everything sits flat on the page.",
+    )
 }
 
 /** Which colour a picker is for, so one picker serves all four. */

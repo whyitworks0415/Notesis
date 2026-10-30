@@ -89,7 +89,7 @@ fun DropdownMenu(
         // That pale patch in the centre of the AI menu, and of every other
         // menu in the app, was its own shadow seen from the front. Same bug as
         // the one under each note's name; same fix.
-        shadowElevation = if (LocalSkin.current == Skin.MATERIAL) {
+        shadowElevation = if (LocalSkin.current == Skin.MATERIAL && LocalSkinSettings.current.shadows) {
             MenuDefaults.ShadowElevation
         } else {
             0.dp

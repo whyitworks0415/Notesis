@@ -224,7 +224,7 @@ fun LiquidGlassSlider(
             if (!useLiquidGlass) {
                 Box(
                     thumbModifier
-                        .shadow(3.dp, CircleShape, clip = false)
+                        .then(if (LocalSkinSettings.current.shadows) Modifier.shadow(3.dp, CircleShape, clip = false) else Modifier)
                         .clip(CircleShape)
                         .background(scheme.primary)
                         .border(1.dp, scheme.onPrimary.copy(alpha = 0.18f), CircleShape),

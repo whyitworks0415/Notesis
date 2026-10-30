@@ -514,7 +514,9 @@ private fun SpotiActionButton(
             indication = if (glass) null else LocalIndication.current, onClick = tapped),
         contentAlignment = Alignment.Center) {
         val body = Modifier.matchParentSize().graphicsLayer { scaleX = grow; scaleY = grow }
-        Box(if (persistentGlass) body.skinMaterial(CircleShape) else body.background(fill, shape))
+        val pane = if (persistentGlass) body.skinMaterial(CircleShape) else body.background(fill, shape)
+        // Liquid glass lights up under the finger, as Apple's does.
+        Box(if (glass) pane.glassPressGlow(interaction, if (persistentGlass) CircleShape else shape) else pane)
         Column(Modifier.padding(horizontal = Ui.Space.s, vertical = Ui.Space.xs),
             horizontalAlignment = Alignment.CenterHorizontally) {
             // On its own, a round button's glyph grows with it.

@@ -41,6 +41,14 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.graphics.asAndroidPath
+import androidx.compose.ui.graphics.addOutline
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
+import com.kyant.backdrop.highlight.Highlight
+import com.kyant.backdrop.highlight.HighlightStyle
+import kotlinx.coroutines.launch
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -162,9 +170,13 @@ fun Modifier.liquidGlass(
     val rimLight = Color(settings.border)
     val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
 
+    val shadows = settings.shadows
     if (enabled && amount > 0.001f && effectsAllowed && backdrop != null) {
         var result = this
-            .shadow(shadowElevation, glassShape, clip = false)
+            // Cast round the glass, never under it: a shadow beneath clear glass
+            // shows through it and greys the whole pane, which is the first thing
+            // that kept this from looking like Apple's.
+            .then(if (shadows) Modifier.glassShadow(glassShape, shadowElevation, dark) else Modifier)
             .drawBackdrop(
                 backdrop = backdrop,
                 shape = { glassShape },
@@ -185,7 +197,13 @@ fun Modifier.liquidGlass(
                         chromaticAberration = settings.dispersion * amount > 0.08f,
                     )
                 },
-                highlight = null,
+                // Apple's specular edge: light from the top left caught along the
+                // curve of the rim, brightest where the edge faces it, added to
+                // what is under it rather than painted over it.
+                highlight = if (drawBorder && rimStrength > 0.001f) {
+                    { Highlight(width = 1.dp, blurRadius = 0.6.dp, alpha = rimStrength,
+                        style = HighlightStyle.Default(color = rimLight.copy(alpha = if (dark) 0.42f else 0.6f))) }
+                } else null,
                 shadow = null,
                 onDrawSurface = {
                     drawRect(tint)
@@ -208,7 +226,8 @@ fun Modifier.liquidGlass(
                     )
                 },
             )
-        if (drawBorder) result = result.glassRim(glassShape, rimStrength, rimLight, dark = dark)
+        // A hair of shade under the light, so the edge still reads over white paper.
+        if (drawBorder) result = result.glassHairline(glassShape, dark)
         return result
     }
 
@@ -218,7 +237,8 @@ fun Modifier.liquidGlass(
     val fallbackAlpha = if (effectsAllowed) 0.84f else 0.95f
     val fallback = body.copy(alpha = maxOf(body.alpha, fallbackAlpha))
     var result = this
-        .shadow(shadowElevation.coerceAtMost(LiquidGlassTokens.fallbackShadow), glassShape, clip = false)
+        .then(if (shadows) Modifier.shadow(shadowElevation.coerceAtMost(LiquidGlassTokens.fallbackShadow), glassShape, clip = false)
+            else Modifier)
         .clip(glassShape)
         .background(fallback)
     if (drawBorder) {
@@ -293,6 +313,99 @@ internal fun glassRimBrush(strength: Float, light: Color = Color.White, dark: Bo
 }
 
 /**
+ * The shadow glass casts: soft, wide and faint, drawn only outside the
+ * outline, so clear glass over it stays clear. A plain elevation shadow is a
+ * dark slab under the pane, and through glass that slab is all you see.
+ * [elevation] sets how far it spreads, as an elevation would.
+ */
+internal fun Modifier.glassShadow(shape: Shape, elevation: Dp, dark: Boolean = false): Modifier {
+    if (elevation <= 0.dp) return this
+    return drawWithCache {
+        val spread = elevation.toPx() * 4f
+        val drop = spread / 6f
+        val outline = shape.createOutline(size, layoutDirection, this)
+        val shade = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.Black.copy(alpha = if (dark) 0.30f else 0.12f).toArgb()
+            maskFilter = android.graphics.BlurMaskFilter(spread.coerceAtLeast(0.5f), android.graphics.BlurMaskFilter.Blur.NORMAL)
+        }
+        val cut = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.CLEAR)
+        }
+        val path = androidx.compose.ui.graphics.Path().apply { addOutline(outline) }.asAndroidPath()
+        onDrawBehind {
+            drawIntoCanvas { canvas ->
+                val native = canvas.nativeCanvas
+                val room = spread * 3f
+                val layer = native.saveLayer(-room, -room, size.width + room, size.height + room + drop, null)
+                native.save()
+                native.translate(0f, drop)
+                native.drawPath(path, shade)
+                native.restore()
+                // Nothing under the glass itself.
+                native.drawPath(path, cut)
+                native.restoreToCount(layer)
+            }
+        }
+    }
+}
+
+/** A faint dark line just inside the outline: the edge of clear glass on white paper. */
+internal fun Modifier.glassHairline(shape: Shape, dark: Boolean): Modifier = drawWithCache {
+    val stroke = 0.6.dp.toPx()
+    val inner = Size((size.width - stroke).coerceAtLeast(0f), (size.height - stroke).coerceAtLeast(0f))
+    val outline = shape.createOutline(inner, layoutDirection, this)
+    val shade = Color.Black.copy(alpha = if (dark) 0.22f else 0.07f)
+    onDrawWithContent {
+        drawContent()
+        translate(stroke / 2f, stroke / 2f) { drawOutline(outline, shade, style = Stroke(stroke)) }
+    }
+}
+
+/**
+ * Apple's glass answers a touch with light: a glow that spreads from under
+ * the finger across the pane while it is held, and fades when it lets go.
+ * [interaction] is the control's own; [shape] keeps the glow inside it.
+ */
+@Composable
+internal fun Modifier.glassPressGlow(interaction: androidx.compose.foundation.interaction.InteractionSource, shape: Shape): Modifier {
+    val at = remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
+    val glow = remember { androidx.compose.animation.core.Animatable(0f) }
+    androidx.compose.runtime.LaunchedEffect(interaction) {
+        kotlinx.coroutines.coroutineScope {
+            interaction.interactions.collect { event ->
+                when (event) {
+                    is androidx.compose.foundation.interaction.PressInteraction.Press -> {
+                        at.value = event.pressPosition
+                        launch { glow.animateTo(1f, androidx.compose.animation.core.tween(140)) }
+                    }
+                    is androidx.compose.foundation.interaction.PressInteraction.Release,
+                    is androidx.compose.foundation.interaction.PressInteraction.Cancel ->
+                        launch { glow.animateTo(0f, androidx.compose.animation.core.tween(520)) }
+                }
+            }
+        }
+    }
+    return drawWithContent {
+        drawContent()
+        val center = at.value ?: return@drawWithContent
+        val a = glow.value
+        if (a <= 0.001f) return@drawWithContent
+        val reach = maxOf(size.width, size.height) * (0.6f + 0.4f * a)
+        val outline = shape.createOutline(size, layoutDirection, this)
+        val clip = androidx.compose.ui.graphics.Path().apply { addOutline(outline) }
+        clipPath(clip) {
+            drawCircle(
+                Brush.radialGradient(
+                    listOf(Color.White.copy(alpha = 0.32f * a), Color.White.copy(alpha = 0.08f * a), Color.Transparent),
+                    center = center, radius = reach,
+                ),
+                radius = reach, center = center,
+            )
+        }
+    }
+}
+
+/**
  * Liquid glass's own material, the one the toolbar, its tool strip, its
  * button and the popups opened from it are all made of: the page behind,
  * blurred and bent at the edge by the lens, under a thin coat of the surface
@@ -334,7 +447,7 @@ internal fun liquidGlassPaneShadow(panel: Boolean): Dp {
 }
 
 /** The least a liquid glass panel with text on it is coated. */
-private const val LIQUID_PANEL_MIN_OPACITY = 0.55f
+private const val LIQUID_PANEL_MIN_OPACITY = 0.45f
 
 /**
  * [shape] as an outline Backdrop's lens can work with. Its lens() computes the

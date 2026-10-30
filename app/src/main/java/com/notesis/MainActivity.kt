@@ -7848,7 +7848,7 @@ private fun PageScrubber(
                         .align(Alignment.TopEnd)
                         .offset { IntOffset(-(52.dp + 8.dp).roundToPx(), previewY) }
                         .requiredSize(previewWidth, previewHeight)
-                        .shadow(6.dp, Ui.Shape.preview)
+                        .then(if (LocalSkinSettings.current.shadows) Modifier.shadow(6.dp, Ui.Shape.preview) else Modifier)
                         .clip(Ui.Shape.preview)
                         .background(Color.White)
                         .border(0.5.dp, scheme.outlineVariant, Ui.Shape.preview),

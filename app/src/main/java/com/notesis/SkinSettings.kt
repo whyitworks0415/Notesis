@@ -30,10 +30,10 @@ data class SkinSettings(
     val blur: Float = 7.2f,
     /** Saturation lift on the blurred backdrop; glass makes colour, not mud. Goes with the frost (see [withFrost]). */
     val vibrancy: Float = 0.296f,
-    /** 굴절이 가장자리에서 안쪽으로 파고드는 깊이(dp). */
-    val depth: Float = 10f,
+    /** 굴절이 가장자리에서 안쪽으로 파고드는 깊이(dp). A deeper band, as Apple's glass bends the page. */
+    val depth: Float = 14f,
     /** 렌즈가 배경 픽셀을 휘게 하는 거리(dp). Twice the depth (see [withDepth]). */
-    val refraction: Float = 20f,
+    val refraction: Float = 28f,
     /** 가장자리의 배경 픽셀을 바깥/안쪽 어느 방향으로 굴절할지 정합니다. */
     val refractionDirection: RefractionDirection = RefractionDirection.RAISED,
     /** RGB 파장이 갈라지는 색수차의 체감 강도(0~1). */
@@ -72,6 +72,8 @@ data class SkinSettings(
      * its own with its own set of surprises.
      */
     val highContrast: Boolean = false,
+    /** Whether bars, panels, buttons and dialogs cast shadows at all. */
+    val shadows: Boolean = true,
 ) {
     fun toJson(): String = JSONObject()
         .put("themeMode", themeMode.name)
@@ -93,6 +95,7 @@ data class SkinSettings(
         .put("reflection", reflection.toDouble())
         .put("opticsVersion", OPTICS_VERSION)
         .put("highContrast", highContrast)
+        .put("shadows", shadows)
         .toString()
 
     /** Whether the optics are still the ones a fresh install had before [OPTICS_VERSION] 2. */
@@ -111,7 +114,7 @@ data class SkinSettings(
      */
     fun controlOptics(): SkinSettings = ORIGINAL.copy(
         themeMode = themeMode, tint = tint, border = border, content = content, accent = accent,
-        highContrast = highContrast,
+        highContrast = highContrast, shadows = shadows,
     )
 
     /** The frost, 0 to 1: blur and the colour lift that goes with it, set as one. */
@@ -173,20 +176,31 @@ data class SkinSettings(
                 reflection = json.optDouble("reflection", LEGACY_REFLECTION.toDouble())
                     .toFloat().takeIf { it.isFinite() }?.coerceIn(REFLECTION_RANGE) ?: LEGACY_REFLECTION,
                 highContrast = json.optBoolean("highContrast", d.highContrast),
+                shadows = json.optBoolean("shadows", d.shadows),
             )
             // Saved before the glass took its present look: optics never moved
             // from the old defaults take the new ones; any the reader set are kept,
             // with the edge they were seen with.
-            if (json.optInt("opticsVersion", 1) < OPTICS_VERSION && read.hasOriginalOptics()) {
+            val version = json.optInt("opticsVersion", 1)
+            if (version < OPTICS_VERSION && read.hasOriginalOptics()) {
                 return read.copy(blur = d.blur, vibrancy = d.vibrancy, depth = d.depth, refraction = d.refraction,
                     spotiglassClarity = d.spotiglassClarity, spotiglassToolbarOpacity = d.spotiglassToolbarOpacity,
                     reflection = d.reflection)
             }
+            // Version 2's lens, never moved, takes version 3's deeper one.
+            fun same(a: Float, b: Float) = kotlin.math.abs(a - b) < 0.001f
+            if (version < 3 && same(read.depth, V2_DEPTH) && same(read.refraction, V2_REFRACTION)) {
+                return read.copy(depth = d.depth, refraction = d.refraction)
+            }
             return read
         }
 
-        /** The look's version; 2 is the glass after the reference photo. */
-        const val OPTICS_VERSION = 2
+        /** The look's version; 2 is the glass after the reference photo, 3 the deeper lens of Apple's. */
+        const val OPTICS_VERSION = 3
+
+        /** Version 2's lens, which a fresh install had until version 3. */
+        private const val V2_DEPTH = 10f
+        private const val V2_REFRACTION = 20f
 
         /** The edge as it was drawn before [reflection] could be set. */
         const val LEGACY_REFLECTION = 0.35f

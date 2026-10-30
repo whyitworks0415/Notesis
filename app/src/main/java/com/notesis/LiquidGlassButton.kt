@@ -136,7 +136,9 @@ fun LiquidGlassButton(
                         surfaceColor = Color.White.copy(alpha = 0.20f),
                         shadowElevation = glassShadowElevation,
                         drawBorder = drawBorder,
-                    ),
+                    )
+                    // Lit from under the finger while it is held, as Apple's glass is.
+                    .glassPressGlow(interaction, shape),
             )
         }
 
@@ -144,7 +146,7 @@ fun LiquidGlassButton(
             Box(
                 Modifier
                     .matchParentSize()
-                    .shadow(1.dp, shape, clip = false)
+                    .then(if (LocalSkinSettings.current.shadows) Modifier.shadow(1.dp, shape, clip = false) else Modifier)
                     .clip(shape)
                     .background(containerColor.copy(alpha = if (enabled) 1f else 0.52f)),
             )
