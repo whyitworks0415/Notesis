@@ -791,7 +791,12 @@ internal fun SpotiGlassToolbar(
                                     NestedCorners(outer, Ui.Space.m) {
                                         // Inside the surface: animateContentSize clips,
                                         // and on the surface it took the shadow with it.
-                                        Box(Modifier.animateContentSize(if (effects) spring(0.86f, 430f) else tween(0))) {
+                                        // Without motion, no size animation at all. A zero-length
+                                        // one left the menu at no height on Android 11 and 12,
+                                        // where motion is always off: there, and wherever the
+                                        // system's animations are off, the menu could be
+                                        // tapped but never seen.
+                                        Box(if (effects) Modifier.animateContentSize(spring(0.86f, 430f)) else Modifier) {
                                             ToolbarMenuContent(page, sizeLevel, mode, config, functions, notes, ai,
                                                 onPage = { page = it }, onClose = { open = false },
                                                 onSizeLevel = onSizeLevel, onPick = ::pick)
