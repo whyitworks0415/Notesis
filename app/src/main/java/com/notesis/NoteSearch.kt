@@ -267,6 +267,23 @@ internal fun NoteSearchPanel(
             } finally {
                 state.searching = false
             }
+            // Where the first matches in the PDF are on their pages, looked up
+            // now, so opening one marks it on the page at once instead of
+            // after a trip into the PDF.
+            val ahead = state.hits.asSequence()
+                .filter { it.source == SearchSource.PDF && it.box == null }
+                .mapNotNull { hit ->
+                    canvas.document.pages.getOrNull(hit.pageIndex)?.pdfPageIndex?.takeIf { it >= 0 }?.let { it to hit.occurrence }
+                }
+                .distinct()
+                .take(SEARCH_PREFETCH)
+                .toList()
+            if (ahead.isNotEmpty()) withContext(Dispatchers.IO) {
+                for ((pdfIndex, occurrence) in ahead) {
+                    ensureActive()
+                    canvas.pdfMatchBounds(pdfIndex, needle, occurrence)
+                }
+            }
         }
     }
 
@@ -418,3 +435,5 @@ private const val GLASS_EDGE_ALPHA = 0.18f
 private const val SNIPPET_RADIUS = 28
 internal const val MAX_SEARCH_HITS = 500
 private const val SEARCH_DEBOUNCE_MS = 250L
+/** How many matches in a PDF have their place on the page looked up ahead of being opened. */
+private const val SEARCH_PREFETCH = 12

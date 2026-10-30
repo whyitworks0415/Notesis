@@ -41,6 +41,8 @@ internal fun DictationDialog(onInsert: (String) -> Unit, onCopy: (String) -> Uni
     var transcript by remember { mutableStateOf("") }
     var partial by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
+    // How loud the voice is now, 0 to 1, for the button's rings.
+    var level by remember { mutableFloatStateOf(0f) }
     val recognizer = remember { if (available) SpeechRecognizer.createSpeechRecognizer(context) else null }
     fun intent() = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
@@ -75,7 +77,8 @@ internal fun DictationDialog(onInsert: (String) -> Unit, onCopy: (String) -> Uni
             }
             override fun onReadyForSpeech(params: Bundle?) { error = null }
             override fun onBeginningOfSpeech() = Unit
-            override fun onRmsChanged(rmsdB: Float) = Unit
+            // Roughly -2 dB in silence to 10 dB for speech, on most recognisers.
+            override fun onRmsChanged(rmsdB: Float) { level = ((rmsdB + 2f) / 12f).coerceIn(0f, 1f) }
             override fun onBufferReceived(buffer: ByteArray?) = Unit
             override fun onEndOfSpeech() = Unit
             override fun onEvent(eventType: Int, params: Bundle?) = Unit
@@ -84,52 +87,64 @@ internal fun DictationDialog(onInsert: (String) -> Unit, onCopy: (String) -> Uni
             recognizer?.destroy()
         }
     }
-    AlertDialog(
-        onDismissRequest = { listening = false; recognizer?.cancel(); onDismiss() },
-        title = { Text("Dictation") },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                if (!available) {
-                    Text("This device has no speech recognition service.")
-                    return@Column
-                }
-                Row(Modifier.horizontalScroll(rememberScrollState())) {
-                    DICTATION_LANGUAGES.forEach { (tag, label) ->
-                        SettingsChoiceChip(selected = language == tag, onClick = { if (!listening) language = tag },
-                            label = label, modifier = Modifier.padding(end = Ui.Space.s))
-                    }
-                }
-                Row {
-                    TextButton(onClick = {
-                        if (listening) {
-                            listening = false
-                            recognizer?.stopListening()
-                        } else {
-                            listening = true
-                            recognizer?.startListening(intent())
-                        }
-                    }) { Text(if (listening) "■ Stop" else "● Start listening") }
-                    TextButton(enabled = transcript.isNotEmpty() && !listening, onClick = { transcript = "" }) { Text("Clear") }
-                }
-                error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-                Text(transcript.ifEmpty { if (listening) "Listening…" else "What you say appears here." },
-                    style = MaterialTheme.typography.bodyMedium)
-                if (partial.isNotBlank()) Text(partial, color = MaterialTheme.colorScheme.outline,
-                    style = MaterialTheme.typography.bodySmall)
-            }
+    val panel = rememberToolPanelState()
+    fun close() {
+        listening = false
+        recognizer?.cancel()
+        panel.close(onDismiss)
+    }
+    // The microphone's own panel: the bar's glass, grown out of where it was opened.
+    ToolPanel(
+        title = "Dictation",
+        state = panel,
+        onOutside = ::close,
+        maxWidth = 480.dp,
+        actions = {
+            IconButton(onClick = ::close) { Icon(Reicons.Close, contentDescription = "Close") }
         },
-        confirmButton = {
+    ) {
+        if (!available) {
+            Text("This device has no speech recognition service.")
+            return@ToolPanel
+        }
+        Row(Modifier.horizontalScroll(rememberScrollState())) {
+            DICTATION_LANGUAGES.forEach { (tag, label) ->
+                SettingsChoiceChip(selected = language == tag, onClick = { if (!listening) language = tag },
+                    label = label, modifier = Modifier.padding(end = Ui.Space.s))
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+            VoiceRecordButton(
+                active = listening,
+                label = if (listening) "Stop" else "Start listening",
+                level = if (listening) level else 0f,
+                onClick = {
+                    if (listening) {
+                        listening = false
+                        level = 0f
+                        recognizer?.stopListening()
+                    } else {
+                        listening = true
+                        recognizer?.startListening(intent())
+                    }
+                },
+            )
+        }
+        error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+        Text(transcript.ifEmpty { if (listening) "Listening…" else "What you say appears here." },
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState()))
+        if (partial.isNotBlank()) Text(partial, color = MaterialTheme.colorScheme.outline,
+            style = MaterialTheme.typography.bodySmall)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            TextButton(enabled = transcript.isNotEmpty() && !listening, onClick = { transcript = "" }) { Text("Clear") }
+            TextButton(enabled = transcript.isNotBlank(), onClick = { onCopy(transcript) }) { Text("Copy") }
             TextButton(enabled = transcript.isNotBlank(), onClick = {
                 listening = false
                 recognizer?.cancel()
-                onInsert(transcript)
+                val text = transcript
+                panel.close { onInsert(text) }
             }) { Text("Add to page") }
-        },
-        dismissButton = {
-            Row {
-                TextButton(enabled = transcript.isNotBlank(), onClick = { onCopy(transcript) }) { Text("Copy") }
-                TextButton(onClick = { listening = false; recognizer?.cancel(); onDismiss() }) { Text("Close") }
-            }
-        },
-    )
+        }
+    }
 }

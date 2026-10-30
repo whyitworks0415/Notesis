@@ -141,7 +141,7 @@ private fun displayToPdfMatrix(pdfPage: PDPage, model: Page): Matrix {
 
 private fun drawPaper(stream: PDPageContentStream, page: Page, imported: Boolean) {
     if (imported || page.background == PageBackground.BLANK ||
-        page.background == PageBackground.INFINITE ||
+        page.background.isEndless ||
         page.background == PageBackground.CUSTOM) return
     val unit = PdfSource.POINTS_TO_WORLD
     val width = page.width / unit

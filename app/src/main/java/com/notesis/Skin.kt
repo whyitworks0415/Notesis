@@ -242,10 +242,8 @@ fun Skin.tokens(): SkinTokens = when (this) {
             corner = chromeCorner(),
             fillAlpha = 1f,
             fill = Color(look.tint).copy(alpha = Color(look.tint).alpha * 0.6f),
-            rim = Brush.linearGradient(
-                listOf(Color(look.border).copy(alpha = 0.34f), Color.Transparent,
-                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f)),
-            ),
+            // Light caught at two corners, as on iOS, not an even white line.
+            rim = glassRimBrush(0.6f, Color(look.border), dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f),
             rimWidth = if (look.highContrast) 2.dp else 0.75.dp,
             bevel = null,
             glows = emptyList(),

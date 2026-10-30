@@ -9,6 +9,16 @@ on:
   push:
     branches: ["main", "claude/**"]
   workflow_dispatch:
+    inputs:
+      update:
+        # automatic: the app tells everyone about it as it opens.
+        # manual: it is installed only from About · Help, with nothing said.
+        # A release can also be marked manual in its notes file, with the
+        # line `<!-- update: manual -->`, which is how a push releases one.
+        description: "How the app offers this release"
+        type: choice
+        options: ["automatic", "manual"]
+        default: "automatic"
 
 permissions:
   contents: write
@@ -55,6 +65,12 @@ jobs:
           echo "code=$CODE" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION-$CODE" >> "$GITHUB_OUTPUT"
           cp app/build/outputs/apk/release/app-release.apk "Notesis-$VERSION-$CODE.apk"
+
+      - name: Mark a manual update
+        if: ${{ github.event.inputs.update == 'manual' }}
+        run: |
+          NOTES="docs/releases/${{ steps.name.outputs.version }}.md"
+          grep -qi 'update: *manual' "$NOTES" || printf '\n<!-- update: manual -->\n' >> "$NOTES"
 
       - uses: actions/upload-artifact@v4
         with:

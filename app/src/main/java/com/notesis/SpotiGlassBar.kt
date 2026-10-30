@@ -142,8 +142,10 @@ fun SpotiGlassBar(
     /**
      * Whether the selection rises into a lens as it moves. A bar drawn on a
      * surface that is already there - the full toolbar's strip - keeps it
-     * flat: its lens rose past the strip, onto the rows above and below, and
-     * stayed darker than the pill for a moment after the finger lifted.
+     * flat unless asked. Asked, its lens is kept inside the strip: it only
+     * swells along the bar, never past the strip onto the rows above and
+     * below, and carries no tint of its own over the pill's, which had left
+     * it darker than the pill for a moment after the finger lifted.
      */
     lift: Boolean = surface != SpotiBarSurface.NONE,
 ) {
@@ -159,6 +161,8 @@ fun SpotiGlassBar(
     val rtl = !vertical && LocalLayoutDirection.current == LayoutDirection.Rtl
     val latestSelect by rememberUpdatedState(onSelected)
     val selected = selectedIndex.takeIf { it in items.indices }
+    // On a surface it does not own, a lens keeps to the strip's own height.
+    val contained = lift && surface == SpotiBarSurface.NONE
     val motion = remember(items.size, rtl, lift) { SpotiGlassMotion((selected ?: 0).toFloat(), lifts = lift) }
     var wake by remember { mutableIntStateOf(0) }
     var frameRevision by remember { mutableIntStateOf(0) }
@@ -227,9 +231,9 @@ fun SpotiGlassBar(
             val visual = if (rtl) items.lastIndex - motion.position else motion.position
             val extra = (barHeight.value + 9 * response) / cellHeight.value - 1
             val w = cell * (1 + extra * motion.growX * response)
-            val h = cellHeight * (1 + extra * motion.growY * response)
+            val h = if (contained) cellHeight else cellHeight * (1 + extra * motion.growY * response)
             val sx = 1 + motion.deviation * response
-            val sy = 1 - motion.deviation * response
+            val sy = if (contained) 1f else 1 - motion.deviation * response
             val body = with(density) {
                 spotiGlassLensBody(
                     centerX = (padding + cell * (visual + 0.5f)).toPx(),
@@ -246,7 +250,7 @@ fun SpotiGlassBar(
                 // with it from the same radius.
                 radius = with(density) { restRadius.toPx() * (h / cellHeight) },
                 scale = if (vertical) Offset(sy, sx) else Offset(sx, sy),
-                progress = motion.progress, presence = motion.presence, fill = fill,
+                progress = motion.progress, presence = motion.presence, fill = if (contained) Color.Transparent else fill,
                 distortion = 0.04f * (look.refraction / 24f), band = look.depth,
                 dispersion = 0.002f * (look.dispersion / 0.35f), borderWidth = 1.2f,
                 // The same round corner as the resting pill and the still

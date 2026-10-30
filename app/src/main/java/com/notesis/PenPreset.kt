@@ -98,9 +98,20 @@ const val TWO_IGNORED = 2
 const val TAP_NONE = 0
 const val TAP_UNDO = 1
 const val TAP_REDO = 2
+// What one, two or three quick finger taps on the right edge of the page do.
+const val EDGE_NOTHING = 0
+const val EDGE_HIDE_CHROME = 1
+const val EDGE_UNDO = 2
+const val EDGE_REDO = 3
+const val EDGE_NEXT_PAGE = 4
+const val EDGE_PREVIOUS_PAGE = 5
+const val EDGE_PAGES = 6
 const val PEN_BUTTON_ERASE = 0
 const val PEN_BUTTON_LASER = 1
 const val PEN_BUTTON_LASSO = 2
+
+/** Out of the box two taps on the right edge put the bar and the panels away; one and three do nothing. */
+val DEFAULT_EDGE_TAPS = listOf(EDGE_NOTHING, EDGE_HIDE_CHROME, EDGE_NOTHING)
 
 /** What the eraser takes and which pen gestures do more than write. See InkCanvasView. */
 data class CanvasGestures(
@@ -127,6 +138,8 @@ data class CanvasGestures(
     val doubleTapZoom: Boolean = false,
     val twoFingerTap: Int = TAP_UNDO,
     val threeFingerTap: Int = TAP_REDO,
+    /** Taps on the right edge of the page, one finger: what one, two and three of them do. */
+    val edgeTaps: List<Int> = DEFAULT_EDGE_TAPS,
     val longPressMenu: Boolean = true,
     val linkOverlay: Boolean = true,
     val eraserReturns: Boolean = false,
@@ -194,6 +207,7 @@ fun InkCanvasView.applyGestures(gestures: CanvasGestures) {
     doubleTapZoom = gestures.doubleTapZoom
     twoFingerTap = gestures.twoFingerTap
     threeFingerTap = gestures.threeFingerTap
+    edgeTapActions = IntArray(3) { gestures.edgeTaps.getOrElse(it) { EDGE_NOTHING } }
     penButton = gestures.penButton
     pressureEraser = gestures.pressureEraser
     pressureResponse = gestures.pressureResponse.coerceIn(0, 100)
@@ -442,6 +456,7 @@ class PenStore(context: Context) {
             doubleTapZoom = prefs.getBoolean("doubleTapZoom", false),
             twoFingerTap = prefs.getInt("twoFingerTap", TAP_UNDO),
             threeFingerTap = prefs.getInt("threeFingerTap", TAP_REDO),
+            edgeTaps = List(3) { prefs.getInt("edgeTap${it + 1}", DEFAULT_EDGE_TAPS[it]) },
             longPressMenu = prefs.getBoolean("longPressMenu", true),
             linkOverlay = prefs.getBoolean("linkOverlay", true),
             eraserReturns = prefs.getBoolean("eraserReturns", false),
@@ -477,6 +492,9 @@ class PenStore(context: Context) {
             .putBoolean("doubleTapZoom", value.doubleTapZoom)
             .putInt("twoFingerTap", value.twoFingerTap)
             .putInt("threeFingerTap", value.threeFingerTap)
+            .putInt("edgeTap1", value.edgeTaps.getOrElse(0) { EDGE_NOTHING })
+            .putInt("edgeTap2", value.edgeTaps.getOrElse(1) { EDGE_NOTHING })
+            .putInt("edgeTap3", value.edgeTaps.getOrElse(2) { EDGE_NOTHING })
             .putBoolean("longPressMenu", value.longPressMenu)
             .putBoolean("linkOverlay", value.linkOverlay)
             .putBoolean("eraserReturns", value.eraserReturns)

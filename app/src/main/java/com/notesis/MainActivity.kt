@@ -263,6 +263,7 @@ class MainActivity : ComponentActivity() {
         Planner.init(applicationContext)
         ToolbarMotion.init(applicationContext)
         ToolbarOrientation.init(applicationContext)
+        WebSites.init(applicationContext)
         ToolbarScale.init(applicationContext)
         // A real start, not a rotation: first-run mode shows the welcome and the tutorial again.
         if (savedInstanceState == null) Onboarding.startAsFirstRunIfAsked(applicationContext)
@@ -2888,7 +2889,7 @@ private fun AiButton(onWeb: (String) -> Unit) {
             Icon(Reicons.AutoAwesome, contentDescription = "AI")
         }
         DropdownMenu(open, onDismissRequest = { open = false }) {
-            for ((name, url) in AI_SITES) {
+            for ((name, url) in aiSites()) {
                 DropdownMenuItem(
                     text = { Text(name) },
                     onClick = {
@@ -3354,7 +3355,8 @@ private fun WebPanel(
                     .padding(start = Ui.Space.m, end = Ui.Space.m, bottom = Ui.Space.xs),
                 horizontalArrangement = Arrangement.spacedBy(Ui.Space.s),
             ) {
-                for ((name, site) in listOf("Web" to SEARCH_HOME) + AI_SITES) {
+                val known = listOf("Web" to SEARCH_HOME) + aiSites()
+                for ((name, site) in known) {
                     val siteHost = Uri.parse(site).host.orEmpty().removePrefix("www.")
                     SettingsChoiceChip(
                         selected = host.isNotEmpty() && host == siteHost,
@@ -3363,6 +3365,15 @@ private fun WebPanel(
                         contentColor = onHeader,
                     )
                 }
+                // The page open now, kept among the chips and in Web & AI.
+                var addingSite by remember { mutableStateOf(false) }
+                val current = web?.url ?: url
+                if (host.isNotEmpty() && known.none { (_, site) -> Uri.parse(site).host.orEmpty().removePrefix("www.") == host }) {
+                    SettingsChoiceChip(selected = false, onClick = { addingSite = true }, label = "+ Add this site",
+                        contentColor = onHeader)
+                }
+                if (addingSite) AddSiteDialog(onDismiss = { addingSite = false }, initialUrl = current,
+                    initialName = web?.title.orEmpty().take(40))
             }
             }
             }
@@ -3679,7 +3690,7 @@ private fun NameDialog(
                         PageBackground.BLANK to "Blank", PageBackground.LINED to "Lined",
                         PageBackground.NARROW_LINED to "Narrow lined", PageBackground.GRID to "Grid",
                         PageBackground.DOT to "Dot", PageBackground.CORNELL to "Cornell",
-                        PageBackground.INFINITE to "Infinite",
+                        PageBackground.INFINITE to "Infinite down", PageBackground.INFINITE_ALL to "Infinite all ways",
                     )
                     Column {
                         labels.chunked(3).forEach { row ->
@@ -3829,6 +3840,8 @@ private fun NoteScreen(
     }
     var linking by remember { mutableStateOf(false) }
     var canGoBack by remember { mutableStateOf(false) }
+    /** The page the way back returns to, for its label. */
+    var backPage by remember { mutableStateOf<Int?>(null) }
     /** Where a finger was held on the page, in screen pixels, while its menu is up. */
     var pressMenu by remember { mutableStateOf<Offset?>(null) }
     var playNextRecording by remember { mutableStateOf<String?>(null) }
@@ -4203,6 +4216,10 @@ private fun NoteScreen(
     var ruler by remember { mutableStateOf<RulerKind?>(null) }
     var rulerAngle by remember { mutableStateOf(false) }
     var showPages by remember { mutableStateOf(false) }
+    // The bar and the rest of the chrome over the note, put away upwards by
+    // taps on the page's right edge (see EDGE_HIDE_CHROME).
+    val chromeHide = rememberChromeHideState(skin.animatesChrome && toolbarEffects)
+    val chromeAway = { chromeHide.away.value }
     var pageSidebarWidth by remember { mutableFloatStateOf(penStore.pageSidebarWidth) }
     var pageGridColumns by remember { mutableIntStateOf(penStore.pageGridColumns) }
     // Whether the pen put the panel away. It then goes in one frame, without
@@ -4291,7 +4308,7 @@ private fun NoteScreen(
         )
     }
     if (goToPage) canvas?.let { view ->
-        GoToPageDialog(view.document.pages.size, onGo = { view.scrollToPage(it) }, onDismiss = { goToPage = false })
+        GoToPageDialog(view.document.pages.size, onGo = { view.jumpToPage(it) }, onDismiss = { goToPage = false })
     }
     val study = remember(note.id) { MaskStudy(store.studyFile(note.id)) }
     var studyRevision by remember { mutableIntStateOf(0) }
@@ -4785,7 +4802,7 @@ private fun NoteScreen(
                         { mode = beforeEraser }
                     } else null
                     view.showLinkOverlay = gestures.linkOverlay
-                    view.onLinkBackChanged = { canGoBack = it }
+                    view.onLinkBackChanged = { canGoBack = it; backPage = view.backTarget() }
                     view.onOpenNoteLink = { noteId, pageIndex ->
                         store.list().firstOrNull { it.id == noteId }?.let { target ->
                             penStore.setLastPage(target.id, pageIndex)
@@ -4829,6 +4846,16 @@ private fun NoteScreen(
                     view.eraserWidth = eraserWidth
                     view.onUndo = { canvas?.undo(); edits++ }
                     view.onRedo = { canvas?.redo(); edits++ }
+                    view.onEdgeAction = { action ->
+                        when (action) {
+                            EDGE_HIDE_CHROME -> chromeHide.toggle()
+                            EDGE_UNDO -> { canvas?.undo(); edits++ }
+                            EDGE_REDO -> { canvas?.redo(); edits++ }
+                            EDGE_NEXT_PAGE -> canvas?.let { it.scrollToPage((it.currentPageIndex() + 1).coerceAtMost(it.document.pages.lastIndex)) }
+                            EDGE_PREVIOUS_PAGE -> canvas?.let { it.scrollToPage((it.currentPageIndex() - 1).coerceAtLeast(0)) }
+                            EDGE_PAGES -> { showPages = !showPages }
+                        }
+                    }
                     view.onShortcut = { keyCode, event ->
                         val command = event.isCtrlPressed || event.isMetaPressed
                         val digit = keyCode - android.view.KeyEvent.KEYCODE_1
@@ -5082,6 +5109,7 @@ private fun NoteScreen(
             exit = fadeOut(tween(220)),
             modifier = Modifier
                 .align(Alignment.CenterEnd)
+                .awayUpwards(chromeAway)
                 .fillMaxHeight(0.70f)
                 .windowInsetsPadding(ChromeInsets)
                 // Beside a bar docked down the right, not under it.
@@ -5113,7 +5141,7 @@ private fun NoteScreen(
                     settingsNav = null
                     onBack()
                 },
-                modifier = when {
+                modifier = Modifier.awayUpwards(chromeAway).then(when {
                     barRight -> Modifier
                         .align(Alignment.TopEnd)
                         .windowInsetsPadding(ChromeInsets)
@@ -5126,14 +5154,21 @@ private fun NoteScreen(
                         .align(Alignment.TopStart)
                         .windowInsetsPadding(ChromeInsets)
                         .padding(start = 12.dp, top = barInset + BAR_CAPSULE_TOP)
-                },
+                }),
             )
         }
+
+        // While the chrome is away, a tab at the top brings it back.
+        if (chromeHide.hidden) ChromePullTab(chromeHide,
+            Modifier.align(Alignment.TopCenter).windowInsetsPadding(ChromeInsets))
 
         if (!barDocked && !collapsed) {
             toolbar(
                 Modifier
                     .align(Alignment.TopStart)
+                    // Turning across or down the side, it travels between the two.
+                    .toolbarTurnMorph(barVertical to barRight, skin.animatesChrome && toolbarEffects)
+                    .awayUpwards(chromeAway)
                     // Capped, not just clamped. The tool row scrolls, and a
                     // scrolling row takes every pixel it is offered, so on a
                     // landscape tablet the bar stretched the whole 2960px with
@@ -5250,7 +5285,8 @@ private fun NoteScreen(
                     },
                 ),
                 webActions = listOf(SpotiToolbarAction("Search the web", AppIcons.web) { webUrl = SEARCH_HOME }) +
-                    AI_SITES.map { (name, url) -> SpotiToolbarAction(name, AppIcons.ai) { webUrl = url } },
+                    aiSites().map { (name, url) -> SpotiToolbarAction(name, AppIcons.ai) { webUrl = url } },
+                onOpenSite = { webUrl = it },
                 penSettings = {
                     GlobalPenSettings(
                         gestures = gestures,
@@ -5369,6 +5405,13 @@ private fun NoteScreen(
                         zoomPercent = (zoom * 100).roundToInt(),
                     )
                 },
+                onResetToolbar = {
+                    // What resetToolbar cannot reach: the size, the pin and the place, which live here.
+                    setToolbarSize(0)
+                    docked = false
+                    penStore.docked = false
+                    barOffset = null
+                },
             )
         }
         }
@@ -5409,60 +5452,79 @@ private fun NoteScreen(
         }
         if (showVoice) {
             val recordings = remember(note.id, voiceRevision) { store.recordings(note.id) }
-            AlertDialog(
-                onDismissRequest = { showVoice = false },
-                title = { Text("Voice recordings") },
-                text = {
-                    Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
-                        TextButton(onClick = {
-                            if (recorder != null) stopRecording()
-                            else if (androidx.core.content.ContextCompat.checkSelfPermission(
-                                    context, android.Manifest.permission.RECORD_AUDIO,
-                                ) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                                startRecording()
-                            } else requestAudioPermission.launch(android.Manifest.permission.RECORD_AUDIO)
-                        }) { Text(if (recorder == null) "● Start new recording" else "■ Stop recording") }
-                        TextButton(enabled = recorder == null, onClick = {
-                            showVoice = false
-                            if (androidx.core.content.ContextCompat.checkSelfPermission(
-                                    context, android.Manifest.permission.RECORD_AUDIO,
-                                ) == android.content.pm.PackageManager.PERMISSION_GRANTED) dictating = true
-                            else requestAudioPermission.launch(android.Manifest.permission.RECORD_AUDIO)
-                        }) { Text("Dictation") }
-                        Text("When finished", style = MaterialTheme.typography.bodySmall)
-                        Row(Modifier.horizontalScroll(rememberScrollState())) {
-                            listOf(PLAY_STOP to "Stop", PLAY_NEXT to "Next recording", PLAY_LOOP_ONE to "Repeat one").forEach { (mode, label) ->
-                                SettingsChoiceChip(selected = playMode == mode, onClick = {
-                                    playMode = mode
-                                    penStore.playMode = mode
-                                    voicePlayer?.isLooping = mode == PLAY_LOOP_ONE
-                                }, label = label, modifier = Modifier.padding(end = Ui.Space.s))
-                            }
-                        }
-                        for (file in recordings) Row(verticalAlignment = Alignment.CenterVertically) {
-                            val label = runCatching {
-                                dateFormat.format(Date(file.nameWithoutExtension.toLong()))
-                            }.getOrDefault(file.nameWithoutExtension)
-                            Text(label, modifier = Modifier.weight(1f))
-                            TextButton(onClick = {
-                                if (playingFile == file.path) {
-                                    voicePlayer?.release(); voicePlayer = null; playingFile = null
-                                } else playRecording(file.path)
-                            }) { Text(if (playingFile == file.path) "Stop" else "Play") }
-                            TextButton(onClick = { shareFile(context, file, "audio/*") }) { Text("Export") }
-                            TextButton(onClick = {
-                                if (playingFile == file.path) {
-                                    voicePlayer?.release(); voicePlayer = null; playingFile = null
-                                }
-                                file.delete()
-                                RecordingTimeline.fileFor(file).delete()
-                                voiceRevision++
-                            }) { Text("Delete") }
-                        }
-                    }
+            // The same panel as every other one off the bar: the bar's glass,
+            // grown out of the button that opened it and folded back into it.
+            val voicePanel = rememberToolPanelState()
+            val closeVoice = { voicePanel.close { showVoice = false } }
+            fun withMicrophone(then: () -> Unit) {
+                if (androidx.core.content.ContextCompat.checkSelfPermission(
+                        context, android.Manifest.permission.RECORD_AUDIO,
+                    ) == android.content.pm.PackageManager.PERMISSION_GRANTED) then()
+                else requestAudioPermission.launch(android.Manifest.permission.RECORD_AUDIO)
+            }
+            ToolPanel(
+                title = "Microphone",
+                state = voicePanel,
+                onOutside = closeVoice,
+                maxWidth = 460.dp,
+                actions = {
+                    IconButton(onClick = closeVoice) { Icon(Reicons.Close, contentDescription = "Close") }
                 },
-                confirmButton = { TextButton(onClick = { showVoice = false }) { Text("Close") } },
-            )
+            ) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    VoiceRecordButton(
+                        active = recorder != null,
+                        label = if (recorder == null) "Record" else "Stop",
+                        onClick = { if (recorder != null) stopRecording() else withMicrophone { startRecording() } },
+                    )
+                    VoiceRecordButton(
+                        active = false,
+                        label = "Dictation",
+                        enabled = recorder == null,
+                        onClick = {
+                            voicePanel.close {
+                                showVoice = false
+                                withMicrophone { dictating = true }
+                            }
+                        },
+                    )
+                }
+                PanelSectionHeader("When finished")
+                Row(Modifier.horizontalScroll(rememberScrollState())) {
+                    listOf(PLAY_STOP to "Stop", PLAY_NEXT to "Next recording", PLAY_LOOP_ONE to "Repeat one").forEach { (mode, label) ->
+                        SettingsChoiceChip(selected = playMode == mode, onClick = {
+                            playMode = mode
+                            penStore.playMode = mode
+                            voicePlayer?.isLooping = mode == PLAY_LOOP_ONE
+                        }, label = label, modifier = Modifier.padding(end = Ui.Space.s))
+                    }
+                }
+                PanelSectionHeader("Recordings")
+                if (recordings.isEmpty()) {
+                    Text("None yet. What you record is kept with this note.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                }
+                for (file in recordings) Row(verticalAlignment = Alignment.CenterVertically) {
+                    val label = runCatching {
+                        dateFormat.format(Date(file.nameWithoutExtension.toLong()))
+                    }.getOrDefault(file.nameWithoutExtension)
+                    Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                    TextButton(onClick = {
+                        if (playingFile == file.path) {
+                            voicePlayer?.release(); voicePlayer = null; playingFile = null
+                        } else playRecording(file.path)
+                    }) { Text(if (playingFile == file.path) "Stop" else "Play") }
+                    TextButton(onClick = { shareFile(context, file, "audio/*") }) { Text("Export") }
+                    TextButton(onClick = {
+                        if (playingFile == file.path) {
+                            voicePlayer?.release(); voicePlayer = null; playingFile = null
+                        }
+                        file.delete()
+                        RecordingTimeline.fileFor(file).delete()
+                        voiceRevision++
+                    }) { Text("Delete") }
+                }
+            }
         }
 
         if (editingPen) {
@@ -5754,7 +5816,7 @@ private fun NoteScreen(
         ) {
             TextButton(onClick = { canvas?.goBack() }, modifier = Modifier.padding(horizontal = Ui.Space.s, vertical = Ui.Space.xs)) {
                 Icon(Reicons.ArrowBack, contentDescription = null)
-                Text(" Back to previous spot")
+                Text(backPage?.let { " Back to page ${it + 1}" } ?: " Back to previous spot")
             }
         }
         sendingPages?.let { (indices, move) ->
@@ -6268,7 +6330,8 @@ private fun NoteScreen(
                     }
                 },
                 userTemplates = remember(edits) { store.pageTemplates() },
-                onJump = { canvas?.scrollToPage(it) },
+                // Remembered, so the way back returns to where the panel was opened from.
+                onJump = { canvas?.jumpToPage(it) },
                 onReveal = { index, revealed ->
                     canvas?.setMasksRevealed(index, revealed)
                     edits++
@@ -6391,17 +6454,23 @@ private fun NoteScreen(
                         if (box != null) {
                             view.showSearchHit(index, listOf(android.graphics.RectF(box.left, box.top, box.right, box.bottom)))
                         } else if (hit.source == SearchSource.PDF && page != null && page.pdfPageIndex >= 0) {
-                            // The PDF knows where its own text is; asking it opens
-                            // one page off the main thread. Until it answers, the
-                            // page is already in view.
-                            view.scrollToPage(index)
                             val pdfIndex = page.pdfPageIndex
                             val query = noteSearch.query.trim()
-                            scope.launch {
-                                val rects = withContext(Dispatchers.IO) {
-                                    view.pdfMatchBounds(pdfIndex, query, hit.occurrence)
+                            // Looked up ahead by the search (see NoteSearchPanel): marked at once.
+                            val known = view.cachedPdfMatchBounds(pdfIndex, query, hit.occurrence)
+                            if (known != null) {
+                                view.showSearchHit(index, known)
+                            } else {
+                                // The PDF knows where its own text is; asking it opens
+                                // one page off the main thread. Until it answers, the
+                                // page is already in view.
+                                view.scrollToPage(index)
+                                scope.launch {
+                                    val rects = withContext(Dispatchers.IO) {
+                                        view.pdfMatchBounds(pdfIndex, query, hit.occurrence)
+                                    }
+                                    if (noteSearch.hits.getOrNull(noteSearch.selected) == hit) view.showSearchHit(index, rects)
                                 }
-                                if (noteSearch.hits.getOrNull(noteSearch.selected) == hit) view.showSearchHit(index, rects)
                             }
                         } else {
                             view.showSearchHit(index, emptyList())
@@ -6507,7 +6576,8 @@ private fun NoteScreen(
     }
         if (barDocked && !collapsed) {
             toolbar(
-                when {
+                Modifier.toolbarTurnMorph(barVertical to barRight, skin.animatesChrome && toolbarEffects)
+                    .awayUpwards(chromeAway).then(when {
                     // Docked down the side: against the chosen edge, in the middle of it.
                     barRight -> Modifier.align(Alignment.CenterEnd)
                         .onSizeChanged { sideBarWidth = it.width }
@@ -6523,7 +6593,7 @@ private fun NoteScreen(
                     shownToolbarSize > 0 -> Modifier.align(Alignment.TopCenter).spotiToolbarAnimatedWidth(floatingBarWidth)
                         .windowInsetsPadding(ChromeInsets.only(WindowInsetsSides.Top))
                     else -> Modifier.align(Alignment.TopCenter).fillMaxWidth()
-                },
+                }),
                 null,
             )
         }
@@ -7923,6 +7993,9 @@ private fun PageSidebar(
         }
     }
     var choosing by remember { mutableStateOf(false) }
+    // The page the pen rests over in the grid, by id, and its card's place: shown large (see PagePeek).
+    var peek by remember { mutableStateOf<Pair<String, androidx.compose.ui.geometry.Rect>?>(null) }
+    var peekShown by remember { mutableStateOf(false) }
     val chosen = remember { mutableStateListOf<String>() }
     fun chosenIndices() = pages.indices.filter { pages[it].id in chosen }
     val sweep = remember { PageGridSweep() }
@@ -8148,7 +8221,11 @@ private fun PageSidebar(
                                 items(shownPages, key = { it.id }) { page ->
                                     val index = pages.indexOf(page)
                                     DisposableEffect(page.id) { onDispose { sweep.bounds.remove(page.id) } }
-                                    Box(Modifier.onGloballyPositioned { sweep.bounds[page.id] = it.boundsInRoot() }) {
+                                    Box(Modifier.onGloballyPositioned { sweep.bounds[page.id] = it.boundsInRoot() }
+                                        // The pen resting over a card shows its page large beside the panel.
+                                        .hoverHold(PAGE_PEEK_HOLD_MS,
+                                            onHold = { sweep.bounds[page.id]?.let { peek = page.id to it; peekShown = true } },
+                                            onLeave = { if (peek?.first == page.id) peekShown = false })) {
                                     PageCard(
                                         index = index,
                                         page = page,
@@ -8192,6 +8269,24 @@ private fun PageSidebar(
                                         onAttachmentsHidden = { onAttachmentsHidden(index, it) },
                                     )
                                     }
+                                }
+                            }
+                            val peeked = peek
+                            if (peeked != null) {
+                                val (pageId, card) = peeked
+                                val index = pages.indexOfFirst { it.id == pageId }
+                                val page = pages.getOrNull(index)
+                                if (page == null) {
+                                    peek = null
+                                } else {
+                                    val config = LocalConfiguration.current
+                                    val aspect = page.width / page.height
+                                    val peekPx = pagePeekPixels(pagePeekWidth(config.screenWidthDp.toFloat(),
+                                        config.screenHeightDp.toFloat(), aspect, card.left / density), density)
+                                    val large = rememberPageThumbnail("${page.id}:${page.strokes.size}:${page.loaded}:$peekPx",
+                                        stale = { null }) { onReady -> pageThumbnail(index, peekPx, onReady) }
+                                    PagePeek(card, index + 1, aspect, small = picture(index), large = large, shown = peekShown,
+                                        onGone = { if (!peekShown) peek = null })
                                 }
                             }
                             if (choosing) {
@@ -8927,8 +9022,12 @@ private fun PageCard(
                     onClick = { onBackground(PageBackground.CORNELL); menu = false },
                 )
                 DropdownMenuItem(
-                    text = { Text("Infinite note") },
+                    text = { Text("Infinite note · down") },
                     onClick = { onBackground(PageBackground.INFINITE); menu = false },
+                )
+                DropdownMenuItem(
+                    text = { Text("Infinite note · every way") },
+                    onClick = { onBackground(PageBackground.INFINITE_ALL); menu = false },
                 )
                 userTemplates.forEach { template ->
                     DropdownMenuItem(
@@ -9150,7 +9249,7 @@ private fun Toolbar(
                 ),
             ),
             notes = otherNotes.map { other -> SpotiToolbarAction(other.title, AppIcons.note) { onOpenNote(other) } },
-            ai = AI_SITES.map { (name, url) -> SpotiToolbarAction(name, AppIcons.ai) { onWeb(url) } },
+            ai = aiSites().map { (name, url) -> SpotiToolbarAction(name, AppIcons.ai) { onWeb(url) } },
             topRow = topRow,
             penOptions = { _ ->
               // What the editor put in this row, in its order. The slider takes
@@ -9381,6 +9480,9 @@ private val REFERENCE_GRAB_TOP = 4.dp
 
 
 private const val SEARCH_HOME = "https://www.google.com/"
+
+/** The AI sites the app comes with, then the ones added in Web & AI. Read in composition, it follows changes. */
+internal fun aiSites(): List<Pair<String, String>> = AI_SITES + WebSites.added.map { it.name to it.url }
 
 private val AI_SITES = listOf(
     "Gemini" to "https://gemini.google.com/",

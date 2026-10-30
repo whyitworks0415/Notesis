@@ -250,10 +250,10 @@ internal fun Modifier.spotiGlassSurface(
         edge(0.25f, 0.5f, androidx.compose.ui.graphics.SolidColor(Color.Black.copy(alpha = if (useBlur) 0.10f else 0.22f)))
         if (useBlur && shine > 0f) {
             fun white(a: Float) = Color.White.copy(alpha = (a * shine).coerceAtMost(0.7f))
-            // The lit rim: brightest along the top, again along the bottom.
-            edge(0.8f, 0.6f + 0.6f * reflectionLevel, Brush.verticalGradient(
-                0f to white(0.18f), 0.14f to white(0.03f), 0.5f to Color(0x0A000000),
-                0.86f to white(0.03f), 1f to white(0.12f)))
+            // The lit rim, as iOS draws its glass: light caught at the top-left
+            // corner and again, softer, at the bottom-right, the sides between
+            // nearly clear - not one even line of white all the way round.
+            edge(0.8f, 0.6f + 0.6f * reflectionLevel, glassRimBrush((0.40f * shine).coerceIn(0f, 1f), dark = dark))
             // Light caught across the top of the glass, fading down into it.
             if (reflectionLevel > LEGACY_SHEEN_FROM) {
                 val sheen = Brush.verticalGradient(0f to white(0.05f), 0.35f to Color.Transparent, 1f to Color.Transparent)

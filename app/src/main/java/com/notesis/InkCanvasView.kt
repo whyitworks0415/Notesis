@@ -1167,6 +1167,13 @@ class InkCanvasView @JvmOverloads constructor(
     /** What a two- and a three-finger double tap do: [TAP_NONE], [TAP_UNDO], [TAP_REDO]. */
     var twoFingerTap: Int = TAP_UNDO
     var threeFingerTap: Int = TAP_REDO
+    /** What one, two and three quick finger taps on the page's right edge do; see [EDGE_HIDE_CHROME] and the rest. */
+    var edgeTapActions: IntArray = IntArray(3) { DEFAULT_EDGE_TAPS[it] }
+    /** Called with the action a run of edge taps asked for; the host does it. */
+    var onEdgeAction: ((Int) -> Unit)? = null
+    private var edgeTaps = 0
+    private var edgeTapTime = 0L
+    private val edgeTapsDone = Runnable { fireEdgeTaps() }
     /** Off, three fingers on the page do nothing: no tap action, no reference panel, no turning. */
     var threeFingerGestures: Boolean = true
     /** A finger held still on the page; null leaves long presses alone. */
@@ -2757,9 +2764,19 @@ class InkCanvasView @JvmOverloads constructor(
         documentToScreen.reset()
         documentToScreen.postScale(scale, scale)
         documentToScreen.getValues(matrixValues)
-        matrixValues[Matrix.MTRANS_X] = -document.leftOf(here) * scale +
-            (width - document.pages[here].width * scale) / 2f
-        matrixValues[Matrix.MTRANS_Y] = -document.topOf(here) * scale + PAGE_TOP_MARGIN_PX
+        val page = document.pages[here]
+        if (page.background == PageBackground.INFINITE_ALL) {
+            // A sheet that runs every way opens where it was started: its first
+            // middle, which stays put as the sheet grows right and down.
+            val x = minOf(Page.A4_WIDTH * ENDLESS_ALL_START / 2f, page.width / 2f)
+            val y = minOf(Page.A4_HEIGHT * ENDLESS_ALL_START / 2f, page.height / 2f)
+            matrixValues[Matrix.MTRANS_X] = width / 2f - (document.leftOf(here) + x) * scale
+            matrixValues[Matrix.MTRANS_Y] = height / 2f - (document.topOf(here) + y) * scale
+        } else {
+            matrixValues[Matrix.MTRANS_X] = -document.leftOf(here) * scale +
+                (width - page.width * scale) / 2f
+            matrixValues[Matrix.MTRANS_Y] = -document.topOf(here) * scale + PAGE_TOP_MARGIN_PX
+        }
         documentToScreen.setValues(matrixValues)
         onTransformChanged()
         // Pay the native brush-construction cost now, not on the next pen down.
@@ -2893,7 +2910,8 @@ class InkCanvasView @JvmOverloads constructor(
         return true
     }
 
-    private val thumbnailRenderer by lazy { CanvasStrokeRenderer.create(PencilTextureStore) }
+    // One per worker: two pages are drawn at once, and a renderer keeps scratch state between strokes.
+    private val thumbnailRenderer = ThreadLocal.withInitial { CanvasStrokeRenderer.create(PencilTextureStore) }
     // By size, not count: the page panel's grid holds a screenful of pages, and a
     // dozen pictures went round and round as it scrolled.
     private val thumbnailCache = object : android.util.LruCache<String, Bitmap>(THUMBNAIL_CACHE_BYTES) {
@@ -2909,7 +2927,7 @@ class InkCanvasView @JvmOverloads constructor(
      * other thread in the app.
      */
     private val thumbnailWorker = java.util.concurrent.ThreadPoolExecutor(
-        1, 1, 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
+        THUMBNAIL_WORKERS, THUMBNAIL_WORKERS, 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
         object : java.util.concurrent.LinkedBlockingDeque<Runnable>() {
             override fun offer(e: Runnable): Boolean = offerFirst(e)
         },
@@ -3015,12 +3033,15 @@ class InkCanvasView @JvmOverloads constructor(
                         val scale = widthPx / pageWidth
                         val transform = Matrix().apply { setScale(scale, scale) }
                         canvas.scale(scale, scale)
+                        val renderer = thumbnailRenderer.get()!!
                         drawLayered(canvas, ink, look, null) { stroke ->
-                            runCatching { thumbnailRenderer.draw(canvas, stroke, transform) }
+                            runCatching { renderer.draw(canvas, stroke, transform) }
                         }
                     }
-                    // Through the GPU, so pencil and the particle brushes show: see [renderOnGpu].
-                    val drawn = renderOnGpu(widthPx, height, paint)
+                    // Through the GPU, so pencil and the particle brushes show: see
+                    // [renderOnGpu]. A page with none of those is drawn straight onto
+                    // the bitmap, without standing a renderer up for it.
+                    val drawn = (if (ink.any { needsGpuPicture(it) }) renderOnGpu(widthPx, height, paint) else null)
                         ?: Bitmap.createBitmap(widthPx, height, Bitmap.Config.ARGB_8888).also {
                             val spent = ArrayList<Bitmap>()
                             paint(Canvas(it), spent)
@@ -3393,11 +3414,69 @@ class InkCanvasView @JvmOverloads constructor(
     fun setBackground(index: Int, background: PageBackground) {
         val page = document.pages.getOrNull(index) ?: return
         if (page.background == PageBackground.PDF) return
-        val height = if (background == PageBackground.INFINITE) Page.A4_HEIGHT * 12f
-            else if (page.height > Page.A4_HEIGHT * 2f) Page.A4_HEIGHT else page.height
+        val (width, height) = paperSizeFor(page, background)
         val template = if (background == PageBackground.CUSTOM) page.templateId else null
-        changePaper(page, PaperState(background, template, height, page.width))
+        changePaper(page, PaperState(background, template, height, width))
+        if (background == PageBackground.INFINITE_ALL && page.background == PageBackground.INFINITE_ALL) fitWidth()
     }
+
+    /**
+     * The size page [page] takes with [background]: an endless page's start
+     * (see [endlessStartSize]); a page that was endless back to a page's own
+     * size; any other as it is.
+     */
+    private fun paperSizeFor(page: Page, background: PageBackground): Pair<Float, Float> = when {
+        background.isEndless -> if (page.background == background) page.width to page.height
+            else endlessStartSize(background, if (page.background == PageBackground.INFINITE_ALL) Page.A4_WIDTH else page.width)
+        page.background == PageBackground.INFINITE_ALL -> Page.A4_WIDTH to Page.A4_HEIGHT
+        page.height > Page.A4_HEIGHT * 2f -> page.width to Page.A4_HEIGHT
+        else -> page.width to page.height
+    }
+
+    /**
+     * An endless page grows before the view reaches its end: down, and on a
+     * sheet that runs every way also to the right, by [ENDLESS_GROWTH] pages
+     * at a time once the view comes within a page of the edge. Nothing on it
+     * moves; there is only more of it. Not an edit: no undo, but it is saved.
+     */
+    private fun growEndlessPages() {
+        if (width == 0 || height == 0) return
+        val pages = document.pages
+        if (pages.none { it.background.isEndless }) return
+        layoutViewport(endlessProbe)
+        screenToDocument.mapPoints(endlessProbe)
+        val viewRight = maxOf(endlessProbe[0], endlessProbe[2])
+        val viewTop = minOf(endlessProbe[1], endlessProbe[3])
+        val viewBottom = maxOf(endlessProbe[1], endlessProbe[3])
+        var grew = false
+        for ((index, page) in pages.withIndex()) {
+            if (!page.background.isEndless) continue
+            val top = viewTop - document.topOf(index)
+            val bottom = viewBottom - document.topOf(index)
+            // Only on screen: a page grown while the view is past it would push
+            // the pages after it away for as long as anyone tried to reach them.
+            if (bottom <= 0f || top >= page.height) continue
+            // Down only as the note's last page, for the same reason.
+            if (index == pages.lastIndex && bottom > page.height - Page.A4_HEIGHT) {
+                page.height += Page.A4_HEIGHT * ENDLESS_GROWTH
+                grew = true
+            }
+            if (page.background == PageBackground.INFINITE_ALL) {
+                val right = viewRight - document.leftOf(index)
+                if (right > 0f && right > page.width - Page.A4_WIDTH) {
+                    page.width += Page.A4_WIDTH * ENDLESS_GROWTH
+                    grew = true
+                }
+            }
+        }
+        if (!grew) return
+        document.invalidateLayout()
+        document.markEdited()
+        dry.invalidate()
+        onStrokesChanged?.invoke()
+    }
+
+    private val endlessProbe = FloatArray(4)
 
     private fun changePaper(page: Page, after: PaperState) {
         val before = page.paper()
@@ -3453,10 +3532,9 @@ class InkCanvasView @JvmOverloads constructor(
         var changed = false
         for (page in document.pages) {
             if (page.background == PageBackground.PDF) continue
-            val height = if (background == PageBackground.INFINITE) Page.A4_HEIGHT * 12f
-                else if (page.height > Page.A4_HEIGHT * 2f) Page.A4_HEIGHT else page.height
+            val (width, height) = paperSizeFor(page, background)
             val before = page.paper()
-            val after = PaperState(background, templateId, height, page.width)
+            val after = PaperState(background, templateId, height, width)
             if (before == after) continue
             page.setPaper(after)
             undoStack += Edit.PagePaper(page, before, after, group)
@@ -3797,6 +3875,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** Everything a new viewport means beyond its matrix, at most once a frame while it moves. */
     private fun afterTransform() {
+        growEndlessPages()
         onViewportChanged?.invoke()
         ruler.pxPerMm = currentScale() * Page.A4_WIDTH / A4_MM_WIDTH
         updateCurrentPage()
@@ -5405,6 +5484,7 @@ class InkCanvasView @JvmOverloads constructor(
         if (gestureMaxPointers !in 1..3 || duration >= TAP_MAX_MS || gestureMoved >= TAP_SLOP_PX || turnedThisGesture) {
             return
         }
+        if (gestureMaxPointers == 1 && edgeTap(lastFocusX)) return
         if (gestureMaxPointers == 1 && !doubleTapZoom) return
         val now = System.currentTimeMillis()
         val sameSpot = hypot(lastFocusX - lastTapX, lastFocusY - lastTapY) < DOUBLE_TAP_SLOP_PX
@@ -5424,6 +5504,33 @@ class InkCanvasView @JvmOverloads constructor(
             lastTapX = lastFocusX
             lastTapY = lastFocusY
         }
+    }
+
+    /**
+     * One finger tapped at [x]: on the right edge of the page, it is counted
+     * towards a run of up to three. The run ends at its last tap that does
+     * something - at once, when no longer run would - or once the fingers
+     * have stayed off for [EDGE_TAP_GAP_MS]. True when the tap was the edge's.
+     */
+    private fun edgeTap(x: Float): Boolean {
+        if (onEdgeAction == null || edgeTapActions.all { it == EDGE_NOTHING }) return false
+        if (x < width - EDGE_TAP_ZONE_DP * resources.displayMetrics.density) return false
+        val now = SystemClock.uptimeMillis()
+        if (now - edgeTapTime > EDGE_TAP_GAP_MS) edgeTaps = 0
+        edgeTaps++
+        edgeTapTime = now
+        removeCallbacks(edgeTapsDone)
+        val longest = edgeTapActions.indexOfLast { it != EDGE_NOTHING } + 1
+        if (edgeTaps >= longest) fireEdgeTaps() else postDelayed(edgeTapsDone, EDGE_TAP_GAP_MS)
+        return true
+    }
+
+    private fun fireEdgeTaps() {
+        removeCallbacks(edgeTapsDone)
+        val count = edgeTaps
+        edgeTaps = 0
+        val action = edgeTapActions.getOrElse(count - 1) { EDGE_NOTHING }
+        if (action != EDGE_NOTHING) onEdgeAction?.invoke(action)
     }
 
     private fun runTapAction(action: Int) {
@@ -7070,6 +7177,9 @@ class InkCanvasView @JvmOverloads constructor(
         onLinkBackChanged?.invoke(true)
     }
 
+    /** The page [goBack] would return to, or null with nowhere to go back to. */
+    fun backTarget(): Int? = linkBackStack.lastOrNull()
+
     fun goBack(): Boolean {
         val back = linkBackStack.removeLastOrNull() ?: return false
         scrollToPage(back.coerceIn(document.pages.indices))
@@ -8305,6 +8415,10 @@ class InkCanvasView @JvmOverloads constructor(
      */
     fun pdfMatchBounds(pdfPageIndex: Int, query: String, occurrence: Int): List<RectF> =
         pdf?.matchBounds(pdfPageIndex, query, occurrence).orEmpty()
+
+    /** [pdfMatchBounds] if that page was already searched for [query]; null if not. Does not block. */
+    fun cachedPdfMatchBounds(pdfPageIndex: Int, query: String, occurrence: Int): List<RectF>? =
+        pdf?.cachedMatchBounds(pdfPageIndex, query, occurrence)
 
     /** The text of PDF page [pdfPageIndex], from the PDF already open here. Blocking. */
     fun pdfPageText(pdfPageIndex: Int): String = pdf?.textOf(pdfPageIndex).orEmpty()
@@ -9917,6 +10031,7 @@ class InkCanvasView @JvmOverloads constructor(
             when (page.background) {
                 PageBackground.BLANK -> Unit
                 PageBackground.INFINITE -> Unit
+                PageBackground.INFINITE_ALL -> Unit
                 PageBackground.LINED -> {
                     var y = firstVisiblePaperRule(top, RULE_SPACING)
                     while (y < bottom) {
@@ -10073,6 +10188,8 @@ class InkCanvasView @JvmOverloads constructor(
         const val HIGHLIGHT_ALPHA = 0x66000000
         const val RULE_SPACING = 60f
         const val PAGE_TOP_MARGIN_PX = 24f
+        /** How many pages' worth an endless page grows by when the view nears its end. */
+        const val ENDLESS_GROWTH = 4f
         const val REFINE_DEBOUNCE_MS = 200L
         private const val INK_CACHE_IDLE_MS = 700L
         const val ZOOM_REPORT_INTERVAL_NS = 33_000_000L
@@ -10126,6 +10243,10 @@ class InkCanvasView @JvmOverloads constructor(
         /** The long edge of the picture the capture dialog shows. */
         const val CAPTURE_PREVIEW_PX = 1280f
         /** How long a found search result stays marked, and how long a page without a known place flashes. */
+        /** How far in from the page's right edge a tap counts as the edge's. */
+        const val EDGE_TAP_ZONE_DP = 56f
+        /** How long after a tap on the edge another still adds to the run. */
+        const val EDGE_TAP_GAP_MS = 320L
         const val SEARCH_HIT_MS = 1800L
         const val SEARCH_FLASH_MS = 450L
         /** Screen pixels round a marked search result. */
@@ -10156,6 +10277,8 @@ class InkCanvasView @JvmOverloads constructor(
         private const val THUMBNAIL_CACHE_BYTES = 24 * 1024 * 1024
         /** Java priority 4: Android's background priority, below the UI but not starved by it. */
         private const val THUMBNAIL_THREAD_PRIORITY = 4
+        /** How many pages are pictured at once. The PDF behind them still renders one page at a time. */
+        private const val THUMBNAIL_WORKERS = 2
         /** The zoom a page's ink is read at for its picture alone: far coarser than any page on screen. */
         private const val THUMBNAIL_TESSELLATION_SCALE = 0.25f
         const val GESTURE_TRAIL_COLOR = 0xFF3B7DDD.toInt()

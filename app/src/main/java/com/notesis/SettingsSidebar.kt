@@ -98,14 +98,15 @@ internal enum class SettingsPage(val title: String, val subtitle: String, val sc
     TOUCH("Touch & gestures", "Fingers, taps, palm rejection and three-finger gestures"),
     TOOLBAR("Customize toolbar", "Tools and their order for each toolbar size", scrolls = false),
     NOTE_VIEW("Note & view", "Page layout, page tone and this note"),
-    WEB("Web & AI", "Open the browser panel or an AI site"),
+    WEB("Web & AI", "Open the browser panel or an AI site, and add your own sites"),
+    SAVE_RESET("Save & reset", "Keep your settings to come back to, or reset the toolbar"),
     DIAGNOSTICS("Diagnostics", "Latency overlay, timings, background work and device state"),
 }
 
 /** The order the root lists its sections in. */
 private val SECTIONS = listOf(
     SettingsPage.PEN, SettingsPage.APPEARANCE, SettingsPage.TOUCH, SettingsPage.TOOLBAR,
-    SettingsPage.NOTE_VIEW, SettingsPage.WEB, SettingsPage.DIAGNOSTICS,
+    SettingsPage.NOTE_VIEW, SettingsPage.WEB, SettingsPage.SAVE_RESET, SettingsPage.DIAGNOSTICS,
 )
 
 /**
@@ -371,6 +372,8 @@ internal fun NoteSettingsSidebar(
     onWidthChange: (Float) -> Unit,
     quickActions: List<SpotiToolbarAction>,
     webActions: List<SpotiToolbarAction>,
+    /** Opens an address in the browser panel: one of the sites added in Web & AI. */
+    onOpenSite: (String) -> Unit = {},
     penSettings: @Composable () -> Unit,
     appearance: @Composable () -> Unit,
     touch: @Composable () -> Unit,
@@ -378,6 +381,8 @@ internal fun NoteSettingsSidebar(
     toolbar: @Composable (done: () -> Unit) -> Unit,
     noteView: @Composable () -> Unit,
     diagnostics: @Composable () -> Unit,
+    /** Puts back the toolbar's place and pin, which the note screen holds, after [resetToolbar]. */
+    onResetToolbar: () -> Unit = {},
     modifier: Modifier = Modifier,
     /** See [AnimatedSettingsSidebar]. */
     appear: () -> Float = { 1f },
@@ -411,7 +416,9 @@ internal fun NoteSettingsSidebar(
                     SettingsPage.WEB -> {
                         SettingsNote("The page opens in a panel beside the note, so you can keep writing.")
                         SpotiMenuGrid(webActions, columns = 2)
+                        AddedSitesEditor(onOpen = onOpenSite)
                     }
+                    SettingsPage.SAVE_RESET -> SettingsSaveAndReset(onResetToolbar)
                     SettingsPage.DIAGNOSTICS -> diagnostics()
                 }
             }
@@ -449,6 +456,7 @@ private fun SettingsPage.icon(): ImageVector = when (this) {
     SettingsPage.TOOLBAR -> AppIcons.editTools
     SettingsPage.NOTE_VIEW -> AppIcons.note
     SettingsPage.WEB -> AppIcons.web
+    SettingsPage.SAVE_RESET -> AppIcons.resetBar
     SettingsPage.DIAGNOSTICS -> AppIcons.diagnostics
 }
 
@@ -605,6 +613,21 @@ internal fun TouchGestureSettings(gestures: CanvasGestures, onGestures: (CanvasG
             hint = "In, or back out to the page width")
         SettingsToggle("Lock zoom", gestures.zoomLocked, { onGestures(gestures.copy(zoomLocked = it)) },
             hint = "Pinching moves the page but never changes its zoom")
+    }
+    SettingsCard {
+        SettingsSectionHeader("Right edge of the page")
+        SettingsNote("Quick taps with one finger near the page's right edge. Hiding puts the toolbar and the panels over the note away upwards; pull the tab at the top down, or tap the edge again, to bring them back.")
+        val edge = listOf(
+            EDGE_NOTHING to "Nothing", EDGE_HIDE_CHROME to "Hide toolbar", EDGE_UNDO to "Undo", EDGE_REDO to "Redo",
+            EDGE_NEXT_PAGE to "Next page", EDGE_PREVIOUS_PAGE to "Previous page", EDGE_PAGES to "Pages panel",
+        )
+        listOf("One tap", "Two taps", "Three taps").forEachIndexed { i, title ->
+            SettingsChoices(title, edge, gestures.edgeTaps.getOrElse(i) { EDGE_NOTHING }) { picked ->
+                val next = List(3) { gestures.edgeTaps.getOrElse(it) { EDGE_NOTHING } }.toMutableList()
+                next[i] = picked
+                onGestures(gestures.copy(edgeTaps = next))
+            }
+        }
     }
     SettingsCard {
         SettingsSectionHeader("Three-finger gestures")

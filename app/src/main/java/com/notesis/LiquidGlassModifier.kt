@@ -33,6 +33,14 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.ShaderBrush
+import androidx.compose.ui.graphics.Shader
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.drawOutline
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -150,9 +158,9 @@ fun Modifier.liquidGlass(
     )
     // The edge and the sheen catch as much light as [SkinSettings.reflection] lets them.
     val shine = settings.reflection.coerceIn(0f, 1f) / SkinSettings.LEGACY_REFLECTION
-    val borderColor = Color(settings.border).copy(
-        alpha = ((0.30f + settings.dispersion.coerceIn(0f, 1f) * 0.38f) * amount * shine).coerceIn(0f, 1f),
-    )
+    val rimStrength = (0.45f * shine).coerceIn(0f, 1f) * amount
+    val rimLight = Color(settings.border)
+    val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
 
     if (enabled && amount > 0.001f && effectsAllowed && backdrop != null) {
         var result = this
@@ -200,7 +208,7 @@ fun Modifier.liquidGlass(
                     )
                 },
             )
-        if (drawBorder) result = result.border(1.dp, borderColor, glassShape)
+        if (drawBorder) result = result.glassRim(glassShape, rimStrength, rimLight, dark = dark)
         return result
     }
 
@@ -213,13 +221,74 @@ fun Modifier.liquidGlass(
         .clip(glassShape)
         .background(fallback)
     if (drawBorder) {
-        result = result.border(
-            1.dp,
-            Color(settings.border).copy(alpha = if (settings.highContrast) 0.72f else 0.32f),
-            glassShape,
-        )
+        result = if (settings.highContrast) {
+            result.border(1.dp, Color(settings.border).copy(alpha = 0.72f), glassShape)
+        } else {
+            result.glassRim(glassShape, rimStrength * 0.7f, rimLight, dark = dark)
+        }
     }
     return result
+}
+
+/**
+ * The edge glass has on iOS: not a line of even white all the way round, but
+ * light caught where the glass faces it - brightest at the top-left corner, a
+ * softer second catch at the bottom-right, and next to nothing along the
+ * sides between, over a faint dark hairline so the edge still reads on white
+ * paper. [light] is the colour it catches, [strength] how much of it, from
+ * nothing to full.
+ */
+internal fun Modifier.glassRim(
+    shape: Shape,
+    strength: Float,
+    light: Color = Color.White,
+    width: Dp = 1.dp,
+    dark: Boolean = false,
+): Modifier {
+    if (strength <= 0.001f) return this
+    return drawWithCache {
+        val stroke = width.toPx()
+        val inner = Size((size.width - stroke).coerceAtLeast(0f), (size.height - stroke).coerceAtLeast(0f))
+        val outline = shape.createOutline(inner, layoutDirection, this)
+        val highlight = glassRimBrush(strength, light, dark)
+        val shade = Color.Black.copy(alpha = (if (dark) 0.20f else 0.06f) * strength.coerceAtLeast(0.5f))
+        onDrawWithContent {
+            drawContent()
+            translate(stroke / 2f, stroke / 2f) {
+                drawOutline(outline, shade, style = Stroke(stroke))
+                drawOutline(outline, highlight, style = Stroke(stroke))
+            }
+        }
+    }
+}
+
+/**
+ * [glassRim]'s light as a brush for any outline: a sweep round the middle of
+ * whatever it is drawn on, laid out on that shape squared up, so a long bar
+ * catches the light at its corners as a round button does rather than along
+ * the whole of its top.
+ */
+internal fun glassRimBrush(strength: Float, light: Color = Color.White, dark: Boolean = false): Brush {
+    val s = strength.coerceIn(0f, 1f) * if (dark) 0.8f else 1f
+    fun lit(a: Float) = light.copy(alpha = (light.alpha * a * s).coerceIn(0f, 1f)).toArgb()
+    // Clockwise from the right-hand side: bottom-right, bottom, bottom-left,
+    // left, top-left, top, top-right, and round to the right again.
+    val colors = intArrayOf(
+        lit(0.10f), lit(0.55f), lit(0.08f), lit(0.02f), lit(0.20f), lit(0.95f), lit(0.30f), lit(0.04f), lit(0.10f),
+    )
+    val stops = floatArrayOf(0f, 0.125f, 0.25f, 0.375f, 0.5f, 0.625f, 0.75f, 0.875f, 1f)
+    return object : ShaderBrush() {
+        override fun createShader(size: Size): Shader {
+            val cx = size.width / 2f
+            val cy = size.height / 2f
+            return android.graphics.SweepGradient(cx, cy, colors, stops).apply {
+                val side = minOf(size.width, size.height).coerceAtLeast(1f)
+                setLocalMatrix(android.graphics.Matrix().apply {
+                    setScale(size.width.coerceAtLeast(1f) / side, size.height.coerceAtLeast(1f) / side, cx, cy)
+                })
+            }
+        }
+    }
 }
 
 /**

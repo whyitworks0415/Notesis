@@ -27,6 +27,24 @@ internal fun rasterizeInk(width: Int, height: Int, scale: Float, strokes: List<S
 }
 
 /**
+ * Whether [stroke] needs the GPU to be pictured at all: the pencil's graphite
+ * and the particle brushes - the dashed lines among them - come out blank on a
+ * bitmap's own canvas. The pens, nibs, highlighter and tape do not; anything
+ * not known to be one of them is taken to need it.
+ */
+@OptIn(androidx.ink.brush.ExperimentalInkCustomBrushApi::class)
+internal fun needsGpuPicture(stroke: Stroke): Boolean {
+    val id = stroke.brush.family.clientBrushFamilyId
+    // A nib's angle is written after the family's own id; see InkCanvasView's NIB_MARK.
+    return CPU_SAFE_FAMILIES.none { id == it || id.startsWith("$it.") || id.startsWith("$it@") }
+}
+
+private val CPU_SAFE_FAMILIES = listOf(
+    "notesis.pen", "notesis.pressure-pen", "notesis.vanishing", "notesis.fountain", "notesis.calligraphy",
+    "notesis.watercolor", "notesis.oil", "notesis.highlighter", "notesis.mask",
+)
+
+/**
  * A [width] x [height] picture of what [draw] puts on a canvas, drawn by the
  * GPU as the page on screen is: Ink paints the pencil's graphite and the
  * particle brushes only on a hardware canvas, and on a bitmap's own canvas

@@ -935,24 +935,45 @@ class PdfSource private constructor(
      * boxes in page-local world units - the first match when there are fewer.
      * Empty when nothing matches, or before Android 15, which cannot search.
      */
-    fun matchBounds(index: Int, query: String, occurrence: Int = 0): List<RectF> = synchronized(renderLock) {
-        if (Build.VERSION.SDK_INT < 35) return emptyList()
-        if (closed || index !in 0 until pageCount || query.isBlank()) return emptyList()
-        runCatching {
-            renderer.openPage(index).use { page ->
-                val matches = page.searchText(query)
-                val match = matches.getOrNull(occurrence) ?: matches.firstOrNull() ?: return emptyList()
-                match.bounds.map { rect ->
-                    RectF(
-                        rect.left * POINTS_TO_WORLD,
-                        rect.top * POINTS_TO_WORLD,
-                        rect.right * POINTS_TO_WORLD,
-                        rect.bottom * POINTS_TO_WORLD,
-                    )
+    fun matchBounds(index: Int, query: String, occurrence: Int = 0): List<RectF> {
+        cachedMatchBounds(index, query, occurrence)?.let { return it }
+        val matches = synchronized(renderLock) {
+            if (Build.VERSION.SDK_INT < 35) return emptyList()
+            if (closed || index !in 0 until pageCount || query.isBlank()) return emptyList()
+            runCatching {
+                renderer.openPage(index).use { page ->
+                    page.searchText(query).map { match ->
+                        match.bounds.map { rect ->
+                            RectF(
+                                rect.left * POINTS_TO_WORLD,
+                                rect.top * POINTS_TO_WORLD,
+                                rect.right * POINTS_TO_WORLD,
+                                rect.bottom * POINTS_TO_WORLD,
+                            )
+                        }
+                    }
                 }
-            }
-        }.getOrDefault(emptyList())
+            }.getOrNull() ?: return emptyList()
+        }
+        matchCache.put(matchKey(index, query), matches)
+        return pick(matches, occurrence)
     }
+
+    /**
+     * [matchBounds] when the page has been searched for [query] already, at no
+     * cost: null when it has not. Safe on the main thread, so a match the
+     * search looked up ahead shows on the page in the same frame it is opened.
+     */
+    fun cachedMatchBounds(index: Int, query: String, occurrence: Int = 0): List<RectF>? =
+        matchCache.get(matchKey(index, query))?.let { pick(it, occurrence) }
+
+    private fun pick(matches: List<List<RectF>>, occurrence: Int): List<RectF> =
+        (matches.getOrNull(occurrence) ?: matches.firstOrNull()).orEmpty().map { RectF(it) }
+
+    private fun matchKey(index: Int, query: String) = "$index\u0000${query.trim().lowercase()}"
+
+    /** Every match on a page for a query, by page and query: what a search steps through. */
+    private val matchCache = android.util.LruCache<String, List<List<RectF>>>(MATCH_CACHE_PAGES)
 
     /** [source] is in page-local world units. */
     private fun renderCrop(index: Int, source: RectF, widthPx: Int, heightPx: Int): Bitmap? =
@@ -1037,6 +1058,8 @@ class PdfSource private constructor(
     }
 
     companion object {
+        /** How many pages' matches for a query are kept for the search to step through. */
+        private const val MATCH_CACHE_PAGES = 96
         /** PDF points are 1/72"; pages are laid out at 150dpi like a blank page. */
         const val POINTS_TO_WORLD = 150f / 72f
 

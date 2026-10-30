@@ -1,6 +1,7 @@
 package com.notesis
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -43,5 +44,27 @@ class AppUpdateTest {
         OPEN_SOURCE_COMPONENTS.flatMap { it.texts }.distinct().forEach { path ->
             assertTrue("missing asset $path", File(assets, path).isFile)
         }
+    }
+
+    private fun release(code: Long, manual: Boolean) =
+        AppRelease("0.$code", code, "https://example.com/a.apk", 1L, null, "", manual = manual)
+
+    @Test
+    fun manualReleasesAreMarkedInTheirNotes() {
+        assertTrue(AppUpdate.isManual("# Notesis\n<!-- update: manual -->\n- 내용"))
+        assertTrue(AppUpdate.isManual("<!--UPDATE:Manual-->"))
+        assertFalse(AppUpdate.isManual("# Notesis\n- 수동 업데이트가 아닙니다"))
+        assertEquals("내용", AppUpdate.plainNotes("<!-- update: manual -->\n내용"))
+    }
+
+    @Test
+    fun aManualReleaseIsOfferedOnlyWithAnAutomaticOneDue() {
+        val noRecent = { error("not asked") }
+        assertTrue(AppUpdate.shouldNotify(release(10, manual = false), 9) { noRecent() })
+        assertFalse(AppUpdate.shouldNotify(release(10, manual = false), 10) { noRecent() })
+        assertFalse(AppUpdate.shouldNotify(release(10, manual = true), 9) { listOf(release(10, true)) })
+        // An automatic 9 was due for someone on 8; the manual 10 is what they get.
+        assertTrue(AppUpdate.shouldNotify(release(10, manual = true), 8) { listOf(release(10, true), release(9, false)) })
+        assertFalse(AppUpdate.shouldNotify(release(10, manual = true), 9) { listOf(release(10, true), release(9, false)) })
     }
 }

@@ -186,7 +186,7 @@ fun LiquidGlassSlider(
                             ),
                         ),
                     )
-                    .border(0.75.dp, Color.White.copy(alpha = 0.55f), CircleShape),
+                    .glassRim(CircleShape, 0.8f, width = 0.75.dp),
             ) {
                 Box(
                     Modifier

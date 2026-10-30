@@ -23,8 +23,14 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalConfiguration
@@ -106,8 +112,17 @@ internal fun ToolPanel(
         val corner = skin.tokens().corner
         val shape = RoundedCornerShape(corner)
         val tallest = LocalConfiguration.current.screenHeightDp.dp * 0.9f
+        // Where the panel's top first lands, kept there: a part opening inside
+        // it, or another tab of it, makes it longer downwards rather than
+        // moving its top up and down the screen. Only a panel grown past the
+        // bottom is pushed up, as far as it has to be.
+        val pinnedTop = remember { intArrayOf(-1) }
+        val panelBounds = remember { IntArray(4) }
+        val outside by rememberUpdatedState(onOutside)
         ProvideMovingBackdrops(growth.motion) {
         NestedCorners(corner, TOOL_PANEL_INSET) {
+        Layout(
+            content = {
         Column(
             Modifier
                 // Outside the padding: while the panel fades, the growth's
@@ -134,6 +149,30 @@ internal fun ToolPanel(
                 actions()
             }
             content()
+        }
+            },
+            // The window runs the screen's height, the panel at its pinned top;
+            // a tap above or below the panel is a tap past it.
+            modifier = Modifier.pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val at = down.position
+                    val inside = at.x >= panelBounds[0] && at.x <= panelBounds[2] &&
+                        at.y >= panelBounds[1] && at.y <= panelBounds[3]
+                    if (!inside && waitForUpOrCancellation() != null) outside()
+                }
+            },
+        ) { measurables, constraints ->
+            val panel = measurables.first().measure(constraints.copy(minWidth = 0, minHeight = 0))
+            val height = if (constraints.hasBoundedHeight) constraints.maxHeight else panel.height
+            val room = (height - panel.height).coerceAtLeast(0)
+            if (pinnedTop[0] < 0) pinnedTop[0] = room / 2
+            val top = pinnedTop[0].coerceAtMost(room)
+            panelBounds[0] = 0
+            panelBounds[1] = top
+            panelBounds[2] = panel.width
+            panelBounds[3] = top + panel.height
+            layout(panel.width, height) { panel.place(0, top) }
         }
         }
         }

@@ -31,6 +31,11 @@ internal data class AppRelease(
     /** Lower-case hex, when GitHub reported a digest for the file. */
     val sha256: String?,
     val notes: String,
+    /**
+     * Released to be installed by hand: never offered as the app opens, only
+     * in About · Help. Marked in the release notes with [AppUpdate.MANUAL_MARK].
+     */
+    val manual: Boolean = false,
 )
 
 /**
@@ -43,6 +48,14 @@ internal data class AppRelease(
  */
 internal object AppUpdate {
     private const val LATEST_URL = "https://api.github.com/repos/whyitworks0415/Notesis/releases/latest"
+    private const val RECENT_URL = "https://api.github.com/repos/whyitworks0415/Notesis/releases?per_page=20"
+
+    /**
+     * How a release says it is a manual update: this line anywhere in its
+     * notes. An HTML comment, so the releases page does not show it; apk.yml
+     * adds it when a build is released with update = manual.
+     */
+    const val MANUAL_MARK = "<!-- update: manual -->"
     private const val APK_TYPE = "application/vnd.android.package-archive"
     private const val TIMEOUT_MS = 15_000
 
@@ -74,7 +87,13 @@ internal object AppUpdate {
     private val TAG = Regex("""v?(.+)-(\d+)""")
 
     /** The release notes are Markdown; the dialog shows them as plain lines. */
-    fun plainNotes(markdown: String): String = markdown.lines()
+    /** Whether release notes [markdown] carry [MANUAL_MARK], however it is spaced or cased. */
+    fun isManual(markdown: String): Boolean = MANUAL_PATTERN.containsMatchIn(markdown)
+
+    private val MANUAL_PATTERN = Regex("""<!--\s*update\s*:\s*manual\s*-->""", RegexOption.IGNORE_CASE)
+    private val COMMENT = Regex("""<!--.*?-->""", RegexOption.DOT_MATCHES_ALL)
+
+    fun plainNotes(markdown: String): String = markdown.replace(COMMENT, "").lines()
         .dropWhile { it.isBlank() }
         .let { lines -> if (lines.firstOrNull()?.startsWith("# ") == true) lines.drop(1) else lines }
         .map { line ->
@@ -91,8 +110,30 @@ internal object AppUpdate {
         .trim()
 
     /** The newest release, or null when it cannot be read or carries no APK. Network: call off the main thread. */
-    fun fetchLatest(): AppRelease? = runCatching {
-        val connection = (URL(LATEST_URL).openConnection() as HttpURLConnection).apply {
+    fun fetchLatest(): AppRelease? = fetch(LATEST_URL)?.let { runCatching { parseRelease(JSONObject(it)) }.getOrNull() }
+
+    /** The newest releases, newest first, each that carries an APK. Network: call off the main thread. */
+    fun fetchRecent(): List<AppRelease> = fetch(RECENT_URL)?.let { json ->
+        runCatching {
+            val array = org.json.JSONArray(json)
+            (0 until array.length()).mapNotNull { parseRelease(array.getJSONObject(it)) }
+        }.getOrNull()
+    }.orEmpty()
+
+    /**
+     * Whether a check made as the app opens should offer [latest]: a build
+     * released as automatic, or a manual one with an automatic build between
+     * it and what is installed - that one was due to be offered anyway, and
+     * the newest is what it brings.
+     */
+    fun shouldNotify(latest: AppRelease, installed: Long, recent: () -> List<AppRelease>): Boolean {
+        if (latest.versionCode <= installed) return false
+        if (!latest.manual) return true
+        return recent().any { !it.manual && it.versionCode > installed }
+    }
+
+    private fun fetch(address: String): String? = runCatching {
+        val connection = (URL(address).openConnection() as HttpURLConnection).apply {
             connectTimeout = TIMEOUT_MS
             readTimeout = TIMEOUT_MS
             setRequestProperty("Accept", "application/vnd.github+json")
@@ -100,14 +141,13 @@ internal object AppUpdate {
         }
         try {
             if (connection.responseCode != HttpURLConnection.HTTP_OK) return null
-            parseRelease(connection.inputStream.bufferedReader().use { it.readText() })
+            connection.inputStream.bufferedReader().use { it.readText() }
         } finally {
             connection.disconnect()
         }
     }.getOrNull()
 
-    private fun parseRelease(json: String): AppRelease? {
-        val release = JSONObject(json)
+    private fun parseRelease(release: JSONObject): AppRelease? {
         if (release.optBoolean("draft") || release.optBoolean("prerelease")) return null
         val (name, code) = parseTag(release.optString("tag_name")) ?: return null
         val assets = release.optJSONArray("assets") ?: return null
@@ -120,6 +160,7 @@ internal object AppUpdate {
             apkSize = apk.optLong("size"),
             sha256 = apk.optString("digest").takeIf { it.startsWith("sha256:") }?.removePrefix("sha256:")?.lowercase(),
             notes = plainNotes(release.optString("body")),
+            manual = isManual(release.optString("body")),
         )
     }
 
@@ -218,7 +259,9 @@ internal fun LaunchUpdateCheck() {
         if (latest.versionCode <= installed) {
             withContext(Dispatchers.IO) { AppUpdate.clearDownloads(context) }
         } else if (latest.versionCode != AppUpdate.skipped(context)) {
-            found = latest
+            // A manual release waits in About · Help, unless an automatic one is due.
+            val offer = withContext(Dispatchers.IO) { AppUpdate.shouldNotify(latest, installed) { AppUpdate.fetchRecent() } }
+            if (offer) found = latest
         }
     }
     found?.let { release ->
@@ -328,11 +371,29 @@ internal fun AppVersionSection(onLicenses: () -> Unit) {
     var status by remember { mutableStateOf<String?>(null) }
     var found by remember { mutableStateOf<AppRelease?>(null) }
     found?.let { UpdateDialog(it, onDismiss = { found = null }) }
+    // Looked for as this opens, without a dialog: a manual update is only
+    // ever offered here, so here says when there is one.
+    var waiting by remember { mutableStateOf<AppRelease?>(null) }
+    LaunchedEffect(Unit) {
+        val latest = withContext(Dispatchers.IO) { AppUpdate.fetchLatest() } ?: return@LaunchedEffect
+        if (latest.versionCode > AppUpdate.installedCode(context)) waiting = latest
+    }
 
     Text(
         "Notesis ${AppUpdate.installedName(context)} (${AppUpdate.installedCode(context)})",
         style = MaterialTheme.typography.titleSmall,
     )
+    waiting?.let { release ->
+        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Text(
+                "Version ${release.versionName} is ready" + if (release.manual) " (manual update)" else "",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = { found = release }) { Text("Update") }
+        }
+    }
     Row {
         TextButton(enabled = !checking, onClick = {
             checking = true
@@ -351,7 +412,12 @@ internal fun AppVersionSection(onLicenses: () -> Unit) {
     }
     status?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
     Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-        Text("Check for updates when the app opens", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Text("Tell me about updates when the app opens", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
         SkinSwitch(checked = auto, onCheckedChange = { auto = it; AppUpdate.setAutoCheck(context, it) })
     }
+    Text(
+        "Some versions are released as manual updates. Those are never announced; they wait here until you update.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.outline,
+    )
 }

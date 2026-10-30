@@ -50,6 +50,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
@@ -676,21 +677,19 @@ internal fun SpotiGlassToolbar(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
                 Box {
-                    if (sizeLevel == ToolbarConfig.BUTTON_ONLY_STAGE) {
-                        SpotiActionButton("Tools and functions", AppIcons.functions,
-                            Modifier.size(barButtonSize())
-                                .onGloballyPositioned { functionsAt[0] = it.centerOnScreen() }
-                                .coachTargetWhileShown(coachTargets, CoachTarget.FUNCTIONS)
-                                // Held still first, it picks the bar up and moves it.
-                                .then(if (allowVertical) Modifier.functionsDrag(sizeLevel, vertical = false, onSizeLevel, onMove = onDrag)
-                                    else Modifier),
-                            iconOnly = true, persistentGlass = true, onClick = { menu(ToolbarMenu.FUNCTIONS) })
-                    } else if (vertical) {
+                    // 4/4 is the Functions button alone. It is the same button as
+                    // in the bigger bars - one place in the layout for every
+                    // size - so a drag that starts on it carries on as the bar
+                    // grows out of it, instead of being dropped the moment the
+                    // tools appear beside it.
+                    val buttonOnly = sizeLevel == ToolbarConfig.BUTTON_ONLY_STAGE
+                    if (vertical) {
                         // Down the side: the tools as one capsule (or, when the
                         // screen is too short for them, side by side columns)
                         // with the Functions button under them.
                         Column(horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+                            if (!buttonOnly) {
                             val shown = config.tools(sizeLevel)
                             val tallest = (LocalConfiguration.current.screenHeightDp - VERTICAL_BAR_RESERVE_DP).coerceAtLeast(160)
                             val columns = spotiToolRows(shown, tallest.toFloat(), cellDp = 52f * LocalChromeScale.current)
@@ -708,11 +707,14 @@ internal fun SpotiGlassToolbar(
                                         ownSurface = true, toolColors = toolColors, onPick = ::pick, vertical = true)
                                 }
                             }
-                            SpotiActionButton("Functions", AppIcons.functions, selected = open,
+                            }
+                            SpotiActionButton(if (buttonOnly) "Tools and functions" else "Functions", AppIcons.functions,
+                                selected = open && !buttonOnly,
                                 modifier = Modifier.size(barButtonSize())
                                     .onGloballyPositioned { functionsAt[0] = it.centerOnScreen() }
                                     .coachTargetWhileShown(coachTargets, CoachTarget.FUNCTIONS)
-                                    .functionsDrag(sizeLevel, vertical = true, onSizeLevel),
+                                    // Held still first, the button alone picks the bar up and moves it.
+                                    .functionsDrag(sizeLevel, vertical = true, onSizeLevel, onMove = if (buttonOnly) onDrag else null),
                                 iconOnly = true, persistentGlass = true,
                                 onClick = { menu(ToolbarMenu.FUNCTIONS) })
                         }
@@ -720,7 +722,7 @@ internal fun SpotiGlassToolbar(
                         Row(Modifier.fillMaxWidth().then(if (full) Modifier.spotiFitRow(800.dp, chrome) else Modifier),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(if (full) Ui.Space.xs else Ui.Space.s)) {
-                            Box(Modifier.weight(1f).coachTargetWhileShown(coachTargets, CoachTarget.TOOLS)) {
+                            if (!buttonOnly) Box(Modifier.weight(1f).coachTargetWhileShown(coachTargets, CoachTarget.TOOLS)) {
                               // Freeze wrapping at the destination width while the
                               // spring grows the bar; avoid 6 -> 3 -> 2 -> 1 rows.
                               val toolWidth = spotiToolWidth(targetWidth, LocalChromeScale.current)
@@ -733,11 +735,15 @@ internal fun SpotiGlassToolbar(
                                 rows.forEach { tools ->
                                   val selected = if (open && page == ToolbarMenu.AI) tools.indexOf(SpotiToolbarTool.AI)
                                       else tools.indexOfFirst { it.mode == mode }
+                                  // The full bar's strip is drawn on the bar's own glass, but
+                                  // its selection still rises into a lens while it moves, as
+                                  // the smaller bars' does - kept inside the strip's height.
                                   if (skin == Skin.SPOTIGLASS) SpotiGlassBar(tools.map { SpotiGlassItem(it.label, it.icon(), toolColors[it.mode]) },
                                     selectedIndex = selected,
                                     onSelected = { pick(tools[it]) }, modifier = Modifier.fillMaxWidth(),
                                     showLabels = false, compact = full, corner = stripCorner,
-                                    surface = if (full) SpotiBarSurface.NONE else SpotiBarSurface.LIQUID)
+                                    surface = if (full) SpotiBarSurface.NONE else SpotiBarSurface.LIQUID,
+                                    lift = true)
                                   else ToolStrip(tools, selected, compact = full, corner = stripCorner,
                                     ownSurface = !full, toolColors = toolColors, onPick = ::pick)
                                 }
@@ -745,11 +751,13 @@ internal fun SpotiGlassToolbar(
                             }
                             if (full) Box(Modifier.width(360.dp)
                                 .coachTargetWhileShown(coachTargets, CoachTarget.PEN_ROW)) { penOptions(360.dp) }
-                            SpotiActionButton("Functions", AppIcons.functions, selected = open,
+                            SpotiActionButton(if (buttonOnly) "Tools and functions" else "Functions", AppIcons.functions,
+                                selected = open && !buttonOnly,
                                 modifier = Modifier.size(if (full) Ui.Size.touchCompact else barButtonSize())
                                     .onGloballyPositioned { functionsAt[0] = it.centerOnScreen() }
                                     .coachTargetWhileShown(coachTargets, CoachTarget.FUNCTIONS)
-                                    .then(if (allowVertical) Modifier.functionsDrag(sizeLevel, vertical = false, onSizeLevel) else Modifier),
+                                    .then(if (allowVertical) Modifier.functionsDrag(sizeLevel, vertical = false, onSizeLevel,
+                                        onMove = if (buttonOnly) onDrag else null) else Modifier),
                                 iconOnly = true,
                                 persistentGlass = !full,
                                 corner = if (full) Ui.concentric(outer, TOOLBAR_INSET) else null,
@@ -976,6 +984,68 @@ private fun Modifier.functionsDrag(
                 following?.onWidth(null)
             }
         }
+    }
+}
+
+/**
+ * The bar turning between across the top and down the side, or crossing to
+ * the other side: laid out at once in its new place, it is drawn starting
+ * from where it was - moved back there and a little smaller - and travels to
+ * its new place on [ToolbarMotion]'s curve as it fades up, instead of
+ * vanishing from one edge and appearing at another. [key] is what it turns
+ * on; off ([enabled] false) the bar simply goes there.
+ */
+@Composable
+internal fun Modifier.toolbarTurnMorph(key: Any, enabled: Boolean): Modifier {
+    val laidOut = remember { arrayOfNulls<androidx.compose.ui.geometry.Rect>(1) }
+    val from = remember { arrayOfNulls<androidx.compose.ui.geometry.Rect>(1) }
+    val lastKey = remember { arrayOf<Any?>(key) }
+    // Read only while drawing, so setting it here costs no second composition.
+    val progress = remember { mutableFloatStateOf(1f) }
+    if (lastKey[0] != key) {
+        lastKey[0] = key
+        from[0] = if (enabled && ToolbarMotion.durationMs > 0) laidOut[0] else null
+        if (from[0] != null) progress.floatValue = 0f
+    }
+    LaunchedEffect(key) {
+        if (from[0] == null) return@LaunchedEffect
+        try {
+            androidx.compose.animation.core.animate(0f, 1f, animationSpec = ToolbarMotion.spec()) { value, _ ->
+                progress.floatValue = value
+            }
+        } finally {
+            progress.floatValue = 1f
+            from[0] = null
+        }
+    }
+    return onGloballyPositioned { laidOut[0] = it.boundsInRoot() }.graphicsLayer {
+        val start = from[0] ?: return@graphicsLayer
+        val now = laidOut[0] ?: return@graphicsLayer
+        val p = progress.floatValue.coerceIn(0f, 1f)
+        if (p >= 1f || now.width <= 0f || now.height <= 0f) return@graphicsLayer
+        val back = 1f - p
+        val smallest = minOf(start.width / now.width, start.height / now.height).coerceIn(0.55f, 1f)
+        val scale = smallest + (1f - smallest) * p
+        translationX = (start.center.x - now.center.x) * back
+        translationY = (start.center.y - now.center.y) * back
+        scaleX = scale
+        scaleY = scale
+        alpha = 0.3f + 0.7f * p
+    }
+}
+
+/**
+ * Chrome over the note put away upwards: [away] of 0 leaves it where it is,
+ * 1 has it all the way off the top of the screen, whatever its height or how
+ * far down it sits. Read while drawing only, so the slide recomposes nothing.
+ */
+@Composable
+internal fun Modifier.awayUpwards(away: () -> Float): Modifier {
+    val bottom = remember { floatArrayOf(0f) }
+    return onGloballyPositioned { bottom[0] = it.boundsInRoot().bottom }.graphicsLayer {
+        val amount = away().coerceIn(0f, 1f)
+        if (amount <= 0f) return@graphicsLayer
+        translationY = -(bottom[0] + 24.dp.toPx()) * amount
     }
 }
 

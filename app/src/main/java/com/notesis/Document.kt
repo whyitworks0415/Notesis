@@ -142,8 +142,30 @@ class PageMask(stroke: Stroke) {
     }
 }
 
-/** What is printed under the ink. */
-enum class PageBackground { BLANK, LINED, GRID, PDF, DOT, NARROW_LINED, CORNELL, CUSTOM, INFINITE }
+/**
+ * What is printed under the ink. [INFINITE] is a blank page that runs on
+ * downwards without end; [INFINITE_ALL] one that runs on every way. Saved by
+ * name, so a constant is never renamed.
+ */
+enum class PageBackground { BLANK, LINED, GRID, PDF, DOT, NARROW_LINED, CORNELL, CUSTOM, INFINITE, INFINITE_ALL }
+
+/** A page with no end, which grows as it is written and moved on: see InkCanvasView.growEndlessPages. */
+val PageBackground.isEndless: Boolean
+    get() = this == PageBackground.INFINITE || this == PageBackground.INFINITE_ALL
+
+/**
+ * The size an endless page starts at, from a page [width] wide. Down only, it
+ * keeps its width and starts twelve pages tall. Every way, it starts as a
+ * sheet [ENDLESS_ALL_START] pages each way, and is opened in its middle, so
+ * there is as much room above and to the left as there is below and to the
+ * right; it then grows further right and down as it is reached.
+ */
+fun endlessStartSize(background: PageBackground, width: Float): Pair<Float, Float> = when (background) {
+    PageBackground.INFINITE_ALL -> Page.A4_WIDTH * ENDLESS_ALL_START to Page.A4_HEIGHT * ENDLESS_ALL_START
+    else -> width to Page.A4_HEIGHT * 12f
+}
+
+const val ENDLESS_ALL_START = 20f
 
 data class UserPageTemplate(val id: String, val name: String)
 
@@ -509,11 +531,13 @@ class Document(val pages: MutableList<Page>) {
     }
 
     fun fitWidth(): Float {
-        val cell = pages.maxOfOrNull { it.width } ?: Page.A4_WIDTH
+        // A sheet that runs every way is as wide as it has grown; its 100% is a page's width.
+        val cell = pages.maxOfOrNull { if (it.background == PageBackground.INFINITE_ALL) Page.A4_WIDTH else it.width }
+            ?: Page.A4_WIDTH
         return when (layoutMode) {
             PageLayoutMode.HORIZONTAL -> cell
             PageLayoutMode.SPREAD_2X1, PageLayoutMode.SPREAD_COVER -> cell * 2f + PAGE_GAP
-            else -> widestPage()
+            else -> if (pages.any { it.background == PageBackground.INFINITE_ALL }) cell else widestPage()
         }
     }
 
@@ -968,8 +992,10 @@ class NoteStore(context: Context) {
     ): NoteMeta {
         val id = UUID.randomUUID().toString()
         File(root, "$id/pages").mkdirs()
+        val (width, height) = if (background.isEndless) endlessStartSize(background, Page.A4_WIDTH)
+            else Page.A4_WIDTH to Page.A4_HEIGHT
         val document = Document(mutableListOf(Page(
-            height = if (background == PageBackground.INFINITE) Page.A4_HEIGHT * 12f else Page.A4_HEIGHT,
+            width = width, height = height,
             background = background, templateId = templateId,
         )))
         writeMeta(id, title, document)
