@@ -212,9 +212,10 @@ fun Modifier.liquidGlass(
         return result
     }
 
-    // 시스템 효과가 줄어든 경우에는 불투명하게, 구형 API에서는 반투명하게
-    // 처리합니다. 어느 경우에도 RuntimeShader를 생성하지 않아 크래시가 없습니다.
-    val fallbackAlpha = if (!effectsAllowed && Build.VERSION.SDK_INT >= 33) 0.96f else 0.84f
+    // 효과가 꺼졌거나 쓸 수 없는 경우(Android 12 이하 포함)에는 거의 불투명하게
+    // 처리합니다. 흐림 없이 비치면 뒤 페이지의 글씨가 선명하게 겹쳐 패널을 읽을
+    // 수 없었습니다. 어느 경우에도 RuntimeShader를 생성하지 않아 크래시가 없습니다.
+    val fallbackAlpha = if (effectsAllowed) 0.84f else 0.95f
     val fallback = body.copy(alpha = maxOf(body.alpha, fallbackAlpha))
     var result = this
         .shadow(shadowElevation.coerceAtMost(LiquidGlassTokens.fallbackShadow), glassShape, clip = false)

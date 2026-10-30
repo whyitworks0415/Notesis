@@ -467,9 +467,12 @@ private fun Modifier.frostedGlass(tokens: SkinTokens, shape: Shape, shadow: Bool
         .then(if (shadow) Modifier.shadow(tokens.shadow, shape, clip = false) else Modifier)
         .clip(shape)
         .frost()
-        // Battery saver stops the frost; a pane that stays see-through
-        // without it puts its labels straight over the ink.
-        .background(if (InteractionGovernor.observedPowerSave) body.copy(alpha = maxOf(body.alpha, 0.92f)) else body)
+        // Battery saver stops the frost, and before Android 12 there is no
+        // blur to frost with; a pane that stays see-through without it puts
+        // its labels straight over the ink.
+        .background(if (InteractionGovernor.observedPowerSave || android.os.Build.VERSION.SDK_INT < 31) {
+            body.copy(alpha = maxOf(body.alpha, 0.92f))
+        } else body)
 }
 
 /** The one edge a window-wide bar has: the line where it lets the page go. */
@@ -495,6 +498,9 @@ private fun Modifier.flushEdge(tokens: SkinTokens): Modifier = drawWithContent {
  */
 @Composable
 private fun Modifier.frost(): Modifier {
+    // Before Android 12 there is no blur: the page would be drawn back under
+    // the pane sharp, every line of it showing through the panel's own text.
+    if (android.os.Build.VERSION.SDK_INT < 31) return this
     val backdrop = LocalBackdrop.current
     val layer = backdrop.layer ?: return this
     val settings = LocalSkinSettings.current
