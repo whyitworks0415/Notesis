@@ -40,7 +40,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -257,6 +256,8 @@ internal fun PenDialog(
         state = panel,
         onOutside = ::keep,
         maxWidth = if (wide) 880.dp else TOOL_PANEL_WIDTH,
+        // Every pen's settings open with their title at one height, however long they are.
+        fixedTop = true,
         actions = {
             TextButton(onClick = ::cancel, modifier = Modifier.heightIn(min = Ui.Size.touchCompact)) { Text("Cancel") }
             TextButton(onClick = ::keep, modifier = Modifier.heightIn(min = Ui.Size.touchCompact)) { Text("Save") }

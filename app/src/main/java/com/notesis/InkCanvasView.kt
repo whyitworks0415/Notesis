@@ -7531,7 +7531,7 @@ class InkCanvasView @JvmOverloads constructor(
             val name = layers.layer(target)?.name ?: "This layer"
             val message = if (locked) "Layer '$name' is locked. Unlock it in Layers to write."
                 else "Layer '$name' is hidden. Show it in Layers to write."
-            android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_SHORT).show()
+            KToast.makeText(context, message, android.widget.Toast.LENGTH_SHORT).show()
         }
         return true
     }

@@ -33,7 +33,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -183,9 +182,9 @@ internal fun ReadOnlyDocumentScreen(
             printing = false
             when (result) {
                 is LayoutPrint.Written -> preview = result.file
-                LayoutPrint.HandedToSystem -> android.widget.Toast.makeText(context,
+                LayoutPrint.HandedToSystem -> KToast.makeText(context,
                     "Save it as a PDF from the print screen, then open that PDF in Notesis", android.widget.Toast.LENGTH_LONG).show()
-                LayoutPrint.Failed -> android.widget.Toast.makeText(context, "Couldn't make the PDF", android.widget.Toast.LENGTH_SHORT).show()
+                LayoutPrint.Failed -> KToast.makeText(context, "Couldn't make the PDF", android.widget.Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -204,7 +203,7 @@ internal fun ReadOnlyDocumentScreen(
                         ?: error("Can't write the file")
                 }.isSuccess
             }
-            android.widget.Toast.makeText(context, if (saved) "PDF saved" else "Couldn't save the PDF",
+            KToast.makeText(context, if (saved) "PDF saved" else "Couldn't save the PDF",
                 android.widget.Toast.LENGTH_SHORT).show()
         }
     }
@@ -226,7 +225,7 @@ internal fun ReadOnlyDocumentScreen(
                 }.getOrNull()
             }
             if (pdf != null) preview = pdf
-            else android.widget.Toast.makeText(context, "Couldn't convert to PDF", android.widget.Toast.LENGTH_SHORT).show()
+            else KToast.makeText(context, "Couldn't convert to PDF", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
     preview?.let { file ->
@@ -323,7 +322,7 @@ internal fun ReadOnlyDocumentScreen(
                                     }.getOrNull()
                                 }
                                 if (markdown != null) onImport(request.name.substringBeforeLast('.'), markdown)
-                                else android.widget.Toast.makeText(context, "Import failed", android.widget.Toast.LENGTH_SHORT).show()
+                                else KToast.makeText(context, "Import failed", android.widget.Toast.LENGTH_SHORT).show()
                             }
                         }) { Text("Import as note") }
                         if (onImportPdf != null) TextButton(onClick = {

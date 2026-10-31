@@ -15,7 +15,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -117,11 +116,11 @@ internal fun SettingsSaveAndReset(onResetToolbar: () -> Unit) {
 
     fun reload(count: Int?) {
         if (count == null) {
-            Toast.makeText(context, "Not a Notesis settings file", Toast.LENGTH_SHORT).show()
+            KToast.makeText(context, "Not a Notesis settings file", Toast.LENGTH_SHORT).show()
             return
         }
         StudyClock.reload(context)
-        Toast.makeText(context, "Loaded ${countNoun(count, "setting")}", Toast.LENGTH_SHORT).show()
+        KToast.makeText(context, "Loaded ${countNoun(count, "setting")}", Toast.LENGTH_SHORT).show()
         // Pens, skin, gestures and the bars all read their settings as the
         // screen is built, so it is built again.
         (context as? Activity)?.recreate()
@@ -134,7 +133,7 @@ internal fun SettingsSaveAndReset(onResetToolbar: () -> Unit) {
             val count = withContext(Dispatchers.IO) {
                 runCatching { context.contentResolver.openOutputStream(uri)?.use { SettingsBackup.export(context, it, version) } }.getOrNull()
             }
-            Toast.makeText(context, if (count != null) "Saved ${countNoun(count, "setting")}" else "Couldn't save settings",
+            KToast.makeText(context, if (count != null) "Saved ${countNoun(count, "setting")}" else "Couldn't save settings",
                 Toast.LENGTH_SHORT).show()
         }
     }
@@ -197,7 +196,7 @@ internal fun SettingsSaveAndReset(onResetToolbar: () -> Unit) {
                     naming = false
                     StudyClock.save()
                     val count = SettingsSnapshots.save(context, name, version)
-                    Toast.makeText(context, if (count != null) "Saved ${countNoun(count, "setting")}" else "Couldn't save settings",
+                    KToast.makeText(context, if (count != null) "Saved ${countNoun(count, "setting")}" else "Couldn't save settings",
                         Toast.LENGTH_SHORT).show()
                     revision++
                 }) { Text("Save") }
@@ -230,7 +229,7 @@ internal fun SettingsSaveAndReset(onResetToolbar: () -> Unit) {
                     resetting = false
                     resetToolbar(context)
                     onResetToolbar()
-                    Toast.makeText(context, "Toolbar reset", Toast.LENGTH_SHORT).show()
+                    KToast.makeText(context, "Toolbar reset", Toast.LENGTH_SHORT).show()
                 }) { Text("Reset") }
             },
             dismissButton = { TextButton(onClick = { resetting = false }) { Text("Cancel") } },

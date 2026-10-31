@@ -39,7 +39,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -462,7 +461,7 @@ internal fun AppearanceSettings(
                 photoRevision++
                 choose(PreviewBackground.PHOTO)
             } else {
-                Toast.makeText(context, "Couldn't read that photo", Toast.LENGTH_SHORT).show()
+                KToast.makeText(context, "Couldn't read that photo", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -715,7 +714,7 @@ private fun IosGlassControls(g: IosGlass, onChange: (IosGlass) -> Unit) {
     val d = IosGlass()
     SettingsNote("From liquid_glass_widgets 1.16.1 (MIT), whose iOS 27 regular presets were measured against the " +
         "native control: a frosted body over a lightly blurred page, a paraxial rim and the native springs. " +
-        "Dark mode takes its dark preset, moved in proportion to what is set here.")
+        "The defaults are set by eye from there. Dark mode takes its dark preset, moved in proportion to what is set here.")
     SettingsSectionHeader("Lens")
     AppearanceSlider("Thickness", "%.0f".format(g.thickness), g.thickness, IosGlass.THICKNESS_RANGE, step = 1f,
         default = d.thickness, note = "In pixels at 3x: a bevel of %.1f dp.".format(g.bevelDp),
@@ -725,7 +724,7 @@ private fun IosGlassControls(g: IosGlass, onChange: (IosGlass) -> Unit) {
         note = "The rim bends the page by thickness × 8 × (index − 1): %.1f dp, at most half the pane.".format(g.bendDp),
     ) { onChange(g.copy(refractiveIndex = it)) }
     AppearanceSlider("Chromatic aberration", "%.2f".format(g.dispersion), g.dispersion, 0f..1f, step = 0.01f,
-        default = d.dispersion, note = "0 in the presets.",
+        default = d.dispersion, note = "0 in the presets and by default.",
     ) { onChange(g.copy(dispersion = it)) }
     SettingsSectionHeader("Material")
     AppearanceSlider("Blur", "%.1f".format(g.blur), g.blur, IosGlass.BLUR_RANGE, step = 0.1f, default = d.blur,
@@ -754,10 +753,13 @@ private fun IosGlassControls(g: IosGlass, onChange: (IosGlass) -> Unit) {
         default = d.edgeAbsorption, note = "How much the bevel darkens towards the edge.",
     ) { onChange(g.copy(edgeAbsorption = it)) }
     AppearanceSlider("Corner radius", "%.0f dp".format(g.corner), g.corner, SkinSettings.CORNER_RANGE, step = 1f,
-        default = d.corner, note = "Its GlassMenu's: 32.",
+        default = d.corner, note = "29 by default; its GlassMenu's is 32.",
     ) { onChange(g.copy(corner = it)) }
     ProjectMotionControls(g.motion, "liquid_glass_widgets") { onChange(g.copy(motion = it)) }
-    OutlinedButton(onClick = { onChange(d) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to the presets' values") }
+    OutlinedButton(onClick = { onChange(d.copy(motion = g.motion)) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to the defaults") }
+    OutlinedButton(onClick = { onChange(IosGlass.PRESET.copy(motion = g.motion)) }, modifier = Modifier.heightIn(min = 48.dp)) {
+        Text("Use the ios27Light preset as measured")
+    }
 }
 
 /** Kyant0/AndroidLiquidGlass's numbers, under the names its effects take. */
@@ -778,7 +780,7 @@ private fun KyantGlassControls(k: KyantGlass, onChange: (KyantGlass) -> Unit) {
     SettingsToggle("Depth effect", k.depthEffect, { onChange(k.copy(depthEffect = it)) },
         hint = "The lens bends towards the corners too, on bars and buttons. Panels always have it.")
     SettingsToggle("Chromatic aberration", k.chromaticAberration, { onChange(k.copy(chromaticAberration = it)) },
-        hint = "The colours split a little at the edge. Off in the catalog.")
+        hint = "The colours split a little at the edge. Off in the catalog, on by default here.")
     SettingsSectionHeader("Material")
     AppearanceSlider("Blur radius", "%.0f dp".format(k.blur), k.blur, KyantGlass.BLUR_RANGE, step = 1f, default = d.blur,
         note = "Bars. Panels take twice this in the light, buttons a quarter.",
@@ -796,7 +798,9 @@ private fun KyantGlassControls(k: KyantGlass, onChange: (KyantGlass) -> Unit) {
         default = d.corner, note = "Its dialog's: 48.",
     ) { onChange(k.copy(corner = it)) }
     ProjectMotionControls(k.motion, "the catalog") { onChange(k.copy(motion = it)) }
-    OutlinedButton(onClick = { onChange(d) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to the catalog's values") }
+    OutlinedButton(onClick = { onChange(d.copy(motion = k.motion)) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to the defaults") }
+    OutlinedButton(onClick = { onChange(KyantGlass.CATALOG.copy(corner = k.corner, motion = k.motion)) },
+        modifier = Modifier.heightIn(min = 48.dp)) { Text("Use the catalog's bottom tabs as written") }
 }
 
 /** QWEA0/Liquid-Glass-Android's numbers, as its demo app's drawer sets them. */

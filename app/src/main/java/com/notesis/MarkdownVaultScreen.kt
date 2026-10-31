@@ -22,7 +22,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -148,7 +147,7 @@ internal fun MarkdownVaultScreen(
                     scope.launch {
                         val made = withContext(Dispatchers.IO) { vault.create(name, "# ${name.trim()}\n\n") }
                         if (made != null) onOpen(made)
-                        else android.widget.Toast.makeText(context, "Couldn't make the note in this folder", android.widget.Toast.LENGTH_SHORT).show()
+                        else KToast.makeText(context, "Couldn't make the note in this folder", android.widget.Toast.LENGTH_SHORT).show()
                     }
                 }) { Text("Create") }
             },

@@ -114,7 +114,6 @@ import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
-import androidx.compose.material3.Text
 import androidx.compose.material3.Button
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
@@ -258,6 +257,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         hideSystemBars()
         StudyClock.init(applicationContext)
+        // The language before any word is shown.
+        L10n.init(applicationContext)
         // Before any screen: the glass reads battery saver from it from the first frame.
         InteractionGovernor.init(applicationContext)
         Planner.init(applicationContext)
@@ -403,7 +404,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                                 if (created == null) {
-                                    Toast.makeText(this@MainActivity, "Couldn't import the PDF", Toast.LENGTH_SHORT).show()
+                                    KToast.makeText(this@MainActivity, "Couldn't import the PDF", Toast.LENGTH_SHORT).show()
                                     return@launch
                                 }
                                 incomingViewerRequest = null
@@ -948,7 +949,7 @@ private fun NoteListScreen(
                 return@launch
             }
             StudyClock.reload(context)
-            android.widget.Toast.makeText(context, "Loaded ${countNoun(count, "setting")}", android.widget.Toast.LENGTH_SHORT).show()
+            KToast.makeText(context, "Loaded ${countNoun(count, "setting")}", android.widget.Toast.LENGTH_SHORT).show()
             // Pens, skin, gestures and the bars all read their settings as
             // the screen is built, so it is built again.
             (context as? android.app.Activity)?.recreate()
@@ -3084,7 +3085,7 @@ internal fun sendSelectedText(context: android.content.Context, text: String, ac
         } else putExtra(android.content.Intent.EXTRA_TEXT, text)
     }
     runCatching { context.startActivity(android.content.Intent.createChooser(intent, null)) }
-        .onFailure { Toast.makeText(context, "No app can open this", Toast.LENGTH_SHORT).show() }
+        .onFailure { KToast.makeText(context, "No app can open this", Toast.LENGTH_SHORT).show() }
 }
 
 /**
@@ -3897,7 +3898,7 @@ private fun NoteScreen(
                         { imageId -> store.imageFile(note.id, imageId) }, out)
                 } ?: false
             }
-            Toast.makeText(context, if (ok) "PDF saved" else "Couldn't export", Toast.LENGTH_SHORT).show()
+            KToast.makeText(context, if (ok) "PDF saved" else "Couldn't export", Toast.LENGTH_SHORT).show()
         }
     }
     // The PDF's own contents, read once off the main thread when the note opens.
@@ -3958,7 +3959,7 @@ private fun NoteScreen(
         } else {
             active.release()
             file.delete()
-            Toast.makeText(context, "Couldn't start recording", Toast.LENGTH_SHORT).show()
+            KToast.makeText(context, "Couldn't start recording", Toast.LENGTH_SHORT).show()
         }
     }
     val requestAudioPermission = rememberLauncherForActivityResult(
@@ -4220,7 +4221,7 @@ private fun NoteScreen(
         val target = referenceNotes.firstOrNull { it.id == attachment.noteId }
             ?: store.list().firstOrNull { it.id == attachment.noteId }?.also { notesRevision++ }
         if (target == null) {
-            Toast.makeText(context, "The attached note is gone", Toast.LENGTH_SHORT).show()
+            KToast.makeText(context, "The attached note is gone", Toast.LENGTH_SHORT).show()
             return
         }
         val page = attachment.pageIndex.coerceIn(0, (target.pageCount - 1).coerceAtLeast(0))
@@ -4415,7 +4416,7 @@ private fun NoteScreen(
                 }.getOrNull()
             }
             if (added == null) {
-                Toast.makeText(context, "Couldn't read that image", Toast.LENGTH_SHORT).show()
+                KToast.makeText(context, "Couldn't read that image", Toast.LENGTH_SHORT).show()
                 return@launch
             }
             canvas?.insertImage(added.first, added.second)
@@ -4873,7 +4874,7 @@ private fun NoteScreen(
                         store.list().firstOrNull { it.id == noteId }?.let { target ->
                             penStore.setLastPage(target.id, pageIndex)
                             onOpenNote(target)
-                        } ?: Toast.makeText(context, "Couldn't find the linked note", Toast.LENGTH_SHORT).show()
+                        } ?: KToast.makeText(context, "Couldn't find the linked note", Toast.LENGTH_SHORT).show()
                     }
                     view.onLongPressCanvas = if (gestures.longPressMenu) { x, y -> pressMenu = Offset(x, y) } else null
                     view.onAttachmentTapped = { pageIndex, at ->
@@ -5670,7 +5671,7 @@ private fun NoteScreen(
                     captureBusy = false
                     if (captured == null) return@launch
                     if (output == null) {
-                        Toast.makeText(context, "Couldn't render the capture at this size", Toast.LENGTH_SHORT).show()
+                        KToast.makeText(context, "Couldn't render the capture at this size", Toast.LENGTH_SHORT).show()
                     } else use(output)
                 }
             }
@@ -5701,7 +5702,7 @@ private fun NoteScreen(
                         val pageId = view?.pageIdAt(source)
                         if (pageId != null) {
                             SnipLink.pending = SnipLink.Snip(bitmap, note.id, note.title, pageId, source)
-                            Toast.makeText(context, "Go to the note and page to paste it into, then tap \"Paste here\"",
+                            KToast.makeText(context, "Go to the note and page to paste it into, then tap \"Paste here\"",
                                 Toast.LENGTH_LONG).show()
                         }
                         captured = null
@@ -5712,14 +5713,14 @@ private fun NoteScreen(
                         val options = captureOptions
                         val uri = captureUri(context, bitmap, options.format, options.jpegQuality)
                         if (uri == null) {
-                            Toast.makeText(context, "Couldn't save the capture", Toast.LENGTH_SHORT).show()
+                            KToast.makeText(context, "Couldn't save the capture", Toast.LENGTH_SHORT).show()
                         } else {
                             pendingAttachment.value = uri
                             if (webUrl == null) webUrl = AI_SITES.first().second
                             // Naming the two taps: the sheet behind "+" offers a
                             // camera and a photo picker too, and neither of those
                             // is the file chooser this capture is waiting for.
-                            Toast.makeText(
+                            KToast.makeText(
                                 context,
                                 "Tap + in the chat and choose \"Files\"",
                                 Toast.LENGTH_LONG,
@@ -5744,7 +5745,7 @@ private fun NoteScreen(
                                     "Notesis-capture-${System.currentTimeMillis()}.${options.format.extension}",
                                     bitmap, options.format, options.jpegQuality)
                             }
-                            Toast.makeText(context, if (ok) "Saved to the gallery" else "Couldn't save the capture",
+                            KToast.makeText(context, if (ok) "Saved to the gallery" else "Couldn't save the capture",
                                 Toast.LENGTH_SHORT).show()
                         }
                     }
@@ -5840,7 +5841,7 @@ private fun NoteScreen(
                     val kept = canvas?.lassoClipWithPreview()
                     if (kept != null) scope.launch {
                         val id = withContext(Dispatchers.IO) { store.addToLibrary(kept.first, kept.second) }
-                        Toast.makeText(context, if (id != null) "Added to library" else "Couldn't add to library",
+                        KToast.makeText(context, if (id != null) "Added to library" else "Couldn't add to library",
                             Toast.LENGTH_SHORT).show()
                     }
                 },
@@ -5900,7 +5901,7 @@ private fun NoteScreen(
                                     scope.launch {
                                         val ok = withContext(Dispatchers.IO) { store.appendPages(target.id, note.id, pages) }
                                         if (ok && move) { canvas?.deletePages(indices); edits++ }
-                                        Toast.makeText(context, if (ok) "Added ${countNoun(pages.size, "page")} to \"${target.title}\""
+                                        KToast.makeText(context, if (ok) "Added ${countNoun(pages.size, "page")} to \"${target.title}\""
                                             else if (move) "Couldn't move the pages" else "Couldn't copy the pages", Toast.LENGTH_SHORT).show()
                                     }
                                 }.padding(12.dp))
@@ -6142,7 +6143,7 @@ private fun NoteScreen(
                         edits++
                         showTextBox = false
                     }.onFailure {
-                        Toast.makeText(context, it.message ?: "Couldn't save the text", Toast.LENGTH_LONG).show()
+                        KToast.makeText(context, it.message ?: "Couldn't save the text", Toast.LENGTH_LONG).show()
                     }
                 }
             })
@@ -6175,7 +6176,7 @@ private fun NoteScreen(
             scope.launch {
                 val added = withContext(Dispatchers.IO) { store.addImage(note.id, bitmap) }
                 if (added != null) { canvas?.replaceSelectedImage(added.first, area); edits++ }
-                else Toast.makeText(context, "Couldn't save the image", Toast.LENGTH_SHORT).show()
+                else KToast.makeText(context, "Couldn't save the image", Toast.LENGTH_SHORT).show()
             }
         }
         if (picture == null || pictureBitmap == null) {
@@ -6245,7 +6246,7 @@ private fun NoteScreen(
                                 runCatching { context.contentResolver.openInputStream(uri)?.use { store.addImage(note.id, it) } }.getOrNull()
                             }
                             if (added != null) { canvas?.insertImage(added.first, added.second); edits++ }
-                            else Toast.makeText(context, "Couldn't paste the image", Toast.LENGTH_SHORT).show()
+                            else KToast.makeText(context, "Couldn't paste the image", Toast.LENGTH_SHORT).show()
                         }
                     })
                     if (inkClip == null && pastedText == null && uri == null) {

@@ -40,7 +40,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -178,7 +177,7 @@ internal fun MarkdownNoteScreen(
         MarkdownIo.scope.launch {
             runCatching { source.save(text) }.onFailure {
                 withContext(Dispatchers.Main) {
-                    android.widget.Toast.makeText(appContext, "Couldn't save ${source.title}", android.widget.Toast.LENGTH_LONG).show()
+                    KToast.makeText(appContext, "Couldn't save ${source.title}", android.widget.Toast.LENGTH_LONG).show()
                 }
             }
         }

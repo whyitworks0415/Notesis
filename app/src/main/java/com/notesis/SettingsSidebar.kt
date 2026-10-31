@@ -34,7 +34,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -436,6 +435,15 @@ internal fun NoteSettingsSidebar(
 
 @Composable
 private fun SettingsRoot(quickActions: List<SpotiToolbarAction>, onOpen: (SettingsPage) -> Unit) {
+    // Named in both languages, so it can be found whichever one is showing.
+    SettingsSectionHeader("Language · 언어")
+    val context = androidx.compose.ui.platform.LocalContext.current
+    Row(horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+        AppLanguage.entries.forEach { language ->
+            SettingsChoiceChip(selected = L10n.language == language, onClick = { L10n.choose(context, language) },
+                label = language.label)
+        }
+    }
     if (quickActions.isNotEmpty()) {
         SettingsSectionHeader("Quick actions")
         BoxWithConstraints(Modifier.fillMaxWidth()) {

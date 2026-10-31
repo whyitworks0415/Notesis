@@ -85,6 +85,11 @@ private fun JSONObject.f(key: String, default: Float, range: ClosedFloatingPoint
  * saturation 1.4, the frost at 85%, the light from below, rim light 1.15,
  * body shade 0.28 and no shadow; what is set here moves both in proportion.
  *
+ * Those are kept as [PRESET]. A fresh install starts from values set by eye
+ * on a device against that: no light blur, a frost of 3 at 58%, saturation
+ * 3, the body at 58%, rim light 2, rim shade 0.85, edge absorption 0.02 and
+ * a 29 dp corner - the same lens, thickness 32 and index 1.24.
+ *
  * Thickness is in pixels at 3x, as the presets give it: the bevel is a
  * quarter circle that deep (a third of it in dp), and the paraxial lens bends
  * the page at the rim by thickness × 8 × (index − 1) of those pixels, held to
@@ -100,19 +105,19 @@ data class IosGlass(
     val thickness: Float = 32f,
     val refractiveIndex: Float = 1.24f,
     /** blur: the light blur of the page under the frost, as a Gaussian sigma in dp. */
-    val blur: Float = 0.6f,
+    val blur: Float = 0f,
     /** frost: the heavy blur, as a sigma in dp. */
-    val frost: Float = 14f,
-    val frostOpacity: Float = 0.73f,
-    val saturation: Float = 2.1f,
+    val frost: Float = 3f,
+    val frostOpacity: Float = 0.58f,
+    val saturation: Float = 3f,
     /** glassColor's alpha over #F8F8F8. */
-    val bodyOpacity: Float = 0x87 / 255f,
-    val rimLight: Float = 1f,
-    val rimShade: Float = 1f,
-    val edgeAbsorption: Float = 0.035f,
+    val bodyOpacity: Float = 0.58f,
+    val rimLight: Float = 2f,
+    val rimShade: Float = 0.85f,
+    val edgeAbsorption: Float = 0.02f,
     /** chromaticAberration; 0 in the presets. */
     val dispersion: Float = 0f,
-    val corner: Float = 32f,
+    val corner: Float = 29f,
     val motion: ProjectMotion = ProjectMotion(),
 ) {
     fun toJson(): JSONObject = JSONObject()
@@ -142,9 +147,22 @@ data class IosGlass(
         const val DARK_RIM_LIGHT = 1.15f
         const val DARK_BODY_SHADE = 0.28f
 
+        /**
+         * 0.76's starting point, the ios27Light preset as it stands. Saved
+         * settings still at it take the present defaults: set by eye on the
+         * device, clearer and brighter-rimmed than the preset.
+         */
+        val PRESET = IosGlass(blur = 0.6f, frost = 14f, frostOpacity = 0.73f, saturation = 2.1f,
+            bodyOpacity = 0x87 / 255f, rimLight = 1f, rimShade = 1f, edgeAbsorption = 0.035f, corner = 32f)
+
         fun fromJson(json: JSONObject?): IosGlass {
             val d = IosGlass()
             if (json == null) return d
+            val read = readJson(json, d)
+            return if (read.copy(motion = PRESET.motion) == PRESET) d.copy(motion = read.motion) else read
+        }
+
+        private fun readJson(json: JSONObject, d: IosGlass): IosGlass {
             return IosGlass(
                 thickness = json.f("thickness", d.thickness, THICKNESS_RANGE),
                 refractiveIndex = json.f("refractiveIndex", d.refractiveIndex, INDEX_RANGE),
@@ -178,24 +196,29 @@ data class IosGlass(
  * spring(1, 1000) and lifts to 78/56 on spring(0.6, 250) across and
  * spring(0.7, 250) down; the control centre comes down 48 dp, fading in, on
  * spring(0.5, 300) and goes on spring(1, 300).
+ *
+ * Those are kept as [CATALOG]. A fresh install starts from values set by eye
+ * on a device: refraction height 10 dp and amount 35 dp, depth effect and
+ * chromatic aberration on, blur 13 dp, vibrancy 2, surface 97%, highlight
+ * full; the panels' and buttons' ratios to them are the catalog's still.
  */
 data class KyantGlass(
     /** blur(), in dp. */
-    val blur: Float = 8f,
+    val blur: Float = 13f,
     /** lens()'s refractionHeight: how far in from the edge the bending reaches, in dp. */
-    val refractionHeight: Float = 24f,
+    val refractionHeight: Float = 10f,
     /** lens()'s refractionAmount: how far the page is bent, in dp. */
-    val refractionAmount: Float = 24f,
+    val refractionAmount: Float = 35f,
     /** vibrancy()'s saturation. */
-    val saturation: Float = 1.5f,
+    val saturation: Float = 2f,
     /** The surface colour's alpha over the bent page. */
-    val surface: Float = 0.4f,
+    val surface: Float = 0.97f,
     /** The highlight's alpha. */
     val highlight: Float = 1f,
     /** lens()'s chromaticAberration; off in the catalog. */
-    val chromaticAberration: Boolean = false,
+    val chromaticAberration: Boolean = true,
     /** lens()'s depthEffect on bars and buttons too; the catalog keeps it for panels. */
-    val depthEffect: Boolean = false,
+    val depthEffect: Boolean = true,
     /** DialogContent's RoundedRectangle(48 dp). */
     val corner: Float = 48f,
     val motion: ProjectMotion = ProjectMotion(),
@@ -213,9 +236,23 @@ data class KyantGlass(
         val AMOUNT_RANGE = 0f..64f
         val SATURATION_RANGE = 1f..2f
 
+        /**
+         * The catalog's LiquidBottomTabs, as 0.76 started from them. Saved
+         * settings still at them take the present defaults, set by eye on the
+         * device: a shallower, stronger lens, more blur and colour, the
+         * surface nearly solid, depth and chromatic aberration on.
+         */
+        val CATALOG = KyantGlass(blur = 8f, refractionHeight = 24f, refractionAmount = 24f, saturation = 1.5f,
+            surface = 0.4f, chromaticAberration = false, depthEffect = false)
+
         fun fromJson(json: JSONObject?): KyantGlass {
             val d = KyantGlass()
             if (json == null) return d
+            val read = readJson(json, d)
+            return if (read.copy(motion = CATALOG.motion) == CATALOG) d.copy(motion = read.motion) else read
+        }
+
+        private fun readJson(json: JSONObject, d: KyantGlass): KyantGlass {
             return KyantGlass(
                 blur = json.f("blur", d.blur, BLUR_RANGE),
                 refractionHeight = json.f("refractionHeight", d.refractionHeight, HEIGHT_RANGE),

@@ -54,11 +54,13 @@ internal object GuideNote {
                 bitmap.recycle()
             }
         }
-        place(TextBoxContent(guide.heading, size = HEADING_SIZE, color = INK,
-            html = "<b>${guide.heading.htmlEscaped()}</b>"), HEADING_GAP)
+        // Written in the language chosen when the copy is made; the note keeps it after.
+        val heading = guide.heading.tr
+        place(TextBoxContent(heading, size = HEADING_SIZE, color = INK,
+            html = "<b>${heading.htmlEscaped()}</b>"), HEADING_GAP)
         for (block in guide.blocks) when (block) {
-            is Block.Body -> place(TextBoxContent(block.text, size = BODY_SIZE, color = INK), BLOCK_GAP)
-            is Block.Tip -> place(TextBoxContent(block.text, size = TIP_SIZE, color = INK, background = TIP_FILL,
+            is Block.Body -> place(TextBoxContent(block.text.tr, size = BODY_SIZE, color = INK), BLOCK_GAP)
+            is Block.Tip -> place(TextBoxContent(block.text.tr, size = TIP_SIZE, color = INK, background = TIP_FILL,
                 corner = TIP_CORNER, padding = TIP_PADDING), BLOCK_GAP)
             is Block.Space -> y += block.height
         }

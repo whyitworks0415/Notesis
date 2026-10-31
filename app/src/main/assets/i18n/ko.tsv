@@ -1,0 +1,1383 @@
+# English	Korean. {0}, {1}... are places the app fills in; \n is a line break.
+Server responded {0}	서버 응답: {0}
+The downloaded file size doesn't match	내려받은 파일의 크기가 맞지 않습니다
+The file is corrupted	파일이 손상되었습니다
+Not a new version of Notesis	Notesis의 새 버전이 아닙니다
+Couldn't save the file	파일을 저장하지 못했습니다
+Couldn't open the installer	설치 화면을 열지 못했습니다
+Download failed	내려받기에 실패했습니다
+New version {0}	새 버전 {0}
+Installed {0} · New {1} ({2})	설치됨 {0} · 새 버전 {1} ({2})
+Downloading {0}%	내려받는 중 {0}%
+Turn on "Allow from this source" in the settings screen that opened, then come back and tap Install. This is needed only the first time.	방금 열린 설정 화면에서 "이 출처 허용"을 켠 뒤 돌아와서 설치를 누르세요. 처음 한 번만 하면 됩니다.
+Your notes and settings stay as they are. Tap Update once on the install screen.	노트와 설정은 그대로 유지됩니다. 설치 화면에서 업데이트를 한 번 누르세요.
+Install	설치
+Downloading	내려받는 중
+Try again	다시 시도
+Update	업데이트
+Skip this version	이 버전 건너뛰기
+Later	나중에
+Version {0} is ready	버전 {0}을(를) 설치할 수 있습니다
+ (manual update)	 (수동 업데이트)
+Couldn't check for updates. Check your internet connection.	업데이트를 확인하지 못했습니다. 인터넷 연결을 확인하세요.
+You're up to date	최신 버전입니다
+Checking…	확인하는 중…
+Check for updates	업데이트 확인
+Open-source licenses	오픈소스 라이선스
+Tell me about updates when the app opens	앱을 열 때 업데이트 알려 주기
+Some versions are released as manual updates. Those are never announced; they wait here until you update.	일부 버전은 수동 업데이트로 나옵니다. 수동 업데이트는 따로 알리지 않고, 직접 업데이트할 때까지 여기에서 기다립니다.
+Screen	화면
+Reduced to fit in memory	메모리에 맞게 줄였습니다
+Capped at {0} px per side	한 변 최대 {0}px로 제한됨
+Capped: the PDF page renders at most {0} px per side	제한됨: PDF 페이지는 한 변 최대 {0}px로 렌더링됩니다
+Show the toolbar	툴바 보이기
+Study 	공부 
+Timer done	타이머 종료
+Alarm %02d:%02d	알람 {0}:{1}
+Alarm	알람
+Clock	시계
+Clock button on screen	화면의 시계 버튼
+Timers and alarms still show on screen when this is off	꺼도 타이머와 알람은 화면에 표시됩니다
+Done	완료
+Paused	일시정지됨
+Ends at {0}	{0}에 끝남
+Reset	초기화
+Pause	일시정지
+Resume	계속
+Start	시작
+Lap	랩
+Stop	정지
+Lap {0}	랩 {0}
+Alarms make no sound. At the set time they show on screen and stay until you tap OK.	알람은 소리가 나지 않습니다. 정해진 시간이 되면 화면에 나타나고, 확인을 누를 때까지 남아 있습니다.
+No alarms	알람 없음
++ Add alarm	+ 알람 추가
+Daily	매일
+Once	한 번
+Delete alarm	알람 삭제
+Cancel	취소
+Add	추가
+Study time today	오늘 공부 시간
+Total study time	총 공부 시간
+Measuring	측정 중
+Measuring · counts automatically while you write in a note	측정 중 · 노트에 필기하는 동안 자동으로 셉니다
+Resting · no input for over {0} min	휴식 중 · {0}분 넘게 입력이 없음
+Starts automatically when you open a note	노트를 열면 자동으로 시작합니다
+Stopped	멈춤
+Measure automatically	자동으로 측정
+Counts only while a note is open and you use the pen or a finger. Turn off to start and stop by hand	노트가 열려 있고 펜이나 손가락을 쓰는 동안만 셉니다. 끄면 직접 시작하고 멈춥니다
+Pause after no input for	입력이 없을 때 일시정지까지
+Reset every day	매일 초기화
+Starts again from 0 at midnight. Turn off to keep adding up until you reset it	자정에 0부터 다시 시작합니다. 끄면 직접 초기화할 때까지 계속 쌓입니다
+Tap again to reset	한 번 더 누르면 초기화됩니다
+Reset today's time	오늘 시간 초기화
+Reset total time	총 시간 초기화
+Width ({0}–{1})	굵기 ({0}–{1})
+Width · Favorites	굵기 · 즐겨찾기
+Full · All tools	전체 · 모든 도구
+Medium · One row	중간 · 한 줄
+Small · Essentials	작게 · 필수 도구
+Minimal · One button	최소 · 버튼 하나
+Pick a custom color	원하는 색 고르기
+Color #RRGGBB	색상 #RRGGBB
+Add color template	색 템플릿 추가
+Template name	템플릿 이름
++ Add this color ({0}/12)	+ 이 색 추가 ({0}/12)
+Tap an added color to remove it.	추가한 색을 누르면 지워집니다.
+Save	저장
+Couldn't read the photo	사진을 읽지 못했습니다
+Couldn't read the photo. Please choose another one.	사진을 읽지 못했습니다. 다른 사진을 골라 주세요.
+Note list background	노트 목록 배경
+Choose photo	사진 고르기
+Use default background	기본 배경 사용
+Apply color	색 적용
+English	영어
+Deutsch	독일어
+Français	프랑스어
+Español	스페인어
+Italiano	이탈리아어
+Português	포르투갈어
+Tiếng Việt	베트남어
+Indonesia	인도네시아어
+Türkçe	튀르키예어
+Polski	폴란드어
+Nederlands	네덜란드어
+Svenska	스웨덴어
+Microphone permission is needed	마이크 권한이 필요합니다
+Check your network connection	네트워크 연결을 확인하세요
+This language isn't supported on this device	이 기기에서는 이 언어를 지원하지 않습니다
+Dictation stopped ({0})	받아쓰기가 멈췄습니다 ({0})
+Dictation	받아쓰기
+Close	닫기
+This device has no speech recognition service.	이 기기에는 음성 인식 서비스가 없습니다.
+Start listening	듣기 시작
+Listening…	듣는 중…
+What you say appears here.	말한 내용이 여기에 나타납니다.
+Clear	지우기
+Copy	복사
+Add to page	페이지에 추가
+Can't read the image	이미지를 읽을 수 없습니다
+My template	내 템플릿
+Couldn't create the note	노트를 만들지 못했습니다
+Merged note	합친 노트
+Can't read the merged note	합친 노트를 읽을 수 없습니다
+Not enough memory to show the document, or the viewer stopped. Open it again, or use the text view at the top.	문서를 보여 줄 메모리가 부족하거나 뷰어가 멈췄습니다. 다시 열거나 위쪽의 텍스트 보기를 쓰세요.
+Letter	레터
+Narrow	좁게
+Normal	보통
+Wide	넓게
+Tap a block to start a new page there. Tap a page's first block to pull it back onto the page before, which shrinks to fit it. Tap again to undo.	블록을 누르면 거기서 새 페이지가 시작됩니다. 페이지의 첫 블록을 누르면 앞 페이지로 다시 붙고, 앞 페이지는 맞게 줄어듭니다. 한 번 더 누르면 되돌립니다.
+Tap a paragraph to start it on a new page; tap it again to undo.	문단을 누르면 새 페이지에서 시작합니다. 다시 누르면 되돌립니다.
+Each page keeps its own size and layout.	페이지마다 크기와 배치가 따로 유지됩니다.
+The sheet on show is shrunk to fit the page's width; landscape gives it more room.	보이는 시트를 페이지 너비에 맞게 줄였습니다. 가로로 두면 더 넓게 보입니다.
+Laying out the document…	문서를 배치하는 중…
+Reset pages	페이지 초기화
+Preparing pages…	페이지를 준비하는 중…
+Preview	미리보기
+Portrait	세로
+Landscape	가로
+Text {0}%	글자 {0}%
+Change the layout	배치 바꾸기
+Couldn't show the preview	미리보기를 보여 주지 못했습니다
+Preview · {0}	미리보기 · {0}
+Adjust	조정
+Save PDF	PDF 저장
+Create note	노트 만들기
+Resize	크기 조정
+Welcome to Notesis	Notesis에 오신 것을 환영합니다
+A notebook for the pen: handwriting, PDFs and pictures,\non pages that scroll like paper.	펜으로 쓰는 노트: 필기, PDF, 사진을\n종이처럼 넘어가는 페이지에.
+This note is a short tour, one part of the app per page.\nIt is a normal note - write on it, move things, delete it.\nA fresh copy is in About & help whenever you want one.	이 노트는 한 페이지에 기능 하나씩 보여 주는 짧은 안내입니다.\n보통 노트와 같아서 써도 되고, 옮겨도 되고, 지워도 됩니다.\n새 사본은 언제든 정보 · 도움말에서 받을 수 있습니다.
+Scroll with one finger to reach the next page,\nor drag the page slider at the side.	한 손가락으로 스크롤해서 다음 페이지로 가거나,\n옆의 페이지 슬라이더를 끄세요.
+For a walk through every part - the pen and its settings,\ngestures, pages, the AI panel and Settings - open the\ntutorial: the ? on the home screen, or Functions › Tutorial.	펜과 펜 설정, 제스처, 페이지, AI 패널, 설정까지\n하나씩 둘러보려면 사용법을 여세요:\n홈 화면의 ?, 또는 기능 › 사용법.
+Try it: write your name in the space below.	해 보기: 아래 빈칸에 이름을 써 보세요.
+The toolbar	툴바
+The bar comes in four sizes, 1/4 to 4/4.\nPick one at the top of Functions - the round button on the bar.	툴바는 1/4부터 4/4까지 네 가지 크기가 있습니다.\n툴바의 둥근 버튼인 기능 맨 위에서 고르세요.
+1/4 is the whole bar: the note, undo and redo, and the pen row\nwith colours and width. 4/4 is a single button you can drag aside.	1/4는 툴바 전체입니다: 노트, 실행 취소와 다시 실행, 색과 굵기가 있는 펜 줄.\n4/4는 옆으로 끌어 둘 수 있는 버튼 하나입니다.
+Tap a tool to pick it. Tap the tool in hand again\nto open its settings: colour, width and nib.	도구를 누르면 그 도구를 고릅니다. 들고 있는 도구를 한 번 더 누르면\n설정이 열립니다: 색, 굵기, 펜촉.
+Functions holds the rest: picture, Tools (calculator,\nclock, calendar, to-do), layers, recording, capture,\ntext, Pages & notes, split notes and Settings.	나머지는 기능에 있습니다: 사진, 도구(계산기,\n시계, 달력, 할 일), 레이어, 녹음, 캡처,\n텍스트, 페이지 · 노트, 노트 나눠 보기, 설정.
+With a keyboard, Ctrl+1 to Ctrl+9 pick the tools\nin the order the bar shows them.	키보드가 있으면 Ctrl+1부터 Ctrl+9로\n툴바에 보이는 순서대로 도구를 고릅니다.
+Writing	필기
+Pen, pencil and highlighter each keep their own\ncolour and width. The eraser removes whole strokes,\nor only what it crosses with the partial eraser on.	펜, 연필, 형광펜은 각자 색과 굵기를 따로 기억합니다.\n지우개는 획을 통째로 지우고,\n부분 지우개를 켜면 지나간 부분만 지웁니다.
+"More for this pen" in the pen settings opens\nthe finer options: nib, pressure and smoothing.	펜 설정의 "이 펜 더 보기"를 누르면\n펜촉, 필압, 보정 같은 세부 설정이 열립니다.
+Hold to make a shape: draw a line, triangle, box or circle\nand keep the pen still for half a second. A ring under the pen\nsays it took. Keep moving to stretch or turn it, then lift.	멈춰서 도형 만들기: 선, 삼각형, 사각형, 원을 그리고\n펜을 0.5초 동안 멈추세요. 펜 아래에 고리가 나타나면 된 것입니다.\n그대로 움직여 늘이거나 돌린 뒤 펜을 떼세요.
+A bent line or a curve with a kink works the same way:\nthe bends stay where you drew them.	꺾인 선이나 꺾임이 있는 곡선도 똑같이 됩니다:\n꺾은 자리가 그대로 남습니다.
+Try it here: draw a rectangle and hold.	여기서 해 보기: 사각형을 그리고 멈추세요.
+Shapes and selecting	도형과 선택
+The Shape tool draws exact shapes by dragging.\nTap it again to choose one: lines, arrows, curves, polygons,\nboxes, circles, stars and checkboxes.	도형 도구는 끌어서 정확한 도형을 그립니다.\n한 번 더 누르면 고를 수 있습니다: 선, 화살표, 곡선, 다각형,\n사각형, 원, 별, 체크박스.
+The Lasso picks up ink, pictures and text boxes.\nDrag to move, use the corners to resize and turn,\nand the bar above for copy, cut, colour, link and lock.	올가미는 필기, 사진, 텍스트 상자를 집어 듭니다.\n끌어서 옮기고, 모서리로 크기를 바꾸거나 돌리고,\n위쪽 막대로 복사, 잘라내기, 색, 링크, 잠금을 합니다.
+Select a single shape with the lasso and drag one of\nits corners to reshape it.	올가미로 도형 하나를 고른 뒤\n모서리를 끌면 모양이 바뀝니다.
+Fingers and gestures	손가락과 제스처
+One finger scrolls. Two fingers pinch to zoom.\nTwo-finger double tap undoes; three-finger double tap redoes.	한 손가락은 스크롤, 두 손가락을 오므리고 벌리면 확대·축소.\n두 손가락 두 번 탭은 실행 취소, 세 손가락 두 번 탭은 다시 실행입니다.
+Three fingers up open a second note in a popup beside this one;\nthree fingers down close it. Drag its top bar to move it,\nand a corner to resize it.	세 손가락을 위로 밀면 두 번째 노트가 옆 팝업으로 열리고,\n아래로 밀면 닫힙니다. 위쪽 막대를 끌어 옮기고,\n모서리를 끌어 크기를 바꿉니다.
+Turning three fingers rotates the note; near straight, it snaps.	세 손가락을 돌리면 노트가 돌아갑니다. 거의 똑바르면 딱 맞춰집니다.
+Gesture mode (the Read tool) lets the pen select PDF text,\nfollow links and lift masking tape without writing.	제스처 모드(읽기 도구)에서는 펜으로 필기하지 않고\nPDF 글자를 고르고, 링크를 따라가고, 마스킹 테이프를 들춥니다.
+Everything here can be changed in\nSettings › Touch & gestures, three-finger gestures included.	이 모든 것은 설정 › 터치 · 제스처에서\n바꿀 수 있습니다. 세 손가락 제스처도 마찬가지입니다.
+Pages and search	페이지와 검색
+The page panel shows the pages as pictures, the contents,\nevery strip of tape, and your other notes. Its search field finds\nwords in PDFs, text boxes and handwriting. Writing closes it.	페이지 패널에는 페이지 그림, 목차, 모든 테이프,\n다른 노트가 나옵니다. 검색 칸은 PDF, 텍스트 상자,\n필기에서 낱말을 찾습니다. 필기를 시작하면 닫힙니다.
+Pull past the last page to add a new one,\nor use + Page in the page panel.	마지막 페이지를 지나 더 끌어 올리면 새 페이지가 생깁니다.\n페이지 패널의 + 페이지를 써도 됩니다.
+Ctrl+F opens search; Ctrl+Alt+G goes to a page.	Ctrl+F는 검색, Ctrl+Alt+G는 페이지 이동입니다.
+More on the page	페이지 위의 다른 것들
+Layers keep ink apart: lock one to protect it,\ndim it with opacity, or hide it.	레이어는 필기를 나눠 둡니다: 잠가서 보호하고,\n불투명도로 흐리게 하거나 숨길 수 있습니다.
+Pictures come from the gallery. Text boxes take\ntyping, and Capture saves a region at high resolution.	사진은 갤러리에서 가져옵니다. 텍스트 상자에는\n글자를 입력하고, 캡처는 영역을 고해상도로 저장합니다.
+Recording ties audio to what you write: in the Read tool,\ntap your writing to hear that moment.	녹음은 소리를 필기와 묶어 둡니다: 읽기 도구에서\n필기를 누르면 그때 녹음된 소리를 들을 수 있습니다.
+The Internet panel opens beside the note,\nso an AI chat can sit next to your notes.	인터넷 패널은 노트 옆에 열려서\nAI 채팅을 노트 바로 옆에 둘 수 있습니다.
+Make it yours	나만의 노트로
+Settings › Appearance: Material, Glassmorphism or\nLiquid glass, light or dark, icons, colours and corners.	설정 › 화면: Material, Glassmorphism,\nLiquid glass, 라이트·다크, 아이콘, 색, 모서리.
+Settings › Customize toolbar: which tools each bar size shows,\nand in what order.	설정 › 툴바 꾸미기: 툴바 크기마다 보일 도구와\n그 순서.
+Back up a note, or all of them, from the home screen menu.\nUpdates arrive in the app when a new release is out.	노트 하나 또는 전부를 홈 화면 메뉴에서 백업하세요.\n새 버전이 나오면 앱 안에서 업데이트됩니다.
+That's the tour. Have fun writing!	안내는 여기까지입니다. 즐겁게 쓰세요!
+Crop	자르기
+Rectangle	사각형
+Ellipse	타원
+Freeform	자유형
+Photo style	사진 스타일
+Opacity {0}%	불투명도 {0}%
+Corners {0}%	모서리 {0}%
+Border {0}px	테두리 {0}px
+Apply corners & border	모서리와 테두리 적용
+This layer	이 레이어
+Layer '{0}' is locked. Unlock it in Layers to write.	'{0}' 레이어가 잠겨 있습니다. 쓰려면 레이어에서 잠금을 푸세요.
+Layer '{0}' is hidden. Show it in Layers to write.	'{0}' 레이어가 숨겨져 있습니다. 쓰려면 레이어에서 보이게 하세요.
+Bahasa Indonesia	인도네시아어
+Magyar	헝가리어
+Layer 1	레이어 1
+Layer {0}	레이어 {0}
+No room for another layer	레이어를 더 만들 수 없습니다
+Layer: {0}	레이어: {0}
+Open layers	레이어 열기
+Rename layer	레이어 이름 바꾸기
+Delete '{0}'?	'{0}'을(를) 삭제할까요?
+The layer has no ink. You can undo this.	필기가 없는 레이어입니다. 실행 취소할 수 있습니다.
+Its 1 stroke is removed from every page. You can undo this.	모든 페이지에서 획 1개가 지워집니다. 실행 취소할 수 있습니다.
+Its {0} strokes are removed from every page. You can undo this.	모든 페이지에서 획 {0}개가 지워집니다. 실행 취소할 수 있습니다.
+Delete	삭제
+Layers	레이어
+Add layer	레이어 추가
+Close layers	레이어 닫기
+Layers apply to every page of this note.	레이어는 이 노트의 모든 페이지에 적용됩니다.
+Edit all layers	모든 레이어 편집
+Erase and select on every unlocked layer. New ink goes to the marked layer.	잠기지 않은 모든 레이어에서 지우고 고릅니다. 새 필기는 표시된 레이어로 갑니다.
+Only the highlighted layer can be written, erased or selected.	강조된 레이어에서만 쓰고, 지우고, 고를 수 있습니다.
+Layer '{0}' deleted	'{0}' 레이어를 삭제했습니다
+Undo	실행 취소
+Target, locked: no new ink	대상 레이어, 잠김: 새 필기 불가
+New ink goes here	새 필기가 여기로 갑니다
+View only	보기 전용
+Hidden	숨김
+Locked	잠김
+Drag to reorder {0}	{0} 끌어서 순서 바꾸기
+Write on this layer	이 레이어에 쓰기
+Hide {0}	{0} 숨기기
+Show {0}	{0} 보이기
+Unlock {0}	{0} 잠금 풀기
+Lock {0}	{0} 잠그기
+More for {0}	{0} 더 보기
+Rename	이름 바꾸기
+Duplicate	복제
+Hide opacity	불투명도 숨기기
+Opacity ({0}%)	불투명도 ({0}%)
+Move up	위로 이동
+Move down	아래로 이동
+Opacity	불투명도
+Long-press for menu	길게 눌러 메뉴 열기
+Value	값
+A lens that bends the page. The selection glides after your fingertip.	페이지를 휘게 하는 렌즈. 선택이 손끝을 따라 미끄러집니다.
+The iOS material as liquid_glass_widgets measured it: a frosted body, a thin bright rim, and the native springs.	liquid_glass_widgets가 측정한 iOS 재질: 서리 낀 본체, 가늘고 밝은 가장자리, iOS의 스프링.
+As Kyant0/AndroidLiquidGlass draws it: vivid colour, a deep lens and a lit rim.	Kyant0/AndroidLiquidGlass가 그리는 대로: 선명한 색, 깊은 렌즈, 빛나는 가장자리.
+As QWEA0/Liquid-Glass-Android's demo starts it: a wide bevel, light blur and light lit from the top left.	QWEA0/Liquid-Glass-Android 데모의 처음 모습: 넓은 가장자리 띠, 옅은 블러, 왼쪽 위에서 오는 빛.
+Regular	Regular
+Imported document	가져온 문서
+Couldn't import the PDF	PDF를 가져오지 못했습니다
+Can't read the file	파일을 읽을 수 없습니다
+Markdown note	마크다운 노트
+Couldn't import the Markdown file	마크다운 파일을 가져오지 못했습니다
+Exporting	내보내는 중
+Backup saved	백업을 저장했습니다
+Export failed	내보내기에 실패했습니다
+Backing up all notes	모든 노트를 백업하는 중
+Backed up {0}	{0} 백업했습니다
+Exporting selected notes	선택한 노트를 내보내는 중
+Exported {0}	{0} 내보냈습니다
+Rendering PDF	PDF 만드는 중
+PDF saved	PDF를 저장했습니다
+Rendering PNG	PNG 만드는 중
+PNG saved to Gallery	PNG를 갤러리에 저장했습니다
+PNG export failed	PNG 내보내기에 실패했습니다
+Couldn't add the template image	템플릿 이미지를 추가하지 못했습니다
+Markdown file saved	마크다운 파일을 저장했습니다
+Markdown export failed	마크다운 내보내기에 실패했습니다
+Restoring	복원하는 중
+Restored {0}	{0} 복원했습니다
+Not a Notesis backup file	Notesis 백업 파일이 아닙니다
+Saved {0}	{0} 저장했습니다
+Couldn't save settings	설정을 저장하지 못했습니다
+Not a Notesis settings file	Notesis 설정 파일이 아닙니다
+Loaded {0}	{0} 불러왔습니다
+Making a note from images	이미지로 노트 만드는 중
+Image note	이미지 노트
+Couldn't read the images	이미지를 읽지 못했습니다
+New note from a web page	웹 페이지로 새 노트
+Reading the web page	웹 페이지를 읽는 중
+Couldn't read the web page	웹 페이지를 읽지 못했습니다
+Create	만들기
+Imported {0}	{0} 가져왔습니다
+All notes	모든 노트
+Notes	노트
+Select	선택
+Sort	정렬
+Last modified	최근 수정순
+Name	이름순
+Most pages	페이지 많은 순
+New folder	새 폴더
+Tutorial	사용법
+Display settings	화면 설정
+More	더 보기
+Rename folder	폴더 이름 바꾸기
+Delete folder	폴더 삭제
+Trash	휴지통
+Library background	라이브러리 배경
+About · Help	정보 · 도움말
+Search titles, PDFs and handwriting	제목, PDF, 필기에서 검색
+Clear search	검색 지우기
+New note from web page	웹 페이지로 새 노트
+New note from images	이미지로 새 노트
+Import Markdown	마크다운 가져오기
+Open document · Drive · OneDrive	문서 열기 · 드라이브 · OneDrive
+Import PDF	PDF 가져오기
+Markdown folder (vault)	마크다운 폴더(보관소)
+New note	새 노트
+No results for "{0}"	"{0}"에 대한 결과가 없습니다
+This folder is empty	이 폴더는 비어 있습니다
+No notes yet	아직 노트가 없습니다
+Try other words, or fewer of them.	다른 낱말로, 또는 더 적은 낱말로 찾아보세요.
+Move a note here from its menu, or start a new one.	노트 메뉴에서 이 폴더로 옮기거나 새 노트를 만드세요.
+Start a blank note, or bring in a PDF, pictures or a web page with the + button.	빈 노트를 시작하거나, + 버튼으로 PDF, 사진, 웹 페이지를 가져오세요.
+Folders	폴더
+Matches in pages	페이지 속 검색 결과
+Reading handwriting	필기 읽는 중
+Couldn't download the recognition model. Check your internet connection	인식 모델을 내려받지 못했습니다. 인터넷 연결을 확인하세요
+Indexed 	색인함 
+Move	이동
+Merging notes	노트 합치는 중
+Couldn't merge the notes	노트를 합치지 못했습니다
+Merge	합치기
+Export	내보내기
+Please wait	잠시만 기다려 주세요
+Move {0} to Trash?	{0}을(를) 휴지통으로 옮길까요?
+You can restore them from Trash for {0} days.	휴지통에서 {0}일 동안 복원할 수 있습니다.
+That folder name can't be used	그 폴더 이름은 쓸 수 없습니다
+Delete folder "{0}"?	"{0}" 폴더를 삭제할까요?
+The folder is empty.	빈 폴더입니다.
+{0} in it. Move them to Trash with the folder, or keep them in the library. Restoring a note from Trash brings the folder back.	{0}이(가) 들어 있습니다. 폴더와 함께 휴지통으로 옮기거나 라이브러리에 남겨 두세요. 휴지통에서 노트를 복원하면 폴더도 돌아옵니다.
+Move to Trash	휴지통으로 옮기기
+Keep notes	노트 남기기
+Rename note	노트 이름 바꾸기
+Note name	노트 이름
+The note couldn't be renamed	노트 이름을 바꾸지 못했습니다
+Can't open the PDF	PDF를 열 수 없습니다
+The file may be damaged or password-protected.	파일이 손상되었거나 비밀번호로 보호되어 있을 수 있습니다.
+Untitled	제목 없음
+Tags	태그
+Separate with commas	쉼표로 구분
+Color label	색 라벨
+None	없음
+Move note to Trash?	노트를 휴지통으로 옮길까요?
+You can restore "{0}" from Trash for {1} days.	"{0}"은(는) 휴지통에서 {1}일 동안 복원할 수 있습니다.
+Redo	다시 실행
+Fingers & gestures	손가락 · 제스처
+One finger	한 손가락
+Scroll	스크롤
+Ignore	무시
+Draw	그리기
+Two fingers	두 손가락
+Zoom & pan	확대 · 이동
+Two-finger double tap	두 손가락 두 번 탭
+Three-finger double tap	세 손가락 두 번 탭
+Lock zoom	확대 잠금
+Double-tap with one finger to zoom	한 손가락 두 번 탭으로 확대
+Long-press to open the menu	길게 눌러 메뉴 열기
+Mark linked objects in blue	링크된 개체를 파란색으로 표시
+Back to the previous tool after erasing	지운 뒤 이전 도구로 돌아가기
+Writing with the pen button held	펜 버튼을 누른 채 쓰면
+Eraser	지우개
+Lasso	올가미
+If your palm touches the screen, set one finger to 'Ignore' and two fingers to 'Scroll'. In Draw mode, two fingers move the page.	손바닥이 화면에 닿는다면 한 손가락을 '무시', 두 손가락을 '스크롤'로 두세요. 그리기 모드에서는 두 손가락으로 페이지를 움직입니다.
+Link	링크
+Current: {0}	현재: {0}
+Page in this note	이 노트의 페이지
+Another note	다른 노트
+Web address	웹 주소
+Page (1–{0})	페이지 (1–{0})
+Page	페이지
+Remove link	링크 지우기
+Select with the lasso and tap 'Add to library' to keep it here.	올가미로 고른 뒤 '라이브러리에 추가'를 누르면 여기에 보관됩니다.
+Library item	라이브러리 항목
+Tags (comma-separated)	태그 (쉼표로 구분)
+Create a note password	노트 비밀번호 만들기
+All locked notes share this one password. It is stored only on this device and can't be recovered if you forget it.	잠긴 노트는 모두 이 비밀번호 하나를 씁니다. 이 기기에만 저장되며, 잊으면 되찾을 수 없습니다.
+Password (4+ characters)	비밀번호 (4자 이상)
+Confirm password	비밀번호 확인
+Hint (optional)	힌트 (선택)
+Lock	잠그기
+Open "{0}"	"{0}" 열기
+Locked note	잠긴 노트
+Password	비밀번호
+Hint: {0}	힌트: {0}
+Wrong password	비밀번호가 틀렸습니다
+Open	열기
+Order of {0}	{0} 순서
+Trash is empty	휴지통이 비어 있습니다
+Deleted {0} · {1}	삭제함 {0} · {1}
+Restore	복원
+Delete forever	영구 삭제
+Empty	비우기
+Empty Trash?	휴지통을 비울까요?
+{0} will be deleted for good and can't be recovered.	{0}이(가) 영구 삭제되며 되돌릴 수 없습니다.
+Imported PDF	가져온 PDF
+Favorite	즐겨찾기
+Selected	선택됨
+Not selected	선택 안 됨
+Options for {0}	{0} 옵션
+Set thumbnail	미리보기 그림 정하기
+Export as .md	.md로 내보내기
+Reset to first page	첫 페이지로 되돌리기
+Remove from favorites	즐겨찾기에서 빼기
+Add to favorites	즐겨찾기에 추가
+Move up in favorites	즐겨찾기에서 위로
+Move down in favorites	즐겨찾기에서 아래로
+Unlock	잠금 풀기
+Lock with password	비밀번호로 잠그기
+Move to folder	폴더로 옮기기
+Index handwriting for search	검색용 필기 색인 만들기
+Export as backup file	백업 파일로 내보내기
+Export as PDF	PDF로 내보내기
+Look	스타일
+Folder options for {0}	{0} 폴더 옵션
+Folder name	폴더 이름
+Leave blank for the top level	비워 두면 맨 위에 둡니다
+Existing folders	있는 폴더
+New note · Import	새 노트 · 가져오기
+Backup	백업
+Back up all notes	모든 노트 백업
+Restore from backup	백업에서 복원
+Save settings	설정 저장
+Load settings	설정 불러오기
+Pen	펜
+Pencil	연필
+Highlighter	형광펜
+Masking tape	마스킹 테이프
+Shape	도형
+Tool	도구
+Line	선
+Arrow	화살표
+Double arrow	양쪽 화살표
+Circle	원
+Triangle	삼각형
+Right triangle	직각삼각형
+Diamond	마름모
+Parallelogram	평행사변형
+Trapezoid	사다리꼴
+Pentagon	오각형
+Hexagon	육각형
+Star	별
+Heart	하트
+Arc	호
+Sector	부채꼴
+Sine curve	사인 곡선
+Axes	좌표축
+Brace	중괄호
+Speech bubble	말풍선
+Cube	정육면체
+Cylinder	원기둥
+Curve	곡선
+Polygon · polyline	다각형 · 꺾은선
+Checkbox (tap to add · tap again to tick)	체크박스 (누르면 추가 · 한 번 더 누르면 체크)
+Quick color #%06X	빠른 색 #{0}
+Move left	왼쪽으로 이동
+Move right	오른쪽으로 이동
+Color templates	색 템플릿
+Color #%06X	색 #{0}
+Delete template	템플릿 삭제
++ Add template	+ 템플릿 추가
+No app can open this	열 수 있는 앱이 없습니다
+Capture	캡처
+Size	크기
+Format	형식
+Quality {0}	품질 {0}
+Paste on this page	이 페이지에 붙여넣기
+Carry as link	링크로 가져가기
+Attach to AI	AI에 첨부
+Share	공유
+Web bar {0}	웹 막대 {0}
+Web panel	웹 패널
+Drag to move	끌어서 옮기기
+Back	뒤로
+Reload	새로고침
+Address or search	주소 또는 검색어
+Dock	고정
+Pop out	따로 띄우기
+Mobile site	모바일 사이트
+Desktop site	데스크톱 사이트
+Open in browser	브라우저에서 열기
+Hide error log	오류 기록 숨기기
+Error log ({0})	오류 기록 ({0})
+Web	웹
++ Add this site	+ 이 사이트 추가
+No errors logged	기록된 오류가 없습니다
+Export pages	페이지 내보내기
+From page	시작 페이지
+To page	끝 페이지
+Original	원본
+Rotation	회전
+Image PDF	이미지 PDF
+Invert colors	색 반전
+PNGs go to the Gallery (Pictures/Notesis), one per page.	PNG는 페이지마다 한 장씩 갤러리(Pictures/Notesis)에 저장됩니다.
+Handwritten note	필기 노트
+Markdown (.md)	마크다운 (.md)
+Saved as a note.md file that Obsidian can open.	Obsidian에서 열 수 있는 note.md 파일로 저장합니다.
+A paper notebook for pens and text boxes.	펜과 텍스트 상자를 쓰는 종이 노트입니다.
+First page template	첫 페이지 템플릿
+Blank	빈 페이지
+Lined	줄 노트
+Narrow lined	좁은 줄 노트
+Grid	모눈
+Dot	점
+Cornell	코넬
+Infinite down	아래로 무한
+Infinite all ways	모든 방향으로 무한
+Custom templates	내 템플릿
++ Add image template	+ 이미지 템플릿 추가
+Couldn't export	내보내지 못했습니다
+Couldn't start recording	녹음을 시작하지 못했습니다
+The attached note is gone	첨부한 노트가 없어졌습니다
+Top bar mode width	위쪽 막대 모드 너비
+Ruler settings	자 설정
+Angle (°)	각도 (°)
+Apply	적용
+Couldn't read that image	그 이미지를 읽지 못했습니다
+Couldn't find the linked note	링크된 노트를 찾지 못했습니다
+Back to notes	노트로 돌아가기
+Undock bar	툴바 고정 풀기
+Dock bar	툴바 고정
+Reset bar position	툴바 위치 초기화
+A docked bar stays put	고정된 툴바는 움직이지 않습니다
+Already in place	이미 제자리에 있습니다
+Rotate · {0}°	회전 · {0}°
+Zoom · {0}%	확대 · {0}%
+Pages & search	페이지 · 검색
+Pen in hand	들고 있는 펜
+Search the web	웹에서 검색
+Page layout	페이지 배치
+Vertical scroll	세로 스크롤
+Horizontal scroll	가로 스크롤
+Two pages	두 페이지
+Two pages, cover alone	두 페이지, 표지는 따로
+Four pages	네 페이지
+Page tone	페이지 색조
+Screen color	화면 색
+Sepia	세피아
+Night	야간
+Changes only what the screen shows. The note and its exports keep their colors, and at night the stroke being written shows in its own color for a moment.	화면에 보이는 것만 바뀝니다. 노트와 내보낸 파일은 원래 색을 그대로 유지하며, 야간에는 지금 쓰는 획이 잠깐 원래 색으로 보입니다.
+This note	이 노트
+No password set yet	아직 비밀번호가 없습니다
+Set a password from the note list to lock notes.	노트를 잠그려면 노트 목록에서 비밀번호를 정하세요.
+Move to trash	휴지통으로 옮기기
+Move this note to the trash?	이 노트를 휴지통으로 옮길까요?
+Handwriting recognition	필기 인식
+The languages handwriting is read in for search; the first is tried first.	검색할 때 필기를 읽는 언어입니다. 첫 번째 언어부터 시도합니다.
+Microphone	마이크
+Record	녹음
+When finished	끝나면
+Next recording	다음 녹음
+Repeat one	한 개 반복
+Recordings	녹음
+None yet. What you record is kept with this note.	아직 없습니다. 녹음한 내용은 이 노트에 함께 보관됩니다.
+Play	재생
+Couldn't render the capture at this size	이 크기로는 캡처를 만들지 못했습니다
+Go to the note and page to paste it into, then tap "Paste here"	붙여넣을 노트와 페이지로 간 뒤 "여기에 붙여넣기"를 누르세요
+Couldn't save the capture	캡처를 저장하지 못했습니다
+Tap + in the chat and choose "Files"	채팅에서 +를 누르고 "파일"을 고르세요
+Saved to the gallery	갤러리에 저장했습니다
+ Capture from page {0}	 {0}페이지에서 캡처
+ Capture from {0}, page {1}	 {0}의 {1}페이지에서 캡처
+Paste here	여기에 붙여넣기
+Recognition model unavailable	인식 모델을 쓸 수 없습니다
+Added to library	라이브러리에 추가했습니다
+Couldn't add to library	라이브러리에 추가하지 못했습니다
+ Back to page {0}	 {0}페이지로 돌아가기
+ Back to previous spot	 이전 위치로 돌아가기
+Move {0} to…	{0}을(를) 옮길 곳…
+Copy {0} to…	{0}을(를) 복사할 곳…
+Added {0} to "{1}"	"{1}"에 {0} 추가했습니다
+Couldn't move the pages	페이지를 옮기지 못했습니다
+Couldn't copy the pages	페이지를 복사하지 못했습니다
+Clear all writing?	필기를 모두 지울까요?
+The writing on all {0} pages of this note goes. Pictures, tape and the PDF stay, and Undo brings the writing back.	이 노트 {0}페이지 전체의 필기가 지워집니다. 사진, 테이프, PDF는 남고, 실행 취소로 필기를 되돌릴 수 있습니다.
+Clear all	모두 지우기
+Playing recording	녹음 재생 중
+Playing recording · In read mode, tap ink to jump to that moment	녹음 재생 중 · 읽기 모드에서 필기를 누르면 그 순간으로 갑니다
+Stop when finished	끝나면 멈추기
+Mask name	가림 이름
+Mask {0}	가림 {0}
+Reading selected handwriting…	고른 필기를 읽는 중…
+No text recognized	알아본 글자가 없습니다
+Convert to text	텍스트로 바꾸기
+Couldn't save the text	텍스트를 저장하지 못했습니다
+Couldn't save the image	이미지를 저장하지 못했습니다
+Paste ({0})	붙여넣기 ({0})
+Paste text	텍스트 붙여넣기
+Paste image	이미지 붙여넣기
+Couldn't paste the image	이미지를 붙여넣지 못했습니다
+Nothing to paste	붙여넣을 것이 없습니다
+Attach to this page…	이 페이지에 첨부…
+Untitled note	제목 없는 노트
+Resize the web panel	웹 패널 크기 조정
+Make wider	넓게
+Make narrower	좁게
+Retry {0} missed	틀린 {0}개 다시 풀기
+Show answer	답 보기
+Correct	맞음
+Wrong	틀림
+Finish	끝내기
+{0} · Drag to move	{0} · 끌어서 옮기기
+Shrink	줄이기
+Enlarge	키우기
+Rotate 15°	15° 회전
+Change color	색 바꾸기
+Use current pen color	지금 펜 색 쓰기
+Cut	잘라내기
+Add to library	라이브러리에 추가
+Ungroup	그룹 풀기
+Group	그룹
+ Delete	 삭제
+Fully enclosed only	완전히 둘러싼 것만
+Snap to align	정렬에 맞추기
+Keep aspect ratio	비율 유지
+Select types	고를 종류
+Images	이미지
+Text boxes	텍스트 상자
+Locked objects	잠긴 개체
+Paste	붙여넣기
+Clipboard {0}	클립보드 {0}
+Sticky note	메모지
+Table	표
+Checkbox	체크박스
+Text	텍스트
+Photo	사진
+Fold/Unfold	접기/펼치기
+Edit	편집
+Style	스타일
+Rotate 90°	90° 회전
+Other notes	다른 노트
+Find a note	노트 찾기
+No results	결과 없음
+Page {0}	{0}페이지
+Fit to width	너비에 맞추기
+Split this side	이쪽 나누기
+Split side by side	좌우로 나누기
+Split top and bottom	위아래로 나누기
+Close this side	이쪽 닫기
+Close reference	참고 노트 닫기
+Couldn't open the note · Retry	노트를 열지 못했습니다 · 다시 시도
+Original selection	원래 선택
+Selection	선택
+ Color	 색
+ Highlight	 형광펜
+ Mask	 가림
+Strikethrough	취소선
+ Copy	 복사
+Translate	번역
+Search	검색
+Page {0} of {1}	{0} / {1}페이지
+Page {0} preview	{0}페이지 미리보기
+Contents entry for page {0}	{0}페이지의 목차 항목
+Entry name	항목 이름
+Resize the page panel	페이지 패널 크기 조정
+Search this note	이 노트에서 검색
+Search contents	목차에서 검색
+Search masks	가림에서 검색
+Search notes	노트 검색
+Bookmarks	책갈피
+Range	범위
+Go to	이동
+All	전체
+Copy to…	복사할 곳…
+Move to…	옮길 곳…
+ Page	 페이지
+PDF contents {0}	PDF 목차 {0}
+(Untitled)	(제목 없음)
+My contents	내 목차
+No contents yet. Add the current page, or hold a page in Pages to set one.	아직 목차가 없습니다. 현재 페이지를 추가하거나, 페이지 패널에서 페이지를 길게 눌러 정하세요.
+ Add current page	 현재 페이지 추가
+No masking tape in this note yet.	이 노트에는 아직 마스킹 테이프가 없습니다.
+No masks named like that.	그런 이름의 가림이 없습니다.
+Cover all	모두 가리기
+Reveal all	모두 보이기
+Pages	페이지
+Masks	가림
+Page size	페이지 크기
+Swap ↔	맞바꾸기 ↔
+Width px	너비 px
+Height px	높이 px
+At 300 dpi, 100–9,999 px	300dpi 기준 100–9,999px
+Apply to all non-PDF pages	PDF가 아닌 모든 페이지에 적용
+Select pages	페이지 선택
+From	시작
+To	끝
+Go to page	페이지로 이동
+Go	이동
+Remove highlight	강조 지우기
+Highlight entry	항목 강조
+Entry options	항목 옵션
+Indent	들여쓰기
+Outdent	내어쓰기
+Remove entry	항목 지우기
+Right {0} · Wrong {1}	맞음 {0} · 틀림 {1}
+Reveal this page	이 페이지 보이기
+Cover this page	이 페이지 가리기
+Delete this page's masks	이 페이지의 가림 삭제
+Study	공부
+Wrong only	틀린 것만
+Cover this mask	이 가림 덮기
+Reveal this mask	이 가림 보이기
+Delete this mask	이 가림 삭제
+Select pages up to here	여기까지 페이지 선택
+Bookmarked	책갈피함
+Remove bookmark	책갈피 지우기
+Bookmark	책갈피
+Attach…	첨부…
+Show comments and practice pages	메모와 연습 페이지 보이기
+Hide comments and practice pages	메모와 연습 페이지 숨기기
+Set contents entry	목차 항목 정하기
+Rename contents entry	목차 항목 이름 바꾸기
+Move earlier	앞으로 옮기기
+Move later	뒤로 옮기기
+Duplicate page	페이지 복제
+Rotate left	왼쪽으로 회전
+Rotate right	오른쪽으로 회전
+Page size…	페이지 크기…
+Use this background on all pages	이 배경을 모든 페이지에 쓰기
+Infinite note · down	무한 노트 · 아래로
+Infinite note · every way	무한 노트 · 모든 방향
+Template · {0}	템플릿 · {0}
+Delete page	페이지 삭제
+Nothing to undo	실행 취소할 것이 없습니다
+Nothing to redo	다시 실행할 것이 없습니다
+Recording · open recordings	녹음 · 녹음 목록 열기
+Open recordings	녹음 목록 열기
+Rotate note, now {0}°	노트 회전, 지금 {0}°
+Zoom presets	확대 배율
+Touch & gestures	터치 · 제스처
+Add page	페이지 추가
+Note & view	노트 · 보기
+Settings	설정
+Picture	사진
+Tools	도구
+Pages & notes	페이지 · 노트
+Split notes	노트 나눠 보기
+Unpin bar	상단 고정 풀기
+Pin to top	상단 고정
+Straight line	직선
+Ruler	자
+Set square	삼각자
+Protractor	각도기
+No other notes	다른 노트가 없습니다
+Show tools	도구 보이기
+Basic	기본
+Pastel	파스텔
+Neon	네온
+Ink	잉크
+Live	라이브
+Source	원문
+Read	읽기
+Couldn't read the note	노트를 읽지 못했습니다
+Couldn't save {0}	{0}을(를) 저장하지 못했습니다
+Outline	개요
+Links	링크
+Saved	저장됨
+Editing	편집 중
+Open “{0}”	“{0}” 열기
+No headings yet. Start a line with # to make one.	아직 제목이 없습니다. 줄을 #으로 시작하면 제목이 됩니다.
+Linked from	이 노트를 링크한 곳
+Looking…	찾는 중…
+No other note links here.	이 노트를 링크한 다른 노트가 없습니다.
+Links to	이 노트가 링크한 곳
+Type [[ to link a note.	[[를 입력하면 노트를 링크합니다.
+Note text	노트 본문
+Bold	굵게
+Italic	기울임
+Highlight	형광펜
+Code	코드
+Heading	제목
+Bullet list	글머리 기호 목록
+Numbered list	번호 목록
+Task	할 일
+Quote	인용
+Link a note	노트 링크
+Web link	웹 링크
+New “{0}”	새 “{0}”
+Type a note's name	노트 이름을 입력하세요
+Nothing written yet.	아직 쓴 내용이 없습니다.
+Properties	속성
+Markdown · note.md	마크다운 · note.md
+Vault	보관소
+Can't write the file	파일을 쓸 수 없습니다
+Back to the library	라이브러리로 돌아가기
+Markdown folder · {0}	마크다운 폴더 · {0}
+Markdown folder	마크다운 폴더
+Change folder	폴더 바꾸기
+No Markdown files in this folder yet. Start one with New note.	이 폴더에는 아직 마크다운 파일이 없습니다. 새 노트로 하나 시작하세요.
+No note called “{0}”.	“{0}”이라는 노트가 없습니다.
+Couldn't make the note in this folder	이 폴더에 노트를 만들지 못했습니다
+Use password	비밀번호 사용
+PDF text	PDF 글자
+Text box	텍스트 상자
+Handwriting	필기
+PDF text, text boxes and recognised handwriting	PDF 글자, 텍스트 상자, 알아본 필기
+Searching…	찾는 중…
+No matches	일치하는 것이 없습니다
+Previous match	이전 결과
+Next match	다음 결과
+Page {0} · {1}	{0}페이지 · {1}
+New notes	새 노트
+A blank page, a PDF, pictures, a web page or Markdown all start here.	빈 페이지, PDF, 사진, 웹 페이지, 마크다운 모두 여기서 시작합니다.
+The guide	안내 노트
+Welcome to Notesis is a short tour, one page per part of the app. Write on it.	Notesis에 오신 것을 환영합니다는 기능 하나에 한 페이지씩 보여 주는 짧은 안내입니다. 직접 써 보세요.
+Finds titles, words in PDFs and your own handwriting.	제목, PDF 속 낱말, 직접 쓴 필기까지 찾습니다.
+The pen and its settings, gestures, pages, shapes, the AI panel and every setting, a page each. Open it any time.	펜과 펜 설정, 제스처, 페이지, 도형, AI 패널, 모든 설정을 한 페이지씩 설명합니다. 언제든 여세요.
+The look	스타일
+Skin, colours, corners and dark mode, any time.	스타일, 색, 모서리, 다크 모드는 언제든 바꿀 수 있습니다.
+The trash, the library's picture, and About · Help: the guide note and these tips, whenever you want them again.	휴지통, 라이브러리 배경, 정보 · 도움말: 안내 노트와 이 팁을 원할 때 다시 볼 수 있습니다.
+Your tools	도구
+Pen, pencil, highlighter, eraser, lasso, shapes and more. Tap one to pick it; tap the one in hand again for its settings.	펜, 연필, 형광펜, 지우개, 올가미, 도형 등. 누르면 그 도구를 고르고, 들고 있는 도구를 한 번 더 누르면 설정이 열립니다.
+Colour and width	색과 굵기
+For the tool in hand: its width, the colour palette, and the page you are on. More is in Settings › Customize toolbar.	들고 있는 도구의 굵기, 색 팔레트, 지금 있는 페이지. 더 많은 것은 설정 › 툴바 꾸미기에 있습니다.
+The note's buttons	노트 버튼
+Back to the notes, undo and redo, recordings, and search. Choose which ones show in Settings › Customize toolbar.	노트로 돌아가기, 실행 취소와 다시 실행, 녹음, 검색. 보일 버튼은 설정 › 툴바 꾸미기에서 고르세요.
+Functions	기능
+Pictures, Tools (calculator, clock, calendar, to-do), layers, text, capture, Pages & notes, split notes, the tutorial and Settings. The bar's size, 1/4 to 4/4, is chosen here too, or by dragging this button left and right.	사진, 도구(계산기, 시계, 달력, 할 일), 레이어, 텍스트, 캡처, 페이지 · 노트, 노트 나눠 보기, 사용법, 설정. 툴바 크기 1/4~4/4도 여기서 고르거나, 이 버튼을 좌우로 끌어 바꿉니다.
+Welcome to Notesis. Tap to skip.	Notesis에 오신 것을 환영합니다. 누르면 건너뜁니다.
+A notebook for the pen	펜으로 쓰는 노트
+Skip	건너뛰기
+Pick a look	스타일 고르기
+Every bar and panel wears it. Change it any time in the display settings.	모든 툴바와 패널에 적용됩니다. 화면 설정에서 언제든 바꿀 수 있습니다.
+Continue	계속
+Coach mark	도움말 표시
+Next	다음
+No more tips	팁 그만 보기
+Got it	알겠어요
+Tap the pen you're holding again for its colour, width and nib.	들고 있는 펜을 한 번 더 누르면 색, 굵기, 펜촉을 바꿀 수 있습니다.
+The round button on the bar is Functions: pictures, layers, text, recording and Settings.	툴바의 둥근 버튼이 기능입니다: 사진, 레이어, 텍스트, 녹음, 설정.
+Draw a line, a box or a circle and keep the pen still for a moment: it becomes the shape.	선, 사각형, 원을 그리고 펜을 잠깐 멈추면 도형이 됩니다.
+Pinch to zoom. Two fingers double-tapped undo; three fingers redo.	두 손가락을 오므리고 벌려 확대·축소. 두 손가락 두 번 탭은 실행 취소, 세 손가락은 다시 실행입니다.
+On the last page, pull up past its end to add a new one.	마지막 페이지에서 끝을 지나 더 끌어 올리면 새 페이지가 생깁니다.
+Attach to page {0}	{0}페이지에 첨부
+Practice page	연습 페이지
+A blank page laid beside this one, to work things out next to it	이 페이지 옆에 놓는 빈 페이지로, 옆에서 풀어 볼 때 씁니다
+Comment	메모
+A few words, and a link if you like, in the margin with a line to the page	여백에 짧은 글과 원하면 링크를 달고, 페이지와 선으로 잇습니다
+Link (optional)	링크 (선택)
+Attach	첨부
+Remove	지우기
+Hide	숨기기
+Middle	가운데
+Top	위
+Bottom	아래
+Open beside this note	이 노트 옆에 열기
+Ballpoint	볼펜
+Fountain	만년필
+Fountain (speed)	만년필 (속도)
+Calligraphy	캘리그래피
+Vanishing	사라지는 펜
+Graphite	흑연
+Soft	부드럽게
+Stamp	도장
+Bubble	버블
+Spray	스프레이
+Thin	가늘게
+Medium	보통
+Max	최대
+Calc	계산기
+Calendar	달력
+To-do	할 일
+Width	굵기
+Pressure	필압
+Document	문서
+Save it as a PDF from the print screen, then open that PDF in Notesis	인쇄 화면에서 PDF로 저장한 뒤 Notesis에서 그 PDF를 여세요
+Couldn't make the PDF	PDF를 만들지 못했습니다
+Couldn't save the PDF	PDF를 저장하지 못했습니다
+Can't open the file.	파일을 열 수 없습니다.
+Couldn't convert to PDF	PDF로 바꾸지 못했습니다
+PDF layout	PDF 배치
+This document type isn't supported.	지원하지 않는 문서 형식입니다.
+No permission to read the file. Please pick it again.	파일을 읽을 권한이 없습니다. 다시 골라 주세요.
+Error reading the document: {0}	문서를 읽는 중 오류: {0}
+Back to the document	문서로 돌아가기
+Close document	문서 닫기
+Text view · Read-only	텍스트 보기 · 읽기 전용
+Document view · Read-only	문서 보기 · 읽기 전용
+Read-only	읽기 전용
+Import failed	가져오기에 실패했습니다
+Import as note	노트로 가져오기
+Convert to PDF	PDF로 바꾸기
+Document view	문서 보기
+Text view	텍스트 보기
+Previous	이전
+Opening document…	문서를 여는 중…
+Can't open the document	문서를 열 수 없습니다
+Documents larger than 128 MB can't be previewed yet.	128MB보다 큰 문서는 아직 미리 볼 수 없습니다.
+Recording	녹음 중
+Shown while recording in a note	노트에서 녹음하는 동안 표시됩니다
+Recording into a Notesis note	Notesis 노트에 녹음하는 중
+Pen settings	펜 설정
+Smoothing mode, latency, pressure and pen gestures for every pen	모든 펜의 보정 방식, 지연 시간, 필압, 펜 제스처
+Appearance	화면
+Light or dark, UI style, icons, glass and colors	라이트·다크, UI 스타일, 아이콘, 유리, 색
+Fingers, taps, palm rejection and three-finger gestures	손가락, 탭, 손바닥 무시, 세 손가락 제스처
+Customize toolbar	툴바 꾸미기
+Tools and their order for each toolbar size	툴바 크기마다 보일 도구와 순서
+Page layout, page tone and this note	페이지 배치, 페이지 색조, 이 노트
+Web & AI	웹 · AI
+Open the browser panel or an AI site, and add your own sites	브라우저 패널이나 AI 사이트를 열고, 내 사이트를 추가합니다
+Save & reset	저장 · 초기화
+Keep your settings to come back to, or reset the toolbar	나중에 되돌아올 설정을 저장하거나 툴바를 초기화합니다
+Diagnostics	진단
+Latency overlay, timings, background work and device state	지연 시간 표시, 측정값, 백그라운드 작업, 기기 상태
+Resize settings panel	설정 패널 크기 조정
+Close settings	설정 닫기
+settings page	설정 페이지
+The page opens in a panel beside the note, so you can keep writing.	페이지는 노트 옆 패널에 열리므로 계속 필기할 수 있습니다.
+Quick actions	빠른 실행
+Sections	항목
+Nothing	없음
+Fingers on the page	페이지 위의 손가락
+Zoom & move	확대 · 이동
+Palm rejection: if a resting palm marks or moves the page, set one finger to Ignore and two fingers to Scroll. In Draw mode, two fingers move the page.	손바닥 무시: 손바닥을 대면 자국이 남거나 페이지가 움직인다면 한 손가락을 무시, 두 손가락을 스크롤로 두세요. 그리기 모드에서는 두 손가락으로 페이지를 움직입니다.
+Taps and zoom	탭과 확대
+One-finger double tap	한 손가락 두 번 탭
+Hide toolbar	툴바 숨기기
+Zoom	확대
+Pages panel	페이지 패널
+Anywhere on the page. Hide toolbar puts the bar and the panels over the note away upwards; double-tap again, or pull the tab at the top down, to bring them back. Zoom goes in, or back out to the page width.	페이지 어디서든 됩니다. 툴바 숨기기는 노트 위의 툴바와 패널을 위로 치웁니다. 다시 두 번 탭하거나 위쪽 탭을 끌어내리면 돌아옵니다. 확대는 확대하거나 페이지 너비로 되돌립니다.
+Pinching moves the page but never changes its zoom	오므려도 페이지만 움직이고 배율은 바뀌지 않습니다
+Right edge of the page	페이지 오른쪽 가장자리
+Quick taps with one finger near the page's right edge. Hiding puts the toolbar and the panels over the note away upwards; pull the tab at the top down, or tap the edge again, to bring them back.	페이지 오른쪽 가장자리 근처를 한 손가락으로 빠르게 탭합니다. 숨기기는 노트 위의 툴바와 패널을 위로 치웁니다. 위쪽 탭을 끌어내리거나 가장자리를 다시 탭하면 돌아옵니다.
+Next page	다음 페이지
+Previous page	이전 페이지
+One tap	한 번 탭
+Two taps	두 번 탭
+Three taps	세 번 탭
+Three-finger gestures	세 손가락 제스처
+Three fingers on the page do the following.	페이지 위의 세 손가락으로 다음을 합니다.
+Off: three fingers on the page are ignored.	꺼짐: 페이지 위의 세 손가락은 무시됩니다.
+Double tap: {0}	두 번 탭: {0}
+Swipe up: open the reference panel	위로 밀기: 참고 패널 열기
+Swipe down, on the page or the panel: close the reference panel	페이지나 패널에서 아래로 밀기: 참고 패널 닫기
+Twist: rotate the note	돌리기: 노트 회전
+Turn three-finger gestures on to choose what a three-finger double tap does.	세 손가락 두 번 탭에 쓸 동작을 고르려면 세 손가락 제스처를 켜세요.
+One- and two-finger settings, the two-finger tap and the pen are not affected by this switch.	한 손가락·두 손가락 설정, 두 손가락 탭, 펜은 이 스위치와 상관없습니다.
+Pen and page	펜과 페이지
+Erases	지우기
+Selects (lasso)	선택 (올가미)
+Long press opens a menu	길게 누르면 메뉴 열기
+Saved settings	저장한 설정
+Pens, tools, gestures, the look and the toolbar, saved on this tablet. Notes are not part of it.	펜, 도구, 제스처, 스타일, 툴바를 이 태블릿에 저장합니다. 노트는 포함되지 않습니다.
++ Save current settings	+ 지금 설정 저장
+Nothing saved yet.	아직 저장한 것이 없습니다.
+Load	불러오기
+Delete {0}	{0} 삭제
+Settings file	설정 파일
+The same settings as a file, to keep elsewhere or open on another tablet.	같은 설정을 파일로 만들어 다른 곳에 보관하거나 다른 태블릿에서 엽니다.
+Save to a file	파일로 저장
+Open a file	파일 열기
+Toolbar	툴바
+Puts the toolbar back as it came: its tools at every size, across the top, its scale and motion, and its place on the screen.	툴바를 처음 상태로 되돌립니다: 크기마다의 도구, 위쪽 가로 배치, 크기와 움직임, 화면 위치.
+Reset toolbar	툴바 초기화
+Save current settings	지금 설정 저장
+Load "{0}"?	"{0}"을(를) 불러올까요?
+Your settings change to the ones saved in it. The screen reloads; your notes stay as they are.	설정이 여기에 저장된 것으로 바뀝니다. 화면이 다시 열리고, 노트는 그대로입니다.
+Reset the toolbar?	툴바를 초기화할까요?
+Its tools, size, direction, scale, motion and place go back to how they came. Other settings stay.	도구, 크기, 방향, 배율, 움직임, 위치가 처음 상태로 돌아갑니다. 다른 설정은 그대로입니다.
+Toolbar reset	툴바를 초기화했습니다
+Shapes	도형
+Hold the pen to make a shape	펜을 멈춰서 도형 만들기
+Draw with the pen and keep it still for half a second before lifting. A ring says it took: the stroke becomes a line, triangle, rectangle or other four-sided shape, circle, bent line or bent curve.	펜으로 그린 뒤 떼기 전에 0.5초 동안 멈추세요. 고리가 나타나면 된 것입니다: 획이 선, 삼각형, 사각형 같은 사각형, 원, 꺾은선, 꺾인 곡선으로 바뀝니다.
+Corners	모서리
+Sharp	뾰족하게
+Rounded {0}	둥글게 {0}
+Colours, corners, blur and dark mode are in Settings › Appearance.	색, 모서리, 블러, 다크 모드는 설정 › 화면에 있습니다.
+Android default. Solid and still.	Android 기본. 불투명하고 움직임이 없습니다.
+Frosted glass. Blurs what is behind it, evenly translucent.	서리 낀 유리. 뒤를 흐리게 하고, 고르게 비칩니다.
+Light mode	라이트 모드
+Dark mode	다크 모드
+Raised	볼록하게
+Pressed in	오목하게
+Calm	차분하게
+Your photo	내 사진
+Toolbar preview	툴바 미리보기
+Panels	패널
+Glass	유리
+Colors	색
+Icons	아이콘
+Couldn't read that photo	그 사진을 읽지 못했습니다
+Reset all appearance settings	화면 설정 모두 초기화
+UI style	UI 스타일
+Light	라이트
+Dark	다크
+Battery	배터리
+Battery optimization	배터리 최적화
+In battery saver the glass goes plain and solid, the lens stops moving and fewer pages are read ahead.	절전 모드에서는 유리가 단순하고 불투명해지고, 렌즈가 움직이지 않으며, 미리 읽는 페이지 수가 줄어듭니다.
+Battery saver changes nothing here: the glass, its motion and reading ahead stay as set. The system's own limits still apply.	절전 모드여도 여기서는 바뀌는 것이 없습니다: 유리와 그 움직임, 미리 읽기가 설정한 대로 유지됩니다. 시스템 자체의 제한은 그대로 적용됩니다.
+ Battery saver is on now.	 지금 절전 모드가 켜져 있습니다.
+Preview on	미리보기 배경
+Change photo	사진 바꾸기
+Icon set	아이콘 세트
+Icon animation	아이콘 애니메이션
+Icons move once when tapped or chosen. Off keeps them still.	아이콘을 누르거나 고르면 한 번 움직입니다. 끄면 움직이지 않습니다.
+{0} keeps its icons still	{0}에서는 아이콘이 움직이지 않습니다
+Only the AnimateIcons set moves	AnimateIcons 세트만 움직입니다
+Panels, menus and the toolbar	패널, 메뉴, 툴바
+{0} sets its corner, blur, surface, rim and motion in Glass, with the numbers its project uses.	{0}은(는) 모서리, 블러, 표면, 가장자리, 움직임을 유리 탭에서 그 프로젝트의 값으로 정합니다.
+Corner radius	모서리 둥글기
+Shared by Material, Glassmorphism and Liquid glass. Liquid glass's other recipes keep their own.	Material, Glassmorphism, Liquid glass가 함께 씁니다. Liquid glass의 다른 방식은 각자의 값을 씁니다.
+Frost	서리
+How much the page behind is blurred, and how much colour comes through the blur.	뒤 페이지를 얼마나 흐리게 하고, 흐린 사이로 색이 얼마나 비칠지.
+Material panels are solid	Material 패널은 불투명합니다
+Transparency	투명도
+0% is solid, 100% clear glass - the panels and the toolbar together. Menus and the pen panel stay solid enough to read.	0%는 불투명, 100%는 맑은 유리입니다. 패널과 툴바에 함께 적용됩니다. 메뉴와 펜 패널은 읽을 수 있을 만큼 불투명하게 유지됩니다.
+Reflection	반사
+The light the glass catches: its bright rim and the sheen across its top.	유리가 받는 빛: 밝은 가장자리와 위쪽의 광택.
+Glass optics belong to the Liquid glass style; {0} has none.	유리 광학은 Liquid glass 스타일에만 있습니다. {0}에는 없습니다.
+Use Liquid glass	Liquid glass 쓰기
+Lens	렌즈
+Depth	깊이
+How far in from the edge the glass bends the page, and how strongly.	가장자리에서 얼마나 안쪽까지, 얼마나 세게 페이지를 휘게 할지.
+Lens direction	렌즈 방향
+Raised is a lens standing above the page, pressed in a lens sunk into it.	볼록은 페이지 위로 솟은 렌즈, 오목은 페이지 속으로 들어간 렌즈입니다.
+Touch	터치
+Interaction strength	반응 세기
+How far the lens stretches and lifts on press and slide.	누르거나 밀 때 렌즈가 얼마나 늘어나고 들리는지.
+Sliders, switches and segmented controls keep their own glass, whatever is set here.	슬라이더, 스위치, 세그먼트 버튼은 여기 설정과 상관없이 자체 유리를 씁니다.
+Motion	움직임
+On, {0}'s own motion; off, this app's as before.	켜면 {0}의 움직임, 끄면 지금까지 이 앱의 움직임.
+Press	누르기
+How the toolbar's round buttons and glass buttons answer a finger.	툴바의 둥근 버튼과 유리 버튼이 손가락에 반응하는 방식.
+Selection slide	선택 슬라이드
+How the toolbar's selection follows a finger and lands on a tool.	툴바의 선택이 손가락을 따라가고 도구에 내려앉는 방식.
+Menu opening	메뉴 열기
+How Functions, its menus and the tool panels come out of the button that opened them, and go back.	기능과 그 메뉴, 도구 패널이 누른 버튼에서 나오고 다시 들어가는 방식.
+From liquid_glass_widgets 1.16.1 (MIT), whose iOS 27 regular presets were measured against the native control: a frosted body over a lightly blurred page, a paraxial rim and the native springs. The defaults are set by eye from there. Dark mode takes its dark preset, moved in proportion to what is set here.	liquid_glass_widgets 1.16.1(MIT)에서 가져왔습니다. 이 프로젝트의 iOS 27 regular 프리셋은 실제 iOS 컨트롤과 비교해 측정한 값입니다: 살짝 흐린 페이지 위의 서리 낀 본체, paraxial 가장자리, iOS의 스프링. 기본값은 여기서 눈으로 맞췄습니다. 다크 모드는 다크 프리셋을 쓰고, 여기서 정한 만큼 비례해 바뀝니다.
+Thickness	두께
+In pixels at 3x: a bevel of %.1f dp.	3x 픽셀 단위: 가장자리 띠 {0}dp.
+Refractive index	굴절률
+The rim bends the page by thickness × 8 × (index − 1): %.1f dp, at most half the pane.	가장자리에서 페이지가 두께 × 8 × (굴절률 − 1)만큼 휩니다: {0}dp, 패널의 절반까지.
+Chromatic aberration	색수차
+0 in the presets and by default.	프리셋과 기본값은 0입니다.
+Blur	블러
+The page under the frost, barely softened.	서리 아래의 페이지. 거의 흐리지 않습니다.
+The cloud over it, as a blur.	그 위의 구름 같은 흐림.
+Frost opacity	서리 불투명도
+Below full, the page shows through the cloud as pale ghosts.	100%보다 낮으면 페이지가 구름 사이로 옅게 비칩니다.
+Saturation	채도
+Body	본체
+The #F8F8F8 glass colour over it all.	맨 위에 덮는 #F8F8F8 유리 색.
+Rim	가장자리
+Rim light	가장자리 빛
+Light caught along the edge, from the top.	위에서 와서 가장자리에 맺히는 빛.
+Rim shade	가장자리 그늘
+The fine dark line just inside the edge.	가장자리 바로 안쪽의 가는 어두운 선.
+Edge absorption	가장자리 흡수
+How much the bevel darkens towards the edge.	가장자리로 갈수록 띠가 어두워지는 정도.
+29 by default; its GlassMenu's is 32.	기본값은 29, GlassMenu는 32입니다.
+Back to the defaults	기본값으로 되돌리기
+Use the ios27Light preset as measured	측정한 ios27Light 프리셋 쓰기
+From Kyant0/AndroidLiquidGlass's catalog: bars and buttons as its bottom tabs, panels, menus and dialogs as its dialog - twice the blur and bending, a brighter surface.	Kyant0/AndroidLiquidGlass 데모 앱에서 가져왔습니다: 툴바와 버튼은 하단 탭, 패널·메뉴·대화상자는 대화상자 값. 블러와 굴절은 두 배, 표면은 더 밝게.
+Refraction height	굴절 높이
+How far in from the edge the page is bent. Buttons take half.	가장자리에서 얼마나 안쪽까지 페이지를 휘게 할지. 버튼은 절반.
+Refraction amount	굴절량
+How far the page is bent. Panels take twice this.	페이지가 휘는 정도. 패널은 두 배.
+Depth effect	깊이 효과
+The lens bends towards the corners too, on bars and buttons. Panels always have it.	툴바와 버튼에서도 렌즈가 모서리 쪽으로 휩니다. 패널은 항상 켜져 있습니다.
+The colours split a little at the edge. Off in the catalog, on by default here.	가장자리에서 색이 살짝 갈라집니다. 데모 앱에서는 꺼져 있고, 여기서는 기본으로 켜져 있습니다.
+Blur radius	블러 반경
+Bars. Panels take twice this in the light, buttons a quarter.	툴바 기준. 패널은 라이트에서 두 배, 버튼은 4분의 1.
+Vibrancy	선명도
+Saturation of the page through the glass.	유리 너머 페이지의 채도.
+Surface	표면
+The #FAFAFA coat over the glass (#121212 in the dark). Panels add 20% in the light.	유리 위에 덮는 #FAFAFA 막(다크에서는 #121212). 라이트에서 패널은 20% 더합니다.
+The lit rim.	빛나는 가장자리.
+Its dialog's: 48.	대화상자 값: 48.
+the catalog	데모 앱
+Use the catalog's bottom tabs as written	데모 앱의 하단 탭 값 그대로 쓰기
+From QWEA0/Liquid-Glass-Android (MIT): LiquidGlassView's own defaults, which its demo app starts from, drawn through a port of its lens shader. Pixels are the screen's, as the view's are.	QWEA0/Liquid-Glass-Android(MIT)에서 가져왔습니다: 데모 앱이 시작하는 LiquidGlassView 기본값을, 옮겨 온 렌즈 셰이더로 그립니다. 픽셀은 LiquidGlassView처럼 화면의 실제 픽셀입니다.
+Regular: full blur, the material's light tint.	Regular: 블러 100%, 재질의 옅은 색조.
+Clear: a third of the blur and a fixed 16% dimming layer, for glass over pictures.	Clear: 블러 3분의 1에 16% 어둡게. 사진 위의 유리용.
+Sensor highlight	센서 하이라이트
+The light on the rim follows gravity as the device tilts.	기기를 기울이면 가장자리의 빛이 중력을 따라 움직입니다.
+Adaptive tint	적응형 색조
+Regular only: darker over light parts of the page, lighter over dark ones, pixel by pixel.	Regular에서만: 페이지의 밝은 곳 위에서는 어둡게, 어두운 곳 위에서는 밝게, 픽셀마다.
+Refraction no fold	굴절 접힘 없음
+The bending held below where the rim folds into a mirror image of the inside.	가장자리가 안쪽을 거울처럼 접어 비추기 전까지만 휘게 합니다.
+Refraction outward	바깥쪽 굴절
+The rim draws in the page from outside the glass instead of inside it.	가장자리가 유리 안쪽 대신 바깥쪽 페이지를 끌어옵니다.
+Adaptive lens scale	적응형 렌즈 크기
+On panes under 110 dp the bevel and the bending shrink with the pane.	110dp보다 작은 요소에서는 띠와 굴절이 요소 크기에 맞춰 줄어듭니다.
+Bevel width	가장자리 띠 너비
+The band round the edge where the light is bent.	빛이 휘는, 가장자리를 두른 띠.
+Refraction	굴절
+How far the page is pulled in at the very edge.	가장자리 끝에서 페이지를 얼마나 끌어당길지.
+Falloff	감쇠
+How tightly the bending crowds the edge. 0 is a square bevel.	휘어짐이 가장자리에 얼마나 몰릴지. 0은 고른 경사.
+Dispersion	색분산
+Each colour bent by a little more or less: a spectral fringe at the edge.	색마다 조금씩 다르게 휘어 가장자리에 무지개 테가 생깁니다.
+Edge softness	가장자리 부드럽게
+Smooths the hard line the bending makes at the edge.	휘어짐이 가장자리에 만드는 딱딱한 선을 부드럽게 합니다.
+Enable blur	블러 켜기
+Blur amount	블러 양
+Bars and buttons. The blur is 4 + 32 × this, in pixels.	툴바와 버튼. 블러는 4 + 32 × 이 값(픽셀)입니다.
+Panel blur amount	패널 블러 양
+Panels, menus and dialogs: its dialog builder's 0.6.	패널, 메뉴, 대화상자: 대화상자 빌더 값 0.6.
+Panels, as its dialog builder: 28. Bars and buttons are capsules.	패널은 대화상자 빌더처럼 28. 툴바와 버튼은 캡슐 모양입니다.
+Over light	밝은 배경
+Tells the glass it sits over a light page: more blur, a dark tint, a deeper shadow.	유리가 밝은 페이지 위에 있다고 알립니다: 블러를 더하고, 어두운 색조와 더 짙은 그림자.
+Edge highlight	가장자리 하이라이트
+Highlight opacity	하이라이트 불투명도
+Shadow	그림자
+Off in LiquidGlassView. Shadows in Colors › Readability must be on as well.	LiquidGlassView에서는 꺼져 있습니다. 색 › 가독성의 그림자도 켜져 있어야 합니다.
+Glass tint	유리 색
+Blue	파랑
+Green	초록
+Orange	주황
+Pink	분홍
+Purple	보라
+Tint strength	색 세기
+Pick a tint first	먼저 색을 고르세요
+Interaction	반응
+Press scale	누르기 크기
+Below 1 a press shrinks the button, above 1 grows it. Used with Press in Motion.	1보다 작으면 누를 때 버튼이 작아지고, 크면 커집니다. 움직임의 누르기와 함께 쓰입니다.
+Back to the demo's values	데모 값으로 되돌리기
+Cards and buttons	카드와 버튼
+The whole theme is made from this color	전체 테마가 이 색으로 만들어집니다
+Readability	가독성
+High contrast	고대비
+Darker text, solid glass, thicker edges. Colors stay; only the contrast goes up.	더 진한 글자, 불투명한 유리, 굵은 테두리. 색은 그대로이고 대비만 높아집니다.
+Shadows	그림자
+Shadows under the toolbar, panels, menus, buttons and dialogs, in every look. Off, everything sits flat on the page.	모든 스타일에서 툴바, 패널, 메뉴, 버튼, 대화상자 아래의 그림자. 끄면 모두 페이지 위에 평평하게 놓입니다.
+Edge	테두리
+Text and icons	글자와 아이콘
+Accent	강조색
+Accent #%06X	강조색 #{0}
+Reset to default	기본값으로 되돌리기
+A branch splits into two or more	한 갈래가 둘 이상으로 나뉩니다
+Side by side	좌우
+Top and bottom	위아래
+Three side by side	가로 셋
+Side by side, right split	좌우, 오른쪽 나눔
+Side by side, left split	좌우, 왼쪽 나눔
+Top and bottom, bottom split	위아래, 아래쪽 나눔
+Top and bottom, top split	위아래, 위쪽 나눔
+Four	넷
+This note stays in the tinted part; every other part opens a note of its own. Drag the handles between the parts to resize them, and use each part's bar to change its note, split it again or close it.	이 노트는 색이 칠해진 칸에 남고, 나머지 칸마다 각자의 노트가 열립니다. 칸 사이 손잡이를 끌어 크기를 바꾸고, 각 칸의 막대로 노트를 바꾸거나, 다시 나누거나, 닫습니다.
+Not split	나누지 않음
+Resize the parts left and right	좌우 칸 크기 조정
+Resize the parts above and below	위아래 칸 크기 조정
+Mask	가림
+Direction	방향
+Horizontal	가로
+Vertical	세로
+Side	옆
+Left	왼쪽
+Right	오른쪽
+1/4 is the whole bar, with its top row and pen row, and always runs across. 2/4 to 4/4 run down the side.	1/4은 위쪽 줄과 펜 줄이 있는 툴바 전체로, 항상 가로로 놓입니다. 2/4~4/4는 옆으로 세울 수 있습니다.
+Drag the round button up or down for a shorter or longer bar. Let go across the screen to put the bar on that side, or in the middle to put it back across the top.	둥근 버튼을 위아래로 끌면 툴바가 짧아지거나 길어집니다. 화면 반대쪽에서 놓으면 그쪽에 세우고, 가운데에서 놓으면 다시 위쪽 가로로 돌아갑니다.
+Drag the round button left for a shorter bar, right for a longer one. Carry it to the screen's edge to stand the bar down that side.	둥근 버튼을 왼쪽으로 끌면 툴바가 짧아지고, 오른쪽으로 끌면 길어집니다. 화면 가장자리까지 끌면 그쪽에 세로로 세웁니다.
+Scale	배율
+Tools and functions	도구와 기능
+Close menu	메뉴 닫기
+Toolbar size	툴바 크기
+No other notes yet	아직 다른 노트가 없습니다
+Back to functions	기능으로 돌아가기
+Instant switch	즉시 전환
+Switch time {0} ms	전환 시간 {0}ms
+Used by Liquid glass. {0} switches sizes at once.	Liquid glass에서 쓰입니다. {0}에서는 크기가 바로 바뀝니다.
+Timer	타이머
+Stopwatch	스톱워치
+Default	기본
+Serif	명조
+Monospace	고정폭
+Condensed	좁게
+Casual	캐주얼
+Cursive	필기체
+The text is too long. Split it into more boxes.	글이 너무 깁니다. 상자를 더 나눠 주세요.
+Add text box	텍스트 상자 추가
+Edit text	텍스트 편집
+Selection color	선택 색
+Font size (12–96)	글자 크기 (12–96)
+Font	글꼴
+Text color	글자 색
+Background	배경
+Corners {0}	모서리 {0}
+Padding {0}	안쪽 여백 {0}
+Select text and tap B·I·U·S to style just that part; with nothing selected, it applies to all.	글자를 고르고 B·I·U·S를 누르면 그 부분에만 적용되고, 고른 것이 없으면 전체에 적용됩니다.
+Angles in degrees	각도 단위: 도
+Angles in radians	각도 단위: 라디안
+Backspace	지우기
+Error	오류
+Write down your to-dos	할 일을 적어 보세요
+Add a to-do	할 일 추가
+Clear completed	완료한 일 지우기
+Previous month	이전 달
+Next month	다음 달
+Today	오늘
+Sun	일
+Mon	월
+Tue	화
+Wed	수
+Thu	목
+Fri	금
+Sat	토
+Add a to-do for this day	이날 할 일 추가
+Nothing written down for this day	이날 적은 것이 없습니다
+Square	사각형
+Ring	고리
+Disc	원판
+Clear this page	이 페이지 지우기
+Clear all writing	모든 필기 지우기
+This page: its writing, pictures and tape. All writing: the ink on every page; pictures, tape and the PDF stay. Undo brings either back.	이 페이지: 필기, 사진, 테이프. 모든 필기: 모든 페이지의 필기만 지우고 사진, 테이프, PDF는 남습니다. 둘 다 실행 취소로 되돌릴 수 있습니다.
+Color	색
+Pen width	펜 굵기
+Pencil type	연필 종류
+Pen type	펜 종류
+Pressing harder draws a wider line	세게 누를수록 선이 굵어집니다
+Line style	선 모양
+Solid	실선
+Dotted	점선
+Dashed	파선
+Dash-dot	1점 쇄선
+Draws a straight line from where the pen lands to where it lifts	펜을 댄 곳부터 뗀 곳까지 직선을 긋습니다
+Fewer settings	설정 줄이기
+More for this {0}	이 {0} 더 보기
+Only this tool	이 도구만
+Smoothing {0}%	보정 {0}%
+ · average of the last {0} ms	 · 마지막 {0}ms의 평균
+Window average, set for every pen in Pen settings.	구간 평균. 펜 설정에서 모든 펜에 정합니다.
+Adaptive, set for every pen in Pen settings.	적응형. 펜 설정에서 모든 펜에 정합니다.
+Recognize shapes	도형 인식
+Snap lines to 90° steps	선을 90° 단위로 맞추기
+Polygon corner rounding {0}	다각형 모서리 둥글기 {0}
+Shown above the writing	필기 위에 표시
+Shown under the writing	필기 아래에 표시
+Pressure sensitivity, smoothing mode, 480 Hz frames, pen gestures and drawing options apply to every pen. They are in Settings › Pen settings.	필압 감도, 보정 방식, 480Hz 프레임, 펜 제스처, 그리기 옵션은 모든 펜에 적용됩니다. 설정 › 펜 설정에 있습니다.
+Open settings for every pen	모든 펜 설정 열기
+These apply to every pen	모든 펜에 적용됩니다
+Color, width, nib, smoothing strength and prediction belong to each pen. Tap the tool in hand again to set those for it alone.	색, 굵기, 펜촉, 보정 세기, 예측은 펜마다 따로입니다. 들고 있는 도구를 한 번 더 누르면 그 도구만 설정합니다.
+Open the pen in hand	들고 있는 펜 열기
+Pressure sensitivity {0}	필압 감도 {0}
+Default {0}. At 0 pressure is ignored; higher values thin a light touch, so only a firm press draws the full width. Also sets the pressure eraser.	기본값 {0}. 0이면 필압을 무시하고, 높을수록 살짝 댄 선이 가늘어져 세게 눌러야 최대 굵기가 됩니다. 필압 지우개에도 적용됩니다.
+Smoothing	보정
+How smoothing works	보정 방식
+Adaptive	적응형
+Window average	구간 평균
+Averages the pen's last few milliseconds. Slow, shaky lines come out straighter, and trail the pen by as much.	펜의 마지막 몇 밀리초를 평균합니다. 느리고 떨리는 선이 더 곧게 나오고, 그만큼 펜보다 늦게 따라옵니다.
+Follows fast writing at once and only calms small, slow wobbles.	빠르게 쓸 때는 바로 따라오고, 느리고 작은 떨림만 잡아 줍니다.
+Latency and drawing	지연 시간과 그리기
+480 Hz in-between frames	480Hz 중간 프레임
+Off	끄기
+Motion blur	모션 블러
+Trail	잔상
+The pen reports about four positions per screen refresh. This draws the path between them faintly ahead of the tip, so the line seems to keep up. Nothing extra is saved.	펜은 화면을 한 번 그릴 때마다 위치를 네 번쯤 알려 줍니다. 그 사이의 경로를 펜촉 앞에 옅게 그려서 선이 펜을 바로 따라오는 것처럼 보이게 합니다. 따로 저장되는 것은 없습니다.
+Compatible wet ink	호환 젖은 잉크
+Turn on if strokes only appear once the pen lifts. On by default on the Galaxy Tab S6 Lite.	펜을 뗀 뒤에야 획이 나타난다면 켜세요. 갤럭시 탭 S6 Lite에서는 기본으로 켜져 있습니다.
+Sharpen after zooming	확대 후 선명하게
+While zooming the page is drawn as it is, then redrawn sharp when your fingers lift.	확대·축소하는 동안에는 페이지를 그대로 그리고, 손가락을 떼면 선명하게 다시 그립니다.
+Mesh rendering (experimental)	메시 렌더링 (실험)
+Draws opaque and pressure pens with the Ink shader. Off goes back to the older path fill.	불투명한 펜과 필압 펜을 Ink 셰이더로 그립니다. 끄면 예전 경로 채우기로 돌아갑니다.
+Pen gestures	펜 제스처
+Hold at the end to make a shape	끝에서 멈추면 도형으로
+Scribble over ink to erase it	필기 위에 휘갈기면 지우기
+Circle and hold to select	동그라미 그리고 멈추면 선택
+Color picker	색 고르기
+One-piece color picker	한 판 색 고르기
+The bars, square and RGB fields joined into one panel. Off shows them apart.	막대, 정사각형, RGB 칸을 한 패널에 모읍니다. 끄면 따로 보입니다.
+Palm rejection and what fingers do are in Touch & gestures.	손바닥 무시와 손가락 동작은 터치 · 제스처에 있습니다.
+Prediction 	예측 
+Auto	자동
+Automatic draws 9 ms ahead at 60 Hz (12 ms with compatible wet ink) and 6 ms at 90 Hz and up	자동은 60Hz에서 9ms(호환 젖은 잉크는 12ms), 90Hz 이상에서 6ms 앞을 그립니다
+Draws this far ahead of the pen. 0 turns prediction off. Longer feels faster, but stroke ends can wobble	펜보다 이만큼 앞을 미리 그립니다. 0이면 예측을 끕니다. 길수록 빠르게 느껴지지만 획 끝이 흔들릴 수 있습니다
+Whole strokes	획 전체
+Partial	부분
+Erases only where it passes	지나간 곳만 지웁니다
+Erases every stroke it touches, whole	닿은 획을 통째로 지웁니다
+Pressure eraser	필압 지우개
+The set size is the lightest touch; pressing harder grows it up to 2.5 times	정한 크기는 가장 살짝 댔을 때의 크기이고, 세게 누르면 2.5배까지 커집니다
+Tape	테이프
+Pictures	사진
+Eyedropper	스포이트
+Brightness {0}%	밝기 {0}%
+Palette	팔레트
+Width limit	굵기 범위
+Nib angle	펜촉 각도
+Note title	노트 제목
+Rotate note	노트 회전
+Zoom level	배율
+Layer	레이어
+Pen, shape or text options	펜, 도형, 텍스트 옵션
+Quick colors	빠른 색
+Width slider	굵기 슬라이더
+Page number	페이지 번호
+Full	전체
+One row	한 줄
+Compact	작게
+Button	버튼
+Toolbar size {0} of 4, {1}	툴바 크기 {0}/4, {1}
+Top row	위쪽 줄
+Pen row	펜 줄
+Toolbar size to edit	편집할 툴바 크기
+The function button is always on the bar and Settings is always in its menu, so neither can be lost.	기능 버튼은 항상 툴바에 있고 설정은 항상 그 메뉴에 있어서, 둘 다 없어지지 않습니다.
+Switching between sizes	크기 사이 전환
+Applies right away, without Done.	완료를 누르지 않아도 바로 적용됩니다.
+4/4 is the function button alone. Its menu also shows the 3/4 tools, so a tool is never more than two taps away.	4/4는 기능 버튼 하나뿐입니다. 그 메뉴에 3/4의 도구도 보여서, 어떤 도구든 두 번 누르면 닿습니다.
+Always shown	항상 표시
+Keep at least one tool	도구를 하나 이상 남겨 두세요
+Unsaved changes	저장하지 않은 변경
+Reset every size to the default tools	모든 크기를 기본 도구로 되돌리기
+Shown, in order	표시, 순서대로
+Drag the handle to move an item.	손잡이를 끌어 항목을 옮기세요.
+Drag to move {0}	{0} 끌어서 옮기기
+Everything is shown.	모두 표시되어 있습니다.
+Pick a tool	도구 고르기
+The bar holds the tools: pen, pencil, highlighter, eraser, lasso, shapes, text and more.	툴바에 도구가 있습니다: 펜, 연필, 형광펜, 지우개, 올가미, 도형, 텍스트 등.
+Tap one to pick it. Each pen keeps its own colour and width, so switching back finds it as you left it.	누르면 그 도구를 고릅니다. 펜마다 색과 굵기를 따로 기억해서, 다시 돌아오면 두었던 그대로입니다.
+With a keyboard, Ctrl+1 to Ctrl+9 pick them in the order the bar shows.	키보드가 있으면 Ctrl+1부터 Ctrl+9로 툴바에 보이는 순서대로 고릅니다.
+Tap it again for its settings	한 번 더 누르면 설정
+Tap the tool already in hand and its panel opens: colour, width, pen type, pressure and line style.	들고 있는 도구를 누르면 패널이 열립니다: 색, 굵기, 펜 종류, 필압, 선 모양.
+"More for this pen" holds smoothing, prediction and the width range.	"이 펜 더 보기"에는 보정, 예측, 굵기 범위가 있습니다.
+Save keeps what you set; Cancel leaves the pen as it was. Tapping past the panel keeps it too.	저장은 바꾼 것을 남기고, 취소는 펜을 그대로 둡니다. 패널 바깥을 눌러도 남습니다.
+Colour and width on the bar	툴바의 색과 굵기
+On the full bar, the pen row has swatches and a width slider for the tool in hand.	전체 툴바의 펜 줄에는 들고 있는 도구의 색 견본과 굵기 슬라이더가 있습니다.
+Tap a swatch to write in it; tap the one in use for every setting.	견본을 누르면 그 색으로 쓰고, 쓰고 있는 견본을 누르면 모든 설정이 열립니다.
++ keeps the colour you are using; hold a swatch to move it or take it off.	+는 지금 쓰는 색을 남기고, 견본을 길게 누르면 옮기거나 뺄 수 있습니다.
+Hold to make a shape	멈춰서 도형 만들기
+Draw a line, a triangle, a box or a circle and keep the pen still for half a second.	선, 삼각형, 사각형, 원을 그리고 펜을 0.5초 동안 멈추세요.
+A ring under the pen says it took, and the stroke becomes the clean shape.	펜 아래에 고리가 나타나면 된 것이고, 획이 깔끔한 도형으로 바뀝니다.
+Keep moving before you lift to stretch it, turn it or move its last corner. Bent lines keep their bends.	떼기 전에 계속 움직이면 늘이거나, 돌리거나, 마지막 모서리를 옮길 수 있습니다. 꺾은선은 꺾인 그대로입니다.
+The Shape tool draws exact shapes by dragging; tap it again to choose one.	도형 도구는 끌어서 정확한 도형을 그립니다. 한 번 더 누르면 모양을 고릅니다.
+Erase and select	지우기와 선택
+The eraser takes whole strokes, or only what it crosses with Partial on; pressing harder can make it bigger.	지우개는 획을 통째로 지우고, 부분 지우개를 켜면 지나간 부분만 지웁니다. 세게 누르면 더 커지게 할 수 있습니다.
+The lasso picks up ink, pictures and text. Drag to move, use the corners to resize and turn.	올가미는 필기, 사진, 텍스트를 집어 듭니다. 끌어서 옮기고, 모서리로 크기를 바꾸거나 돌립니다.
+The bar over a selection copies, cuts, recolours, links and locks it.	선택 위의 막대로 복사, 잘라내기, 색 바꾸기, 링크, 잠금을 합니다.
+Fingers	손가락
+One finger scrolls; two fingers pinch to zoom.	한 손가락은 스크롤, 두 손가락을 오므리고 벌리면 확대·축소.
+Two fingers tapped twice undo; three fingers tapped twice redo.	두 손가락 두 번 탭은 실행 취소, 세 손가락 두 번 탭은 다시 실행입니다.
+Turning three fingers turns the note, and it snaps when it is nearly straight.	세 손가락을 돌리면 노트가 돌아가고, 거의 똑바르면 딱 맞춰집니다.
+All of it can be changed in Settings › Touch & gestures.	모두 설정 › 터치 · 제스처에서 바꿀 수 있습니다.
+Pull up past the last page to add a new one, or use + Page in the page panel.	마지막 페이지를 지나 더 끌어 올리면 새 페이지가 생깁니다. 페이지 패널의 + 페이지를 써도 됩니다.
+The page panel (the search button, or Pages & notes in Functions) shows the pages as pictures, two to five a row, the contents beside their pages, every strip of tape where it lies, and your other notes.	페이지 패널(검색 버튼, 또는 기능의 페이지 · 노트)에는 한 줄에 2~5개씩 페이지 그림, 해당 페이지 옆의 목차, 붙인 자리의 모든 테이프, 다른 노트가 나옵니다.
+Its search field finds words in PDFs, text boxes and handwriting; on the other tabs it narrows the list. Drag its inner edge to widen it, or pull it right off to close it.	검색 칸은 PDF, 텍스트 상자, 필기에서 낱말을 찾고, 다른 탭에서는 목록을 좁힙니다. 안쪽 가장자리를 끌면 넓어지고, 끝까지 밀면 닫힙니다.
+Hold a page in the panel, or hold the page itself, to lay a practice page beside it or write a comment in its margin, with a line to where you held. Tap a comment to open it; the page's menu hides them all.	패널에서 페이지를 길게 누르거나 페이지 자체를 길게 누르면, 옆에 연습 페이지를 놓거나 여백에 메모를 달 수 있습니다. 메모는 누른 자리와 선으로 이어집니다. 메모를 누르면 열리고, 페이지 메뉴에서 모두 숨길 수 있습니다.
+Ctrl+F searches; Ctrl+Alt+G goes to a page.	Ctrl+F는 검색, Ctrl+Alt+G는 페이지 이동입니다.
+The round button on the bar opens Functions.	툴바의 둥근 버튼을 누르면 기능이 열립니다.
+Pictures, Tools (calculator, clock, calendar and to-do in one panel), layers, recording, capture, text, Pages & notes, split notes, pinning the bar to the top, and Settings.	사진, 도구(계산기, 시계, 달력, 할 일이 한 패널에), 레이어, 녹음, 캡처, 텍스트, 페이지 · 노트, 노트 나눠 보기, 툴바 상단 고정, 설정.
+The bar's size is chosen at its top, or drag the round button: left for a shorter bar, right for a longer one, all the way to the edge to stand it down the side. 1/4 is the whole bar, 4/4 a single button.	툴바 크기는 맨 위에서 고르거나 둥근 버튼을 끌어 바꿉니다: 왼쪽은 짧게, 오른쪽은 길게, 가장자리까지 끌면 옆에 세로로. 1/4은 툴바 전체, 4/4는 버튼 하나입니다.
+A second note beside this one	이 노트 옆의 두 번째 노트
+Three fingers up open another note in a popup over this one; you can write in it.	세 손가락을 위로 밀면 이 노트 위 팝업에 다른 노트가 열리고, 거기에도 쓸 수 있습니다.
+Drag its top bar to move it, and any corner to resize it.	위쪽 막대를 끌어 옮기고, 아무 모서리나 끌어 크기를 바꿉니다.
+Three fingers down close it.	세 손가락을 아래로 밀면 닫힙니다.
+Functions › Split notes divides the screen: side by side, top and bottom, three across, or with one side split again, up to four notes.	기능 › 노트 나눠 보기는 화면을 나눕니다: 좌우, 위아래, 가로 셋, 한쪽을 다시 나누기까지 최대 노트 네 개.
+This note stays in the first part; each other part opens a note of its own, written on with the same pen.	이 노트는 첫 칸에 남고, 다른 칸마다 각자의 노트가 열리며 같은 펜으로 씁니다.
+Drag the handles between the parts to resize them. Each part's bar, along its bottom, changes its note, splits it again or closes it.	칸 사이 손잡이를 끌어 크기를 바꿉니다. 각 칸 아래쪽 막대로 노트를 바꾸거나, 다시 나누거나, 닫습니다.
+The toolbar floats over every part at a narrower size, so it never takes room from one of them.	툴바는 모든 칸 위에 더 좁게 떠 있어서 어느 칸의 자리도 차지하지 않습니다.
+AI and the web	AI와 웹
+The AI tool, or Functions, opens the internet panel beside the note.	AI 도구나 기능에서 노트 옆에 인터넷 패널을 엽니다.
+The chips at its top switch between Gemini, Claude, ChatGPT and the rest; ⋮ holds the desktop site and more.	위쪽 칩으로 Gemini, Claude, ChatGPT 등을 바꾸고, ⋮에는 데스크톱 사이트 등이 있습니다.
+Pop it out to float it over the page instead.	따로 띄우면 페이지 위에 떠 있게 됩니다.
+Settings opens along the edge, over the note.	설정은 노트 위, 가장자리를 따라 열립니다.
+Pen settings: pressure, smoothing, prediction and drawing options for every pen.	펜 설정: 모든 펜의 필압, 보정, 예측, 그리기 옵션.
+Touch & gestures, Appearance (skin, colours, dark mode), Customize toolbar and Note & view are beside it.	터치 · 제스처, 화면(스타일, 색, 다크 모드), 툴바 꾸미기, 노트 · 보기가 그 옆에 있습니다.
+Your notes	내 노트
+Folders, tags and favourites keep the library in order; search reaches across all of them.	폴더, 태그, 즐겨찾기로 라이브러리를 정리하고, 검색은 그 모두를 아우릅니다.
+Back up one note, or all of them, from the home screen; restore puts them back.	노트 하나 또는 전부를 홈 화면에서 백업하고, 복원하면 되돌아옵니다.
+Deleted notes wait in the trash until you empty it.	삭제한 노트는 휴지통을 비울 때까지 남아 있습니다.
+Close tutorial	사용법 닫기
+Open the guide note	안내 노트 열기
+Show me on this note	이 노트에서 보여 주기
+Tap again	한 번 더 누르세요
+Pinch: zoom	오므리기: 확대·축소
+Two, twice: undo	두 손가락 두 번: 실행 취소
+Three, twice: redo	세 손가락 두 번: 다시 실행
+Sine in-out	사인 가감속
+Quad in-out	2차 가감속
+Cubic in-out	3차 가감속
+Ease out	감속
+Linear	선형
+Spring	스프링
+Your sites	내 사이트
+Add any address - a dictionary, a class page, another AI. It shows here, in the bar's AI menu and on the browser panel.	사전, 수업 페이지, 다른 AI 등 어떤 주소든 추가하세요. 여기와 툴바의 AI 메뉴, 브라우저 패널에 나타납니다.
+Up	위로
+Remove {0}	{0} 지우기
++ Add a site	+ 사이트 추가
+Add a site	사이트 추가
+Address	주소
+Zoom · now {0}%	확대 · 지금 {0}%
+Remove {0}%	{0}% 지우기
+Custom ({0}–{1}%)	직접 입력 ({0}–{1}%)
+Save value	값 저장

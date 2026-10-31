@@ -16,7 +16,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
@@ -87,6 +86,13 @@ internal fun ToolPanel(
     maxWidth: Dp = TOOL_PANEL_WIDTH,
     /** Drawn in the title's place, when the head of the panel is a choice rather than a name. */
     heading: (@Composable RowScope.() -> Unit)? = null,
+    /**
+     * Its top at one fixed height ([PINNED_TOP] of the window) rather than
+     * centred: for panels of one kind but different lengths - the pen's,
+     * the pencil's, the highlighter's - so each opens with its title in the
+     * same place.
+     */
+    fixedTop: Boolean = false,
     actions: @Composable RowScope.() -> Unit,
     content: @Composable ColumnScope.() -> Unit,
 ) {
@@ -166,7 +172,7 @@ internal fun ToolPanel(
             val panel = measurables.first().measure(constraints.copy(minWidth = 0, minHeight = 0))
             val height = if (constraints.hasBoundedHeight) constraints.maxHeight else panel.height
             val room = (height - panel.height).coerceAtLeast(0)
-            if (pinnedTop[0] < 0) pinnedTop[0] = room / 2
+            if (pinnedTop[0] < 0) pinnedTop[0] = if (fixedTop) (height * PINNED_TOP).toInt() else room / 2
             val top = pinnedTop[0].coerceAtMost(room)
             panelBounds[0] = 0
             panelBounds[1] = top
@@ -211,3 +217,10 @@ internal val TOOL_PANEL_INSET = Ui.Space.l
 
 /** How wide a panel gets on a phone, or anywhere it has a single column. */
 internal val TOOL_PANEL_WIDTH = 600.dp
+
+/**
+ * Where a [ToolPanel] with a fixed top opens, as a share of the window's
+ * height: clear of the toolbar, and with room under it for a panel as tall as
+ * any is allowed to be (nine tenths of the screen).
+ */
+private const val PINNED_TOP = 0.1f

@@ -98,24 +98,36 @@ class SkinSettingsTest {
     @Test fun `the other recipes start from their projects' numbers and keep what was set`() {
         val fresh = SkinSettings()
         assertEquals(LiquidStyle.NOTESIS, fresh.liquidStyle)
-        // liquid_glass_widgets' ios27Light.
+        // liquid_glass_widgets' ios27Light lens, the rest set by eye on a device.
         assertEquals(32f, fresh.ios.thickness, 0f)
         assertEquals(1.24f, fresh.ios.refractiveIndex, 0f)
-        assertEquals(14f, fresh.ios.frost, 0f)
-        assertEquals(0.73f, fresh.ios.frostOpacity, 0f)
-        assertEquals(2.1f, fresh.ios.saturation, 0f)
-        assertEquals(0x87 / 255f, fresh.ios.bodyOpacity, 0f)
-        assertEquals(32f, fresh.ios.corner, 0f)
+        assertEquals(0f, fresh.ios.blur, 0f)
+        assertEquals(3f, fresh.ios.frost, 0f)
+        assertEquals(0.58f, fresh.ios.frostOpacity, 0f)
+        assertEquals(3f, fresh.ios.saturation, 0f)
+        assertEquals(0.58f, fresh.ios.bodyOpacity, 0f)
+        assertEquals(2f, fresh.ios.rimLight, 0f)
+        assertEquals(0.85f, fresh.ios.rimShade, 0f)
+        assertEquals(0.02f, fresh.ios.edgeAbsorption, 0f)
+        assertEquals(29f, fresh.ios.corner, 0f)
+        // The preset itself is kept as measured.
+        assertEquals(14f, IosGlass.PRESET.frost, 0f)
+        assertEquals(0.73f, IosGlass.PRESET.frostOpacity, 0f)
+        assertEquals(0x87 / 255f, IosGlass.PRESET.bodyOpacity, 0f)
         // Its paraxial rim: a bevel of a third of the thickness in dp, bending thickness × 8 × 0.24 / 3.
         assertEquals(32f / 3f, fresh.ios.bevelDp, 0.001f)
         assertEquals(32f * 8f * 0.24f / 3f, fresh.ios.bendDp, 0.001f)
-        // Kyant0's catalog: LiquidBottomTabs, and its dialog's corner.
-        assertEquals(8f, fresh.kyant.blur, 0f)
-        assertEquals(24f, fresh.kyant.refractionHeight, 0f)
-        assertEquals(24f, fresh.kyant.refractionAmount, 0f)
-        assertEquals(1.5f, fresh.kyant.saturation, 0f)
-        assertEquals(0.4f, fresh.kyant.surface, 0f)
+        // Kyant0: set by eye on a device, its dialog's corner; the catalog kept as a preset.
+        assertEquals(13f, fresh.kyant.blur, 0f)
+        assertEquals(10f, fresh.kyant.refractionHeight, 0f)
+        assertEquals(35f, fresh.kyant.refractionAmount, 0f)
+        assertEquals(2f, fresh.kyant.saturation, 0f)
+        assertEquals(0.97f, fresh.kyant.surface, 0f)
+        assertEquals(true, fresh.kyant.depthEffect && fresh.kyant.chromaticAberration)
         assertEquals(48f, fresh.kyant.corner, 0f)
+        assertEquals(24f, KyantGlass.CATALOG.refractionAmount, 0f)
+        // 0.76's catalog defaults, never moved, take the present ones.
+        assertEquals(KyantGlass(), KyantGlass.fromJson(KyantGlass.CATALOG.toJson()))
         // QWEA0's LiquidGlassView as its demo app starts it: no adaptive tint, so no dark body.
         assertEquals(QweaMaterial.REGULAR, fresh.qwea.material)
         assertEquals(false, fresh.qwea.adaptiveTint)
@@ -151,6 +163,17 @@ class SkinSettingsTest {
         assertEquals(IosGlass(), old.ios)
         assertEquals(KyantGlass(), old.kyant)
         assertEquals(QweaGlass(), old.qwea)
+        // 0.76 saved the preset as its defaults: those move to the present ones, motion kept.
+        val v076 = SkinSettings.fromJson(JSONObject(old.toJson()).apply {
+            put("ios", IosGlass.PRESET.copy(motion = ProjectMotion(open = false)).toJson())
+        }.toString())
+        assertEquals(IosGlass(motion = ProjectMotion(open = false)), v076.ios)
+        // ...but a preset the reader changed is theirs.
+        val tuned = SkinSettings.fromJson(JSONObject(old.toJson()).apply {
+            put("ios", IosGlass.PRESET.copy(frost = 20f).toJson())
+        }.toString())
+        assertEquals(20f, tuned.ios.frost, 0f)
+        assertEquals(0.73f, tuned.ios.frostOpacity, 0f)
         // 0.75's QWEA0 settings were in dp: left behind rather than read as pixels.
         val v075 = SkinSettings.fromJson(JSONObject(old.toJson()).apply {
             remove("qweaView"); put("qwea", JSONObject().put("bevelWidth", 24.0).put("adaptiveTint", true))
