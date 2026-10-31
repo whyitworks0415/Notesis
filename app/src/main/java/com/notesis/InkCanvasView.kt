@@ -2997,7 +2997,9 @@ class InkCanvasView @JvmOverloads constructor(
         // the PDF that came after. The page panel's grid, held open to be
         // looked at, does ask - one small page at a time, on the worker.
         val pdfIndex = if (page.background == PageBackground.PDF) page.pdfPageIndex else -1
-        val pdfPicture = if (pdfIndex >= 0) pdf?.cachedPage(pdfIndex) else null
+        // Within a quarter of the width asked for: a card a little wider than
+        // the preview still takes it, a large picture renders its own.
+        val pdfPicture = if (pdfIndex >= 0) pdf?.cachedPage(pdfIndex, minWidth = widthPx * 3 / 4) else null
         if (pdfIndex >= 0 && pdfPicture == null && !renderPdf) return null
         val source = pdf
         // Snapshot on the UI thread; the drawing happens on the worker. A page
@@ -3005,7 +3007,8 @@ class InkCanvasView @JvmOverloads constructor(
         // and left off the page: the canvas reads it properly when it is shown.
         val strokes = if (page.loaded) page.strokes.toList() else null
         val loader = if (page.loaded) null else pageLoader
-        val coarse = epsilonFor(THUMBNAIL_TESSELLATION_SCALE)
+        // Coarse for a card; as fine as the picture is large for a big one.
+        val coarse = epsilonFor(maxOf(THUMBNAIL_TESSELLATION_SCALE, widthPx / page.width))
         val look = document.layers.translucentLook()
         val pageWidth = page.width
         val pageHeight = page.height
@@ -3049,8 +3052,10 @@ class InkCanvasView @JvmOverloads constructor(
                             spent.forEach(Bitmap::recycle)
                         }
                     // On white paper, so nothing is lost without alpha; half the memory,
-                    // and twice the pages the cache holds.
-                    drawn.copy(Bitmap.Config.RGB_565, false)?.also { drawn.recycle() } ?: drawn
+                    // and twice the pages the cache holds. Not for a large picture,
+                    // looked at closely, where 16-bit colour bands pale pencil and highlighter.
+                    if (widthPx > LARGE_THUMBNAIL_PX) drawn
+                    else drawn.copy(Bitmap.Config.RGB_565, false)?.also { drawn.recycle() } ?: drawn
                 }.getOrNull()
                 post {
                     thumbnailsPending -= key
@@ -10284,6 +10289,8 @@ class InkCanvasView @JvmOverloads constructor(
         private const val THUMBNAIL_WORKERS = 2
         /** The zoom a page's ink is read at for its picture alone: far coarser than any page on screen. */
         private const val THUMBNAIL_TESSELLATION_SCALE = 0.25f
+        /** Wider than this, a page picture is a close look (the page peek), kept in full colour. */
+        private const val LARGE_THUMBNAIL_PX = 640
         const val GESTURE_TRAIL_COLOR = 0xFF3B7DDD.toInt()
         const val MEASURED_LATENCY_REFRESH_MS = 500L
         /** How far outside a checkbox, in screen pixels, a tap still ticks it. */

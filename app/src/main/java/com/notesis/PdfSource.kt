@@ -851,15 +851,17 @@ class PdfSource private constructor(
      * Whatever whole-page picture of [index] is already in memory - the low
      * preview first - without asking for anything to be rendered. For
      * thumbnails, which must never queue renders ahead of the pages on screen.
+     * One narrower than [minWidth] is no use: stretched to a large picture,
+     * the preview is a blur.
      */
-    fun cachedPage(index: Int): Bitmap? {
+    fun cachedPage(index: Int, minWidth: Int = 0): Bitmap? {
         if (closed || index !in 0 until pageCount) return null
-        previewCache.get(index)?.let { return it }
+        previewCache.get(index)?.takeIf { it.width >= minWidth }?.let { return it }
         // Whole pages are only ever cached at the power-of-two steps, so the
         // smallest held one is a probe of each step from the bottom.
         var width = MIN_PAGE_WIDTH
         while (width <= MAX_PAGE_WIDTH) {
-            pagesHeld[keyOf(index, width)]?.takeIf { !it.isRecycled }?.let { return it }
+            pagesHeld[keyOf(index, width)]?.takeIf { !it.isRecycled && it.width >= minWidth }?.let { return it }
             width *= 2
         }
         return null
