@@ -4,6 +4,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.isUnspecified
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Shape
@@ -427,12 +428,18 @@ internal fun Modifier.styledLiquidGlass(
     LiquidStyle.NOTESIS -> this
 }
 
-/** The corner of [shape] at this size, for a shader that draws its own outline. */
-private fun cornerOf(shape: Shape, size: Size, layoutDirection: LayoutDirection, density: Density): Float =
-    when (val outline = shape.createOutline(size, layoutDirection, density)) {
-        is Outline.Rounded -> outline.roundRect.topLeftCornerRadius.x
+/**
+ * The corner of [shape] at this size, for a shader that draws its own outline.
+ * Before the pane is measured Backdrop's size is unspecified - NaN - and a
+ * rounded shape asked for its outline at that size throws, so there is none.
+ */
+private fun cornerOf(shape: Shape, size: Size, layoutDirection: LayoutDirection, density: Density): Float {
+    if (size.isUnspecified || !(size.width > 0f) || !(size.height > 0f)) return 0f
+    return when (val outline = runCatching { shape.createOutline(size, layoutDirection, density) }.getOrNull()) {
+        is Outline.Rounded -> outline.roundRect.topLeftCornerRadius.x.takeIf { it.isFinite() } ?: 0f
         else -> 0f
     }
+}
 
 /**
  * Two layers, as liquid_glass_widgets composes its iOS 27 material: the page
