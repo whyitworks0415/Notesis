@@ -203,7 +203,8 @@ internal fun Modifier.spotiGlassSurface(
     // Another recipe draws the whole pane its own way, rim and shadow included.
     if (lensAllowed && settings.liquidStyle != LiquidStyle.NOTESIS) {
         return styledLiquidGlass(settings.liquidStyle, settings, shape, backdrop!!, panel = !navigation, dark = dark,
-            shadows = settings.shadows && elevation > 0.dp, rim = rim, exportedBackdrop = exportedBackdrop)
+            shadows = settings.shadows && elevation > 0.dp, rim = rim, exportedBackdrop = exportedBackdrop,
+            light = glassLight(settings))
     }
     val useBlur = lensAllowed && clarity > 0
     val sigma = when {

@@ -626,17 +626,18 @@ private fun IconsGroup() {
 private fun PanelsGroup(skin: Skin, settings: SkinSettings, onChange: (SkinSettings) -> Unit) {
     val defaults = SkinSettings()
     SettingsSectionHeader("Panels, menus and the toolbar")
+    val ownRecipe = skin == Skin.SPOTIGLASS && settings.liquidStyle != LiquidStyle.NOTESIS
+    if (ownRecipe) {
+        SettingsNote("${settings.liquidStyle.label} sets its corner, blur, surface, rim and motion in Glass, " +
+            "with the numbers its project uses.")
+        return
+    }
     // One corner for every style: the toolbar, its menus and the panels take
     // the same curve whichever style is on (see [chromeCorner]).
     AppearanceSlider("Corner radius", "%.0f dp".format(settings.spotiglassCorner), settings.spotiglassCorner,
         SkinSettings.CORNER_RANGE, step = 1f, default = defaults.spotiglassCorner,
-        note = "Shared by every style.",
+        note = "Shared by Material, Glassmorphism and Liquid glass. Liquid glass's other recipes keep their own.",
     ) { onChange(settings.copy(spotiglassCorner = it)) }
-    val ownRecipe = skin == Skin.SPOTIGLASS && settings.liquidStyle != LiquidStyle.NOTESIS
-    if (ownRecipe) {
-        SettingsNote("${settings.liquidStyle.label} sets its blur, surface and rim in Glass, with the numbers its project uses.")
-        return
-    }
     AppearanceSlider("Frost", "%.0f%%".format(settings.frost * 100), settings.frost, 0f..1f,
         step = 0.01f, default = defaults.frost,
         note = "How much the page behind is blurred, and how much colour comes through the blur.",
@@ -665,6 +666,7 @@ private fun GlassGroup(skin: Skin, settings: SkinSettings, onChange: (SkinSettin
         return
     }
     when (settings.liquidStyle) {
+        LiquidStyle.IOS -> { IosGlassControls(settings.ios) { onChange(settings.copy(ios = it)) }; return }
         LiquidStyle.KYANT -> { KyantGlassControls(settings.kyant) { onChange(settings.copy(kyant = it)) }; return }
         LiquidStyle.QWEA -> { QweaGlassControls(settings.qwea) { onChange(settings.copy(qwea = it)) }; return }
         LiquidStyle.NOTESIS -> Unit
@@ -692,6 +694,70 @@ private fun GlassGroup(skin: Skin, settings: SkinSettings, onChange: (SkinSettin
         ) { onChange(settings.copy(spotiglassResponse = it)) }
     }
     SettingsNote("Sliders, switches and segmented controls keep their own glass, whatever is set here.")
+}
+
+/** The three motion switches every recipe has: on, the project's; off, this app's as before. */
+@Composable
+private fun ProjectMotionControls(m: ProjectMotion, project: String, onChange: (ProjectMotion) -> Unit) {
+    SettingsSectionHeader("Motion")
+    SettingsNote("On, $project's own motion; off, this app's as before.")
+    SettingsToggle("Press", m.press, { onChange(m.copy(press = it)) },
+        hint = "How the toolbar's round buttons and glass buttons answer a finger.")
+    SettingsToggle("Selection slide", m.slide, { onChange(m.copy(slide = it)) },
+        hint = "How the toolbar's selection follows a finger and lands on a tool.")
+    SettingsToggle("Menu opening", m.open, { onChange(m.copy(open = it)) },
+        hint = "How Functions, its menus and the tool panels come out of the button that opened them, and go back.")
+}
+
+/** liquid_glass_widgets' iOS material, under the names its LiquidGlassSettings take. */
+@Composable
+private fun IosGlassControls(g: IosGlass, onChange: (IosGlass) -> Unit) {
+    val d = IosGlass()
+    SettingsNote("From liquid_glass_widgets 1.16.1 (MIT), whose iOS 27 regular presets were measured against the " +
+        "native control: a frosted body over a lightly blurred page, a paraxial rim and the native springs. " +
+        "Dark mode takes its dark preset, moved in proportion to what is set here.")
+    SettingsSectionHeader("Lens")
+    AppearanceSlider("Thickness", "%.0f".format(g.thickness), g.thickness, IosGlass.THICKNESS_RANGE, step = 1f,
+        default = d.thickness, note = "In pixels at 3x: a bevel of %.1f dp.".format(g.bevelDp),
+    ) { onChange(g.copy(thickness = it)) }
+    AppearanceSlider("Refractive index", "%.2f".format(g.refractiveIndex), g.refractiveIndex, IosGlass.INDEX_RANGE,
+        step = 0.01f, default = d.refractiveIndex,
+        note = "The rim bends the page by thickness × 8 × (index − 1): %.1f dp, at most half the pane.".format(g.bendDp),
+    ) { onChange(g.copy(refractiveIndex = it)) }
+    AppearanceSlider("Chromatic aberration", "%.2f".format(g.dispersion), g.dispersion, 0f..1f, step = 0.01f,
+        default = d.dispersion, note = "0 in the presets.",
+    ) { onChange(g.copy(dispersion = it)) }
+    SettingsSectionHeader("Material")
+    AppearanceSlider("Blur", "%.1f".format(g.blur), g.blur, IosGlass.BLUR_RANGE, step = 0.1f, default = d.blur,
+        note = "The page under the frost, barely softened.",
+    ) { onChange(g.copy(blur = it)) }
+    AppearanceSlider("Frost", "%.0f".format(g.frost), g.frost, IosGlass.FROST_RANGE, step = 1f, default = d.frost,
+        note = "The cloud over it, as a blur.",
+    ) { onChange(g.copy(frost = it)) }
+    AppearanceSlider("Frost opacity", "%.0f%%".format(g.frostOpacity * 100), g.frostOpacity, 0f..1f, step = 0.01f,
+        default = d.frostOpacity, note = "Below full, the page shows through the cloud as pale ghosts.",
+    ) { onChange(g.copy(frostOpacity = it)) }
+    AppearanceSlider("Saturation", "%.1f×".format(g.saturation), g.saturation, IosGlass.SATURATION_RANGE, step = 0.1f,
+        default = d.saturation,
+    ) { onChange(g.copy(saturation = it)) }
+    AppearanceSlider("Body", "%.0f%%".format(g.bodyOpacity * 100), g.bodyOpacity, 0f..1f, step = 0.01f,
+        default = d.bodyOpacity, note = "The #F8F8F8 glass colour over it all.",
+    ) { onChange(g.copy(bodyOpacity = it)) }
+    SettingsSectionHeader("Rim")
+    AppearanceSlider("Rim light", "%.2f".format(g.rimLight), g.rimLight, 0f..2f, step = 0.05f, default = d.rimLight,
+        note = "Light caught along the edge, from the top.",
+    ) { onChange(g.copy(rimLight = it)) }
+    AppearanceSlider("Rim shade", "%.2f".format(g.rimShade), g.rimShade, 0f..2f, step = 0.05f, default = d.rimShade,
+        note = "The fine dark line just inside the edge.",
+    ) { onChange(g.copy(rimShade = it)) }
+    AppearanceSlider("Edge absorption", "%.3f".format(g.edgeAbsorption), g.edgeAbsorption, 0f..0.5f, step = 0.005f,
+        default = d.edgeAbsorption, note = "How much the bevel darkens towards the edge.",
+    ) { onChange(g.copy(edgeAbsorption = it)) }
+    AppearanceSlider("Corner radius", "%.0f dp".format(g.corner), g.corner, SkinSettings.CORNER_RANGE, step = 1f,
+        default = d.corner, note = "Its GlassMenu's: 32.",
+    ) { onChange(g.copy(corner = it)) }
+    ProjectMotionControls(g.motion, "liquid_glass_widgets") { onChange(g.copy(motion = it)) }
+    OutlinedButton(onClick = { onChange(d) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to the presets' values") }
 }
 
 /** Kyant0/AndroidLiquidGlass's numbers, under the names its effects take. */
@@ -726,16 +792,20 @@ private fun KyantGlassControls(k: KyantGlass, onChange: (KyantGlass) -> Unit) {
     AppearanceSlider("Highlight", "%.0f%%".format(k.highlight * 100), k.highlight, 0f..1f, step = 0.01f, default = d.highlight,
         note = "The lit rim.",
     ) { onChange(k.copy(highlight = it)) }
+    AppearanceSlider("Corner radius", "%.0f dp".format(k.corner), k.corner, SkinSettings.CORNER_RANGE, step = 1f,
+        default = d.corner, note = "Its dialog's: 48.",
+    ) { onChange(k.copy(corner = it)) }
+    ProjectMotionControls(k.motion, "the catalog") { onChange(k.copy(motion = it)) }
     OutlinedButton(onClick = { onChange(d) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to the catalog's values") }
 }
 
-/** QWEA0/Liquid-Glass-Android's numbers, under the names its view takes. */
+/** QWEA0/Liquid-Glass-Android's numbers, as its demo app's drawer sets them. */
 @Composable
 private fun QweaGlassControls(q: QweaGlass, onChange: (QweaGlass) -> Unit) {
     val d = QweaGlass()
-    SettingsNote("From QWEA0/Liquid-Glass-Android: the lens of its README, its view's blur, saturation and rim, " +
-        "and its dialog's blur on panels. Small panes narrow the bevel, as its adaptive lens scale does.")
-    SettingsSectionHeader("Material")
+    SettingsNote("From QWEA0/Liquid-Glass-Android (MIT): LiquidGlassView's own defaults, which its demo app starts " +
+        "from, drawn through a port of its lens shader. Pixels are the screen's, as the view's are.")
+    SettingsSectionHeader("Lens")
     LiquidSegmentedControl(
         segments = QweaMaterial.entries.map { it.label },
         selectedIndex = q.material.ordinal,
@@ -743,37 +813,72 @@ private fun QweaGlassControls(q: QweaGlass, onChange: (QweaGlass) -> Unit) {
         modifier = Modifier.fillMaxWidth(),
         useLiquidGlass = false,
     )
-    SettingsNote(if (q.material == QweaMaterial.REGULAR) "Regular: full blur and a tint that follows the page."
-        else "Clear: a third of the blur and a fixed dimming layer, for glass over pictures.")
-    SettingsSectionHeader("Lens")
-    AppearanceSlider("Bevel width", "%.0f dp".format(q.bevelWidth), q.bevelWidth, QweaGlass.BEVEL_RANGE,
-        step = 1f, default = d.bevelWidth, note = "The band round the edge where the light is bent.",
+    SettingsNote(if (q.material == QweaMaterial.REGULAR) "Regular: full blur, the material's light tint."
+        else "Clear: a third of the blur and a fixed 16% dimming layer, for glass over pictures.")
+    SettingsToggle("Sensor highlight", q.sensorHighlight, { onChange(q.copy(sensorHighlight = it)) },
+        hint = "The light on the rim follows gravity as the device tilts.")
+    SettingsToggle("Adaptive tint", q.adaptiveTint, { onChange(q.copy(adaptiveTint = it)) },
+        hint = "Regular only: darker over light parts of the page, lighter over dark ones, pixel by pixel.")
+    SettingsToggle("Refraction no fold", q.noFold, { onChange(q.copy(noFold = it)) },
+        hint = "The bending held below where the rim folds into a mirror image of the inside.")
+    SettingsToggle("Refraction outward", q.outward, { onChange(q.copy(outward = it)) },
+        hint = "The rim draws in the page from outside the glass instead of inside it.")
+    SettingsToggle("Adaptive lens scale", q.adaptiveLensScale, { onChange(q.copy(adaptiveLensScale = it)) },
+        hint = "On panes under 110 dp the bevel and the bending shrink with the pane.")
+    AppearanceSlider("Bevel width", "%.0f px".format(q.bevelWidth), q.bevelWidth, QweaGlass.BEVEL_RANGE, step = 1f,
+        default = d.bevelWidth, note = "The band round the edge where the light is bent.",
     ) { onChange(q.copy(bevelWidth = it)) }
-    AppearanceSlider("Refraction height", "%.0f dp".format(q.refractionHeight), q.refractionHeight,
-        QweaGlass.REFRACTION_RANGE, step = 1f, default = d.refractionHeight,
-        note = "How far the page is pulled in at the very edge.",
+    AppearanceSlider("Refraction", "%.0f px".format(q.refractionHeight), q.refractionHeight, QweaGlass.REFRACTION_RANGE,
+        step = 1f, default = d.refractionHeight, note = "How far the page is pulled in at the very edge.",
     ) { onChange(q.copy(refractionHeight = it)) }
+    AppearanceSlider("Falloff", "%.1f".format(q.falloff), q.falloff, QweaGlass.FALLOFF_RANGE, step = 0.1f,
+        default = d.falloff, note = "How tightly the bending crowds the edge. 0 is a square bevel.",
+    ) { onChange(q.copy(falloff = it)) }
     AppearanceSlider("Dispersion", "%.2f".format(q.dispersion), q.dispersion, 0f..1f, step = 0.01f, default = d.dispersion,
-        note = "The colours split at the edge. Here it is on or off; 0 turns it off.",
+        note = "Each colour bent by a little more or less: a spectral fringe at the edge.",
     ) { onChange(q.copy(dispersion = it)) }
-    SettingsSectionHeader("Blur and colour")
+    AppearanceSlider("Edge softness", "%.0f px".format(q.edgeSoftness), q.edgeSoftness, QweaGlass.SOFTNESS_RANGE,
+        step = 1f, default = d.edgeSoftness, note = "Smooths the hard line the bending makes at the edge.",
+    ) { onChange(q.copy(edgeSoftness = it)) }
+    SettingsSectionHeader("Glass")
+    SettingsToggle("Enable blur", q.blurOn, { onChange(q.copy(blurOn = it)) })
     AppearanceSlider("Blur amount", "%.3f".format(q.blurAmount), q.blurAmount, 0f..1f, step = 0.005f, default = d.blurAmount,
         note = "Bars and buttons. The blur is 4 + 32 × this, in pixels.",
     ) { onChange(q.copy(blurAmount = it)) }
     AppearanceSlider("Panel blur amount", "%.2f".format(q.panelBlurAmount), q.panelBlurAmount, 0f..1f, step = 0.01f,
-        default = d.panelBlurAmount, note = "Panels, menus and dialogs, so their text has something under it.",
+        default = d.panelBlurAmount, note = "Panels, menus and dialogs: its dialog builder's 0.6.",
     ) { onChange(q.copy(panelBlurAmount = it)) }
     AppearanceSlider("Saturation", "%.0f%%".format(q.saturation * 100), q.saturation, QweaGlass.SATURATION_RANGE,
-        step = 0.05f, default = d.saturation,
+        step = 0.01f, default = d.saturation,
     ) { onChange(q.copy(saturation = it)) }
-    SettingsToggle("Adaptive tint", q.adaptiveTint, { onChange(q.copy(adaptiveTint = it)) },
-        hint = "Regular only: a grey tint over a light page, a light one over a dark page. Off, a faint white.")
-    AppearanceSlider("Edge highlight", "%.0f%%".format(q.highlight * 100), q.highlight, 0f..1f, step = 0.01f,
-        default = d.highlight, note = "The rim lit from the top left. Clear lights it a fifth brighter.",
+    AppearanceSlider("Corner radius", "%.0f dp".format(q.corner), q.corner, SkinSettings.CORNER_RANGE, step = 1f,
+        default = d.corner, note = "Panels, as its dialog builder: 28. Bars and buttons are capsules.",
+    ) { onChange(q.copy(corner = it)) }
+    SettingsToggle("Over light", q.overLight, { onChange(q.copy(overLight = it)) },
+        hint = "Tells the glass it sits over a light page: more blur, a dark tint, a deeper shadow.")
+    SettingsToggle("Edge highlight", q.edgeHighlight, { onChange(q.copy(edgeHighlight = it)) })
+    AppearanceSlider("Highlight opacity", "%.0f%%".format(q.highlight * 100), q.highlight, 0f..1f, step = 0.01f,
+        default = d.highlight,
     ) { onChange(q.copy(highlight = it)) }
     SettingsToggle("Shadow", q.shadow, { onChange(q.copy(shadow = it)) },
         hint = "Off in LiquidGlassView. Shadows in Colors › Readability must be on as well.")
-    OutlinedButton(onClick = { onChange(d) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to the project's values") }
+    SettingsSectionHeader("Glass tint")
+    val swatches = listOf(0 to "None", 0xFF007AFF.toInt() to "Blue", 0xFF34C759.toInt() to "Green",
+        0xFFFF9500.toInt() to "Orange", 0xFFFF2D55.toInt() to "Pink", 0xFFAF52DE.toInt() to "Purple")
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+        swatches.forEach { (color, name) ->
+            SettingsChoiceChip(selected = q.tintColor == color, onClick = { onChange(q.copy(tintColor = color)) }, label = name)
+        }
+    }
+    AppearanceSlider("Tint strength", "%.0f%%".format(q.tintStrength * 100), q.tintStrength, 0f..1f, step = 0.01f,
+        default = d.tintStrength, disabledReason = if (q.tintColor == 0) "Pick a tint first" else null,
+    ) { onChange(q.copy(tintStrength = it)) }
+    SettingsSectionHeader("Interaction")
+    AppearanceSlider("Press scale", "%.2f".format(q.pressScale), q.pressScale, QweaGlass.PRESS_RANGE, step = 0.01f,
+        default = d.pressScale, note = "Below 1 a press shrinks the button, above 1 grows it. Used with Press in Motion.",
+    ) { onChange(q.copy(pressScale = it)) }
+    ProjectMotionControls(q.motion, "LiquidGlassView") { onChange(q.copy(motion = it)) }
+    OutlinedButton(onClick = { onChange(d) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to the demo's values") }
 }
 
 @Composable

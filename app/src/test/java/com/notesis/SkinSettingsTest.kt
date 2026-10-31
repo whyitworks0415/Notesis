@@ -98,36 +98,64 @@ class SkinSettingsTest {
     @Test fun `the other recipes start from their projects' numbers and keep what was set`() {
         val fresh = SkinSettings()
         assertEquals(LiquidStyle.NOTESIS, fresh.liquidStyle)
-        // Kyant0's catalog: LiquidBottomTabs.
+        // liquid_glass_widgets' ios27Light.
+        assertEquals(32f, fresh.ios.thickness, 0f)
+        assertEquals(1.24f, fresh.ios.refractiveIndex, 0f)
+        assertEquals(14f, fresh.ios.frost, 0f)
+        assertEquals(0.73f, fresh.ios.frostOpacity, 0f)
+        assertEquals(2.1f, fresh.ios.saturation, 0f)
+        assertEquals(0x87 / 255f, fresh.ios.bodyOpacity, 0f)
+        assertEquals(32f, fresh.ios.corner, 0f)
+        // Its paraxial rim: a bevel of a third of the thickness in dp, bending thickness × 8 × 0.24 / 3.
+        assertEquals(32f / 3f, fresh.ios.bevelDp, 0.001f)
+        assertEquals(32f * 8f * 0.24f / 3f, fresh.ios.bendDp, 0.001f)
+        // Kyant0's catalog: LiquidBottomTabs, and its dialog's corner.
         assertEquals(8f, fresh.kyant.blur, 0f)
         assertEquals(24f, fresh.kyant.refractionHeight, 0f)
         assertEquals(24f, fresh.kyant.refractionAmount, 0f)
         assertEquals(1.5f, fresh.kyant.saturation, 0f)
         assertEquals(0.4f, fresh.kyant.surface, 0f)
-        // QWEA0's README and LiquidGlassView.
+        assertEquals(48f, fresh.kyant.corner, 0f)
+        // QWEA0's LiquidGlassView as its demo app starts it: no adaptive tint, so no dark body.
         assertEquals(QweaMaterial.REGULAR, fresh.qwea.material)
+        assertEquals(false, fresh.qwea.adaptiveTint)
+        assertEquals(false, fresh.qwea.overLight)
         assertEquals(0.0625f, fresh.qwea.blurAmount, 0f)
         assertEquals(1.4f, fresh.qwea.saturation, 0f)
-        assertEquals(24f, fresh.qwea.bevelWidth, 0f)
-        assertEquals(12f, fresh.qwea.refractionHeight, 0f)
-        assertEquals(0.12f, fresh.qwea.dispersion, 0f)
+        assertEquals(48f, fresh.qwea.bevelWidth, 0f)
+        assertEquals(160f, fresh.qwea.refractionHeight, 0f)
+        assertEquals(2f, fresh.qwea.falloff, 0f)
+        assertEquals(0.10f, fresh.qwea.dispersion, 0f)
+        assertEquals(0.95f, fresh.qwea.pressScale, 0f)
+        // Every project's own motion is on until switched off.
+        assertEquals(ProjectMotion(), fresh.qwea.motion)
+        assertEquals(true, fresh.ios.motion.press && fresh.ios.motion.slide && fresh.ios.motion.open)
 
         val set = fresh.copy(
             liquidStyle = LiquidStyle.QWEA,
+            ios = fresh.ios.copy(thickness = 40f, motion = ProjectMotion(slide = false)),
             kyant = fresh.kyant.copy(blur = 12f, chromaticAberration = true),
-            qwea = fresh.qwea.copy(material = QweaMaterial.CLEAR, bevelWidth = 40f, shadow = true),
+            qwea = fresh.qwea.copy(material = QweaMaterial.CLEAR, bevelWidth = 60f, outward = true, tintColor = 0xFF007AFF.toInt()),
         )
         val read = SkinSettings.fromJson(set.toJson())
         assertEquals(LiquidStyle.QWEA, read.liquidStyle)
+        assertEquals(set.ios, read.ios)
         assertEquals(set.kyant, read.kyant)
         assertEquals(set.qwea, read.qwea)
+        assertEquals(set.qwea.corner, read.glassCorner, 0f)
         // Saved before there were recipes: this app's own, at the projects' numbers.
         val old = SkinSettings.fromJson(JSONObject(set.toJson()).apply {
-            remove("liquidStyle"); remove("kyant"); remove("qwea")
+            remove("liquidStyle"); remove("ios"); remove("kyant"); remove("qweaView")
         }.toString())
         assertEquals(LiquidStyle.NOTESIS, old.liquidStyle)
+        assertEquals(IosGlass(), old.ios)
         assertEquals(KyantGlass(), old.kyant)
         assertEquals(QweaGlass(), old.qwea)
+        // 0.75's QWEA0 settings were in dp: left behind rather than read as pixels.
+        val v075 = SkinSettings.fromJson(JSONObject(old.toJson()).apply {
+            remove("qweaView"); put("qwea", JSONObject().put("bevelWidth", 24.0).put("adaptiveTint", true))
+        }.toString())
+        assertEquals(QweaGlass(), v075.qwea)
         // Out of range on disk comes back in range.
         val wild = SkinSettings.fromJson(JSONObject(set.toJson()).apply {
             put("kyant", JSONObject().put("blur", 900.0)); put("liquidStyle", "NOPE")
@@ -136,11 +164,14 @@ class SkinSettingsTest {
         assertEquals(LiquidStyle.NOTESIS, wild.liquidStyle)
         // Controls keep this app's own glass whatever the recipe.
         assertEquals(LiquidStyle.NOTESIS, set.controlOptics().liquidStyle)
+        // This app's own glass keeps its own corner and its own motion.
+        assertEquals(fresh.spotiglassCorner, fresh.glassCorner, 0f)
+        assertEquals(null, fresh.projectMotion)
     }
 
-    @Test fun `five looks to pick from`() {
-        assertEquals(5, Look.all.size)
-        assertEquals(listOf("Material", "Glassmorphism", "Liquid glass", "Liquid glass · Kyant0", "Liquid glass · QWEA0"),
-            Look.all.map { it.label })
+    @Test fun `six looks to pick from`() {
+        assertEquals(6, Look.all.size)
+        assertEquals(listOf("Material", "Glassmorphism", "Liquid glass", "Liquid glass · iOS",
+            "Liquid glass · Kyant0", "Liquid glass · QWEA0"), Look.all.map { it.label })
     }
 }

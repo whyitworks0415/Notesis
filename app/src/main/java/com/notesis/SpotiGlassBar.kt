@@ -132,7 +132,7 @@ fun SpotiGlassBar(
     modifier: Modifier = Modifier,
     showLabels: Boolean = true, compact: Boolean = false,
     /** The capsule's own radius; the resting pill inside it is concentric with it. */
-    corner: Dp = LocalSkinSettings.current.spotiglassCorner.dp,
+    corner: Dp = LocalSkinSettings.current.glassCorner.dp,
     surface: SpotiBarSurface = SpotiBarSurface.FROST,
     /**
      * Down the side instead of across: the same capsule, pill and lens on
@@ -163,7 +163,12 @@ fun SpotiGlassBar(
     val selected = selectedIndex.takeIf { it in items.indices }
     // On a surface it does not own, a lens keeps to the strip's own height.
     val contained = lift && surface == SpotiBarSurface.NONE
-    val motion = remember(items.size, rtl, lift) { SpotiGlassMotion((selected ?: 0).toFloat(), lifts = lift) }
+    // Under a recipe whose slide is switched on, its springs; otherwise this app's.
+    val slide = if (LocalSkin.current == Skin.SPOTIGLASS) look.slideProfile() else null
+    val slideKey = look.liquidStyle to (slide != null)
+    val motion = remember(items.size, rtl, lift, slideKey) {
+        SpotiGlassMotion((selected ?: 0).toFloat(), lifts = lift, profile = slide)
+    }
     var wake by remember { mutableIntStateOf(0) }
     var frameRevision by remember { mutableIntStateOf(0) }
     fun choose(index: Int) {

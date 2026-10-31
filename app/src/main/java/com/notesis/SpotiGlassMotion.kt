@@ -15,6 +15,8 @@ internal class SpotiGlassMotion(
      * slides across as the flat pill it rests as, and nothing grows or stretches.
      */
     private val lifts: Boolean = true,
+    /** A recipe's own springs for the travel and the lift; null keeps these. */
+    private val profile: SlideProfile? = null,
 ) {
     private class Spring(var x: Double = 0.0, var velocity: Double = 0.0) {
         fun step(target: Double, dt: Double, stiffness: Double, damping: Double) {
@@ -84,20 +86,25 @@ internal class SpotiGlassMotion(
         // Pause/resume cannot integrate an unbounded duration into the spring.
         val step = dt.coerceAtMost(0.05)
         val landed: Boolean
+        val follow = profile?.follow
         if (dragging) {
             if (control) travel.x = followTarget
+            else if (follow != null) travel.step(followTarget, step, follow.first, follow.second)
             else travel.x += (followTarget - travel.x) * (1 - exp(-step / 0.05))
             landed = false
         } else {
-            travel.step(target, step, SPOTIGLASS_TRAVEL_STIFFNESS, SPOTIGLASS_TRAVEL_DAMPING)
+            val (k, c) = profile?.travel ?: (SPOTIGLASS_TRAVEL_STIFFNESS to SPOTIGLASS_TRAVEL_DAMPING)
+            travel.step(target, step, k, c)
             landed = travel.settle(target, SPOTIGLASS_TRAVEL_SETTLE, 0.05)
             val span = target - from
             val fraction = if (abs(span) < 1e-6) 1.0 else (travel.x - from) / span
             if (landed || (!control && fraction >= 0.92)) lifted = false
         }
         val liftTarget = if (lifted) 1.0 else 0.0
-        liftX.step(liftTarget, step, 250.0, 19.0)
-        liftY.step(liftTarget, step, 250.0, 22.1)
+        val (kx, cx) = profile?.liftX ?: (250.0 to 19.0)
+        val (ky, cy) = profile?.liftY ?: (250.0 to 22.1)
+        liftX.step(liftTarget, step, kx, cx)
+        liftY.step(liftTarget, step, ky, cy)
         material.step(liftTarget, step, 1000.0, 63.3)
         liftX.settle(liftTarget, 0.001, 0.01)
         liftY.settle(liftTarget, 0.001, 0.01)

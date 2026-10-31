@@ -90,7 +90,7 @@ internal fun ToolPanel(
     actions: @Composable RowScope.() -> Unit,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val growth = remember { PopupGrowth(shown = !state.animate) }
+    val growth = rememberPopupGrowth(shown = !state.animate)
     LaunchedEffect(state.closing) {
         val after = state.closing
         if (after == null) {

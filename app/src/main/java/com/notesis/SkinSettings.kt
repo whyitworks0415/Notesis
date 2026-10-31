@@ -76,6 +76,8 @@ data class SkinSettings(
     val shadows: Boolean = true,
     /** Whose recipe Liquid glass is drawn with; the sliders above are [LiquidStyle.NOTESIS]'s. */
     val liquidStyle: LiquidStyle = LiquidStyle.NOTESIS,
+    /** [LiquidStyle.IOS]'s own settings. */
+    val ios: IosGlass = IosGlass(),
     /** [LiquidStyle.KYANT]'s own settings. */
     val kyant: KyantGlass = KyantGlass(),
     /** [LiquidStyle.QWEA]'s own settings. */
@@ -103,8 +105,10 @@ data class SkinSettings(
         .put("highContrast", highContrast)
         .put("shadows", shadows)
         .put("liquidStyle", liquidStyle.name)
+        .put("ios", ios.toJson())
         .put("kyant", kyant.toJson())
-        .put("qwea", qwea.toJson())
+        // "qwea" held 0.75's settings, in dp where these are the view's pixels.
+        .put("qweaView", qwea.toJson())
         .toString()
 
     /** Whether the optics are still the ones a fresh install had before [OPTICS_VERSION] 2. */
@@ -187,8 +191,9 @@ data class SkinSettings(
                 highContrast = json.optBoolean("highContrast", d.highContrast),
                 shadows = json.optBoolean("shadows", d.shadows),
                 liquidStyle = LiquidStyle.fromName(json.optString("liquidStyle", d.liquidStyle.name)),
+                ios = IosGlass.fromJson(json.optJSONObject("ios")),
                 kyant = KyantGlass.fromJson(json.optJSONObject("kyant")),
-                qwea = QweaGlass.fromJson(json.optJSONObject("qwea")),
+                qwea = QweaGlass.fromJson(json.optJSONObject("qweaView")),
             )
             // Saved before the glass took its present look: optics never moved
             // from the old defaults take the new ones; any the reader set are kept,

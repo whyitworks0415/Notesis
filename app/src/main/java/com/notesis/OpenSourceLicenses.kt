@@ -68,6 +68,20 @@ internal val OPEN_SOURCE_COMPONENTS = listOf(
         listOf(APACHE),
     ),
     OpenSourceComponent(
+        "Liquid-Glass-Android (lens shader and settings ported to Kotlin · AGSL)",
+        "pandadog (QWEA0)",
+        "MIT",
+        "https://github.com/QWEA0/Liquid-Glass-Android",
+        listOf("licenses/Liquid-Glass-Android.LICENSE"),
+    ),
+    OpenSourceComponent(
+        "liquid_glass_widgets 1.16.1 (glass presets, springs and morph curves ported)",
+        "Sebastian Degenaar",
+        "MIT",
+        "https://github.com/sdegenaar/liquid_glass_widgets",
+        listOf("licenses/liquid_glass_widgets.LICENSE"),
+    ),
+    OpenSourceComponent(
         "liquid_glass_easy 4.3.2 (ported to Kotlin · AGSL)",
         "Ahmed Gamil",
         "MIT",

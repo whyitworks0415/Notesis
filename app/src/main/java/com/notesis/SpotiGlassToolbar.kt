@@ -28,6 +28,8 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.findRootCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionOnScreen
@@ -438,7 +440,7 @@ internal fun Modifier.spotiGlassMorph(key: Any, enter: Boolean = false): Modifie
     return spotiGlassLens(effects, active = { raised() > 0.002f }) { size, density ->
         val raised = raised()
         SpotiGlassLensFrame(center = Offset(size.width / 2, size.height / 2), size = size,
-            radius = look.spotiglassCorner * density, progress = raised, presence = raised,
+            radius = look.glassCorner * density, progress = raised, presence = raised,
             distortion = 0.04f * (look.refraction / 24) * look.spotiglassResponse,
             band = look.depth, dispersion = 0.002f * (look.dispersion / 0.35f),
             // The pane under it is a round rectangle; see [SpotiGlassLensFrame.continuous].
@@ -487,9 +489,22 @@ private fun SpotiActionButton(
     // the tool pill; an ordinary button stays flat, and still skins never lift.
     val lifts = persistentGlass && skin.animatesChrome && rememberLiquidGlassEffectsAllowed() &&
         !look.highContrast && look.spotiglassResponse > 0f
+    // A recipe with its own press switched on grows (or shrinks) the button its way.
+    val recipe = if (glass) look.pressRecipe() else null
+    var buttonSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+    val density = LocalDensity.current.density
+    val target = when {
+        !pressed || !lifts -> 1f
+        recipe != null -> recipe.scale(buttonSize.width.toFloat(), buttonSize.height.toFloat(), density)
+        else -> 1f + 0.08f * look.spotiglassResponse
+    }
     val grow by androidx.compose.animation.core.animateFloatAsState(
-        if (pressed && lifts) 1f + 0.08f * look.spotiglassResponse else 1f,
-        if (lifts) spring(0.78f, 430f) else snap(), label = "Action button lift")
+        target,
+        when {
+            !lifts -> snap()
+            recipe != null -> if (pressed) recipe.press else recipe.release
+            else -> spring(0.78f, 430f)
+        }, label = "Action button lift")
     val radius = corner ?: nestedCorner(Ui.Corner.control)
     // One shape family in every skin: the round corner the bar and its strip draw.
     val shape = RoundedCornerShape(radius)
@@ -507,6 +522,7 @@ private fun SpotiActionButton(
         else -> scheme.onSurface
     }.copy(alpha = if (enabled) 1f else 0.38f)
     Box(modifier.sizeIn(minWidth = Ui.Size.touchCompact, minHeight = Ui.Size.touchCompact)
+        .onSizeChanged { buttonSize = it }
         .then(described)
         .clickable(enabled = enabled, role = Role.Button, interactionSource = interaction,
             // Glass answers a press with the lift; the still skins with the
@@ -635,7 +651,7 @@ internal fun SpotiGlassToolbar(
     }
     // Open grows the menu out of the button; close folds it back, and only
     // then is the popup taken away.
-    val menuGrowth = remember { PopupGrowth(shown = false) }
+    val menuGrowth = rememberPopupGrowth(shown = false)
     var menuShown by remember { mutableStateOf(false) }
     LaunchedEffect(open) {
         if (open) {
@@ -1214,13 +1230,27 @@ internal class PopupGrowth(shown: Boolean) {
      */
     val motion: () -> Float = { width.value + height.value }
 
-    suspend fun open(animate: Boolean) = move(1f, animate, POPUP_OPEN)
+    /** A recipe's own way in and out (see [openProfile]); null is this app's. Set as the popup is composed. */
+    var profile: OpenProfile? = null
 
-    suspend fun close(animate: Boolean) = move(0f, animate, POPUP_CLOSE)
+    /** Whether the last move was a close, so the scale it is drawn at is the closing one. */
+    var closing = false
+        private set
+
+    suspend fun open(animate: Boolean) {
+        closing = false
+        move(1f, animate, profile?.open ?: POPUP_OPEN, 0f)
+    }
+
+    suspend fun close(animate: Boolean) {
+        closing = true
+        move(0f, animate, profile?.close ?: POPUP_CLOSE, profile?.closeVelocity ?: 0f)
+    }
 
     private suspend fun move(
         target: Float, animate: Boolean,
         spec: androidx.compose.animation.core.AnimationSpec<Float>,
+        velocity: Float,
     ) {
         if (!animate) {
             width.snapTo(target)
@@ -1229,10 +1259,19 @@ internal class PopupGrowth(shown: Boolean) {
         }
         // The same curve on both, so the shape never changes proportion on the way.
         coroutineScope {
-            launch { width.animateTo(target, spec) }
-            launch { height.animateTo(target, spec) }
+            launch { width.animateTo(target, spec, initialVelocity = velocity) }
+            launch { height.animateTo(target, spec, initialVelocity = velocity) }
         }
     }
+}
+
+/** A popup's growth, with the opening of the recipe in use when its own is switched on. */
+@Composable
+internal fun rememberPopupGrowth(shown: Boolean): PopupGrowth {
+    val growth = remember { PopupGrowth(shown) }
+    val look = LocalSkinSettings.current
+    growth.profile = if (LocalSkin.current == Skin.SPOTIGLASS) look.openProfile() else null
+    return growth
 }
 
 // Material's emphasized accelerate: leaves slowly and is gone quickly.
@@ -1270,9 +1309,18 @@ internal fun Modifier.growOutOf(anchor: () -> Offset?, growth: PopupGrowth): Mod
         .graphicsLayer {
             val w = growth.width.value
             val h = growth.height.value
-            alpha = popupGrowAlpha(w, h)
-            scaleX = popupGrowScale(w, POPUP_START_SCALE_X)
-            scaleY = popupGrowScale(h, POPUP_START_SCALE_Y)
+            val profile = growth.profile
+            if (profile == null) {
+                alpha = popupGrowAlpha(w, h)
+                scaleX = popupGrowScale(w, POPUP_START_SCALE_X)
+                scaleY = popupGrowScale(h, POPUP_START_SCALE_Y)
+            } else {
+                val start = if (growth.closing) profile.closeScale else profile.startScale
+                alpha = profile.alpha(minOf(w, h))
+                scaleX = profile.scaleOf(w, start)
+                scaleY = profile.scaleOf(h, start)
+                translationY = -profile.dropDp * density * (1f - minOf(w, h).coerceIn(0f, 1f))
+            }
             transformOrigin = origin
         }
 }

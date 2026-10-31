@@ -136,8 +136,21 @@ fun ProvideSkin(skin: Skin, settings: SkinSettings, content: @Composable () -> U
         values += LocalRippleConfiguration provides null
         values += LocalIndication provides FocusOnlyIndication
     }
+    // QWEA0's gravity-lit highlight: the sensor runs only while it is wanted.
+    val tiltLight = skin == Skin.SPOTIGLASS && settings.liquidStyle == LiquidStyle.QWEA && settings.qwea.sensorHighlight
+    val view = androidx.compose.ui.platform.LocalView.current
+    androidx.compose.runtime.DisposableEffect(tiltLight) {
+        if (tiltLight) GravityLight.listen(view.context) { view.display?.rotation ?: android.view.Surface.ROTATION_0 }
+        onDispose { if (tiltLight) GravityLight.stop() }
+    }
     CompositionLocalProvider(*values.toTypedArray(), content = content)
 }
+
+/** Where the glass's light comes from: the tilt of the device while QWEA0's sensor highlight is on. */
+@Composable
+internal fun glassLight(settings: SkinSettings): Pair<Float, Float> =
+    if (settings.liquidStyle == LiquidStyle.QWEA && settings.qwea.sensorHighlight) GravityLight.direction.value
+    else GravityLight.DEFAULT_X to GravityLight.DEFAULT_Y
 
 /**
  * An indication that answers focus and nothing else: no ripple on a press,
@@ -262,7 +275,8 @@ fun Skin.tokens(): SkinTokens = when (this) {
  */
 @Composable
 internal fun chromeCorner(): Dp =
-    LocalSkinSettings.current.spotiglassCorner.coerceIn(SkinSettings.CORNER_RANGE).dp
+    LocalSkinSettings.current.let { if (LocalSkin.current == Skin.SPOTIGLASS) it.glassCorner else it.spotiglassCorner }
+        .coerceIn(SkinSettings.CORNER_RANGE).dp
 
 /**
  * What the glass has to look through.

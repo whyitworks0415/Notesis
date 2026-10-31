@@ -171,14 +171,23 @@ internal fun SkinPreview(skin: Skin, modifier: Modifier, style: LiquidStyle = Li
                 drawRoundRect(Color.White.copy(alpha = 0.9f), bar.topLeft, bar.size, radius, style = Stroke(1.dp.toPx()))
             }
             Skin.SPOTIGLASS -> when (style) {
+                // The iOS material: a pale frosted body, a bright hairline on top, a faint shade under it.
+                LiquidStyle.IOS -> {
+                    drawRoundRect(Color(0xFFF8F8F8).copy(alpha = 0.72f), bar.topLeft, bar.size, radius)
+                    drawRoundRect(Color.Black.copy(alpha = 0.10f), bar.topLeft, bar.size, radius, style = Stroke(0.75.dp.toPx()))
+                    drawRoundRect(
+                        Brush.verticalGradient(listOf(Color.White, Color.White.copy(alpha = 0f)), startY = bar.top, endY = bar.bottom),
+                        bar.topLeft, bar.size, radius, style = Stroke(1.dp.toPx()),
+                    )
+                }
                 // Kyant0's: a light surface at 40%, colour lifted, a thin lit rim.
                 LiquidStyle.KYANT -> {
                     drawRoundRect(Color(0xFFFAFAFA).copy(alpha = 0.4f), bar.topLeft, bar.size, radius)
                     drawRoundRect(Color.White, bar.topLeft, bar.size, radius, style = Stroke(0.6.dp.toPx()))
                 }
-                // QWEA0's: tinted grey over a light page, lit from the top left.
+                // QWEA0's: a faint white body, lit from the top left.
                 LiquidStyle.QWEA -> {
-                    drawRoundRect(Color.Black.copy(alpha = 0.22f), bar.topLeft, bar.size, radius)
+                    drawRoundRect(Color.White.copy(alpha = 0x24 / 255f), bar.topLeft, bar.size, radius)
                     drawRoundRect(
                         Brush.linearGradient(listOf(Color.White, Color.White.copy(alpha = 0.1f)), start = bar.topLeft, end = bar.bottomRight),
                         bar.topLeft, bar.size, radius, style = Stroke(1.5.dp.toPx()),

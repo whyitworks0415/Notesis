@@ -27,6 +27,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -72,11 +73,24 @@ fun LiquidGlassButton(
     val spoti = LocalSkin.current == Skin.SPOTIGLASS
     val response = if (spoti) look.spotiglassResponse else 1f
     // The round corner every glass surface takes now, the outline Backdrop can use.
-    val shape = if (spoti) RoundedCornerShape(look.spotiglassCorner.coerceIn(SkinSettings.CORNER_RANGE).dp) else CircleShape
+    val shape = if (spoti) RoundedCornerShape(look.glassCorner.coerceIn(SkinSettings.CORNER_RANGE).dp) else CircleShape
     var expanded by remember { mutableStateOf(false) }
+    // A recipe with its own press switched on answers it its way.
+    val recipe = if (spoti) look.pressRecipe() else null
+    var buttonSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+    val density = androidx.compose.ui.platform.LocalDensity.current.density
+    val down = pressed && enabled && effectsAllowed
     val scale by animateFloatAsState(
-        targetValue = if (pressed && enabled && effectsAllowed) 1f - 0.04f * response else 1f,
-        animationSpec = if (effectsAllowed) spring(dampingRatio = 0.82f, stiffness = 620f) else snap(),
+        targetValue = when {
+            !down -> 1f
+            recipe != null -> recipe.scale(buttonSize.width.toFloat(), buttonSize.height.toFloat(), density)
+            else -> 1f - 0.04f * response
+        },
+        animationSpec = when {
+            !effectsAllowed -> snap()
+            recipe != null -> if (down) recipe.press else recipe.release
+            else -> spring(dampingRatio = 0.82f, stiffness = 620f)
+        },
         label = "Button press scale",
     )
     val glassAmount by animateFloatAsState(
@@ -106,6 +120,7 @@ fun LiquidGlassButton(
     }
 
     val buttonModifier = modifier
+        .onSizeChanged { buttonSize = it }
         .scale(scale)
         .animateContentSize(
             animationSpec = spring(

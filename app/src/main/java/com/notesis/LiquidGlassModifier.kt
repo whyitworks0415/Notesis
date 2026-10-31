@@ -134,7 +134,7 @@ fun Modifier.liquidGlass(
         val square = shape == RoundedCornerShape(0.dp)
         // A round corner, as the toolbar and every popup draw theirs: one
         // shape family across the skins, and an outline Backdrop can take.
-        val spotiShape = if (circle || square) shape else RoundedCornerShape(settings.spotiglassCorner.dp)
+        val spotiShape = if (circle || square) shape else RoundedCornerShape(settings.glassCorner.dp)
         // No lens over a resting surface. The lens is a shader over the
         // element's whole drawing, so it ran every icon, line of text and
         // control on a panel through refraction and resampling, and they came
@@ -177,7 +177,7 @@ fun Modifier.liquidGlass(
     if (enabled && amount > 0.001f && effectsAllowed && backdrop != null &&
         skin == Skin.SPOTIGLASS && settings.liquidStyle != LiquidStyle.NOTESIS) {
         return styledLiquidGlass(settings.liquidStyle, settings, glassShape, backdrop, panel, dark,
-            shadows = shadows && shadowElevation > 0.dp, rim = drawBorder, amount = amount)
+            shadows = shadows && shadowElevation > 0.dp, rim = drawBorder, amount = amount, light = glassLight(settings))
     }
     if (enabled && amount > 0.001f && effectsAllowed && backdrop != null) {
         var result = this
