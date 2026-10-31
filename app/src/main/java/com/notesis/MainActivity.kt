@@ -304,6 +304,11 @@ class MainActivity : ComponentActivity() {
                 shapes = skinShapes(skin),
             ) {
             ProvideSkin(skin, look) {
+            // A look picker that offers Liquid glass's recipes sets the recipe through this.
+            CompositionLocalProvider(LocalLiquidStyleChange provides { style ->
+                look = look.copy(liquidStyle = style)
+                lookStore.save(look)
+            }) {
                 var openNote by remember { mutableStateOf<NoteMeta?>(null) }
                 // Lives here rather than in the list, which leaves composition
                 // while a note is open and used to come back at the top level.
@@ -500,6 +505,7 @@ class MainActivity : ComponentActivity() {
                     (note == null || note.kind != NoteKind.MARKDOWN)
                 if (!clockHosted) ClockOverlay()
                 }
+            }
             }
         }
         }
@@ -761,6 +767,8 @@ private fun NoteListScreen(
     var creatingFolder by remember { mutableStateOf(false) }
     var renamingFolder by remember { mutableStateOf(false) }
     var deletingFolder by remember { mutableStateOf(false) }
+    var menuFolder by remember { mutableStateOf<String?>(null) }
+    var renamingNote by remember { mutableStateOf<NoteMeta?>(null) }
     val folders = remember(revision) { store.folders() }
     // Favourites first, then the chosen order within each group.
     val shown = (results ?: if (tagFilter != null) notes.filter { tagFilter in it.tags }
@@ -1303,7 +1311,9 @@ private fun NoteListScreen(
                 if (results == null && folder.isBlank() && folders.isNotEmpty() && tagFilter == null) {
                     item(span = { GridItemSpan(maxLineSpan) }) { LibraryHeading("Folders") }
                     item(span = { GridItemSpan(maxLineSpan) }) {
-                        FolderRow(folders) { folder = it }
+                        FolderRow(folders, onOpen = { folder = it },
+                            onRename = { menuFolder = it; renamingFolder = true },
+                            onDelete = { menuFolder = it; deletingFolder = true })
                     }
                 }
                 // Tags cut across folders, so picking one shows every note that carries it.
@@ -1382,6 +1392,7 @@ private fun NoteListScreen(
                             store.setFavorite(note.id, !note.favorite)
                             revision++
                         },
+                        onRename = { renamingNote = note },
                         onTags = { taggingNote = note },
                         onMoveFavorite = if (note.favorite) { delta ->
                             val pinned = shown.filter { it.favorite }
@@ -1550,44 +1561,67 @@ private fun NoteListScreen(
         dismissButton = { TextButton(onClick = { bulkDelete = false }) { Text("Cancel") } },
     )
 
+    // The folder a tile's menu was opened on, else the one that is open.
+    val folderTarget = menuFolder ?: folder
     if (creatingFolder || renamingFolder) {
         val rename = renamingFolder
         FolderNameDialog(
             title = if (rename) "Rename folder" else "New folder",
-            initial = if (rename) folder else "",
-            onDismiss = { creatingFolder = false; renamingFolder = false },
+            initial = if (rename) folderTarget else "",
+            onDismiss = { creatingFolder = false; renamingFolder = false; menuFolder = null },
             onConfirm = { name ->
-                val ok = if (rename) store.renameFolder(folder, name) else store.createFolder(name)
+                val ok = if (rename) store.renameFolder(folderTarget, name) else store.createFolder(name)
                 if (ok) {
-                    if (rename) folder = name.trim()
+                    if (rename && folder == folderTarget) folder = name.trim()
                     revision++
                 } else report = "That folder name can't be used"
-                creatingFolder = false; renamingFolder = false
+                creatingFolder = false; renamingFolder = false; menuFolder = null
             },
         )
     }
-    if (deletingFolder) AlertDialog(
-        onDismissRequest = { deletingFolder = false },
-        title = { Text("Delete folder") },
-        text = { Text("Moves the folder and its notes to Trash. Restoring a note brings the folder back.") },
-        confirmButton = { TextButton(onClick = {
-            store.deleteFolder(folder)
-            folder = ""
+    if (deletingFolder) {
+        val count = remember(folderTarget, revision) { store.list().count { it.folder == folderTarget } }
+        fun deleted() {
+            if (folder == folderTarget) folder = ""
             revision++
             deletingFolder = false
-        }) { Text("Move to Trash") } },
-        dismissButton = {
-            Row {
-                TextButton(onClick = {
-                    store.deleteFolder(folder, keepNotes = true)
-                    folder = ""
-                    revision++
-                    deletingFolder = false
-                }) { Text("Keep notes") }
-                TextButton(onClick = { deletingFolder = false }) { Text("Cancel") }
-            }
-        },
-    )
+            menuFolder = null
+        }
+        AlertDialog(
+            onDismissRequest = { deletingFolder = false; menuFolder = null },
+            title = { Text("Delete folder \"$folderTarget\"?") },
+            text = { Text(if (count == 0) "The folder is empty." else
+                "${countNoun(count, "note")} in it. Move them to Trash with the folder, or keep them in the library. " +
+                    "Restoring a note from Trash brings the folder back.") },
+            confirmButton = { TextButton(onClick = {
+                store.deleteFolder(folderTarget)
+                deleted()
+            }) { Text(if (count == 0) "Delete" else "Move to Trash") } },
+            dismissButton = {
+                Row {
+                    if (count > 0) TextButton(onClick = {
+                        store.deleteFolder(folderTarget, keepNotes = true)
+                        deleted()
+                    }) { Text("Keep notes") }
+                    TextButton(onClick = { deletingFolder = false; menuFolder = null }) { Text("Cancel") }
+                }
+            },
+        )
+    }
+    renamingNote?.let { target ->
+        var name by remember(target.id) { mutableStateOf(target.title) }
+        AlertDialog(
+            onDismissRequest = { renamingNote = null },
+            title = { Text("Rename note") },
+            text = { OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true,
+                label = { Text("Note name") }) },
+            confirmButton = { TextButton(enabled = name.isNotBlank(), onClick = {
+                if (store.renameNote(target.id, name)) revision++ else report = "The note couldn't be renamed"
+                renamingNote = null
+            }) { Text("Save") } },
+            dismissButton = { TextButton(onClick = { renamingNote = null }) { Text("Cancel") } },
+        )
+    }
 
     if (importing) {
         Box(
@@ -1822,7 +1856,9 @@ internal fun InputSettingsDialog(gestures: CanvasGestures, onGestures: (CanvasGe
                     }
                 }
                 toggle("Lock zoom", gestures.zoomLocked) { onGestures(gestures.copy(zoomLocked = it)) }
-                toggle("Double-tap with one finger to zoom", gestures.doubleTapZoom) { onGestures(gestures.copy(doubleTapZoom = it)) }
+                toggle("Double-tap with one finger to zoom", gestures.oneFingerDoubleTap == DOUBLE_TAP_ZOOM) {
+                    onGestures(gestures.copy(oneFingerDoubleTap = if (it) DOUBLE_TAP_ZOOM else EDGE_HIDE_CHROME))
+                }
                 toggle("Long-press to open the menu", gestures.longPressMenu) { onGestures(gestures.copy(longPressMenu = it)) }
                 toggle("Mark linked objects in blue", gestures.linkOverlay) { onGestures(gestures.copy(linkOverlay = it)) }
                 toggle("Back to the previous tool after erasing", gestures.eraserReturns) { onGestures(gestures.copy(eraserReturns = it)) }
@@ -2147,6 +2183,7 @@ private fun NoteCard(
     onIndex: () -> Unit,
     onFile: () -> Unit,
     onToggleFavorite: () -> Unit,
+    onRename: () -> Unit = {},
     onTags: () -> Unit = {},
     onLabel: () -> Unit = {},
     onLock: () -> Unit = {},
@@ -2323,6 +2360,11 @@ private fun NoteCard(
                             DropdownMenuItem(text = { Text("Move down in favorites") }, onClick = { menuOpen = false; onMoveFavorite(1) })
                         }
                         DropdownMenuItem(
+                            text = { Text("Rename") },
+                            leadingIcon = { Icon(Reicons.Edit, contentDescription = null) },
+                            onClick = { menuOpen = false; onRename() },
+                        )
+                        DropdownMenuItem(
                             text = { Text("Tags") },
                             onClick = { menuOpen = false; onTags() },
                         )
@@ -2436,7 +2478,12 @@ private fun LibraryHeading(text: String) {
 
 /** The folders that exist, as somewhere to go. */
 @Composable
-private fun FolderRow(folders: List<String>, onOpen: (String) -> Unit) {
+private fun FolderRow(
+    folders: List<String>,
+    onOpen: (String) -> Unit,
+    onRename: (String) -> Unit,
+    onDelete: (String) -> Unit,
+) {
     Row(
         Modifier.horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(Ui.Space.s),
@@ -2444,16 +2491,35 @@ private fun FolderRow(folders: List<String>, onOpen: (String) -> Unit) {
         for (name in folders) {
             // The same tile as a search hit: a control-sized corner, and
             // padding that makes the row a full touch target.
+            // Held, or its own ⋮, it offers renaming and deleting.
+            var menu by remember(name) { mutableStateOf(false) }
             SkinSurface(corner = Ui.Corner.control) {
                 Row(
                     Modifier
-                        .clickable { onOpen(name) }
-                        .padding(horizontal = Ui.Space.l, vertical = Ui.Space.m),
+                        .combinedClickable(onClick = { onOpen(name) }, onLongClick = { menu = true })
+                        .padding(start = Ui.Space.l, end = Ui.Space.xs, top = Ui.Space.xs, bottom = Ui.Space.xs),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Icon(Reicons.Folder, contentDescription = null)
                     Spacer(Modifier.width(Ui.Space.s))
                     Text(name, style = MaterialTheme.typography.bodyLarge)
+                    Box {
+                        IconButton(onClick = { menu = true }) {
+                            Icon(Reicons.MoreVert, contentDescription = "Folder options for $name")
+                        }
+                        DropdownMenu(menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Rename folder") },
+                                leadingIcon = { Icon(Reicons.Edit, contentDescription = null) },
+                                onClick = { menu = false; onRename(name) },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Delete folder") },
+                                leadingIcon = { Icon(Reicons.Delete, contentDescription = null) },
+                                onClick = { menu = false; onDelete(name) },
+                            )
+                        }
+                    }
                 }
             }
         }

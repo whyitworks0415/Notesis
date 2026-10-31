@@ -94,4 +94,53 @@ class SkinSettingsTest {
         // Saved before the switch existed: shadows on.
         assertEquals(true, SkinSettings.fromJson(JSONObject(off.toJson()).apply { remove("shadows") }.toString()).shadows)
     }
+
+    @Test fun `the other recipes start from their projects' numbers and keep what was set`() {
+        val fresh = SkinSettings()
+        assertEquals(LiquidStyle.NOTESIS, fresh.liquidStyle)
+        // Kyant0's catalog: LiquidBottomTabs.
+        assertEquals(8f, fresh.kyant.blur, 0f)
+        assertEquals(24f, fresh.kyant.refractionHeight, 0f)
+        assertEquals(24f, fresh.kyant.refractionAmount, 0f)
+        assertEquals(1.5f, fresh.kyant.saturation, 0f)
+        assertEquals(0.4f, fresh.kyant.surface, 0f)
+        // QWEA0's README and LiquidGlassView.
+        assertEquals(QweaMaterial.REGULAR, fresh.qwea.material)
+        assertEquals(0.0625f, fresh.qwea.blurAmount, 0f)
+        assertEquals(1.4f, fresh.qwea.saturation, 0f)
+        assertEquals(24f, fresh.qwea.bevelWidth, 0f)
+        assertEquals(12f, fresh.qwea.refractionHeight, 0f)
+        assertEquals(0.12f, fresh.qwea.dispersion, 0f)
+
+        val set = fresh.copy(
+            liquidStyle = LiquidStyle.QWEA,
+            kyant = fresh.kyant.copy(blur = 12f, chromaticAberration = true),
+            qwea = fresh.qwea.copy(material = QweaMaterial.CLEAR, bevelWidth = 40f, shadow = true),
+        )
+        val read = SkinSettings.fromJson(set.toJson())
+        assertEquals(LiquidStyle.QWEA, read.liquidStyle)
+        assertEquals(set.kyant, read.kyant)
+        assertEquals(set.qwea, read.qwea)
+        // Saved before there were recipes: this app's own, at the projects' numbers.
+        val old = SkinSettings.fromJson(JSONObject(set.toJson()).apply {
+            remove("liquidStyle"); remove("kyant"); remove("qwea")
+        }.toString())
+        assertEquals(LiquidStyle.NOTESIS, old.liquidStyle)
+        assertEquals(KyantGlass(), old.kyant)
+        assertEquals(QweaGlass(), old.qwea)
+        // Out of range on disk comes back in range.
+        val wild = SkinSettings.fromJson(JSONObject(set.toJson()).apply {
+            put("kyant", JSONObject().put("blur", 900.0)); put("liquidStyle", "NOPE")
+        }.toString())
+        assertEquals(KyantGlass.BLUR_RANGE.endInclusive, wild.kyant.blur, 0f)
+        assertEquals(LiquidStyle.NOTESIS, wild.liquidStyle)
+        // Controls keep this app's own glass whatever the recipe.
+        assertEquals(LiquidStyle.NOTESIS, set.controlOptics().liquidStyle)
+    }
+
+    @Test fun `five looks to pick from`() {
+        assertEquals(5, Look.all.size)
+        assertEquals(listOf("Material", "Glassmorphism", "Liquid glass", "Liquid glass · Kyant0", "Liquid glass · QWEA0"),
+            Look.all.map { it.label })
+    }
 }

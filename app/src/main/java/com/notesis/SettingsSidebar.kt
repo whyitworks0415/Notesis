@@ -608,9 +608,12 @@ internal fun TouchGestureSettings(gestures: CanvasGestures, onGestures: (CanvasG
         SettingsChoices("Two-finger double tap", taps, gestures.twoFingerTap) {
             onGestures(gestures.copy(twoFingerTap = it))
         }
-        SettingsToggle("One-finger double tap zooms", gestures.doubleTapZoom,
-            { onGestures(gestures.copy(doubleTapZoom = it)) },
-            hint = "In, or back out to the page width")
+        SettingsChoices("One-finger double tap", listOf(
+            EDGE_HIDE_CHROME to "Hide toolbar", DOUBLE_TAP_ZOOM to "Zoom", EDGE_UNDO to "Undo", EDGE_REDO to "Redo",
+            EDGE_PAGES to "Pages panel", EDGE_NOTHING to "Nothing",
+        ), gestures.oneFingerDoubleTap) { onGestures(gestures.copy(oneFingerDoubleTap = it)) }
+        SettingsNote("Anywhere on the page. Hide toolbar puts the bar and the panels over the note away upwards; " +
+            "double-tap again, or pull the tab at the top down, to bring them back. Zoom goes in, or back out to the page width.")
         SettingsToggle("Lock zoom", gestures.zoomLocked, { onGestures(gestures.copy(zoomLocked = it)) },
             hint = "Pinching moves the page but never changes its zoom")
     }

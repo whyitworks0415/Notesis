@@ -106,6 +106,8 @@ const val EDGE_REDO = 3
 const val EDGE_NEXT_PAGE = 4
 const val EDGE_PREVIOUS_PAGE = 5
 const val EDGE_PAGES = 6
+/** A one-finger double tap's own choice besides the edge actions: zoom in, or back to the page width. */
+const val DOUBLE_TAP_ZOOM = 7
 const val PEN_BUTTON_ERASE = 0
 const val PEN_BUTTON_LASER = 1
 const val PEN_BUTTON_LASSO = 2
@@ -135,7 +137,8 @@ data class CanvasGestures(
     val oneFinger: Int = FINGER_SCROLL,
     val twoFingers: Int = TWO_ZOOM_PAN,
     val zoomLocked: Boolean = false,
-    val doubleTapZoom: Boolean = false,
+    /** What a one-finger double tap anywhere on the page does: an EDGE_* action or [DOUBLE_TAP_ZOOM]. */
+    val oneFingerDoubleTap: Int = EDGE_HIDE_CHROME,
     val twoFingerTap: Int = TAP_UNDO,
     val threeFingerTap: Int = TAP_REDO,
     /** Taps on the right edge of the page, one finger: what one, two and three of them do. */
@@ -204,7 +207,7 @@ fun InkCanvasView.applyGestures(gestures: CanvasGestures) {
     oneFinger = gestures.oneFinger
     twoFingers = gestures.twoFingers
     zoomLocked = gestures.zoomLocked
-    doubleTapZoom = gestures.doubleTapZoom
+    oneFingerDoubleTap = gestures.oneFingerDoubleTap
     twoFingerTap = gestures.twoFingerTap
     threeFingerTap = gestures.threeFingerTap
     edgeTapActions = IntArray(3) { gestures.edgeTaps.getOrElse(it) { EDGE_NOTHING } }
@@ -453,7 +456,9 @@ class PenStore(context: Context) {
             oneFinger = prefs.getInt("oneFinger", FINGER_SCROLL),
             twoFingers = prefs.getInt("twoFingers", TWO_ZOOM_PAN),
             zoomLocked = prefs.getBoolean("zoomLocked", false),
-            doubleTapZoom = prefs.getBoolean("doubleTapZoom", false),
+            // Before the choice there was only a switch for zooming; off, the tap did nothing.
+            oneFingerDoubleTap = prefs.getInt("oneFingerDoubleTap",
+                if (prefs.getBoolean("doubleTapZoom", false)) DOUBLE_TAP_ZOOM else EDGE_HIDE_CHROME),
             twoFingerTap = prefs.getInt("twoFingerTap", TAP_UNDO),
             threeFingerTap = prefs.getInt("threeFingerTap", TAP_REDO),
             edgeTaps = List(3) { prefs.getInt("edgeTap${it + 1}", DEFAULT_EDGE_TAPS[it]) },
@@ -489,7 +494,7 @@ class PenStore(context: Context) {
             .putInt("oneFinger", value.oneFinger)
             .putInt("twoFingers", value.twoFingers)
             .putBoolean("zoomLocked", value.zoomLocked)
-            .putBoolean("doubleTapZoom", value.doubleTapZoom)
+            .putInt("oneFingerDoubleTap", value.oneFingerDoubleTap)
             .putInt("twoFingerTap", value.twoFingerTap)
             .putInt("threeFingerTap", value.threeFingerTap)
             .putInt("edgeTap1", value.edgeTaps.getOrElse(0) { EDGE_NOTHING })

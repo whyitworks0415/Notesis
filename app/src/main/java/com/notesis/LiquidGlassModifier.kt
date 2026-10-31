@@ -124,8 +124,11 @@ fun Modifier.liquidGlass(
     drawBorder: Boolean = true,
     useSpotiStyle: Boolean = true,
     surfaceOpacity: Float? = null,
+    /** A pane with text on it rather than a bar or a button; the other recipes in [LiquidStyle] tell them apart. */
+    panel: Boolean = false,
 ): Modifier {
-    val spoti = useSpotiStyle && LocalSkin.current == Skin.SPOTIGLASS
+    val skin = LocalSkin.current
+    val spoti = useSpotiStyle && skin == Skin.SPOTIGLASS
     if (spoti) {
         val circle = shape == androidx.compose.foundation.shape.CircleShape
         val square = shape == RoundedCornerShape(0.dp)
@@ -171,6 +174,11 @@ fun Modifier.liquidGlass(
     val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
 
     val shadows = settings.shadows
+    if (enabled && amount > 0.001f && effectsAllowed && backdrop != null &&
+        skin == Skin.SPOTIGLASS && settings.liquidStyle != LiquidStyle.NOTESIS) {
+        return styledLiquidGlass(settings.liquidStyle, settings, glassShape, backdrop, panel, dark,
+            shadows = shadows && shadowElevation > 0.dp, rim = drawBorder, amount = amount)
+    }
     if (enabled && amount > 0.001f && effectsAllowed && backdrop != null) {
         var result = this
             // Cast round the glass, never under it: a shadow beneath clear glass
@@ -428,6 +436,7 @@ internal fun Modifier.liquidGlassPane(shape: Shape, panel: Boolean = false, shad
         shadowElevation = if (shadow) liquidPaneElevation(panel) else 0.dp,
         useSpotiStyle = false,
         surfaceOpacity = opacity,
+        panel = panel,
     )
 }
 

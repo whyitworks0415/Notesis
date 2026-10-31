@@ -10,7 +10,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
@@ -41,45 +44,59 @@ import androidx.compose.ui.unit.dp
  */
 @Composable
 internal fun SkinChoiceList(current: Skin, onSkin: (Skin) -> Unit, modifier: Modifier = Modifier) {
+    val pick = rememberLookPick(onSkin)
+    val now = Look(current, LocalSkinSettings.current.liquidStyle)
     Column(modifier, verticalArrangement = Arrangement.spacedBy(Ui.Space.xs)) {
-        for (skin in Skin.entries) {
-            val chosen = skin == current
+        for (look in Look.all) {
+            val chosen = look.skin == now.skin && (look.skin != Skin.SPOTIGLASS || look.style == now.style)
             Row(
                 Modifier
                     .fillMaxWidth()
                     .clip(choiceShape())
                     .background(if (chosen) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f) else Color.Transparent)
-                    .clickable(role = Role.RadioButton) { onSkin(skin) }
+                    .clickable(role = Role.RadioButton) { pick(look) }
                     .semantics { selected = chosen }
                     .padding(Ui.Space.s),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(Ui.Space.m),
             ) {
-                SkinPreview(skin, Modifier.size(88.dp, 56.dp))
+                SkinPreview(look.skin, Modifier.size(88.dp, 56.dp), look.style)
                 Column(Modifier.weight(1f)) {
-                    Text(skin.label, style = MaterialTheme.typography.titleMedium)
-                    Text(skin.blurb, style = MaterialTheme.typography.bodySmall,
+                    Text(look.label, style = MaterialTheme.typography.titleMedium)
+                    Text(look.blurb, style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                RadioButton(selected = chosen, onClick = { onSkin(skin) })
+                RadioButton(selected = chosen, onClick = { pick(look) })
             }
         }
     }
 }
 
+/** Picking a look: the skin, and for Liquid glass its recipe too. */
+@Composable
+private fun rememberLookPick(onSkin: (Skin) -> Unit): (Look) -> Unit {
+    val setStyle = LocalLiquidStyleChange.current
+    return { look ->
+        if (look.skin == Skin.SPOTIGLASS) setStyle(look.style)
+        onSkin(look.skin)
+    }
+}
+
 /**
- * The same choice in a third of the height, for a screen that has a preview
- * above it already: the three previews side by side, each named under it.
+ * The same choice in less height, for a screen that has a preview above it
+ * already: the five previews in a row that scrolls, each named under it.
  */
 @Composable
 internal fun SkinChoiceTiles(current: Skin, onSkin: (Skin) -> Unit, modifier: Modifier = Modifier) {
-    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
-        for (skin in Skin.entries) {
-            val chosen = skin == current
+    val pick = rememberLookPick(onSkin)
+    val now = Look(current, LocalSkinSettings.current.liquidStyle)
+    Row(modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+        for (look in Look.all) {
+            val chosen = look.skin == now.skin && (look.skin != Skin.SPOTIGLASS || look.style == now.style)
             val shape = choiceShape()
             Column(
                 Modifier
-                    .weight(1f)
+                    .width(112.dp)
                     .clip(shape)
                     .background(if (chosen) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f) else Color.Transparent)
                     .border(
@@ -87,15 +104,15 @@ internal fun SkinChoiceTiles(current: Skin, onSkin: (Skin) -> Unit, modifier: Mo
                         if (chosen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
                         shape,
                     )
-                    .clickable(role = Role.RadioButton) { onSkin(skin) }
+                    .clickable(role = Role.RadioButton) { pick(look) }
                     .semantics { selected = chosen }
                     .heightIn(min = Ui.Size.touch)
                     .padding(Ui.Space.s),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(Ui.Space.xs),
             ) {
-                SkinPreview(skin, Modifier.fillMaxWidth().heightIn(min = 40.dp).size(width = 88.dp, height = 44.dp))
-                Text(skin.label, style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center, maxLines = 1)
+                SkinPreview(look.skin, Modifier.fillMaxWidth().heightIn(min = 40.dp).size(width = 88.dp, height = 44.dp), look.style)
+                Text(look.label, style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center, maxLines = 2)
             }
         }
     }
@@ -133,9 +150,9 @@ internal fun SkinPickerPanel(current: Skin, onSkin: (Skin) -> Unit, onDismiss: (
 @Composable
 private fun choiceShape() = RoundedCornerShape(nestedCorner(Ui.Corner.control))
 
-/** A little bar in [skin]'s material over a scrap of colour, so the three can be told apart at a glance. */
+/** A little bar in [skin]'s material over a scrap of colour, so the looks can be told apart at a glance. */
 @Composable
-internal fun SkinPreview(skin: Skin, modifier: Modifier) {
+internal fun SkinPreview(skin: Skin, modifier: Modifier, style: LiquidStyle = LiquidStyle.NOTESIS) {
     val accent = MaterialTheme.colorScheme.primary
     val surface = MaterialTheme.colorScheme.surfaceContainerHigh
     val onSurface = MaterialTheme.colorScheme.onSurface
@@ -153,14 +170,29 @@ internal fun SkinPreview(skin: Skin, modifier: Modifier) {
                 drawRoundRect(Color.White.copy(alpha = 0.55f), bar.topLeft, bar.size, radius)
                 drawRoundRect(Color.White.copy(alpha = 0.9f), bar.topLeft, bar.size, radius, style = Stroke(1.dp.toPx()))
             }
-            Skin.SPOTIGLASS -> {
-                drawRoundRect(Color.White.copy(alpha = 0.22f), bar.topLeft, bar.size, radius)
-                drawRoundRect(
-                    Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.75f), Color.White.copy(alpha = 0f)),
-                        startY = bar.top, endY = bar.center.y),
-                    bar.topLeft, bar.size, radius,
-                )
-                drawRoundRect(Color.White, bar.topLeft, bar.size, radius, style = Stroke(1.2.dp.toPx()))
+            Skin.SPOTIGLASS -> when (style) {
+                // Kyant0's: a light surface at 40%, colour lifted, a thin lit rim.
+                LiquidStyle.KYANT -> {
+                    drawRoundRect(Color(0xFFFAFAFA).copy(alpha = 0.4f), bar.topLeft, bar.size, radius)
+                    drawRoundRect(Color.White, bar.topLeft, bar.size, radius, style = Stroke(0.6.dp.toPx()))
+                }
+                // QWEA0's: tinted grey over a light page, lit from the top left.
+                LiquidStyle.QWEA -> {
+                    drawRoundRect(Color.Black.copy(alpha = 0.22f), bar.topLeft, bar.size, radius)
+                    drawRoundRect(
+                        Brush.linearGradient(listOf(Color.White, Color.White.copy(alpha = 0.1f)), start = bar.topLeft, end = bar.bottomRight),
+                        bar.topLeft, bar.size, radius, style = Stroke(1.5.dp.toPx()),
+                    )
+                }
+                LiquidStyle.NOTESIS -> {
+                    drawRoundRect(Color.White.copy(alpha = 0.22f), bar.topLeft, bar.size, radius)
+                    drawRoundRect(
+                        Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.75f), Color.White.copy(alpha = 0f)),
+                            startY = bar.top, endY = bar.center.y),
+                        bar.topLeft, bar.size, radius,
+                    )
+                    drawRoundRect(Color.White, bar.topLeft, bar.size, radius, style = Stroke(1.2.dp.toPx()))
+                }
             }
         }
         // The tools, the first one picked.

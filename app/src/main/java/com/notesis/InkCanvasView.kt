@@ -1163,7 +1163,8 @@ class InkCanvasView @JvmOverloads constructor(
     /** Pinching moves the page but never changes its zoom. */
     var zoomLocked: Boolean = false
     /** A one-finger double tap zooms in, or back out to the page width. */
-    var doubleTapZoom: Boolean = false
+    /** A one-finger double tap: an EDGE_* action handed to [onEdgeAction], or [DOUBLE_TAP_ZOOM]. */
+    var oneFingerDoubleTap: Int = EDGE_HIDE_CHROME
     /** What a two- and a three-finger double tap do: [TAP_NONE], [TAP_UNDO], [TAP_REDO]. */
     var twoFingerTap: Int = TAP_UNDO
     var threeFingerTap: Int = TAP_REDO
@@ -5485,14 +5486,16 @@ class InkCanvasView @JvmOverloads constructor(
             return
         }
         if (gestureMaxPointers == 1 && edgeTap(lastFocusX)) return
-        if (gestureMaxPointers == 1 && !doubleTapZoom) return
+        if (gestureMaxPointers == 1 && oneFingerDoubleTap == EDGE_NOTHING) return
         val now = System.currentTimeMillis()
         val sameSpot = hypot(lastFocusX - lastTapX, lastFocusY - lastTapY) < DOUBLE_TAP_SLOP_PX
         if (lastTapFingers == gestureMaxPointers && now - lastTapTime < DOUBLE_TAP_MS && sameSpot) {
             when (gestureMaxPointers) {
-                1 -> if (!zoomLocked) {
+                1 -> if (oneFingerDoubleTap != DOUBLE_TAP_ZOOM) {
+                    onEdgeAction?.invoke(oneFingerDoubleTap)
+                } else if (!zoomLocked) {
                     if (fitScale > 0f && currentScale() > fitScale * 1.2f) fitWidth()
-                    else zoomBy(DOUBLE_TAP_ZOOM, lastFocusX, lastFocusY)
+                    else zoomBy(DOUBLE_TAP_ZOOM_FACTOR, lastFocusX, lastFocusY)
                 }
                 2 -> runTapAction(twoFingerTap)
                 3 -> if (threeFingerGestures) runTapAction(threeFingerTap)
@@ -10233,7 +10236,7 @@ class InkCanvasView @JvmOverloads constructor(
         const val VERTEX_HANDLE_PX = 9f
         const val MAX_EDITABLE_INPUTS = SHAPE_EDITABLE_INPUTS
         const val EDGE_EXCLUSION_DP = 32f
-        const val DOUBLE_TAP_ZOOM = 2f
+        const val DOUBLE_TAP_ZOOM_FACTOR = 2f
         const val STRIKE_HEIGHT = 0.08f
         // Page units are A4 at 150dpi, so a real millimetre of page is this many of them.
         const val A4_MM_WIDTH = 210f

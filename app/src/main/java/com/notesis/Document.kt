@@ -841,6 +841,18 @@ class NoteStore(context: Context) {
         }
     }
 
+    /** Gives a note a new name. False when the name is blank or the note's meta can't be written. */
+    fun renameNote(id: String, title: String): Boolean {
+        val clean = title.trim()
+        if (clean.isEmpty()) return false
+        val file = File(root, "$id/meta.json")
+        return runCatching {
+            val json = JSONObject(file.readText())
+            json.put("title", clean)
+            atomicText(file, json.toString())
+        }.isSuccess
+    }
+
     fun list(): List<NoteMeta> {
         purgeTrashOnce()
         return root.listFiles { f -> f.isDirectory && !File(f, TRASHED).isFile }

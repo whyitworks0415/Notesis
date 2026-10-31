@@ -632,6 +632,11 @@ private fun PanelsGroup(skin: Skin, settings: SkinSettings, onChange: (SkinSetti
         SkinSettings.CORNER_RANGE, step = 1f, default = defaults.spotiglassCorner,
         note = "Shared by every style.",
     ) { onChange(settings.copy(spotiglassCorner = it)) }
+    val ownRecipe = skin == Skin.SPOTIGLASS && settings.liquidStyle != LiquidStyle.NOTESIS
+    if (ownRecipe) {
+        SettingsNote("${settings.liquidStyle.label} sets its blur, surface and rim in Glass, with the numbers its project uses.")
+        return
+    }
     AppearanceSlider("Frost", "%.0f%%".format(settings.frost * 100), settings.frost, 0f..1f,
         step = 0.01f, default = defaults.frost,
         note = "How much the page behind is blurred, and how much colour comes through the blur.",
@@ -659,6 +664,11 @@ private fun GlassGroup(skin: Skin, settings: SkinSettings, onChange: (SkinSettin
         }
         return
     }
+    when (settings.liquidStyle) {
+        LiquidStyle.KYANT -> { KyantGlassControls(settings.kyant) { onChange(settings.copy(kyant = it)) }; return }
+        LiquidStyle.QWEA -> { QweaGlassControls(settings.qwea) { onChange(settings.copy(qwea = it)) }; return }
+        LiquidStyle.NOTESIS -> Unit
+    }
     val defaults = SkinSettings()
     SettingsSectionHeader("Lens")
     AppearanceSlider("Depth", "%.0f dp".format(settings.depth), settings.depth, SkinSettings.DEPTH_RANGE,
@@ -682,6 +692,88 @@ private fun GlassGroup(skin: Skin, settings: SkinSettings, onChange: (SkinSettin
         ) { onChange(settings.copy(spotiglassResponse = it)) }
     }
     SettingsNote("Sliders, switches and segmented controls keep their own glass, whatever is set here.")
+}
+
+/** Kyant0/AndroidLiquidGlass's numbers, under the names its effects take. */
+@Composable
+private fun KyantGlassControls(k: KyantGlass, onChange: (KyantGlass) -> Unit) {
+    val d = KyantGlass()
+    SettingsNote("From Kyant0/AndroidLiquidGlass's catalog: bars and buttons as its bottom tabs, " +
+        "panels, menus and dialogs as its dialog - twice the blur and bending, a brighter surface.")
+    SettingsSectionHeader("Lens")
+    AppearanceSlider("Refraction height", "%.0f dp".format(k.refractionHeight), k.refractionHeight,
+        KyantGlass.HEIGHT_RANGE, step = 1f, default = d.refractionHeight,
+        note = "How far in from the edge the page is bent. Buttons take half.",
+    ) { onChange(k.copy(refractionHeight = it)) }
+    AppearanceSlider("Refraction amount", "%.0f dp".format(k.refractionAmount), k.refractionAmount,
+        KyantGlass.AMOUNT_RANGE, step = 1f, default = d.refractionAmount,
+        note = "How far the page is bent. Panels take twice this.",
+    ) { onChange(k.copy(refractionAmount = it)) }
+    SettingsToggle("Depth effect", k.depthEffect, { onChange(k.copy(depthEffect = it)) },
+        hint = "The lens bends towards the corners too, on bars and buttons. Panels always have it.")
+    SettingsToggle("Chromatic aberration", k.chromaticAberration, { onChange(k.copy(chromaticAberration = it)) },
+        hint = "The colours split a little at the edge. Off in the catalog.")
+    SettingsSectionHeader("Material")
+    AppearanceSlider("Blur radius", "%.0f dp".format(k.blur), k.blur, KyantGlass.BLUR_RANGE, step = 1f, default = d.blur,
+        note = "Bars. Panels take twice this in the light, buttons a quarter.",
+    ) { onChange(k.copy(blur = it)) }
+    AppearanceSlider("Vibrancy", "%.2f×".format(k.saturation), k.saturation, KyantGlass.SATURATION_RANGE,
+        step = 0.05f, default = d.saturation, note = "Saturation of the page through the glass.",
+    ) { onChange(k.copy(saturation = it)) }
+    AppearanceSlider("Surface", "%.0f%%".format(k.surface * 100), k.surface, 0f..1f, step = 0.01f, default = d.surface,
+        note = "The #FAFAFA coat over the glass (#121212 in the dark). Panels add 20% in the light.",
+    ) { onChange(k.copy(surface = it)) }
+    AppearanceSlider("Highlight", "%.0f%%".format(k.highlight * 100), k.highlight, 0f..1f, step = 0.01f, default = d.highlight,
+        note = "The lit rim.",
+    ) { onChange(k.copy(highlight = it)) }
+    OutlinedButton(onClick = { onChange(d) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to the catalog's values") }
+}
+
+/** QWEA0/Liquid-Glass-Android's numbers, under the names its view takes. */
+@Composable
+private fun QweaGlassControls(q: QweaGlass, onChange: (QweaGlass) -> Unit) {
+    val d = QweaGlass()
+    SettingsNote("From QWEA0/Liquid-Glass-Android: the lens of its README, its view's blur, saturation and rim, " +
+        "and its dialog's blur on panels. Small panes narrow the bevel, as its adaptive lens scale does.")
+    SettingsSectionHeader("Material")
+    LiquidSegmentedControl(
+        segments = QweaMaterial.entries.map { it.label },
+        selectedIndex = q.material.ordinal,
+        onSelected = { onChange(q.copy(material = QweaMaterial.entries[it])) },
+        modifier = Modifier.fillMaxWidth(),
+        useLiquidGlass = false,
+    )
+    SettingsNote(if (q.material == QweaMaterial.REGULAR) "Regular: full blur and a tint that follows the page."
+        else "Clear: a third of the blur and a fixed dimming layer, for glass over pictures.")
+    SettingsSectionHeader("Lens")
+    AppearanceSlider("Bevel width", "%.0f dp".format(q.bevelWidth), q.bevelWidth, QweaGlass.BEVEL_RANGE,
+        step = 1f, default = d.bevelWidth, note = "The band round the edge where the light is bent.",
+    ) { onChange(q.copy(bevelWidth = it)) }
+    AppearanceSlider("Refraction height", "%.0f dp".format(q.refractionHeight), q.refractionHeight,
+        QweaGlass.REFRACTION_RANGE, step = 1f, default = d.refractionHeight,
+        note = "How far the page is pulled in at the very edge.",
+    ) { onChange(q.copy(refractionHeight = it)) }
+    AppearanceSlider("Dispersion", "%.2f".format(q.dispersion), q.dispersion, 0f..1f, step = 0.01f, default = d.dispersion,
+        note = "The colours split at the edge. Here it is on or off; 0 turns it off.",
+    ) { onChange(q.copy(dispersion = it)) }
+    SettingsSectionHeader("Blur and colour")
+    AppearanceSlider("Blur amount", "%.3f".format(q.blurAmount), q.blurAmount, 0f..1f, step = 0.005f, default = d.blurAmount,
+        note = "Bars and buttons. The blur is 4 + 32 × this, in pixels.",
+    ) { onChange(q.copy(blurAmount = it)) }
+    AppearanceSlider("Panel blur amount", "%.2f".format(q.panelBlurAmount), q.panelBlurAmount, 0f..1f, step = 0.01f,
+        default = d.panelBlurAmount, note = "Panels, menus and dialogs, so their text has something under it.",
+    ) { onChange(q.copy(panelBlurAmount = it)) }
+    AppearanceSlider("Saturation", "%.0f%%".format(q.saturation * 100), q.saturation, QweaGlass.SATURATION_RANGE,
+        step = 0.05f, default = d.saturation,
+    ) { onChange(q.copy(saturation = it)) }
+    SettingsToggle("Adaptive tint", q.adaptiveTint, { onChange(q.copy(adaptiveTint = it)) },
+        hint = "Regular only: a grey tint over a light page, a light one over a dark page. Off, a faint white.")
+    AppearanceSlider("Edge highlight", "%.0f%%".format(q.highlight * 100), q.highlight, 0f..1f, step = 0.01f,
+        default = d.highlight, note = "The rim lit from the top left. Clear lights it a fifth brighter.",
+    ) { onChange(q.copy(highlight = it)) }
+    SettingsToggle("Shadow", q.shadow, { onChange(q.copy(shadow = it)) },
+        hint = "Off in LiquidGlassView. Shadows in Colors › Readability must be on as well.")
+    OutlinedButton(onClick = { onChange(d) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to the project's values") }
 }
 
 @Composable

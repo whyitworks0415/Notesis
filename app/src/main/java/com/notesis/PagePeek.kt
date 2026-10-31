@@ -85,7 +85,7 @@ private fun Modifier.hoverHoldInput(holdMs: Long, onHold: () -> Unit, onLeave: (
     }
 
 /** How long the pen rests over a page in the panel before it is shown large. */
-internal const val PAGE_PEEK_HOLD_MS = 2000L
+internal const val PAGE_PEEK_HOLD_MS = 800L
 
 /**
  * Page [number] large, beside the card at [card] (window coordinates) it was
