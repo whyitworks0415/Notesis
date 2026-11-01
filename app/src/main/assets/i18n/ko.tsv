@@ -518,9 +518,6 @@ Couldn't find the linked note	링크된 노트를 찾지 못했습니다
 Back to notes	노트로 돌아가기
 Undock bar	툴바 고정 풀기
 Dock bar	툴바 고정
-Reset bar position	툴바 위치 초기화
-A docked bar stays put	고정된 툴바는 움직이지 않습니다
-Already in place	이미 제자리에 있습니다
 Rotate · {0}°	회전 · {0}°
 Zoom · {0}%	확대 · {0}%
 Pages & search	페이지 · 검색
@@ -1381,3 +1378,13 @@ Zoom · now {0}%	확대 · 지금 {0}%
 Remove {0}%	{0}% 지우기
 Custom ({0}–{1}%)	직접 입력 ({0}–{1}%)
 Save value	값 저장
+{0} selected	{0}개 선택됨
+Delete {0}?	{0}을(를) 삭제할까요?
+Delete {0} and {1}?	{0}과(와) {1}을(를) 삭제할까요?
+Selected notes go to Trash.	선택한 노트는 휴지통으로 옮겨집니다.
+{0} in the folders: move them to Trash with the folders, or keep them in the library.	폴더 안에 {0}이(가) 있습니다. 폴더와 함께 휴지통으로 옮기거나, 보관함에 남길 수 있습니다.
+You can restore from Trash for {0} days.	휴지통에서 {0}일 동안 되돌릴 수 있습니다.
+Smoothness	부드러움
+Highest refresh rate	최고 주사율
+Asks the screen for its fastest rate, such as 120 Hz, while the app is open. Some phones keep apps at 60 Hz unless they ask. Not while battery saver makes the app save power.	앱이 열려 있는 동안 화면에 가장 빠른 주사율(예: 120Hz)을 요청합니다. 일부 휴대폰은 앱이 요청하지 않으면 60Hz로 고정합니다. 절전 모드로 앱이 전력을 아낄 때는 요청하지 않습니다.
+The system picks the rate, which on some phones is 60 Hz for this app.	시스템이 주사율을 정합니다. 일부 휴대폰에서는 이 앱이 60Hz로 실행됩니다.

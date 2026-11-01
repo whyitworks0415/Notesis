@@ -189,6 +189,11 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.Dp
@@ -281,6 +286,10 @@ class MainActivity : ComponentActivity() {
             var skin by remember { mutableStateOf(prefs.skin) }
             var look by remember { mutableStateOf(lookStore.load()) }
             var settingsOpen by remember { mutableStateOf(false) }
+            // The fastest refresh rate the panel has, unless turned off or saving power.
+            LaunchedEffect(InteractionGovernor.highRefresh, InteractionGovernor.observedPowerSave) {
+                DisplayRate.apply(this@MainActivity)
+            }
             // The whole scheme is built from the accent rather than painted over
             // Material's baseline, so the purple that used to survive in every
             // container, outline and tint goes when the accent does. Kept until
@@ -306,10 +315,14 @@ class MainActivity : ComponentActivity() {
             ) {
             ProvideSkin(skin, look) {
             // A look picker that offers Liquid glass's recipes sets the recipe through this.
+            // The system's largest font sizes, kept to one the bars, buttons
+            // and panels have room for: past it their words were cut off
+            // rather than the controls growing, most of all on a phone.
+            val systemDensity = LocalDensity.current
             CompositionLocalProvider(LocalLiquidStyleChange provides { style ->
                 look = look.copy(liquidStyle = style)
                 lookStore.save(look)
-            }) {
+            }, LocalDensity provides remember(systemDensity) { cappedFontScale(systemDensity) }) {
                 var openNote by remember { mutableStateOf<NoteMeta?>(null) }
                 // Lives here rather than in the list, which leaves composition
                 // while a note is open and used to come back at the top level.
@@ -528,6 +541,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         StudyClock.foreground = true
         StudyClock.touched()
+        DisplayRate.apply(this)
     }
 
     override fun onPause() {
@@ -619,6 +633,19 @@ private fun NoteListScreen(
     var pendingDelete by remember { mutableStateOf<NoteMeta?>(null) }
     val selectedIds = remember { mutableStateListOf<String>() }
     var selectionMode by remember { mutableStateOf(false) }
+    // Folders can be selected beside notes, by their names.
+    val selectedFolders = remember { mutableStateListOf<String>() }
+    val selectedCount = selectedIds.size + selectedFolders.size
+    fun clearSelection() {
+        selectedIds.clear(); selectedFolders.clear(); selectionMode = false
+    }
+    fun selectionKeys(): Set<String> = selectedFolders.map(::folderKey).toSet() + selectedIds
+    fun setSelection(keys: Set<String>) {
+        val names = keys.filter(::isFolderKey).map(::folderOfKey)
+        val ids = keys.filterNot(::isFolderKey)
+        if (selectedFolders.toSet() != names.toSet()) { selectedFolders.clear(); selectedFolders.addAll(names) }
+        if (selectedIds.toSet() != ids.toSet()) { selectedIds.clear(); selectedIds.addAll(ids) }
+    }
     var bulkDelete by remember { mutableStateOf(false) }
     var bulkFolder by remember { mutableStateOf(false) }
     var naming by remember { mutableStateOf(false) }
@@ -764,6 +791,8 @@ private fun NoteListScreen(
     LaunchedEffect(folder) { onFolder(folder) }
     // Back leaves the folder before it leaves the app.
     BackHandler(enabled = folder.isNotBlank()) { folder = "" }
+    // And selecting ends before either.
+    BackHandler(enabled = selectionMode) { clearSelection() }
     var filing by remember { mutableStateOf<NoteMeta?>(null) }
     var creatingFolder by remember { mutableStateOf(false) }
     var renamingFolder by remember { mutableStateOf(false) }
@@ -771,6 +800,7 @@ private fun NoteListScreen(
     var menuFolder by remember { mutableStateOf<String?>(null) }
     var renamingNote by remember { mutableStateOf<NoteMeta?>(null) }
     val folders = remember(revision) { store.folders() }
+    val folderCounts = remember(notes) { notes.groupingBy { it.folder }.eachCount() }
     // Favourites first, then the chosen order within each group.
     val shown = (results ?: if (tagFilter != null) notes.filter { tagFilter in it.tags }
         else notes.filter { it.folder == folder }).sortedWith(
@@ -1043,6 +1073,42 @@ private fun NoteListScreen(
     )
     val liquidBackdrop = if (currentSkin.isRefractive) rememberLiquidGlassBackdrop() else null
     val searchFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    val gridState = rememberLazyGridState()
+    val libraryTiles = remember { LibraryTiles() }
+    var edgeSpeed by remember { mutableFloatStateOf(0f) }
+    var gridHeight by remember { mutableIntStateOf(0) }
+    var titleHeight by remember { mutableIntStateOf(1) }
+    val haptics = LocalHapticFeedback.current
+    val density = LocalDensity.current
+    val narrowLibrary = LocalConfiguration.current.screenWidthDp < FULL_BAR_MIN_WIDTH_DP
+    val libraryTitle = when {
+        tagFilter != null -> "#$tagFilter"
+        folder.isNotBlank() -> folder
+        else -> "Notes"
+    }
+    // 0 with the big title in full view, 1 once it has gone under the bar.
+    val collapse by remember {
+        derivedStateOf {
+            if (gridState.firstVisibleItemIndex > 0) 1f
+            else (gridState.firstVisibleItemScrollOffset / titleHeight.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
+        }
+    }
+    val inlineTitle by remember { derivedStateOf { ((collapse - 0.55f) / 0.45f).coerceIn(0f, 1f) } }
+    val titleGone by remember { derivedStateOf { collapse > 0.9f } }
+    // A finger held at an edge while selecting scrolls the notes along under it.
+    LaunchedEffect(edgeSpeed != 0f) {
+        while (edgeSpeed != 0f) {
+            gridState.scrollBy(edgeSpeed)
+            withFrameNanos { }
+            libraryTiles.reselect?.invoke()
+        }
+    }
+    fun focusSearch() {
+        scope.launch {
+            gridState.animateScrollToItem(0)
+            runCatching { searchFocus.requestFocus() }
+        }
+    }
     CompositionLocalProvider(
         LocalBackdrop provides backdrop,
         LocalLiquidGlassBackdrop provides if (currentSkin.isRefractive) liquidBackdrop else null,
@@ -1058,143 +1124,142 @@ private fun NoteListScreen(
             }
             when (native.keyCode) {
                 android.view.KeyEvent.KEYCODE_N -> { if (native.isShiftPressed) creatingFolder = true else naming = true; true }
-                android.view.KeyEvent.KEYCODE_F -> { runCatching { searchFocus.requestFocus() }; true }
+                android.view.KeyEvent.KEYCODE_F -> { focusSearch(); true }
                 else -> false
             }
         },
         topBar = {
-            // Flush to the window edge, and the notes pass underneath it.
-            SkinSurface(flush = true) {
+            // Apple's large title: the bar starts clear, with the big title in
+            // the list under it; as the notes scroll up under the bar its
+            // material comes in and the title moves into it, small.
             var homeMore by remember { mutableStateOf(false) }
-            Column(Modifier.windowInsetsPadding(TopAppBarDefaults.windowInsets)) {
-            // One line for where you are and what you can do here; the search under it, as wide as it reads well.
-            Row(
-                Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(start = Ui.Space.xs, end = Ui.Space.xs),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                // Only inside a folder: at the top level there is nowhere
-                // to go back to, and an arrow that does nothing is a lie.
-                if (folder.isNotBlank()) {
-                    IconButton(onClick = { folder = "" }) {
-                        Icon(Reicons.ArrowBack, contentDescription = "All notes")
-                    }
-                } else Spacer(Modifier.width(Ui.Space.m))
-                Column(Modifier.weight(1f).semantics { heading() }) {
+            Box(Modifier.fillMaxWidth()) {
+                SkinSurface(flush = true, modifier = Modifier.matchParentSize().graphicsLayer { alpha = collapse }) {}
+                Row(
+                    Modifier.windowInsetsPadding(TopAppBarDefaults.windowInsets).fillMaxWidth()
+                        .heightIn(min = 56.dp).padding(horizontal = Ui.Space.xs),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    // Only inside a folder: at the top level there is nowhere
+                    // to go back to, and an arrow that does nothing is a lie.
+                    if (folder.isNotBlank() && !selectionMode) {
+                        IconButton(onClick = { folder = "" }) {
+                            Icon(Reicons.ArrowBack, contentDescription = "All notes")
+                        }
+                    } else Spacer(Modifier.width(Ui.Space.m))
                     Text(
-                        if (folder.isNotBlank()) folder else "Notes",
-                        style = MaterialTheme.typography.headlineSmall,
+                        if (selectionMode) "${selectedCount} selected" else libraryTitle,
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f).graphicsLayer { alpha = inlineTitle },
                     )
-                    Text(
-                        if (selectionMode) "${selectedIds.size} selected" else countNoun(shown.size, "note"),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                TextButton(onClick = {
-                    selectionMode = !selectionMode
-                    selectedIds.clear()
-                }) { Text(if (selectionMode) "Done" else "Select") }
-                Box {
-                    IconButton(onClick = { sortMenu = true }) {
-                        Icon(LibraryIcons.Sort, contentDescription = "Sort")
+                    // Once the field has gone up with the title, a way back to it.
+                    if (!selectionMode && titleGone) IconButton(onClick = { focusSearch() }) {
+                        Icon(Reicons.Search, contentDescription = "Search")
                     }
-                    DropdownMenu(sortMenu, onDismissRequest = { sortMenu = false }) {
-                        listOf(
-                            LIBRARY_SORT_MODIFIED to "Last modified",
-                            LIBRARY_SORT_TITLE to "Name",
-                            LIBRARY_SORT_PAGES to "Most pages",
-                        ).forEach { (mode, label) ->
-                            DropdownMenuItem(
-                                text = { Text(label) },
-                                leadingIcon = if (librarySort == mode) {
-                                    { Icon(Reicons.Check, contentDescription = null) }
-                                } else null,
-                                onClick = {
-                                    librarySort = mode
-                                    homeStore.librarySort = mode
-                                    sortMenu = false
-                                },
-                            )
-                        }
-                    }
-                }
-                IconButton(onClick = { creatingFolder = true }) {
-                    Icon(Reicons.Folder, contentDescription = "New folder")
-                }
-                ToolsMenuButton()
-                AppIconButton(
-                    onClick = { Onboarding.tutorialOpen = true },
-                    icon = AppIcons.tutorial,
-                    contentDescription = "Tutorial",
-                    modifier = Modifier.coachTarget(coachTargets, CoachTarget.TUTORIAL),
-                )
-                IconButton(onClick = onSettings, modifier = Modifier.coachTarget(coachTargets, CoachTarget.LOOK)) {
-                    Icon(Reicons.Tune, contentDescription = "Display settings")
-                }
-                // The rest, used now and then, in one menu: the trash, the
-                // library's picture, help, and the open folder's own options.
-                Box(Modifier.coachTarget(coachTargets, CoachTarget.HELP)) {
-                    IconButton(onClick = { homeMore = true }) {
-                        Icon(Reicons.MoreVert, contentDescription = "More")
-                    }
-                    DropdownMenu(homeMore, onDismissRequest = { homeMore = false }) {
-                        if (folder.isNotBlank()) {
-                            DropdownMenuItem(text = { Text("Rename folder") }, onClick = {
-                                homeMore = false; renamingFolder = true
-                            })
-                            DropdownMenuItem(text = { Text("Delete folder") }, onClick = {
-                                homeMore = false; deletingFolder = true
-                            })
-                            HorizontalDivider()
-                        }
-                        DropdownMenuItem(
-                            text = { Text("Trash") },
-                            leadingIcon = { Icon(Reicons.Delete, contentDescription = null) },
-                            onClick = { homeMore = false; showTrash = true },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Library background") },
-                            leadingIcon = { Icon(Reicons.Image, contentDescription = null) },
-                            onClick = { homeMore = false; showHomeBackground = true },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("About · Help") },
-                            leadingIcon = { Icon(Reicons.BugReport, contentDescription = null) },
-                            onClick = { homeMore = false; showHelp = true },
-                        )
-                    }
-                }
-            }
-            Box(Modifier.fillMaxWidth().padding(horizontal = Ui.Space.l).padding(bottom = Ui.Space.s),
-                contentAlignment = Alignment.Center) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    singleLine = true,
-                    shape = RoundedCornerShape(28.dp),
-                    placeholder = { Text("Search titles, PDFs and handwriting") },
-                    leadingIcon = { Icon(Reicons.Search, contentDescription = null) },
-                    trailingIcon = if (query.isNotEmpty()) {
-                        {
-                            IconButton(onClick = { query = "" }) {
-                                Icon(Reicons.Close, contentDescription = "Clear search")
+                    TextButton(onClick = {
+                        if (selectionMode) clearSelection() else selectionMode = true
+                    }) { Text(if (selectionMode) "Done" else "Select", maxLines = 1) }
+                    if (!selectionMode) {
+                        Box {
+                            IconButton(onClick = { sortMenu = true }) {
+                                Icon(LibraryIcons.Sort, contentDescription = "Sort")
+                            }
+                            DropdownMenu(sortMenu, onDismissRequest = { sortMenu = false }) {
+                                listOf(
+                                    LIBRARY_SORT_MODIFIED to "Last modified",
+                                    LIBRARY_SORT_TITLE to "Name",
+                                    LIBRARY_SORT_PAGES to "Most pages",
+                                ).forEach { (mode, label) ->
+                                    DropdownMenuItem(
+                                        text = { Text(label) },
+                                        leadingIcon = if (librarySort == mode) {
+                                            { Icon(Reicons.Check, contentDescription = null) }
+                                        } else null,
+                                        onClick = {
+                                            librarySort = mode
+                                            homeStore.librarySort = mode
+                                            sortMenu = false
+                                        },
+                                    )
+                                }
                             }
                         }
-                    } else null,
-                    modifier = Modifier
-                        .widthIn(max = 720.dp)
-                        .fillMaxWidth()
-                        .focusRequester(searchFocus)
-                        .coachTarget(coachTargets, CoachTarget.SEARCH),
-                )
-            }
-            }
+                        // A phone keeps the bar to what is used most; the rest is in ⋮.
+                        if (!narrowLibrary) {
+                            IconButton(onClick = { creatingFolder = true }) {
+                                Icon(Reicons.Folder, contentDescription = "New folder")
+                            }
+                            ToolsMenuButton()
+                            AppIconButton(
+                                onClick = { Onboarding.tutorialOpen = true },
+                                icon = AppIcons.tutorial,
+                                contentDescription = "Tutorial",
+                                modifier = Modifier.coachTarget(coachTargets, CoachTarget.TUTORIAL),
+                            )
+                        }
+                        IconButton(onClick = onSettings, modifier = Modifier.coachTarget(coachTargets, CoachTarget.LOOK)) {
+                            Icon(Reicons.Tune, contentDescription = "Display settings")
+                        }
+                        // The rest, used now and then, in one menu: the trash, the
+                        // library's picture, help, and the open folder's own options.
+                        Box(Modifier.coachTarget(coachTargets, CoachTarget.HELP)) {
+                            IconButton(onClick = { homeMore = true }) {
+                                Icon(Reicons.MoreVert, contentDescription = "More")
+                            }
+                            DropdownMenu(homeMore, onDismissRequest = { homeMore = false }) {
+                                if (narrowLibrary) {
+                                    DropdownMenuItem(
+                                        text = { Text("New folder") },
+                                        leadingIcon = { Icon(Reicons.Folder, contentDescription = null) },
+                                        onClick = { homeMore = false; creatingFolder = true },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Tools") },
+                                        leadingIcon = { Icon(AppIcons.tools, contentDescription = null) },
+                                        onClick = { homeMore = false; Planner.show(Planner.lastPanel) },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Tutorial") },
+                                        leadingIcon = { Icon(AppIcons.tutorial, contentDescription = null) },
+                                        onClick = { homeMore = false; Onboarding.tutorialOpen = true },
+                                    )
+                                    HorizontalDivider()
+                                }
+                                if (folder.isNotBlank()) {
+                                    DropdownMenuItem(text = { Text("Rename folder") }, onClick = {
+                                        homeMore = false; renamingFolder = true
+                                    })
+                                    DropdownMenuItem(text = { Text("Delete folder") }, onClick = {
+                                        homeMore = false; deletingFolder = true
+                                    })
+                                    HorizontalDivider()
+                                }
+                                DropdownMenuItem(
+                                    text = { Text("Trash") },
+                                    leadingIcon = { Icon(Reicons.Delete, contentDescription = null) },
+                                    onClick = { homeMore = false; showTrash = true },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Library background") },
+                                    leadingIcon = { Icon(Reicons.Image, contentDescription = null) },
+                                    onClick = { homeMore = false; showHomeBackground = true },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("About · Help") },
+                                    leadingIcon = { Icon(Reicons.BugReport, contentDescription = null) },
+                                    onClick = { homeMore = false; showHelp = true },
+                                )
+                            }
+                        }
+                    }
+                }
             }
         },
         floatingActionButton = {
-            Column(horizontalAlignment = Alignment.End) {
+            // Out of the way of the selection's own bar while selecting.
+            if (!selectionMode) Column(horizontalAlignment = Alignment.End) {
                 BackupButton(
                     onBackupAll = { saveAllArchive.launch("Notesis-backup") },
                     onRestore = { openArchive.launch(arrayOf("*/*")) },
@@ -1248,186 +1313,224 @@ private fun NoteListScreen(
                 .background(homeColor?.let { Color(it) } ?: MaterialTheme.colorScheme.surface),
         ) {
         HomeBackground(homePhoto)
-        if (shown.isEmpty() && (folder.isNotBlank() || results != null || folders.isEmpty())) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                contentAlignment = Alignment.Center,
-            ) {
-                // What is missing, and the one thing to do about it.
-                Column(
-                    Modifier.widthIn(max = 420.dp).padding(Ui.Space.l),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(Ui.Space.s),
-                ) {
-                    Icon(
-                        if (query.isNotBlank()) Reicons.Search else if (folder.isNotBlank()) Reicons.Folder else Reicons.Edit,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(48.dp),
-                    )
-                    Text(
-                        when {
-                            query.isNotBlank() -> "No results for \"$query\""
-                            folder.isNotBlank() -> "This folder is empty"
-                            else -> "No notes yet"
-                        },
-                        style = MaterialTheme.typography.titleLarge,
-                        textAlign = TextAlign.Center,
-                    )
-                    Text(
-                        when {
-                            query.isNotBlank() -> "Try other words, or fewer of them."
-                            folder.isNotBlank() -> "Move a note here from its menu, or start a new one."
-                            else -> "Start a blank note, or bring in a PDF, pictures or a web page with the + button."
-                        },
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                    )
-                    if (query.isBlank()) Button(onClick = { naming = true },
-                        modifier = Modifier.padding(top = Ui.Space.s).heightIn(min = 48.dp)) { Text("New note") }
+        val emptyHere = shown.isEmpty() && (folder.isNotBlank() || results != null || folders.isEmpty())
+        val showFolders = results == null && folder.isBlank() && folders.isNotEmpty() && tagFilter == null
+        val side = if (narrowLibrary) Ui.Space.m else Ui.Space.l
+        LazyVerticalGrid(
+            state = gridState,
+            // Two notes across even on a small phone: at the tablet's width a
+            // 360 dp screen had room for one, as wide as the screen.
+            columns = GridCells.Adaptive(minSize = if (narrowLibrary) 148.dp else 176.dp),
+            // The bar's height is padding inside the list rather than
+            // around it, so the notes scroll under the glass instead of
+            // stopping politely below it with nothing to frost.
+            contentPadding = PaddingValues(
+                start = side,
+                end = side,
+                top = padding.calculateTopPadding(),
+                // Clear of the + button, so the last row can be scrolled out from under it.
+                bottom = padding.calculateBottomPadding() + 96.dp,
+            ),
+            horizontalArrangement = Arrangement.spacedBy(Ui.Space.m),
+            verticalArrangement = Arrangement.spacedBy(Ui.Space.m),
+            modifier = Modifier.fillMaxSize().dragToSelect(
+                tiles = libraryTiles,
+                order = { (if (showFolders) folders.map(::folderKey) else emptyList()) + shown.map { it.id } },
+                selection = { selectionKeys() },
+                onSelection = ::setSelection,
+                onHold = {
+                    if (!selectionMode) selectionMode = true
+                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                },
+                edgeTop = { with(density) { padding.calculateTopPadding().toPx() } },
+                edgeBottom = { gridHeight.toFloat() },
+                onEdge = { edgeSpeed = it },
+            ).onSizeChanged { gridHeight = it.height },
+        ) {
+            item(key = "title", span = { GridItemSpan(maxLineSpan) }) {
+                LibraryLargeTitle(
+                    title = libraryTitle,
+                    subtitle = if (selectionMode) "${selectedCount} selected" else countNoun(shown.size, "note"),
+                    modifier = Modifier.onSizeChanged { titleHeight = it.height },
+                )
+            }
+            item(key = "search", span = { GridItemSpan(maxLineSpan) }) {
+                Box(contentAlignment = Alignment.Center) {
+                    LibrarySearchField(query, { query = it },
+                        Modifier.focusRequester(searchFocus).coachTarget(coachTargets, CoachTarget.SEARCH))
                 }
             }
-        } else {
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 176.dp),
-                // The bar's height is padding inside the list rather than
-                // around it, so the notes scroll under the glass instead of
-                // stopping politely below it with nothing to frost.
-                contentPadding = PaddingValues(
-                    start = Ui.Space.l,
-                    end = Ui.Space.l,
-                    top = padding.calculateTopPadding() + Ui.Space.m,
-                    // Clear of the + button, so the last row can be scrolled out from under it.
-                    bottom = padding.calculateBottomPadding() + 96.dp,
-                ),
-                horizontalArrangement = Arrangement.spacedBy(Ui.Space.m),
-                verticalArrangement = Arrangement.spacedBy(Ui.Space.m),
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                // Folders sit above the notes rather than beside them: they
-                // are a place, not another note.
-                if (results == null && folder.isBlank() && folders.isNotEmpty() && tagFilter == null) {
-                    item(span = { GridItemSpan(maxLineSpan) }) { LibraryHeading("Folders") }
-                    item(span = { GridItemSpan(maxLineSpan) }) {
-                        FolderRow(folders, onOpen = { folder = it },
-                            onRename = { menuFolder = it; renamingFolder = true },
-                            onDelete = { menuFolder = it; deletingFolder = true })
-                    }
-                }
-                // Tags cut across folders, so picking one shows every note that carries it.
-                if (results == null && allTags.isNotEmpty()) {
-                    item(span = { GridItemSpan(maxLineSpan) }) {
-                        Row(Modifier.horizontalScroll(rememberScrollState())) {
-                            allTags.forEach { tag ->
-                                FilterChip(
-                                    selected = tagFilter == tag,
-                                    onClick = { tagFilter = if (tagFilter == tag) null else tag },
-                                    label = { Text("#$tag") },
-                                    modifier = Modifier.padding(end = Ui.Space.s),
-                                )
-                            }
+            // Tags cut across folders, so picking one shows every note that carries it.
+            if (results == null && allTags.isNotEmpty()) {
+                item(key = "tags", span = { GridItemSpan(maxLineSpan) }) {
+                    Row(Modifier.horizontalScroll(rememberScrollState())) {
+                        allTags.forEach { tag ->
+                            FilterChip(
+                                selected = tagFilter == tag,
+                                onClick = { tagFilter = if (tagFilter == tag) null else tag },
+                                label = { Text("#$tag") },
+                                modifier = Modifier.padding(end = Ui.Space.s),
+                            )
                         }
                     }
                 }
-                // Where in each note the text was found; opening one goes
-                // straight to that page.
-                if (results != null && pageHits.isNotEmpty()) {
-                    item(span = { GridItemSpan(maxLineSpan) }) {
-                        LibraryHeading("Matches in pages")
-                    }
-                    shown.forEach { note ->
-                        pageHits[note.id]?.take(MAX_HITS_PER_NOTE)?.forEach { hit ->
-                            item(key = "hit:${note.id}:${hit.pageId}", span = { GridItemSpan(maxLineSpan) }) {
-                                SearchHitRow(note, hit) {
-                                    homeStore.setLastPage(note.id, hit.pageIndex)
-                                    onOpen(note)
-                                }
-                            }
-                        }
-                    }
-                    item(span = { GridItemSpan(maxLineSpan) }) { LibraryHeading("Notes") }
-                } else if (results == null && folder.isBlank() && folders.isNotEmpty() && tagFilter == null && shown.isNotEmpty()) {
-                    item(span = { GridItemSpan(maxLineSpan) }) { LibraryHeading("Notes") }
-                }
-                items(shown, key = { it.id }) { note ->
-                    // The guide's card is where the welcome folds into, and what its first mark points at.
-                    Box(if (note.title == GuideNote.TITLE) Modifier.coachTarget(coachTargets, CoachTarget.GUIDE) else Modifier) {
-                    NoteCard(
-                        note = note,
-                        selected = note.id in selectedIds,
+            }
+            // Folders sit above the notes rather than among them: they
+            // are a place, not another note.
+            if (showFolders) {
+                item(key = "folders-heading", span = { GridItemSpan(maxLineSpan) }) { LibrarySection("Folders") }
+                items(folders, key = { folderKey(it) }) { name ->
+                    FolderTile(
+                        name = name,
+                        count = folderCounts[name] ?: 0,
+                        selected = name in selectedFolders,
                         selectionMode = selectionMode,
-                        hasCustomThumbnail = note.thumbnail?.name == NoteStore.CUSTOM_THUMB,
                         onOpen = {
                             if (selectionMode) {
-                                if (note.id in selectedIds) selectedIds.remove(note.id)
-                                else selectedIds.add(note.id)
-                            } else onOpen(note)
+                                if (name in selectedFolders) selectedFolders.remove(name) else selectedFolders.add(name)
+                            } else folder = name
                         },
-                        onDelete = { pendingDelete = note },
-                        onPickThumbnail = {
-                            thumbnailFor = note
-                            pickThumbnail.launch("image/*")
-                        },
-                        onClearThumbnail = {
-                            store.clearThumbnail(note.id)
-                            revision++
-                        },
-                        onExport = {
-                            exporting = note.id to false
-                            saveArchive.launch(safeFileName(note.title))
-                        },
-                        onExportPdf = {
-                            exportDialogFor = note
-                        },
-                        onExportMarkdown = if (note.kind == NoteKind.MARKDOWN) {
-                            {
-                                markdownExportId = note.id
-                                saveMarkdown.launch(safeFileName(note.title) + ".md")
-                            }
-                        } else null,
-                        onFile = { filing = note },
-                        onToggleFavorite = {
-                            store.setFavorite(note.id, !note.favorite)
-                            revision++
-                        },
-                        onRename = { renamingNote = note },
-                        onTags = { taggingNote = note },
-                        onMoveFavorite = if (note.favorite) { delta ->
-                            val pinned = shown.filter { it.favorite }
-                            val at = pinned.indexOfFirst { it.id == note.id }
-                            val to = (at + delta).coerceIn(pinned.indices)
-                            if (at >= 0 && to != at) {
-                                store.setFavoriteOrder(pinned.toMutableList().apply { add(to, removeAt(at)) }.map { it.id })
-                                revision++
-                            }
-                        } else null,
-                        onLabel = { labelingNote = note },
-                        onLock = {
-                            // Locking with a password already set needs nothing more; the rest asks first.
-                            if (!note.locked && noteLock?.hasPassword == true) {
-                                store.setLocked(note.id, true)
-                                revision++
-                            } else lockingNote = note
-                        },
-                        onIndex = {
-                            busy = "Reading handwriting"
-                            scope.launch {
-                                val pages = withContext(Dispatchers.IO) {
-                                    indexNote(store, indexer, note.id)
-                                }
-                                busy = null
-                                report = if (pages < 0) {
-                                    "Couldn't download the recognition model. Check your internet connection"
-                                } else {
-                                    "Indexed " + countNoun(pages, "page")
-                                }
-                            }
-                        },
+                        onRename = { menuFolder = name; renamingFolder = true },
+                        onDelete = { menuFolder = name; deletingFolder = true },
+                        modifier = Modifier.libraryTile(libraryTiles, folderKey(name)),
                     )
+                }
+            }
+            // Where in each note the text was found; opening one goes
+            // straight to that page.
+            if (results != null && pageHits.isNotEmpty()) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    LibrarySection("Matches in pages")
+                }
+                shown.forEach { note ->
+                    pageHits[note.id]?.take(MAX_HITS_PER_NOTE)?.forEach { hit ->
+                        item(key = "hit:${note.id}:${hit.pageId}", span = { GridItemSpan(maxLineSpan) }) {
+                            SearchHitRow(note, hit) {
+                                homeStore.setLastPage(note.id, hit.pageIndex)
+                                onOpen(note)
+                            }
+                        }
                     }
+                }
+                item(span = { GridItemSpan(maxLineSpan) }) { LibrarySection("Notes") }
+            } else if (showFolders && shown.isNotEmpty()) {
+                item(key = "notes-heading", span = { GridItemSpan(maxLineSpan) }) { LibrarySection("Notes") }
+            }
+            if (emptyHere) item(key = "empty", span = { GridItemSpan(maxLineSpan) }) {
+                Box(Modifier.fillMaxWidth().padding(top = Ui.Space.xl), contentAlignment = Alignment.Center) {
+                    // What is missing, and the one thing to do about it.
+                    Column(
+                        Modifier.widthIn(max = 420.dp).padding(Ui.Space.l),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(Ui.Space.s),
+                    ) {
+                        Icon(
+                            if (query.isNotBlank()) Reicons.Search else if (folder.isNotBlank()) Reicons.Folder else Reicons.Edit,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(48.dp),
+                        )
+                        Text(
+                            when {
+                                query.isNotBlank() -> "No results for \"$query\""
+                                folder.isNotBlank() -> "This folder is empty"
+                                else -> "No notes yet"
+                            },
+                            style = MaterialTheme.typography.titleLarge,
+                            textAlign = TextAlign.Center,
+                        )
+                        Text(
+                            when {
+                                query.isNotBlank() -> "Try other words, or fewer of them."
+                                folder.isNotBlank() -> "Move a note here from its menu, or start a new one."
+                                else -> "Start a blank note, or bring in a PDF, pictures or a web page with the + button."
+                            },
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                        )
+                        if (query.isBlank()) Button(onClick = { naming = true },
+                            modifier = Modifier.padding(top = Ui.Space.s).heightIn(min = 48.dp)) { Text("New note") }
+                    }
+                }
+            }
+
+            items(shown, key = { it.id }) { note ->
+                // The guide's card is where the welcome folds into, and what its first mark points at.
+                Box((if (note.title == GuideNote.TITLE) Modifier.coachTarget(coachTargets, CoachTarget.GUIDE) else Modifier)
+                    .libraryTile(libraryTiles, note.id)) {
+                NoteCard(
+                    note = note,
+                    selected = note.id in selectedIds,
+                    selectionMode = selectionMode,
+                    hasCustomThumbnail = note.thumbnail?.name == NoteStore.CUSTOM_THUMB,
+                    onOpen = {
+                        if (selectionMode) {
+                            if (note.id in selectedIds) selectedIds.remove(note.id)
+                            else selectedIds.add(note.id)
+                        } else onOpen(note)
+                    },
+                    onDelete = { pendingDelete = note },
+                    onPickThumbnail = {
+                        thumbnailFor = note
+                        pickThumbnail.launch("image/*")
+                    },
+                    onClearThumbnail = {
+                        store.clearThumbnail(note.id)
+                        revision++
+                    },
+                    onExport = {
+                        exporting = note.id to false
+                        saveArchive.launch(safeFileName(note.title))
+                    },
+                    onExportPdf = {
+                        exportDialogFor = note
+                    },
+                    onExportMarkdown = if (note.kind == NoteKind.MARKDOWN) {
+                        {
+                            markdownExportId = note.id
+                            saveMarkdown.launch(safeFileName(note.title) + ".md")
+                        }
+                    } else null,
+                    onFile = { filing = note },
+                    onToggleFavorite = {
+                        store.setFavorite(note.id, !note.favorite)
+                        revision++
+                    },
+                    onRename = { renamingNote = note },
+                    onTags = { taggingNote = note },
+                    onMoveFavorite = if (note.favorite) { delta ->
+                        val pinned = shown.filter { it.favorite }
+                        val at = pinned.indexOfFirst { it.id == note.id }
+                        val to = (at + delta).coerceIn(pinned.indices)
+                        if (at >= 0 && to != at) {
+                            store.setFavoriteOrder(pinned.toMutableList().apply { add(to, removeAt(at)) }.map { it.id })
+                            revision++
+                        }
+                    } else null,
+                    onLabel = { labelingNote = note },
+                    onLock = {
+                        // Locking with a password already set needs nothing more; the rest asks first.
+                        if (!note.locked && noteLock?.hasPassword == true) {
+                            store.setLocked(note.id, true)
+                            revision++
+                        } else lockingNote = note
+                    },
+                    onIndex = {
+                        busy = "Reading handwriting"
+                        scope.launch {
+                            val pages = withContext(Dispatchers.IO) {
+                                indexNote(store, indexer, note.id)
+                            }
+                            busy = null
+                            report = if (pages < 0) {
+                                "Couldn't download the recognition model. Check your internet connection"
+                            } else {
+                                "Indexed " + countNoun(pages, "page")
+                            }
+                        }
+                    },
+                )
                 }
             }
         }
@@ -1435,14 +1538,23 @@ private fun NoteListScreen(
         // bar over the page or the list is the same shape.
         if (selectionMode) SkinSurface(
             modifier = Modifier.align(Alignment.BottomCenter)
-                .padding(bottom = padding.calculateBottomPadding() + Ui.Space.l),
+                .padding(bottom = padding.calculateBottomPadding() + Ui.Space.l, start = Ui.Space.m, end = Ui.Space.m),
         ) {
-            Row(Modifier.padding(horizontal = Ui.Space.s, vertical = Ui.Space.xs), verticalAlignment = Alignment.CenterVertically) {
-                Text("${selectedIds.size} selected", modifier = Modifier.padding(horizontal = Ui.Space.s))
-                TextButton(onClick = { bulkFolder = true }, enabled = selectedIds.isNotEmpty()) {
-                    Text("Move")
+            val inkSelected = selectedIds.count { id -> notes.any { it.id == id && it.kind == NoteKind.INK } }
+            SelectionActions {
+                val everything = (if (showFolders) folders.map(::folderKey) else emptyList()) + shown.map { it.id }
+                val allIn = everything.isNotEmpty() && selectionKeys().containsAll(everything)
+                SelectionAction(Reicons.Checklist, if (allIn) "None" else "All") {
+                    setSelection(if (allIn) emptySet() else everything.toSet())
                 }
-                TextButton(onClick = {
+                SelectionAction(Reicons.FolderOpen, "Move", enabled = selectedIds.isNotEmpty()) { bulkFolder = true }
+                SelectionAction(Reicons.Edit, "Rename", enabled = selectedCount == 1) {
+                    val one = selectedFolders.firstOrNull()
+                    if (one != null) { menuFolder = one; renamingFolder = true }
+                    else notes.firstOrNull { it.id == selectedIds.firstOrNull() }?.let { renamingNote = it }
+                    clearSelection()
+                }
+                SelectionAction(Reicons.AutoAwesomeMosaic, "Merge", enabled = inkSelected >= 2) {
                     val ids = selectedIds.filter { id -> notes.any { it.id == id && it.kind == NoteKind.INK } }
                     busy = "Merging notes"
                     scope.launch {
@@ -1452,19 +1564,15 @@ private fun NoteListScreen(
                         busy = null
                         if (merged == null) report = "Couldn't merge the notes"
                         else {
-                            selectedIds.clear(); selectionMode = false; revision++
+                            clearSelection(); revision++
                             onOpen(merged)
                         }
                     }
-                }, enabled = selectedIds.count { id -> notes.any { it.id == id && it.kind == NoteKind.INK } } >= 2) {
-                    Text("Merge")
                 }
-                TextButton(onClick = { saveSelectedArchive.launch("Notesis-selected-backup") }, enabled = selectedIds.isNotEmpty()) {
-                    Text("Export")
+                SelectionAction(Reicons.Archive, "Export", enabled = selectedIds.isNotEmpty()) {
+                    saveSelectedArchive.launch("Notesis-selected-backup")
                 }
-                TextButton(onClick = { bulkDelete = true }, enabled = selectedIds.isNotEmpty()) {
-                    Text("Delete")
-                }
+                SelectionAction(Reicons.Delete, "Delete", enabled = selectedCount > 0) { bulkDelete = true }
             }
         }
         }
@@ -1548,19 +1656,50 @@ private fun NoteListScreen(
         current = "", folders = folders, onDismiss = { bulkFolder = false },
         onPick = { picked ->
             selectedIds.forEach { store.setFolder(it, picked) }
-            selectedIds.clear(); selectionMode = false; bulkFolder = false; revision++
+            clearSelection(); bulkFolder = false; revision++
         },
     )
-    if (bulkDelete) AlertDialog(
-        onDismissRequest = { bulkDelete = false },
-        title = { Text("Move ${countNoun(selectedIds.size, "selected note")} to Trash?") },
-        text = { Text("You can restore them from Trash for ${NoteStore.TRASH_DAYS} days.") },
-        confirmButton = { TextButton(onClick = {
+    if (bulkDelete) {
+        val noteCount = selectedIds.size
+        val folderCount = selectedFolders.size
+        // Notes inside the selected folders that are not selected themselves.
+        val inside = remember(selectedFolders.toList(), selectedIds.toList(), revision) {
+            store.list().count { it.folder in selectedFolders && it.id !in selectedIds }
+        }
+        fun finish(keepNotes: Boolean) {
             selectedIds.forEach(store::moveToTrash)
-            selectedIds.clear(); selectionMode = false; bulkDelete = false; revision++
-        }) { Text("Delete") } },
-        dismissButton = { TextButton(onClick = { bulkDelete = false }) { Text("Cancel") } },
-    )
+            selectedFolders.forEach { store.deleteFolder(it, keepNotes = keepNotes) }
+            if (folder in selectedFolders) folder = ""
+            clearSelection(); bulkDelete = false; revision++
+        }
+        AlertDialog(
+            onDismissRequest = { bulkDelete = false },
+            title = {
+                Text(when {
+                    folderCount == 0 -> "Move ${countNoun(noteCount, "selected note")} to Trash?"
+                    noteCount == 0 -> "Delete ${countNoun(folderCount, "folder")}?"
+                    else -> "Delete ${countNoun(folderCount, "folder")} and ${countNoun(noteCount, "note")}?"
+                })
+            },
+            text = {
+                // A sentence each, so each reads whole in either language.
+                Column(verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+                    if (noteCount > 0) Text("Selected notes go to Trash.")
+                    if (inside > 0) Text("${countNoun(inside, "note")} in the folders: move them to Trash with the folders, or keep them in the library.")
+                    Text("You can restore from Trash for ${NoteStore.TRASH_DAYS} days.")
+                }
+            },
+            confirmButton = { TextButton(onClick = { finish(keepNotes = false) }) {
+                Text(if (inside > 0) "Move to Trash" else "Delete")
+            } },
+            dismissButton = {
+                Row {
+                    if (inside > 0) TextButton(onClick = { finish(keepNotes = true) }) { Text("Keep notes") }
+                    TextButton(onClick = { bulkDelete = false }) { Text("Cancel") }
+                }
+            },
+        )
+    }
 
     // The folder a tile's menu was opened on, else the one that is open.
     val folderTarget = menuFolder ?: folder
@@ -1781,6 +1920,10 @@ private fun NoteListScreen(
 private const val PLAYBACK_WINDOW_MS = 2500L
 private const val PLAYBACK_TICK_MS = 120L
 private const val LIBRARY_SORT_MODIFIED = 0
+/** How far a note's page sits in from its card's edge. */
+private val NOTE_CARD_INSET = 8.dp
+/** Narrower than this, the whole bar (1/4) is shown as the one-row bar (2/4). */
+private const val FULL_BAR_MIN_WIDTH_DP = 600
 private const val LIBRARY_SORT_TITLE = 1
 private const val LIBRARY_SORT_PAGES = 2
 private const val MAX_HITS_PER_NOTE = 5
@@ -2197,9 +2340,12 @@ private fun NoteCard(
     val preview = rememberFileBitmap(note.thumbnail, NOTE_CARD_PICTURE_PX)
     val skin = LocalSkin.current
     val cardShape = Ui.Shape.card
+    // A selected card sits back a little inside its ring, as Photos marks a pick.
+    val sink by androidx.compose.animation.core.animateFloatAsState(if (selected) 0.95f else 1f, label = "cardSelected")
     Card(
-        modifier = if (selected) Modifier.border(3.dp, MaterialTheme.colorScheme.primary, cardShape)
-            else Modifier,
+        modifier = Modifier
+            .graphicsLayer { scaleX = sink; scaleY = sink }
+            .then(if (selected) Modifier.border(2.5.dp, MaterialTheme.colorScheme.primary, cardShape) else Modifier),
         onClick = onOpen,
         shape = cardShape,
         // No shadow on glass. A shadow is drawn under the whole card, not only
@@ -2232,12 +2378,17 @@ private fun NoteCard(
             )
         },
     ) {
-        Column {
+        // The page sits inset in the card on its own paper corner, the
+        // card's corner one inset in, with the name and date under it.
+        Column(Modifier.padding(start = NOTE_CARD_INSET, end = NOTE_CARD_INSET, top = NOTE_CARD_INSET)) {
+            val paper = RoundedCornerShape(Ui.concentric(Ui.Corner.card, NOTE_CARD_INSET))
             Box(
                 Modifier
                     .fillMaxWidth()
                     .aspectRatio(0.75f)
-                    .background(if (isDarkTheme()) MaterialTheme.colorScheme.surfaceContainerHigh else Color(0xFFFDFCF8)),
+                    .clip(paper)
+                    .background(if (isDarkTheme()) MaterialTheme.colorScheme.surfaceContainerHigh else Color(0xFFFDFCF8))
+                    .border(Dp.Hairline, MaterialTheme.colorScheme.outlineVariant, paper),
                 contentAlignment = Alignment.Center,
             ) {
                 if (preview != null && !note.locked) {
@@ -2277,23 +2428,18 @@ private fun NoteCard(
                         .height(6.dp)
                         .background(Color(note.label)),
                 )
-                if (selectionMode) Icon(
-                    if (selected) Reicons.Check else Reicons.Circle,
-                    contentDescription = if (selected) "Selected" else "Not selected",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.align(Alignment.TopEnd).padding(10.dp),
-                )
+                if (selectionMode) SelectionMark(selected, Modifier.align(Alignment.TopEnd).padding(8.dp))
             }
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+                    .padding(start = 4.dp, top = 6.dp, bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
                     Text(
                         if (note.kind == NoteKind.MARKDOWN) "${note.title} · MD" else note.title,
-                        style = MaterialTheme.typography.titleSmall,
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -2302,6 +2448,8 @@ private fun NoteCard(
                         style = MaterialTheme.typography.bodySmall,
                         // Read at a glance on frost as well: the stronger of the two greys.
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                     if (note.tags.isNotEmpty()) Text(
                         note.tags.joinToString(" ") { "#$it" },
@@ -2311,7 +2459,8 @@ private fun NoteCard(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                Box {
+                // While selecting, the bar below holds what can be done; the card's own menu waits.
+                if (!selectionMode) Box {
                     IconButton(onClick = { menuOpen = true }) {
                         Icon(
                             Reicons.MoreVert,
@@ -2464,67 +2613,6 @@ private fun indexNote(store: NoteStore, indexer: InkIndexer, id: String): Int {
         done++
     }
     return done
-}
-
-/** A section's name in the library, read out as a heading. */
-@Composable
-private fun LibraryHeading(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.titleMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(top = Ui.Space.xs).semantics { heading() },
-    )
-}
-
-/** The folders that exist, as somewhere to go. */
-@Composable
-private fun FolderRow(
-    folders: List<String>,
-    onOpen: (String) -> Unit,
-    onRename: (String) -> Unit,
-    onDelete: (String) -> Unit,
-) {
-    Row(
-        Modifier.horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(Ui.Space.s),
-    ) {
-        for (name in folders) {
-            // The same tile as a search hit: a control-sized corner, and
-            // padding that makes the row a full touch target.
-            // Held, or its own ⋮, it offers renaming and deleting.
-            var menu by remember(name) { mutableStateOf(false) }
-            SkinSurface(corner = Ui.Corner.control) {
-                Row(
-                    Modifier
-                        .combinedClickable(onClick = { onOpen(name) }, onLongClick = { menu = true })
-                        .padding(start = Ui.Space.l, end = Ui.Space.xs, top = Ui.Space.xs, bottom = Ui.Space.xs),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(Reicons.Folder, contentDescription = null)
-                    Spacer(Modifier.width(Ui.Space.s))
-                    Text(name, style = MaterialTheme.typography.bodyLarge)
-                    Box {
-                        IconButton(onClick = { menu = true }) {
-                            Icon(Reicons.MoreVert, contentDescription = "Folder options for $name")
-                        }
-                        DropdownMenu(menu, onDismissRequest = { menu = false }) {
-                            DropdownMenuItem(
-                                text = { Text("Rename folder") },
-                                leadingIcon = { Icon(Reicons.Edit, contentDescription = null) },
-                                onClick = { menu = false; onRename(name) },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Delete folder") },
-                                leadingIcon = { Icon(Reicons.Delete, contentDescription = null) },
-                                onClick = { menu = false; onDelete(name) },
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
 }
 
 /**
@@ -4098,7 +4186,11 @@ private fun NoteScreen(
     // (1/4) shows as 2/4 while the screen is split, and nothing is docked, so
     // the bar lies over the notes instead of over one part's edge. The size
     // that was chosen is kept for when the split ends.
-    val shownToolbarSize = if (split != null && toolbarSize == 0) 1 else toolbarSize
+    // A phone, or a window narrower than a small tablet, the same: the whole
+    // bar is laid out 800 dp wide and shrunk to fit, which on a 360 dp phone
+    // drew every button and word at under half size.
+    val narrowWindow = LocalConfiguration.current.screenWidthDp < FULL_BAR_MIN_WIDTH_DP
+    val shownToolbarSize = if ((split != null || narrowWindow) && toolbarSize == 0) 1 else toolbarSize
     val barDocked = docked && split == null
     // The docked side bar's width, so what else lives on that edge can stand clear of it.
     var sideBarWidth by remember { mutableIntStateOf(0) }
@@ -4514,7 +4606,7 @@ private fun NoteScreen(
             autoVertical = barWraps && previewLevel == null,
             toolbarTargetWidth = if (previewLevel != null)
                     spotiToolbarWidth(previewLevel, LocalChromeScale.current, ToolbarLayout.config.tools(previewLevel).size)
-                else minOf(barRoom, spotiToolbarWidth(toolbarSize, LocalChromeScale.current, ToolbarLayout.config.tools(toolbarSize).size)),
+                else minOf(barRoom, spotiToolbarWidth(shownToolbarSize, LocalChromeScale.current, ToolbarLayout.config.tools(shownToolbarSize).size)),
             mode = mode,
             shapeKind = shapeKind,
             straightLine = straightLine,
@@ -4598,8 +4690,6 @@ private fun NoteScreen(
             skin = skin,
             onSkin = onSkin,
             docked = barDocked && previewLevel == null,
-            canResetBar = !docked && barOffset != null,
-            onResetBar = { barOffset = null },
             onSettings = { openSettings(it) },
             onDragBar = { delta ->
                 val at = barPlacement(barOffset, barSize, containerSize, barVertical, barRight, barClearStartPx)
@@ -5329,13 +5419,6 @@ private fun NoteScreen(
                         docked = !docked
                         penStore.docked = docked
                     },
-                    SpotiToolbarAction("Reset bar position", AppIcons.resetBar,
-                        enabled = !docked && barOffset != null,
-                        disabledReason = when {
-                            docked -> "A docked bar stays put"
-                            barOffset == null -> "Already in place"
-                            else -> null
-                        }) { barOffset = null },
                     SpotiToolbarAction("Rotate · ${noteRotation.roundToInt()}°", AppIcons.rotate) {
                         noteRotation = (((noteRotation / 90f).roundToInt() + 1) * 90 % 360).toFloat()
                         penStore.noteRotation = noteRotation.roundToInt()
@@ -9156,9 +9239,6 @@ private fun Toolbar(
     onOpenNote: (NoteMeta) -> Unit,
     onBack: () -> Unit,
     onPalette: () -> Unit,
-    /** Whether the bar has been dragged away from where it starts. */
-    canResetBar: Boolean,
-    onResetBar: () -> Unit,
     /** Opens the settings sidebar at the given screen. */
     onSettings: (SettingsPage) -> Unit,
     onDragBar: (Offset) -> Unit,
@@ -9240,13 +9320,6 @@ private fun Toolbar(
                             .padding(horizontal = 6.dp, vertical = 10.dp),
                     )
                     TopRowItem.SKIN -> SkinButton(skin, onSkin)
-                    // Only once there is somewhere to come back from. A bar that
-                    // has never been moved does not need a button for moving it
-                    // back, and a bar dragged to a corner and left there had no way
-                    // back at all short of docking it and undocking it again.
-                    TopRowItem.RESET_BAR -> if (canResetBar) {
-                        AppIconButton(onClick = onResetBar, icon = AppIcons.resetBar, contentDescription = "Reset bar position")
-                    }
                     // The clock, the calculator, the to-do list and the calendar.
                     TopRowItem.PLANNER -> ToolsMenuButton()
                     TopRowItem.GESTURES -> AppIconButton(onClick = { onSettings(SettingsPage.TOUCH) }, icon = AppIcons.touch,

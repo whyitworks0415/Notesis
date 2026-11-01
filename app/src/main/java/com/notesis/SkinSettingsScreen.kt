@@ -565,6 +565,13 @@ private fun StyleGroup(
     SettingsSectionHeader("Toolbar")
     ToolbarStageSelector(toolbarSize, onSelect = onToolbarSize)
     ToolbarOrientationChoice(toolbarSize)
+    SettingsSectionHeader("Smoothness")
+    SettingsToggle(
+        "Highest refresh rate", InteractionGovernor.highRefresh, InteractionGovernor::updateHighRefresh,
+        hint = if (InteractionGovernor.highRefresh)
+            "Asks the screen for its fastest rate, such as 120 Hz, while the app is open. Some phones keep apps at 60 Hz unless they ask. Not while battery saver makes the app save power."
+        else "The system picks the rate, which on some phones is 60 Hz for this app.",
+    )
     SettingsSectionHeader("Battery")
     SettingsToggle(
         "Battery optimization", InteractionGovernor.batteryOptimization, InteractionGovernor::updateBatteryOptimization,

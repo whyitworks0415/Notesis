@@ -162,6 +162,7 @@ internal object InteractionGovernor {
         val power = app.getSystemService(PowerManager::class.java)
         prefs = app.getSharedPreferences("pens", Context.MODE_PRIVATE).also {
             batteryOptimization = it.getBoolean(KEY_BATTERY_OPTIMIZATION, true)
+            highRefresh = it.getBoolean(KEY_HIGH_REFRESH, true)
         }
         systemPowerSave = power?.isPowerSaveMode == true
         followPowerSave()
@@ -199,6 +200,17 @@ internal object InteractionGovernor {
     }
 
     private const val KEY_BATTERY_OPTIMIZATION = "batteryOptimization"
+    private const val KEY_HIGH_REFRESH = "highRefresh"
+
+    /** Whether the app asks the display for its fastest refresh rate; see [DisplayRate]. */
+    var highRefresh by mutableStateOf(true)
+        private set
+
+    fun updateHighRefresh(on: Boolean) {
+        if (highRefresh == on) return
+        highRefresh = on
+        prefs?.edit()?.putBoolean(KEY_HIGH_REFRESH, on)?.apply()
+    }
 
     fun noteRefreshRate(hz: Float?) {
         if (hz != null && hz.isFinite() && hz >= 20f) refreshHz = hz
