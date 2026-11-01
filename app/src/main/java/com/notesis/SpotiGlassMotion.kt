@@ -136,9 +136,11 @@ internal class SpotiGlassMotion(
  * it is the same spring as a Compose spring of this stiffness and of
  * [SPOTIGLASS_TRAVEL_DAMPING_RATIO]. The still skins' highlight slides on it
  * too, so a tap moves the selection at one speed whichever skin is on.
+ * Tuned to settle in [Ui.Motion.MS], as the rest of the chrome: ω = 4 / (ζ t)
+ * at ζ 0.938 and t 180 ms.
  */
-internal const val SPOTIGLASS_TRAVEL_STIFFNESS = 280.0
-internal const val SPOTIGLASS_TRAVEL_DAMPING = 31.4
+internal const val SPOTIGLASS_TRAVEL_STIFFNESS = 561.3
+internal const val SPOTIGLASS_TRAVEL_DAMPING = 44.44
 
 /** [SPOTIGLASS_TRAVEL_DAMPING] as a damping ratio: c / (2 sqrt(k m)), m = 1. Just under critical. */
 internal val SPOTIGLASS_TRAVEL_DAMPING_RATIO: Float =

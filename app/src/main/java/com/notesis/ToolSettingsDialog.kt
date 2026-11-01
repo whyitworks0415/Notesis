@@ -464,8 +464,8 @@ internal fun PenDialog(
 
 
 /** How long "More for this pen" takes to open the rest of the panel, and to close it. */
-private const val DETAIL_OPEN_MS = 280
-private const val DETAIL_CLOSE_MS = 220
+private const val DETAIL_OPEN_MS = Ui.Motion.MS
+private const val DETAIL_CLOSE_MS = Ui.Motion.MS
 // Material's standard curve: off quickly, landing softly, without the
 // emphasized curve's long tail - a collapse should be over when it looks over.
 private val DETAIL_CLOSE_EASING = androidx.compose.animation.core.CubicBezierEasing(0.2f, 0f, 0f, 1f)

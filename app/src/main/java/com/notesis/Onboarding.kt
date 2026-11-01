@@ -627,7 +627,7 @@ internal fun CoachMarks(targets: CoachTargets, all: List<CoachMark> = HOME_MARKS
     // Material jumps from mark to mark; the glass skins slide the light across.
     val hole by animateRectAsState(
         wanted,
-        if (skin.animatesPopups) tween<Rect>(420, easing = androidx.compose.animation.core.FastOutSlowInEasing) else snap<Rect>(),
+        if (skin.animatesPopups) Ui.Motion.tween<Rect>() else snap<Rect>(),
         label = "Coach mark",
     )
     val scrim = Color.Black.copy(alpha = 0.55f)
@@ -753,8 +753,8 @@ internal fun NoteTips(onLastPage: () -> Boolean, modifier: Modifier = Modifier) 
     if (skin.animatesPopups) {
         AnimatedVisibility(
             visible = current != null,
-            enter = fadeIn(tween(180)) + slideInVertically(tween(240)) { it / 3 },
-            exit = fadeOut(tween(140)) + slideOutVertically(tween(180)) { it / 4 },
+            enter = fadeIn(Ui.Motion.tween()) + slideInVertically(Ui.Motion.tween()) { it / 3 },
+            exit = fadeOut(Ui.Motion.tween()) + slideOutVertically(Ui.Motion.tween()) { it / 4 },
             modifier = modifier,
         ) { content() }
     } else if (current != null) {

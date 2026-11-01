@@ -107,9 +107,9 @@ internal fun PagePeek(
     val moves = LocalSkin.current.animatesPopups && rememberLiquidGlassEffectsAllowed()
     val grow = remember { Animatable(0f) }
     LaunchedEffect(shown) {
-        if (shown) grow.animateTo(1f, if (moves) spring(dampingRatio = 0.78f, stiffness = 520f) else snap())
+        if (shown) grow.animateTo(1f, if (moves) Ui.Motion.spring(0.78f) else snap())
         else {
-            grow.animateTo(0f, if (moves) tween(140) else snap())
+            grow.animateTo(0f, if (moves) Ui.Motion.tween() else snap())
             onGone()
         }
     }

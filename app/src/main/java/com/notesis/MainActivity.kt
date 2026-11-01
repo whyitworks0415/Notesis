@@ -1920,6 +1920,8 @@ private fun NoteListScreen(
 private const val PLAYBACK_WINDOW_MS = 2500L
 private const val PLAYBACK_TICK_MS = 120L
 private const val LIBRARY_SORT_MODIFIED = 0
+/** Between one choice of the + menu and the next, so the whole menu is out in little more than one motion. */
+private const val DIAL_STAGGER_MS = 12
 /** How far a note's page sits in from its card's edge. */
 private val NOTE_CARD_INSET = 8.dp
 /** Narrower than this, the whole bar (1/4) is shown as the one-row bar (2/4). */
@@ -2341,7 +2343,7 @@ private fun NoteCard(
     val skin = LocalSkin.current
     val cardShape = Ui.Shape.card
     // A selected card sits back a little inside its ring, as Photos marks a pick.
-    val sink by androidx.compose.animation.core.animateFloatAsState(if (selected) 0.95f else 1f, label = "cardSelected")
+    val sink by androidx.compose.animation.core.animateFloatAsState(if (selected) 0.95f else 1f, Ui.Motion.spring(), label = "cardSelected")
     Card(
         modifier = Modifier
             .graphicsLayer { scaleX = sink; scaleY = sink }
@@ -2732,19 +2734,19 @@ private fun NewNoteDial(options: List<DialOption>) {
     var open by remember { mutableStateOf(false) }
     androidx.activity.compose.BackHandler(enabled = open) { open = false }
     val turn by androidx.compose.animation.core.animateFloatAsState(if (open) 45f else 0f,
-        androidx.compose.animation.core.spring(dampingRatio = 0.6f, stiffness = 500f), label = "dialTurn")
+        Ui.Motion.spring(0.6f), label = "dialTurn")
     Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(Ui.Space.m)) {
         options.forEachIndexed { index, option ->
             // The nearest choice comes first and leaves last.
             val fromButton = options.lastIndex - index
             androidx.compose.animation.AnimatedVisibility(
                 visible = open,
-                enter = androidx.compose.animation.fadeIn(tween(160, delayMillis = fromButton * 35)) +
-                    androidx.compose.animation.slideInVertically(tween(240, delayMillis = fromButton * 35)) { it / 2 } +
-                    androidx.compose.animation.scaleIn(tween(240, delayMillis = fromButton * 35), initialScale = 0.7f),
-                exit = androidx.compose.animation.fadeOut(tween(120, delayMillis = index * 20)) +
-                    androidx.compose.animation.slideOutVertically(tween(160, delayMillis = index * 20)) { it / 2 } +
-                    androidx.compose.animation.scaleOut(tween(160, delayMillis = index * 20), targetScale = 0.7f),
+                enter = androidx.compose.animation.fadeIn(Ui.Motion.tween(delayMillis = fromButton * DIAL_STAGGER_MS)) +
+                    androidx.compose.animation.slideInVertically(Ui.Motion.tween(delayMillis = fromButton * DIAL_STAGGER_MS)) { it / 2 } +
+                    androidx.compose.animation.scaleIn(Ui.Motion.tween(delayMillis = fromButton * DIAL_STAGGER_MS), initialScale = 0.7f),
+                exit = androidx.compose.animation.fadeOut(Ui.Motion.tween(delayMillis = index * DIAL_STAGGER_MS / 2)) +
+                    androidx.compose.animation.slideOutVertically(Ui.Motion.tween(delayMillis = index * DIAL_STAGGER_MS / 2)) { it / 2 } +
+                    androidx.compose.animation.scaleOut(Ui.Motion.tween(delayMillis = index * DIAL_STAGGER_MS / 2), targetScale = 0.7f),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Ui.Space.m)) {
                     SkinSurface(corner = Ui.Corner.chip) {
@@ -5262,8 +5264,8 @@ private fun NoteScreen(
         }
         androidx.compose.animation.AnimatedVisibility(
             visible = pageScrubberVisible && !showPages,
-            enter = fadeIn(tween(120)),
-            exit = fadeOut(tween(220)),
+            enter = fadeIn(Ui.Motion.tween()),
+            exit = fadeOut(Ui.Motion.tween()),
             modifier = Modifier
                 .align(Alignment.CenterEnd)
                 .awayUpwards(chromeAway)
@@ -6284,8 +6286,8 @@ private fun NoteScreen(
         // canvas saves every change itself.
         androidx.compose.animation.AnimatedVisibility(
             visible = showLayers && canvas != null,
-            enter = slideInHorizontally { it },
-            exit = slideOutHorizontally { it },
+            enter = slideInHorizontally(Ui.Motion.tween()) { it },
+            exit = slideOutHorizontally(Ui.Motion.tween()) { it },
             modifier = Modifier.align(Alignment.CenterEnd),
         ) {
             canvas?.let { view -> LayerPanel(view, onClose = { showLayers = false }) }
@@ -6447,8 +6449,8 @@ private fun NoteScreen(
         LaunchedEffect(showPages) { if (showPages) pagesClosedByPen = false }
         androidx.compose.animation.AnimatedVisibility(
             visible = showPages,
-            enter = slideInHorizontally { it },
-            exit = if (pagesClosedByPen) ExitTransition.None else slideOutHorizontally { it },
+            enter = slideInHorizontally(Ui.Motion.tween()) { it },
+            exit = if (pagesClosedByPen) ExitTransition.None else slideOutHorizontally(Ui.Motion.tween()) { it },
             modifier = Modifier.align(Alignment.CenterEnd),
         ) {
             PageSidebar(
@@ -6640,19 +6642,16 @@ private fun NoteScreen(
             ?: note.id
         androidx.compose.animation.AnimatedVisibility(
             visible = referenceOpen,
-            enter = fadeIn(tween(140)) +
+            enter = fadeIn(Ui.Motion.tween()) +
                 scaleIn(
-                    animationSpec = spring(
-                        dampingRatio = Spring.DampingRatioNoBouncy,
-                        stiffness = Spring.StiffnessMediumLow,
-                    ),
+                    animationSpec = Ui.Motion.spring(Spring.DampingRatioNoBouncy),
                     initialScale = 0.94f,
                     transformOrigin = TransformOrigin(0.5f, 0.18f),
                 ) +
-                slideInVertically(animationSpec = tween(190)) { -it / 18 },
-            exit = fadeOut(tween(110)) +
-                scaleOut(tween(130), targetScale = 0.97f) +
-                slideOutVertically(animationSpec = tween(130)) { it / 22 },
+                slideInVertically(animationSpec = Ui.Motion.tween()) { -it / 18 },
+            exit = fadeOut(Ui.Motion.tween()) +
+                scaleOut(Ui.Motion.tween(), targetScale = 0.97f) +
+                slideOutVertically(animationSpec = Ui.Motion.tween()) { it / 22 },
         ) {
             key(activeReferenceNoteId) { ReferencePanel(
                 store = store,
@@ -7877,7 +7876,7 @@ private fun PageScrubber(
     var dragging by remember { mutableStateOf(false) }
     val thumbWidth by animateDpAsState(
         targetValue = if (dragging && liquid) 40.dp else 34.dp,
-        animationSpec = tween(120),
+        animationSpec = Ui.Motion.tween(),
         label = "page scrubber width",
     )
     val travel = (trackHeight - thumbHeightPx).coerceAtLeast(0f)

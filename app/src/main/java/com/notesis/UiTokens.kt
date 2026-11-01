@@ -88,6 +88,32 @@ object Ui {
         val xl = 24.dp
     }
 
+    /**
+     * The one length every transition of the app's own chrome takes: menus
+     * and panels opening, buttons answering a press, the selection moving,
+     * the bar changing size. Springs are tuned to settle in it - the
+     * envelope of a spring of damping ratio ζ falls to 2% in about
+     * 4 / (ζ ω), so ω = 4 / (ζ t). The Liquid glass recipes' own motion,
+     * where its switch is on, keeps the project it comes from.
+     */
+    object Motion {
+        const val MS = 180
+
+        /** Stiffness per unit mass for a spring of [dampingRatio] that settles in [MS]. */
+        fun stiffness(dampingRatio: Float): Float {
+            val omega = 4f / (dampingRatio * MS / 1000f)
+            return omega * omega
+        }
+
+        fun <T> spring(dampingRatio: Float = 0.86f, visibilityThreshold: T? = null): androidx.compose.animation.core.SpringSpec<T> =
+            androidx.compose.animation.core.spring(dampingRatio, stiffness(dampingRatio), visibilityThreshold)
+
+        fun <T> tween(
+            delayMillis: Int = 0,
+            easing: androidx.compose.animation.core.Easing = androidx.compose.animation.core.FastOutSlowInEasing,
+        ): androidx.compose.animation.core.TweenSpec<T> = androidx.compose.animation.core.tween(MS, delayMillis, easing)
+    }
+
     /** Hit areas and fixed control sizes. */
     object Size {
         /** The smallest thing a finger is asked to hit. */

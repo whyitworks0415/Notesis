@@ -88,7 +88,7 @@ fun LiquidGlassButton(
         animationSpec = when {
             !effectsAllowed -> snap()
             recipe != null -> if (down) recipe.press else recipe.release
-            else -> spring(dampingRatio = 0.82f, stiffness = 620f)
+            else -> Ui.Motion.spring(0.82f)
         },
         label = "Button press scale",
     )
@@ -98,13 +98,13 @@ fun LiquidGlassButton(
             pressed && enabled -> 1f
             else -> 0.76f
         },
-        animationSpec = if (effectsAllowed) tween(170) else snap(),
+        animationSpec = if (effectsAllowed) Ui.Motion.tween() else snap(),
         label = "Button refraction",
     )
     val haloScale by animateFloatAsState(
         // Apple식 버튼은 손가락 아래에서 살짝 퍼지되 터치 영역은 바꾸지 않습니다.
         targetValue = if (pressed && enabled && useLiquidGlass && effectsAllowed) 1f + 0.08f * response else 1f,
-        animationSpec = if (effectsAllowed) tween(190) else snap(),
+        animationSpec = if (effectsAllowed) Ui.Motion.tween() else snap(),
         label = "Button glass expansion",
     )
 
@@ -122,10 +122,7 @@ fun LiquidGlassButton(
         .onSizeChanged { buttonSize = it }
         .scale(scale)
         .animateContentSize(
-            animationSpec = spring(
-                dampingRatio = LiquidGlassTokens.segmentDampingRatio,
-                stiffness = 430f,
-            ),
+            animationSpec = Ui.Motion.spring(LiquidGlassTokens.segmentDampingRatio),
         )
         .combinedClickable(
             enabled = enabled,
@@ -168,7 +165,7 @@ fun LiquidGlassButton(
 
         AnimatedContent(
             targetState = expanded,
-            transitionSpec = { fadeIn(tween(140)) togetherWith fadeOut(tween(90)) },
+            transitionSpec = { fadeIn(Ui.Motion.tween()) togetherWith fadeOut(Ui.Motion.tween()) },
             label = "Button menu morph",
         ) { isExpanded ->
             CompositionLocalProvider(

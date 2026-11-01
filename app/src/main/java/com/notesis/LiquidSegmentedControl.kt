@@ -83,13 +83,10 @@ private fun SegmentedControlBody(
             morph.snapTo(0f)
             if (!effectsAllowed || still) return@LaunchedEffect
             // 이동 초반에는 캡슐이 늘어나고, 도착하면서 spring으로 돌아옵니다.
-            morph.animateTo(1f, tween(90))
+            morph.animateTo(1f, tween(Ui.Motion.MS / 2))
             morph.animateTo(
                 0f,
-                spring(
-                    dampingRatio = LiquidGlassTokens.segmentDampingRatio,
-                    stiffness = 430f,
-                ),
+                Ui.Motion.spring(LiquidGlassTokens.segmentDampingRatio),
             )
         }
     }
@@ -122,10 +119,7 @@ private fun SegmentedControlBody(
             animationSpec = when {
                 !effectsAllowed -> snap()
                 still -> tween(SEGMENT_SLIDE_MS, easing = SineInOutEasing)
-                else -> spring(
-                    dampingRatio = LiquidGlassTokens.segmentDampingRatio,
-                    stiffness = 420f,
-                )
+                else -> Ui.Motion.spring(LiquidGlassTokens.segmentDampingRatio)
             },
             label = "Segment indicator position",
         )
@@ -213,4 +207,4 @@ private fun LiquidSegmentedControlPreview() {
 }
 
 /** How long a still skin's segment highlight takes to slide across. */
-private const val SEGMENT_SLIDE_MS = 260
+private const val SEGMENT_SLIDE_MS = Ui.Motion.MS

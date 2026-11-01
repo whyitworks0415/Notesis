@@ -712,18 +712,12 @@ private fun SkinSliderBody(
     val swell = held && !still
     val thumbWidth by animateDpAsState(
         targetValue = if (swell) SLIDER_THUMB_W_HELD else SLIDER_THUMB_W,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessMediumLow,
-        ),
+        animationSpec = Ui.Motion.spring(Spring.DampingRatioMediumBouncy),
         label = "slider thumb width",
     )
     val thumbHeight by animateDpAsState(
         targetValue = if (swell) SLIDER_THUMB_H_HELD else SLIDER_THUMB_H,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessMediumLow,
-        ),
+        animationSpec = Ui.Motion.spring(Spring.DampingRatioMediumBouncy),
         label = "slider thumb height",
     )
 
@@ -862,17 +856,14 @@ private fun SkinSwitchBody(checked: Boolean, onCheckedChange: (Boolean) -> Unit)
         animationSpec = if (still) {
             snap()
         } else {
-            spring(
-                dampingRatio = Spring.DampingRatioMediumBouncy,
-                stiffness = Spring.StiffnessMedium,
-            )
+            Ui.Motion.spring(Spring.DampingRatioMediumBouncy)
         },
         label = "switch lens centre",
     )
     val shift = centre - SWITCH_THUMB_W / 2f
     val track by animateColorAsState(
         if (checked) scheme.primary else scheme.onSurface.copy(alpha = trackAlpha),
-        animationSpec = if (still) snap() else spring(),
+        animationSpec = if (still) snap() else Ui.Motion.spring(),
         label = "switch track",
     )
     Box(
@@ -1100,10 +1091,7 @@ internal fun sliderShownFraction(
     val dragging = dragFraction >= 0f
     val shown by androidx.compose.animation.core.animateFloatAsState(
         targetValue = if (dragging) dragFraction else valueFraction,
-        animationSpec = if (dragging || !animate) snap() else spring(
-            dampingRatio = Spring.DampingRatioNoBouncy,
-            stiffness = Spring.StiffnessMediumLow,
-        ),
+        animationSpec = if (dragging || !animate) snap() else Ui.Motion.spring(Spring.DampingRatioNoBouncy),
         label = "slider handle",
     )
     return shown.coerceIn(0f, 1f)

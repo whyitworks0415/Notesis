@@ -234,7 +234,7 @@ internal fun FolderTile(
 ) {
     var menu by remember(name) { mutableStateOf(false) }
     val primary = MaterialTheme.colorScheme.primary
-    val press by animateFloatAsState(if (selected) 0.96f else 1f, label = "folderSelected")
+    val press by animateFloatAsState(if (selected) 0.96f else 1f, Ui.Motion.spring(), label = "folderSelected")
     SkinSurface(
         corner = Ui.Corner.card,
         modifier = modifier

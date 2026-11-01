@@ -66,7 +66,7 @@ internal class ChromeHideState(private val scope: CoroutineScope, private val mo
     /** Let go: past a third of the way it comes back, short of that it goes up again. */
     fun release(fraction: Float) = if (fraction > 0.33f) show() else hide()
 
-    private fun spec(): AnimationSpec<Float> = if (moves()) spring(dampingRatio = 0.86f, stiffness = 360f) else snap()
+    private fun spec(): AnimationSpec<Float> = if (moves()) Ui.Motion.spring(0.86f) else snap()
 }
 
 @Composable

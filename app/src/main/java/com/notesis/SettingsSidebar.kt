@@ -353,9 +353,9 @@ private val SIDEBAR_CONTENT_LEAD = 24.dp
 // In on Material's emphasized decelerate - most of the way at once, then a
 // long soft landing - and no overshoot: a panel against the screen's edge
 // that springs past its place opens a gap along that edge.
-private val SIDEBAR_OPEN = tween<Float>(380, easing = EmphasizedDecelerateEasing)
-// Out quicker, and gathering speed as it goes.
-private val SIDEBAR_CLOSE = tween<Float>(220, easing = EmphasizedAccelerateEasing)
+private val SIDEBAR_OPEN = tween<Float>(Ui.Motion.MS, easing = EmphasizedDecelerateEasing)
+// Out in the same time, gathering speed as it goes.
+private val SIDEBAR_CLOSE = tween<Float>(Ui.Motion.MS, easing = EmphasizedAccelerateEasing)
 
 /**
  * The note's settings sidebar. Each screen's content comes from the note,
@@ -402,7 +402,7 @@ internal fun NoteSettingsSidebar(
     ) {
         // Material and Glassmorphism turn the page at once; their chrome does not move.
         Crossfade(targetState = nav.current,
-            animationSpec = if (LocalSkin.current.animatesChrome) tween(160) else snap(),
+            animationSpec = if (LocalSkin.current.animatesChrome) Ui.Motion.tween() else snap(),
             label = "settings page") { page ->
             val content: @Composable () -> Unit = {
                 when (page) {

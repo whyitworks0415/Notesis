@@ -384,11 +384,11 @@ internal fun Modifier.glassPressGlow(interaction: androidx.compose.foundation.in
                 when (event) {
                     is androidx.compose.foundation.interaction.PressInteraction.Press -> {
                         at.value = event.pressPosition
-                        launch { glow.animateTo(1f, androidx.compose.animation.core.tween(140)) }
+                        launch { glow.animateTo(1f, Ui.Motion.tween()) }
                     }
                     is androidx.compose.foundation.interaction.PressInteraction.Release,
                     is androidx.compose.foundation.interaction.PressInteraction.Cancel ->
-                        launch { glow.animateTo(0f, androidx.compose.animation.core.tween(520)) }
+                        launch { glow.animateTo(0f, Ui.Motion.tween()) }
                 }
             }
         }

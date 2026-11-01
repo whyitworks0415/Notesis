@@ -31,7 +31,7 @@ object LiquidGlassTokens {
     const val pressedScale = 1.15f
 
     /** 유리 전환 애니메이션 시간입니다. */
-    const val transitionMillis = 200
+    const val transitionMillis = Ui.Motion.MS
 
     /** 세그먼트 인디케이터 spring의 감쇠비입니다. */
     const val segmentDampingRatio = 0.75f

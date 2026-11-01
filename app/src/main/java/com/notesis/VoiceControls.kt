@@ -56,7 +56,7 @@ internal fun VoiceRecordButton(
     val red = Color(0xFFE5484D)
     // 0 the dot, 1 the square.
     val morph by animateFloatAsState(if (active) 1f else 0f,
-        if (moves) spring(dampingRatio = 0.62f, stiffness = 420f) else snap(), label = "record morph")
+        if (moves) Ui.Motion.spring(0.62f) else snap(), label = "record morph")
     val loud by animateFloatAsState(level.coerceIn(0f, 1f),
         if (moves) tween(120) else snap(), label = "record level")
     val pulse = if (moves && active) {

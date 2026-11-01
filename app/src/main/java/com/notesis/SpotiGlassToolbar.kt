@@ -236,7 +236,7 @@ internal fun ToolbarOrientationChoice(sizeLevel: Int, inMenu: Boolean = false) {
 internal object ToolbarMotion {
     private var prefs: android.content.SharedPreferences? = null
 
-    const val DEFAULT_MS = 500
+    const val DEFAULT_MS = Ui.Motion.MS
     const val MAX_MS = 1000
 
     var durationMs by mutableIntStateOf(DEFAULT_MS)
@@ -248,6 +248,11 @@ internal object ToolbarMotion {
         if (prefs != null) return
         val p = context.getSharedPreferences("pens", android.content.Context.MODE_PRIVATE)
         prefs = p
+        // Once, as every motion went to one length: what was chosen before
+        // becomes that length too; a choice made after is kept.
+        if (!p.getBoolean(KEY_UNIFIED, false)) {
+            p.edit().putInt(KEY_MS, DEFAULT_MS).putBoolean(KEY_UNIFIED, true).apply()
+        }
         durationMs = p.getInt(KEY_MS, DEFAULT_MS).coerceIn(0, MAX_MS)
         // Stored as the curve's own number, which the older four kept when
         // the two newer were added; see [ToolbarCurve.stored].
@@ -278,6 +283,7 @@ internal object ToolbarMotion {
     }
 
     private const val KEY_MS = "toolbarMotionMs"
+    private const val KEY_UNIFIED = "toolbarMotionUnified180"
     private const val KEY_CURVE = "toolbarMotionEasing"
     private const val SPRING_DAMPING = 0.78f
     // Cubic in-out: starts gently, gathers, and settles as gently as it began.
@@ -432,7 +438,7 @@ internal fun Modifier.spotiGlassMorph(key: Any, enter: Boolean = false): Modifie
     LaunchedEffect(key, effects) {
         if (effects && (enter || !initial)) {
             phase.snapTo(0f)
-            phase.animateTo(1f, tween(460))
+            phase.animateTo(1f, Ui.Motion.tween())
         } else phase.snapTo(1f)
         initial = false
     }
@@ -503,7 +509,7 @@ private fun SpotiActionButton(
         when {
             !lifts -> snap()
             recipe != null -> if (pressed) recipe.press else recipe.release
-            else -> spring(0.78f, 430f)
+            else -> Ui.Motion.spring(0.78f)
         }, label = "Action button lift")
     val radius = corner ?: nestedCorner(Ui.Corner.control)
     // One shape family in every skin: the round corner the bar and its strip draw.
@@ -814,7 +820,7 @@ internal fun SpotiGlassToolbar(
                                         // where motion is always off: there, and wherever the
                                         // system's animations are off, the menu could be
                                         // tapped but never seen.
-                                        Box(if (effects) Modifier.animateContentSize(spring(0.86f, 430f)) else Modifier) {
+                                        Box(if (effects) Modifier.animateContentSize(Ui.Motion.spring(0.86f)) else Modifier) {
                                             ToolbarMenuContent(page, sizeLevel, mode, config, functions, notes, ai,
                                                 onPage = { page = it }, onClose = { open = false },
                                                 onSizeLevel = onSizeLevel, onPick = ::pick)
@@ -1279,9 +1285,9 @@ internal val EmphasizedAccelerateEasing = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15
 // Material's emphasized decelerate: arrives quickly and lands softly.
 internal val EmphasizedDecelerateEasing = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
 // Out of the point: fast at first, then a soft landing at full size.
-private val POPUP_OPEN = tween<Float>(240, easing = EmphasizedDecelerateEasing)
+private val POPUP_OPEN = tween<Float>(Ui.Motion.MS, easing = EmphasizedDecelerateEasing)
 // Back into it: slow to leave, then drawn in quickly.
-private val POPUP_CLOSE = tween<Float>(180, easing = EmphasizedAccelerateEasing)
+private val POPUP_CLOSE = tween<Float>(Ui.Motion.MS, easing = EmphasizedAccelerateEasing)
 
 /**
  * Grows a popup out of [anchor], a point on screen - the button or the tool

@@ -110,13 +110,13 @@ class ChromeMotionTest {
             t += dt
             motion.tick(t, dt, 100f)
             // The lens steps its spring at 240 Hz, which runs a few
-            // milliseconds ahead of the exact curve: under a tenth of a cell.
-            assertEquals(spring(t), motion.position.toDouble(), 0.08)
+            // milliseconds ahead of the exact curve: about a tenth of a cell
+            // at its fastest, now that it settles in 180 ms.
+            assertEquals(spring(t), motion.position.toDouble(), 0.12)
             if (halfwayAt < 0 && motion.position >= 1.5f) halfwayAt = t
         }
-        // Halfway in about a tenth of a second: off the mark quicker than
-        // the 260 ms sine ease it replaces, which took 130 ms to get there.
-        assertTrue(halfwayAt in 0.08..0.115)
+        // Halfway in under 70 ms, settled within the chrome's 180 ms.
+        assertTrue(halfwayAt in 0.055..0.085)
         assertEquals(3f, motion.position, 0.001f)
     }
 }

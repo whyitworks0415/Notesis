@@ -106,7 +106,7 @@ fun LiquidGlassSlider(
     val thumbWidth by androidx.compose.animation.core.animateDpAsState(
         targetValue = if (dragging && enabled && useLiquidGlass && effectsAllowed) 36.dp + 8.dp * response else 36.dp,
         animationSpec = if (effectsAllowed) {
-            spring(dampingRatio = 0.78f, stiffness = 520f)
+            Ui.Motion.spring(0.78f)
         } else {
             snap()
         },
