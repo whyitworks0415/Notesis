@@ -639,6 +639,27 @@ private fun IconsGroup() {
 private fun PanelsGroup(skin: Skin, settings: SkinSettings, onChange: (SkinSettings) -> Unit) {
     val defaults = SkinSettings()
     SettingsSectionHeader("Panels, menus and the toolbar")
+    // Each kind of chrome on its own, over whatever glass the style draws.
+    val solidStyle = if (skin == Skin.MATERIAL) "Material panels are solid" else null
+    AppearanceSlider("Toolbar transparency", "%.0f%%".format(settings.toolbarClarity * 100), settings.toolbarClarity,
+        0f..1f, step = 0.01f, default = defaults.toolbarClarity,
+        note = "The toolbar, its strip of tools and its round buttons. 100% is the glass as the style draws it; lower is more solid.",
+        disabledReason = solidStyle,
+    ) { onChange(settings.copy(toolbarClarity = it)) }
+    AppearanceSlider("Popup transparency", "%.0f%%".format(settings.popupClarity * 100), settings.popupClarity,
+        0f..1f, step = 0.01f, default = defaults.popupClarity,
+        note = "The Functions menu, the pen panel, Tools and the other panels that open from the bar, and a page shown large.",
+        disabledReason = solidStyle,
+    ) { onChange(settings.copy(popupClarity = it)) }
+    AppearanceSlider("Sidebar transparency", "%.0f%%".format(settings.sidebarClarity * 100), settings.sidebarClarity,
+        0f..1f, step = 0.01f, default = defaults.sidebarClarity,
+        note = "Settings, the page panel and the layer panel along the window's edge.",
+        disabledReason = solidStyle,
+    ) { onChange(settings.copy(sidebarClarity = it)) }
+    AppearanceSlider("Dim behind popups", "%.0f%%".format(settings.popupDim * 100), settings.popupDim,
+        SkinSettings.POPUP_DIM_RANGE, step = 0.01f, default = defaults.popupDim,
+        note = "How much the page darkens behind a tool or pen panel.",
+    ) { onChange(settings.copy(popupDim = it)) }
     val ownRecipe = skin == Skin.SPOTIGLASS && settings.liquidStyle != LiquidStyle.NOTESIS
     if (ownRecipe) {
         SettingsNote("${settings.liquidStyle.label} sets its corner, blur, surface, rim and motion in Glass, " +
@@ -758,8 +779,16 @@ private fun IosGlassControls(g: IosGlass, onChange: (IosGlass) -> Unit) {
     ) { onChange(g.copy(bodyOpacity = it)) }
     SettingsSectionHeader("Rim")
     AppearanceSlider("Rim light", "%.2f".format(g.rimLight), g.rimLight, 0f..2f, step = 0.05f, default = d.rimLight,
-        note = "Light caught along the edge, from the top.",
+        note = "Light caught along the edge, where it faces the light.",
     ) { onChange(g.copy(rimLight = it)) }
+    AppearanceSlider("Light from", lightAngleLabel(g.lightAngle), g.lightAngle, IosGlass.LIGHT_ANGLE_RANGE, step = 5f,
+        default = d.lightAngle,
+        note = "Where the rim is brightest. 90° lights the top and bottom and leaves the left and right ends faint; " +
+            "0° or 180° lights the ends instead, 45° or 135° the corners.",
+        disabledReason = if (g.rimAllRound) "The rim is lit all the way round" else null,
+    ) { onChange(g.copy(lightAngle = it)) }
+    SettingsToggle("Light all the way round", g.rimAllRound, { onChange(g.copy(rimAllRound = it)) },
+        hint = "The same light along every edge, with no faint ends.")
     AppearanceSlider("Rim shade", "%.2f".format(g.rimShade), g.rimShade, 0f..2f, step = 0.05f, default = d.rimShade,
         note = "The fine dark line just inside the edge.",
     ) { onChange(g.copy(rimShade = it)) }
@@ -774,6 +803,16 @@ private fun IosGlassControls(g: IosGlass, onChange: (IosGlass) -> Unit) {
     OutlinedButton(onClick = { onChange(IosGlass.PRESET.copy(motion = g.motion)) }, modifier = Modifier.heightIn(min = 48.dp)) {
         Text("Use the ios27Light preset as measured")
     }
+}
+
+/** The light's angle as where on the pane it comes from. */
+private fun lightAngleLabel(angle: Float): String = when (angle.roundToInt()) {
+    0 -> "0° · right"
+    45 -> "45° · top right"
+    90 -> "90° · top"
+    135 -> "135° · top left"
+    180 -> "180° · left"
+    else -> "%.0f°".format(angle)
 }
 
 /** Kyant0/AndroidLiquidGlass's numbers, under the names its effects take. */

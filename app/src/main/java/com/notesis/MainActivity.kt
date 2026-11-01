@@ -8293,7 +8293,7 @@ private fun PageSidebar(
                         .background(MaterialTheme.colorScheme.outline.copy(alpha = if (draft != null) 0.95f else 0.6f)),
                 )
             }
-            SkinSurface(modifier = Modifier.width(shown.dp).fillMaxHeight()) {
+            SkinSurface(modifier = Modifier.width(shown.dp).fillMaxHeight(), role = ChromeRole.SIDEBAR) {
                 Column {
                     LiquidSegmentedControl(
                         segments = PAGE_PANEL_TABS,

@@ -197,4 +197,34 @@ class SkinSettingsTest {
         assertEquals(listOf("Material", "Glassmorphism", "Liquid glass", "Liquid glass · iOS",
             "Liquid glass · Kyant0", "Liquid glass · QWEA0"), Look.all.map { it.label })
     }
+
+    @Test fun `each kind of chrome keeps its own transparency and the popups their dim`() {
+        val d = SkinSettings()
+        assertEquals(1f, d.clarityOf(ChromeRole.TOOLBAR), 0f)
+        assertEquals(1f, d.clarityOf(ChromeRole.POPUP), 0f)
+        assertEquals(1f, d.clarityOf(ChromeRole.SIDEBAR), 0f)
+        assertEquals(SkinSettings.DEFAULT_POPUP_DIM, d.popupDim, 0f)
+        val set = d.copy(toolbarClarity = 0.8f, popupClarity = 0.3f, sidebarClarity = 0.55f, popupDim = 0.25f)
+        val back = SkinSettings.fromJson(set.toJson())
+        assertEquals(0.8f, back.clarityOf(ChromeRole.TOOLBAR), 0.001f)
+        assertEquals(0.3f, back.clarityOf(ChromeRole.POPUP), 0.001f)
+        assertEquals(0.55f, back.clarityOf(ChromeRole.SIDEBAR), 0.001f)
+        assertEquals(0.25f, back.popupDim, 0.001f)
+        // Saved before there were any: the glass as it was.
+        val old = SkinSettings.fromJson(JSONObject(d.toJson()).apply {
+            remove("toolbarClarity"); remove("popupClarity"); remove("sidebarClarity"); remove("popupDim")
+        }.toString())
+        assertEquals(1f, old.popupClarity, 0f)
+        assertEquals(SkinSettings.DEFAULT_POPUP_DIM, old.popupDim, 0f)
+    }
+
+    @Test fun `the iOS rim's light can come from anywhere round the pane`() {
+        val d = IosGlass()
+        assertEquals(90f, d.lightAngle, 0f)
+        assertEquals(false, d.rimAllRound)
+        val back = IosGlass.fromJson(d.copy(lightAngle = 0f, rimAllRound = true).toJson())
+        assertEquals(0f, back.lightAngle, 0f)
+        assertTrue(back.rimAllRound)
+        assertEquals(180f, IosGlass.fromJson(d.copy(lightAngle = 400f).toJson()).lightAngle, 0f)
+    }
 }

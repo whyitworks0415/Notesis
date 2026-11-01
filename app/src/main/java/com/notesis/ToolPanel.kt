@@ -111,7 +111,7 @@ internal fun ToolPanel(
 
     Dialog(onDismissRequest = onOutside, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         // A light dim: the page should still show through the glass.
-        (LocalView.current.parent as? DialogWindowProvider)?.window?.setDimAmount(0.12f)
+        (LocalView.current.parent as? DialogWindowProvider)?.window?.setDimAmount(LocalSkinSettings.current.popupDim)
         // The panel's own corner is the one fixed radius, and everything
         // inside follows it, one inset in. It is the toolbar's and its menu's,
         // on the same round outline, in every skin (see [chromeCorner]).
@@ -141,7 +141,7 @@ internal fun ToolPanel(
                 .heightIn(max = tallest)
                 // Liquid glass under the glass skin, the same lens as the bar
                 // it came from; frost or a solid panel under the others.
-                .skinMaterial(shape, panel = true)
+                .skinMaterial(shape, panel = true, role = ChromeRole.POPUP)
                 .clip(shape)
                 // No size animation of its own: a part that opens inside grows
                 // on one curve and the panel, measured round it, comes with it.

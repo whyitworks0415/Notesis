@@ -388,6 +388,8 @@ fun SkinSurface(
      * what the gap along the top of the docked toolbar was.
      */
     flush: Boolean = false,
+    /** Which kind of chrome this is, for its own transparency; null takes none. */
+    role: ChromeRole? = null,
     content: @Composable () -> Unit,
 ) {
     val skin = LocalSkin.current
@@ -413,11 +415,12 @@ fun SkinSurface(
             shape, LocalSkinSettings.current,
             elevation = if (flush) 0.dp else tokens.shadow, rim = !flush,
             exportedBackdrop = spotiHost,
-        ).then(if (flush) Modifier.flushEdge(tokens) else Modifier)
+        ).then(if (flush) Modifier.flushEdge(tokens) else Modifier).chromeVeil(role, shape)
     } else {
         modifier
             .frostedGlass(tokens, shape)
             .then(if (flush) Modifier.flushEdge(tokens) else Modifier.glassEdge(tokens, shape))
+            .chromeVeil(role, shape)
     }
     Box(surfaceModifier) {
         if (spotiHost != null) {
@@ -443,6 +446,8 @@ internal fun Modifier.skinMaterial(
      * the shadow off at its bounds.
      */
     shadow: Boolean = true,
+    /** Which kind of chrome this is, for its own transparency; null takes none. */
+    role: ChromeRole? = null,
 ): Modifier {
     val skin = LocalSkin.current
     val tokens = skin.tokens()
@@ -458,8 +463,22 @@ internal fun Modifier.skinMaterial(
             .frostedGlass(tokens, shape, shadow = shadow,
                 fill = if (panel) MaterialTheme.colorScheme.surfaceContainerHigh else null)
             .glassEdge(tokens, shape)
-        Skin.SPOTIGLASS -> liquidGlassPane(shape, panel = panel, shadow = shadow)
+            .chromeVeil(role, shape)
+        Skin.SPOTIGLASS -> liquidGlassPane(shape, panel = panel, shadow = shadow).chromeVeil(role, shape)
     }
+}
+
+/**
+ * [role]'s own transparency over the glass under it: the panes' surface
+ * colour laid over the glass, as solid as the role is set below clear, under
+ * the content and the rim. Material's panes are solid already and take nothing.
+ */
+@Composable
+internal fun Modifier.chromeVeil(role: ChromeRole?, shape: Shape): Modifier {
+    if (role == null || LocalSkin.current == Skin.MATERIAL) return this
+    val clarity = LocalSkinSettings.current.clarityOf(role)
+    if (clarity >= 0.999f) return this
+    return background(MaterialTheme.colorScheme.surface.copy(alpha = (1f - clarity).coerceIn(0f, 1f)), shape)
 }
 
 /** The shadow [skinMaterial] casts for this [shape], on its own. */

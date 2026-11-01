@@ -536,7 +536,7 @@ private fun SpotiActionButton(
             indication = if (glass) null else LocalIndication.current, onClick = tapped),
         contentAlignment = Alignment.Center) {
         val body = Modifier.matchParentSize().graphicsLayer { scaleX = grow; scaleY = grow }
-        val pane = if (persistentGlass) body.skinMaterial(CircleShape) else body.background(fill, shape)
+        val pane = if (persistentGlass) body.skinMaterial(CircleShape, role = ChromeRole.TOOLBAR) else body.background(fill, shape)
         // Liquid glass lights up under the finger, as Apple's does.
         Box(if (glass) pane.glassPressGlow(interaction, if (persistentGlass) CircleShape else shape) else pane)
         Column(Modifier.padding(horizontal = Ui.Space.s, vertical = Ui.Space.xs),
@@ -684,7 +684,7 @@ internal fun SpotiGlassToolbar(
         }) {
         // The full bar is one surface. The strip on it is content, not a
         // second pane of glass, so the page shows through both the same way.
-        if (full) Box(Modifier.matchParentSize().skinMaterial(outline))
+        if (full) Box(Modifier.matchParentSize().skinMaterial(outline, role = ChromeRole.TOOLBAR))
         // The whole bar is scaled as one row (see spotiFitRow), so nothing in it scales again.
         CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides androidx.compose.ui.unit.Dp.Unspecified,
             LocalChromeScale provides if (full) 1f else chrome) {
@@ -726,7 +726,7 @@ internal fun SpotiGlassToolbar(
                                         tools.map { SpotiGlassItem(it.label, it.icon(), toolColors[it.mode]) },
                                         selectedIndex = selected, onSelected = { pick(tools[it]) },
                                         showLabels = false, compact = false, corner = outer,
-                                        surface = SpotiBarSurface.LIQUID, vertical = true)
+                                        surface = SpotiBarSurface.LIQUID, vertical = true, role = ChromeRole.TOOLBAR)
                                     else ToolStrip(tools, selected, compact = false, corner = outer,
                                         ownSurface = true, toolColors = toolColors, onPick = ::pick, vertical = true)
                                 }
@@ -767,7 +767,7 @@ internal fun SpotiGlassToolbar(
                                     onSelected = { pick(tools[it]) }, modifier = Modifier.fillMaxWidth(),
                                     showLabels = false, compact = full, corner = stripCorner,
                                     surface = if (full) SpotiBarSurface.NONE else SpotiBarSurface.LIQUID,
-                                    lift = true)
+                                    lift = true, role = ChromeRole.TOOLBAR)
                                   else ToolStrip(tools, selected, compact = full, corner = stripCorner,
                                     ownSurface = !full, toolColors = toolColors, onPick = ::pick)
                                 }
@@ -843,9 +843,9 @@ internal fun SpotiGlassToolbar(
                                             // Only between the menu's pages: on top of coming out of
                                             // the point, a lens ripple was one motion too many.
                                             .spotiGlassMorph(page)
-                                            .skinMaterial(outline, panel = true, shadow = false)) { menuBody() }
+                                            .skinMaterial(outline, panel = true, shadow = false, role = ChromeRole.POPUP)) { menuBody() }
                                     } else {
-                                        SkinSurface(paneModifier) {
+                                        SkinSurface(paneModifier, role = ChromeRole.POPUP) {
                                             if (skin != Skin.MATERIAL) BlurBehind()
                                             menuBody()
                                         }
@@ -1424,7 +1424,7 @@ private fun ToolStrip(
         val cell = ((if (vertical) maxHeight else maxWidth) - padding * 2).coerceAtLeast(1.dp) / tools.size
         val capsule = if (vertical) Modifier.fillMaxHeight().width(barHeight) else Modifier.fillMaxWidth().height(barHeight)
         Box(capsule.align(Alignment.Center)
-            .then(if (ownSurface) Modifier.skinMaterial(RoundedCornerShape(corner)) else Modifier)) {
+            .then(if (ownSurface) Modifier.skinMaterial(RoundedCornerShape(corner), role = ChromeRole.TOOLBAR) else Modifier)) {
             if (selected != null) {
                 // Kept inside the strip if the spring runs a hair past the end.
                 Box(Modifier

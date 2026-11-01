@@ -53,6 +53,7 @@ uniform float  satFactor;
 uniform float  edgeAbsorb;
 uniform float  bodyShade;
 uniform float  outAlpha;
+uniform float  rimEven;
 
 float sdRoundedBox4(float2 p, float2 b, float4 r) {
     float rx = (p.x > 0.0) ? ((p.y > 0.0) ? r.z : r.y) : ((p.y > 0.0) ? r.w : r.x);
@@ -142,7 +143,9 @@ half4 main(float2 coord) {
     float glowIn = clamp((-d - 1.0) / 2.0, 0.0, 1.0);
     float glow = glowIn * pow(clamp(1.0 - (-d - 3.0) / bandW, 0.0, 1.0), 1.5) * cov;
     float hair = clamp(1.0 - abs(d + 1.0) / 2.0, 0.0, 1.0) * cov;
-    float spec = (hair * 0.70 * (lobeF + lobeB) + glow * 0.10 * lobeF) * specStrength;
+    // rimEven 1 lights the whole rim alike instead of the two ends the light faces.
+    float lobes = mix(lobeF + lobeB, 1.0, rimEven);
+    float spec = (hair * 0.70 * lobes + glow * 0.10 * mix(lobeF, 0.5, rimEven)) * specStrength;
 
     col = clamp(col, float3(0.0), float3(1.0));
     // The page through the glass at [outAlpha]; the light on the rim added over it in full.
@@ -170,6 +173,8 @@ internal class LiquidLensParams(
     val lightX: Float = 0.866f,
     val lightY: Float = 0.5f,
     val spec: Float = 0f,
+    /** 1 lights the rim evenly all the way round; 0 only where it faces the light. */
+    val rimEven: Float = 0f,
     val tint: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Transparent,
     val adaptiveTint: Boolean = false,
     val glassTint: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Transparent,
@@ -234,6 +239,7 @@ internal fun BackdropEffectScope.liquidLens(p: LiquidLensParams) {
         setFloatUniform("edgeAbsorb", p.edgeAbsorb)
         setFloatUniform("bodyShade", p.bodyShade)
         setFloatUniform("outAlpha", p.opacity.coerceIn(0f, 1f))
+        setFloatUniform("rimEven", p.rimEven.coerceIn(0f, 1f))
     } }.getOrNull() ?: return
     effect(RenderEffect.createRuntimeShaderEffect(shader, "content"))
 }

@@ -142,7 +142,7 @@ internal fun PagePeek(
                 }
                 .padding(Ui.Space.s)
                 .width(widthDp.dp)
-                .skinMaterial(androidx.compose.foundation.shape.RoundedCornerShape(Ui.Corner.card), panel = true)
+                .skinMaterial(androidx.compose.foundation.shape.RoundedCornerShape(Ui.Corner.card), panel = true, role = ChromeRole.POPUP)
                 .padding(Ui.Space.s),
         ) {
             Box { PagePicture(large ?: small, aspect, number) }

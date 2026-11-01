@@ -118,6 +118,15 @@ data class IosGlass(
     /** chromaticAberration; 0 in the presets. */
     val dispersion: Float = 0f,
     val corner: Float = 29f,
+    /**
+     * Where the rim's light comes from, in degrees round the pane: 90 is
+     * the top, as ios27Light has it, which lights the top and bottom edges
+     * and leaves the two ends faint; 0 and 180 light the ends instead, 45
+     * and 135 the corners. The dark preset's light comes from the opposite side.
+     */
+    val lightAngle: Float = 90f,
+    /** The rim lit evenly all the way round rather than where it faces the light. */
+    val rimAllRound: Boolean = false,
     val motion: ProjectMotion = ProjectMotion(),
 ) {
     fun toJson(): JSONObject = JSONObject()
@@ -127,6 +136,7 @@ data class IosGlass(
         .put("rimLight", rimLight.toDouble()).put("rimShade", rimShade.toDouble())
         .put("edgeAbsorption", edgeAbsorption.toDouble()).put("dispersion", dispersion.toDouble())
         .put("corner", corner.toDouble()).put("motion", motion.toJson())
+        .put("lightAngle", lightAngle.toDouble()).put("rimAllRound", rimAllRound)
 
     /** The bevel's depth in dp. */
     val bevelDp: Float get() = thickness / 3f
@@ -139,6 +149,7 @@ data class IosGlass(
         val BLUR_RANGE = 0f..10f
         val FROST_RANGE = 0f..40f
         val SATURATION_RANGE = 1f..3f
+        val LIGHT_ANGLE_RANGE = 0f..180f
 
         /** ios27Dark against ios27Light, applied to whatever is set. */
         const val DARK_BODY = (0x1F / 255f) / (0x87 / 255f)
@@ -176,6 +187,8 @@ data class IosGlass(
                 edgeAbsorption = json.f("edgeAbsorption", d.edgeAbsorption, 0f..0.5f),
                 dispersion = json.f("dispersion", d.dispersion, 0f..1f),
                 corner = json.f("corner", d.corner, SkinSettings.CORNER_RANGE),
+                lightAngle = json.f("lightAngle", d.lightAngle, LIGHT_ANGLE_RANGE),
+                rimAllRound = json.optBoolean("rimAllRound", d.rimAllRound),
                 motion = ProjectMotion.fromJson(json.optJSONObject("motion")),
             )
         }
@@ -501,8 +514,12 @@ private fun Modifier.iosGlass(
         else Color(0xFFF8F8F8).copy(alpha = (g.bodyOpacity * amount).coerceIn(0f, 1f))
     val rimLight = if (rim) (if (dark) g.rimLight * IosGlass.DARK_RIM_LIGHT else g.rimLight) * amount else 0f
     // ios27Light lights from the top (pi / 2), ios27Dark from the bottom; the
-    // shader takes the way the light travels.
-    val lightY = if (dark) -1f else 1f
+    // shader takes the way the light travels: from the angle set, towards
+    // the opposite side, turned round in the dark.
+    val angle = Math.toRadians(g.lightAngle.toDouble())
+    val travelX = (-kotlin.math.cos(angle)).toFloat() * (if (dark) -1f else 1f)
+    val lightY = kotlin.math.sin(angle).toFloat() * (if (dark) -1f else 1f)
+    val rimEven = if (g.rimAllRound) 1f else 0f
     fun glassLens(scope: com.kyant.backdrop.BackdropEffectScope, opacity: Float, spec: Float) = with(scope) {
         liquidLens(LiquidLensParams(
             cornerRadius = cornerOf(shape, size, layoutDirection, this),
@@ -510,8 +527,9 @@ private fun Modifier.iosGlass(
             refract = g.bendDp.dp.toPx() * amount,
             falloff = 0f,
             dispersion = g.dispersion,
-            lightX = 0f, lightY = lightY,
+            lightX = travelX, lightY = lightY,
             spec = spec,
+            rimEven = rimEven,
             saturation = saturation,
             edgeAbsorb = g.edgeAbsorption,
             bodyShade = if (dark) IosGlass.DARK_BODY_SHADE * amount else 0f,

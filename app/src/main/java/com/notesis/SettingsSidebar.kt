@@ -229,7 +229,7 @@ internal fun SettingsSidebarFrame(
                     )
                 }
             }
-            SkinSurface(Modifier.weight(1f).fillMaxHeight(), corner = if (full) 0.dp else Ui.Corner.sheet) {
+            SkinSurface(Modifier.weight(1f).fillMaxHeight(), corner = if (full) 0.dp else Ui.Corner.sheet, role = ChromeRole.SIDEBAR) {
                 // A veil over the glass: a column of settings has to be read,
                 // and the page behind it should only be a hint.
                 Column(

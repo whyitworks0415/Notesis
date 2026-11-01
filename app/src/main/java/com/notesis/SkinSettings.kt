@@ -82,6 +82,17 @@ data class SkinSettings(
     val kyant: KyantGlass = KyantGlass(),
     /** [LiquidStyle.QWEA]'s own settings. */
     val qwea: QweaGlass = QweaGlass(),
+    /**
+     * Each kind of chrome's own transparency over the glass the style draws:
+     * 1 is the glass as it is, 0 solid. The toolbar and its buttons, the
+     * popups (menus and tool panels) and the sidebars (settings, pages and
+     * layers) each take theirs; see [ChromeRole].
+     */
+    val toolbarClarity: Float = 1f,
+    val popupClarity: Float = 1f,
+    val sidebarClarity: Float = 1f,
+    /** How far the page is dimmed behind a tool panel. */
+    val popupDim: Float = DEFAULT_POPUP_DIM,
 ) {
     fun toJson(): String = JSONObject()
         .put("themeMode", themeMode.name)
@@ -109,7 +120,18 @@ data class SkinSettings(
         .put("kyant", kyant.toJson())
         // "qwea" held 0.75's settings, in dp where these are the view's pixels.
         .put("qweaView", qwea.toJson())
+        .put("toolbarClarity", toolbarClarity.toDouble())
+        .put("popupClarity", popupClarity.toDouble())
+        .put("sidebarClarity", sidebarClarity.toDouble())
+        .put("popupDim", popupDim.toDouble())
         .toString()
+
+    /** [role]'s own transparency; see [toolbarClarity]. */
+    fun clarityOf(role: ChromeRole): Float = when (role) {
+        ChromeRole.TOOLBAR -> toolbarClarity
+        ChromeRole.POPUP -> popupClarity
+        ChromeRole.SIDEBAR -> sidebarClarity
+    }
 
     /** Whether the optics are still the ones a fresh install had before [OPTICS_VERSION] 2. */
     internal fun hasOriginalOptics(): Boolean {
@@ -194,6 +216,11 @@ data class SkinSettings(
                 ios = IosGlass.fromJson(json.optJSONObject("ios")),
                 kyant = KyantGlass.fromJson(json.optJSONObject("kyant")),
                 qwea = QweaGlass.fromJson(json.optJSONObject("qweaView")),
+                toolbarClarity = json.unit("toolbarClarity", d.toolbarClarity),
+                popupClarity = json.unit("popupClarity", d.popupClarity),
+                sidebarClarity = json.unit("sidebarClarity", d.sidebarClarity),
+                popupDim = json.optDouble("popupDim", d.popupDim.toDouble()).toFloat()
+                    .takeIf { it.isFinite() }?.coerceIn(POPUP_DIM_RANGE) ?: d.popupDim,
             )
             // Saved before the glass took its present look: optics never moved
             // from the old defaults take the new ones; any the reader set are kept,
@@ -242,8 +269,23 @@ data class SkinSettings(
         val DISPERSION_RANGE = 0f..1f
         val CORNER_RANGE = 0f..48f
         val REFLECTION_RANGE = 0f..1f
+        /** The dim tool panels always had: enough to set the panel off, the page still readable. */
+        const val DEFAULT_POPUP_DIM = 0.12f
+        val POPUP_DIM_RANGE = 0f..0.6f
     }
 }
+
+/** A 0-to-1 value saved under [key], or [default] if it is missing or unreadable. */
+private fun JSONObject.unit(key: String, default: Float): Float =
+    optDouble(key, default.toDouble()).toFloat().takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: default
+
+/**
+ * Which kind of chrome a surface is, for its own transparency
+ * ([SkinSettings.clarityOf]): the toolbar and its buttons, a popup that
+ * comes out of it (the Functions menu, tool and pen panels, a page shown
+ * large), or a sidebar along the window's edge (settings, pages, layers).
+ */
+enum class ChromeRole { TOOLBAR, POPUP, SIDEBAR }
 
 /** Kept beside the pens, because both are how the person likes their tools. */
 class SkinSettingsStore(context: Context) {

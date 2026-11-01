@@ -1396,3 +1396,22 @@ Always on for this tablet: without it, strokes only appear once the pen lifts.	�
 Turn on if strokes only appear once the pen lifts.	펜을 뗀 뒤에야 획이 나타나면 켜세요.
 The glass is drawn plain and solid, the lens stays still, fewer pages are read ahead and background work takes fewer cores, so the pen and scrolling keep their speed. On by default on this device.	유리를 단순한 불투명 패널로 그리고, 렌즈를 멈추고, 미리 읽는 페이지와 백그라운드 작업을 줄여 펜과 스크롤이 제 속도를 내게 합니다. 이 기기에서는 기본으로 켜져 있습니다.
 Glass, lens and reading ahead as set. Turn on if writing or scrolling stutters. On by default on this device.	유리, 렌즈, 미리 읽기를 설정대로 씁니다. 필기나 스크롤이 끊기면 켜 보세요. 이 기기에서는 기본으로 켜져 있습니다.
+Light caught along the edge, where it faces the light.	빛을 향한 가장자리에 맺히는 빛입니다.
+Light from	빛 방향
+Where the rim is brightest. 90° lights the top and bottom and leaves the left and right ends faint; 0° or 180° lights the ends instead, 45° or 135° the corners.	테두리가 가장 밝은 곳입니다. 90°는 위아래가 밝고 좌우 끝이 흐려집니다. 0°나 180°는 좌우 끝이, 45°나 135°는 모서리가 밝아집니다.
+The rim is lit all the way round	테두리 전체에 빛이 들어가 있습니다
+Light all the way round	테두리 전체에 빛
+The same light along every edge, with no faint ends.	모든 가장자리에 같은 빛이 들어가 흐려지는 끝이 없습니다.
+0° · right	0° · 오른쪽
+45° · top right	45° · 오른쪽 위
+90° · top	90° · 위
+135° · top left	135° · 왼쪽 위
+180° · left	180° · 왼쪽
+Toolbar transparency	툴바 투명도
+The toolbar, its strip of tools and its round buttons. 100% is the glass as the style draws it; lower is more solid.	툴바, 도구 줄, 둥근 버튼입니다. 100%는 스타일이 그리는 유리 그대로이고, 낮출수록 불투명해집니다.
+Popup transparency	팝업 투명도
+The Functions menu, the pen panel, Tools and the other panels that open from the bar, and a page shown large.	Functions 메뉴, 펜 설정창, 도구 등 툴바에서 열리는 창과 크게 보기한 페이지입니다.
+Sidebar transparency	사이드바 투명도
+Settings, the page panel and the layer panel along the window's edge.	화면 가장자리의 설정, 페이지 패널, 레이어 패널입니다.
+Dim behind popups	팝업 뒤 어둡게
+How much the page darkens behind a tool or pen panel.	도구나 펜 설정창 뒤의 페이지를 얼마나 어둡게 할지 정합니다.

@@ -147,6 +147,8 @@ fun SpotiGlassBar(
      * it darker than the pill for a moment after the finger lifted.
      */
     lift: Boolean = surface != SpotiBarSurface.NONE,
+    /** Which kind of chrome the capsule is, for its own transparency; null takes none. */
+    role: ChromeRole? = null,
 ) {
     require(items.isNotEmpty())
     val look = LocalSkinSettings.current
@@ -297,8 +299,10 @@ fun SpotiGlassBar(
             when (surface) {
                 // A round corner, as the toolbar and the other skins' strip draw
                 // theirs - and the only outline Backdrop's lens can take.
-                SpotiBarSurface.FROST -> Box(capsule.spotiGlassSurface(RoundedCornerShape(corner), look, navigation = true))
-                SpotiBarSurface.LIQUID -> Box(capsule.liquidGlassPane(RoundedCornerShape(corner)))
+                SpotiBarSurface.FROST -> Box(capsule.spotiGlassSurface(RoundedCornerShape(corner), look, navigation = true)
+                    .chromeVeil(role, RoundedCornerShape(corner)))
+                SpotiBarSurface.LIQUID -> Box(capsule.liquidGlassPane(RoundedCornerShape(corner))
+                    .chromeVeil(role, RoundedCornerShape(corner)))
                 SpotiBarSurface.NONE -> Unit
             }
         }

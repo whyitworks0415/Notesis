@@ -802,6 +802,7 @@ internal fun LayerPanel(view: InkCanvasView, onClose: () -> Unit, modifier: Modi
             .widthIn(max = 320.dp)
             .fillMaxWidth()
             .fillMaxHeight(0.86f),
+        role = ChromeRole.SIDEBAR,
     ) {
         Column {
             // ---- header: fixed, only the list below scrolls ----
