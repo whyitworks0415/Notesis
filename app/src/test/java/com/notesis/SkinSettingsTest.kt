@@ -227,4 +227,18 @@ class SkinSettingsTest {
         assertTrue(back.rimAllRound)
         assertEquals(180f, IosGlass.fromJson(d.copy(lightAngle = 400f).toJson()).lightAngle, 0f)
     }
+
+    @Test fun `each kind of chrome keeps its own colour and darkening`() {
+        val set = SkinSettings().withRole(ChromeRole.POPUP, clarity = 0.4f, color = 0xFF2C2C2E.toInt(), darken = 0.2f)
+            .withRole(ChromeRole.SIDEBAR, darken = 2f)
+        val back = SkinSettings.fromJson(set.toJson())
+        assertEquals(0.4f, back.clarityOf(ChromeRole.POPUP), 0.001f)
+        assertEquals(0xFF2C2C2E.toInt(), back.colorOf(ChromeRole.POPUP))
+        assertEquals(0.2f, back.darkenOf(ChromeRole.POPUP), 0.001f)
+        // Held to the range: darker, never black.
+        assertEquals(SkinSettings.DARKEN_RANGE.endInclusive, back.darkenOf(ChromeRole.SIDEBAR), 0.001f)
+        // The toolbar untouched: the theme's colour, not darkened.
+        assertEquals(0, back.colorOf(ChromeRole.TOOLBAR))
+        assertEquals(0f, back.darkenOf(ChromeRole.TOOLBAR), 0f)
+    }
 }

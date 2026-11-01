@@ -469,16 +469,26 @@ internal fun Modifier.skinMaterial(
 }
 
 /**
- * [role]'s own transparency over the glass under it: the panes' surface
- * colour laid over the glass, as solid as the role is set below clear, under
- * the content and the rim. Material's panes are solid already and take nothing.
+ * [role]'s own transparency, colour and darkening over the glass under it:
+ * its background colour (the panes' surface unless one is chosen) laid over
+ * the glass as solid as the role is set below clear, then black at its
+ * darkening, all under the content and the rim. Material's panes are solid
+ * already and take nothing.
  */
 @Composable
 internal fun Modifier.chromeVeil(role: ChromeRole?, shape: Shape): Modifier {
     if (role == null || LocalSkin.current == Skin.MATERIAL) return this
-    val clarity = LocalSkinSettings.current.clarityOf(role)
-    if (clarity >= 0.999f) return this
-    return background(MaterialTheme.colorScheme.surface.copy(alpha = (1f - clarity).coerceIn(0f, 1f)), shape)
+    val settings = LocalSkinSettings.current
+    val clarity = settings.clarityOf(role)
+    val darken = settings.darkenOf(role)
+    var result = this
+    if (clarity < 0.999f) {
+        val chosen = settings.colorOf(role)
+        val base = if (chosen != 0) Color(chosen).copy(alpha = 1f) else MaterialTheme.colorScheme.surface
+        result = result.background(base.copy(alpha = (1f - clarity).coerceIn(0f, 1f)), shape)
+    }
+    if (darken > 0.001f) result = result.background(Color.Black.copy(alpha = darken), shape)
+    return result
 }
 
 /** The shadow [skinMaterial] casts for this [shape], on its own. */

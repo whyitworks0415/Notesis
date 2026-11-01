@@ -93,6 +93,17 @@ data class SkinSettings(
     val sidebarClarity: Float = 1f,
     /** How far the page is dimmed behind a tool panel. */
     val popupDim: Float = DEFAULT_POPUP_DIM,
+    /**
+     * Each kind's own background colour, what shows as its transparency goes
+     * below full (0: the theme's surface), and how much darker it is drawn,
+     * 0 to [DARKEN_RANGE]'s top, whatever the transparency.
+     */
+    val toolbarColor: Int = 0,
+    val popupColor: Int = 0,
+    val sidebarColor: Int = 0,
+    val toolbarDarken: Float = 0f,
+    val popupDarken: Float = 0f,
+    val sidebarDarken: Float = 0f,
 ) {
     fun toJson(): String = JSONObject()
         .put("themeMode", themeMode.name)
@@ -124,7 +135,36 @@ data class SkinSettings(
         .put("popupClarity", popupClarity.toDouble())
         .put("sidebarClarity", sidebarClarity.toDouble())
         .put("popupDim", popupDim.toDouble())
+        .put("toolbarColor", toolbarColor).put("popupColor", popupColor).put("sidebarColor", sidebarColor)
+        .put("toolbarDarken", toolbarDarken.toDouble()).put("popupDarken", popupDarken.toDouble())
+        .put("sidebarDarken", sidebarDarken.toDouble())
         .toString()
+
+    /** [role]'s own background colour, 0 for the theme's surface. */
+    fun colorOf(role: ChromeRole): Int = when (role) {
+        ChromeRole.TOOLBAR -> toolbarColor
+        ChromeRole.POPUP -> popupColor
+        ChromeRole.SIDEBAR -> sidebarColor
+    }
+
+    /** How much darker [role] is drawn. */
+    fun darkenOf(role: ChromeRole): Float = when (role) {
+        ChromeRole.TOOLBAR -> toolbarDarken
+        ChromeRole.POPUP -> popupDarken
+        ChromeRole.SIDEBAR -> sidebarDarken
+    }
+
+    /** [role] given its own transparency, colour and darkening. */
+    fun withRole(role: ChromeRole, clarity: Float = clarityOf(role), color: Int = colorOf(role),
+                 darken: Float = darkenOf(role)): SkinSettings {
+        val c = clarity.coerceIn(0f, 1f)
+        val d = darken.coerceIn(DARKEN_RANGE)
+        return when (role) {
+            ChromeRole.TOOLBAR -> copy(toolbarClarity = c, toolbarColor = color, toolbarDarken = d)
+            ChromeRole.POPUP -> copy(popupClarity = c, popupColor = color, popupDarken = d)
+            ChromeRole.SIDEBAR -> copy(sidebarClarity = c, sidebarColor = color, sidebarDarken = d)
+        }
+    }
 
     /** [role]'s own transparency; see [toolbarClarity]. */
     fun clarityOf(role: ChromeRole): Float = when (role) {
@@ -221,6 +261,12 @@ data class SkinSettings(
                 sidebarClarity = json.unit("sidebarClarity", d.sidebarClarity),
                 popupDim = json.optDouble("popupDim", d.popupDim.toDouble()).toFloat()
                     .takeIf { it.isFinite() }?.coerceIn(POPUP_DIM_RANGE) ?: d.popupDim,
+                toolbarColor = json.optInt("toolbarColor", 0),
+                popupColor = json.optInt("popupColor", 0),
+                sidebarColor = json.optInt("sidebarColor", 0),
+                toolbarDarken = json.unit("toolbarDarken", 0f).coerceIn(DARKEN_RANGE),
+                popupDarken = json.unit("popupDarken", 0f).coerceIn(DARKEN_RANGE),
+                sidebarDarken = json.unit("sidebarDarken", 0f).coerceIn(DARKEN_RANGE),
             )
             // Saved before the glass took its present look: optics never moved
             // from the old defaults take the new ones; any the reader set are kept,
@@ -272,6 +318,8 @@ data class SkinSettings(
         /** The dim tool panels always had: enough to set the panel off, the page still readable. */
         const val DEFAULT_POPUP_DIM = 0.12f
         val POPUP_DIM_RANGE = 0f..0.6f
+        /** Darker, not black: past this the labels on it stop reading. */
+        val DARKEN_RANGE = 0f..0.6f
     }
 }
 

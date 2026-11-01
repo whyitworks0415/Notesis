@@ -641,21 +641,13 @@ private fun PanelsGroup(skin: Skin, settings: SkinSettings, onChange: (SkinSetti
     SettingsSectionHeader("Panels, menus and the toolbar")
     // Each kind of chrome on its own, over whatever glass the style draws.
     val solidStyle = if (skin == Skin.MATERIAL) "Material panels are solid" else null
-    AppearanceSlider("Toolbar transparency", "%.0f%%".format(settings.toolbarClarity * 100), settings.toolbarClarity,
-        0f..1f, step = 0.01f, default = defaults.toolbarClarity,
-        note = "The toolbar, its strip of tools and its round buttons. 100% is the glass as the style draws it; lower is more solid.",
-        disabledReason = solidStyle,
-    ) { onChange(settings.copy(toolbarClarity = it)) }
-    AppearanceSlider("Popup transparency", "%.0f%%".format(settings.popupClarity * 100), settings.popupClarity,
-        0f..1f, step = 0.01f, default = defaults.popupClarity,
-        note = "The Functions menu, the pen panel, Tools and the other panels that open from the bar, and a page shown large.",
-        disabledReason = solidStyle,
-    ) { onChange(settings.copy(popupClarity = it)) }
-    AppearanceSlider("Sidebar transparency", "%.0f%%".format(settings.sidebarClarity * 100), settings.sidebarClarity,
-        0f..1f, step = 0.01f, default = defaults.sidebarClarity,
-        note = "Settings, the page panel and the layer panel along the window's edge.",
-        disabledReason = solidStyle,
-    ) { onChange(settings.copy(sidebarClarity = it)) }
+    ChromeRoleControls(ChromeRole.TOOLBAR, "Toolbar",
+        "The toolbar, its strip of tools and its round buttons.", settings, onChange, solidStyle)
+    ChromeRoleControls(ChromeRole.POPUP, "Popups",
+        "The Functions menu, the pen panel, Tools and the other panels that open from the bar, and a page shown large.",
+        settings, onChange, solidStyle)
+    ChromeRoleControls(ChromeRole.SIDEBAR, "Sidebars",
+        "Settings, the page panel and the layer panel along the window's edge.", settings, onChange, solidStyle)
     AppearanceSlider("Dim behind popups", "%.0f%%".format(settings.popupDim * 100), settings.popupDim,
         SkinSettings.POPUP_DIM_RANGE, step = 0.01f, default = defaults.popupDim,
         note = "How much the page darkens behind a tool or pen panel.",
@@ -804,6 +796,67 @@ private fun IosGlassControls(g: IosGlass, onChange: (IosGlass) -> Unit) {
         Text("Use the ios27Light preset as measured")
     }
 }
+
+/**
+ * One kind of chrome's own look over the glass: how clear it is, the
+ * colour that shows as it goes solid, and how much darker it is drawn.
+ */
+@Composable
+private fun ChromeRoleControls(
+    role: ChromeRole,
+    title: String,
+    note: String,
+    settings: SkinSettings,
+    onChange: (SkinSettings) -> Unit,
+    disabledReason: String?,
+) {
+    Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = Ui.Space.s))
+    SettingsNote(note)
+    val clarity = settings.clarityOf(role)
+    AppearanceSlider("Transparency", "%.0f%%".format(clarity * 100), clarity, 0f..1f, step = 0.01f, default = 1f,
+        note = "100% is the glass as the style draws it; lower lays the colour below over it, 0% solid.",
+        disabledReason = disabledReason,
+    ) { onChange(settings.withRole(role, clarity = it)) }
+    val chosen = settings.colorOf(role)
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(Ui.Space.s),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("Color", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        (listOf(0, settings.accent) + CHROME_COLORS).distinct().forEach { color ->
+            val picked = chosen == color
+            Box(
+                Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(if (color == 0) MaterialTheme.colorScheme.surface else Color(color).copy(alpha = 1f))
+                    .border(if (picked) 3.dp else 1.dp,
+                        if (picked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline, CircleShape)
+                    .clickable(enabled = disabledReason == null, onClickLabel = if (color == 0) "Theme color" else "Color") {
+                        onChange(settings.withRole(role, color = color))
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                if (color == 0) Text("A", style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+    if (chosen != 0 && clarity >= 0.999f) {
+        SettingsNote("The colour shows once the transparency is below 100%.")
+    }
+    val darken = settings.darkenOf(role)
+    AppearanceSlider("Darken", "%.0f%%".format(darken * 100), darken, SkinSettings.DARKEN_RANGE, step = 0.01f,
+        default = 0f, note = "Draws it a little darker, glass or solid alike.",
+        disabledReason = disabledReason,
+    ) { onChange(settings.withRole(role, darken = it)) }
+}
+
+/** The background colours offered for a kind of chrome, besides the theme's and the accent. */
+private val CHROME_COLORS = listOf(
+    0xFFFFFFFF.toInt(), 0xFFE5E5EA.toInt(), 0xFF8E8E93.toInt(), 0xFF2C2C2E.toInt(), 0xFF000000.toInt(),
+    0xFFFFF4D6.toInt(), 0xFFE3F2E8.toInt(), 0xFFE3ECFF.toInt(), 0xFFFCE4EC.toInt(),
+)
 
 /** The light's angle as where on the pane it comes from. */
 private fun lightAngleLabel(angle: Float): String = when (angle.roundToInt()) {

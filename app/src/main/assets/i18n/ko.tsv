@@ -1388,7 +1388,6 @@ Smoothness	부드러움
 Highest refresh rate	최고 주사율
 Asks the screen for its fastest rate, such as 120 Hz, while the app is open. Some phones keep apps at 60 Hz unless they ask. Not while battery saver makes the app save power.	앱이 열려 있는 동안 화면에 가장 빠른 주사율(예: 120Hz)을 요청합니다. 일부 휴대폰은 앱이 요청하지 않으면 60Hz로 고정합니다. 절전 모드로 앱이 전력을 아낄 때는 요청하지 않습니다.
 The system picks the rate, which on some phones is 60 Hz for this app.	시스템이 주사율을 정합니다. 일부 휴대폰에서는 이 앱이 60Hz로 실행됩니다.
-Light mode	가벼운 모드
 The glass is drawn plain and solid, the lens stays still, fewer pages are read ahead and background work takes fewer cores, so the pen and scrolling keep their speed.	유리를 단순한 불투명 패널로 그리고, 렌즈를 멈추고, 미리 읽는 페이지와 백그라운드 작업을 줄여 펜과 스크롤이 제 속도를 내게 합니다.
 Glass, lens and reading ahead as set. Turn on if writing or scrolling stutters.	유리, 렌즈, 미리 읽기를 설정대로 씁니다. 필기나 스크롤이 끊기면 켜 보세요.
  On by default on this device.	 이 기기에서는 기본으로 켜져 있습니다.
@@ -1415,3 +1414,11 @@ Sidebar transparency	사이드바 투명도
 Settings, the page panel and the layer panel along the window's edge.	화면 가장자리의 설정, 페이지 패널, 레이어 패널입니다.
 Dim behind popups	팝업 뒤 어둡게
 How much the page darkens behind a tool or pen panel.	도구나 펜 설정창 뒤의 페이지를 얼마나 어둡게 할지 정합니다.
+Popups	팝업
+Sidebars	사이드바
+The toolbar, its strip of tools and its round buttons.	툴바, 도구 줄, 둥근 버튼입니다.
+100% is the glass as the style draws it; lower lays the colour below over it, 0% solid.	100%는 스타일이 그리는 유리 그대로입니다. 낮출수록 아래에서 고른 색이 덮이고, 0%는 불투명합니다.
+Theme color	테마 색
+The colour shows once the transparency is below 100%.	색은 투명도가 100%보다 낮을 때 보입니다.
+Darken	어둡게
+Draws it a little darker, glass or solid alike.	유리든 불투명이든 조금 더 어둡게 그립니다.
