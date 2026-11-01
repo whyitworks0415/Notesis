@@ -529,7 +529,20 @@ class MainActivity : ComponentActivity() {
     // study clock. Seen here, before any view takes it, and cheap: one write.
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
         StudyClock.touched()
-        return super.dispatchTouchEvent(ev)
+        // Samsung sends a touch made with the S Pen's side button held as
+        // its own actions (211-214) rather than DOWN/MOVE/UP. Compose does not
+        // know them and drops them before any view inside it is asked, so the
+        // canvas never saw the barrel-button eraser. Turned into the standard
+        // actions here, with the gesture marked as the button's.
+        val side = samsungSidePenAction(ev.actionMasked)
+        if (side == null) {
+            if (ev.actionMasked == android.view.MotionEvent.ACTION_DOWN) SamsungSidePen.gesture = false
+            return super.dispatchTouchEvent(ev)
+        }
+        if (side == android.view.MotionEvent.ACTION_DOWN) SamsungSidePen.gesture = true
+        val normal = android.view.MotionEvent.obtain(ev)
+        normal.action = side
+        return try { super.dispatchTouchEvent(normal) } finally { normal.recycle() }
     }
 
     override fun dispatchGenericMotionEvent(ev: android.view.MotionEvent): Boolean {
@@ -1071,7 +1084,11 @@ private fun NoteListScreen(
         active = currentSkin == Skin.GLASSMORPHISM &&
             (look.blur > 0.1f || look.vibrancy > 0.01f),
     )
-    val liquidBackdrop = if (currentSkin.isRefractive) rememberLiquidGlassBackdrop() else null
+    // Not while the app runs light: the panes go solid and nothing reads it,
+    // so the library is not drawn a second time for them.
+    val liquidBackdrop = if (currentSkin.isRefractive && !InteractionGovernor.observedPowerSave) {
+        rememberLiquidGlassBackdrop()
+    } else null
     val searchFocus = remember { androidx.compose.ui.focus.FocusRequester() }
     val gridState = rememberLazyGridState()
     val libraryTiles = remember { LibraryTiles() }
@@ -1303,8 +1320,8 @@ private fun NoteListScreen(
                 .graphicsLayer()
                 .recordBackdrop(backdrop)
                 .then(
-                    if (currentSkin.isRefractive) {
-                        Modifier.captureLiquidGlassBackdrop(requireNotNull(liquidBackdrop))
+                    if (liquidBackdrop != null) {
+                        Modifier.captureLiquidGlassBackdrop(liquidBackdrop)
                     } else {
                         Modifier
                     },
@@ -4721,7 +4738,11 @@ private fun NoteScreen(
             (look.blur > 0.1f || look.vibrancy > 0.01f) &&
             !InteractionGovernor.observedPowerSave,
     )
-    val liquidBackdrop = if (skin.isRefractive) rememberLiquidGlassBackdrop() else null
+    // Running light (battery saver, or a slower tablet) the panes are solid
+    // and the lens still; the page is then not recorded for them at all.
+    val liquidBackdrop = if (skin.isRefractive && !InteractionGovernor.observedPowerSave) {
+        rememberLiquidGlassBackdrop()
+    } else null
     var drawingPage by remember { mutableStateOf(false) }
     var pageLayerOrigin by remember { mutableStateOf(Offset.Zero) }
     val popupBackdrop = remember(liquidBackdrop) { liquidBackdrop?.let { SpotiPopupBackdrop(it) { pageLayerOrigin } } }
@@ -4812,9 +4833,9 @@ private fun NoteScreen(
                 .recordBackdrop(backdrop, pageBackdrop, stale = turnStale)
                 .onGloballyPositioned { pageLayerOrigin = it.positionOnScreen() }
                 .then(
-                    if (skin.isRefractive) {
+                    if (liquidBackdrop != null) {
                         Modifier.captureLiquidGlassBackdrop(
-                            requireNotNull(liquidBackdrop),
+                            liquidBackdrop,
                             // Any canvas busy - this one, or the reference panel's -
                             // and through the short settle after: the panes keep the
                             // last recording until the screen is idle again.

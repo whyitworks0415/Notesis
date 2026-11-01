@@ -514,7 +514,9 @@ class PenStore(context: Context) {
 
     /** See [InkCanvasView.compatWetInk]; on by default where the front buffer is known to fail. */
     var compatWetInk: Boolean
-        get() = prefs.getBoolean("compatWetInk", frontBufferInkUnreliable())
+        // Always on where the front buffer only shows at pen-up: off there,
+        // every stroke appeared whole when the pen lifted.
+        get() = frontBufferInkUnreliable() || prefs.getBoolean("compatWetInk", false)
         set(value) = prefs.edit().putBoolean("compatWetInk", value).apply()
 
     /** Screen rendering only - see [InkCanvasView.meshInk]. */

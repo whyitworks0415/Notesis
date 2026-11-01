@@ -549,7 +549,10 @@ internal fun GlobalPenSettings(
                 "them faintly ahead of the tip, so the line seems to keep up. Nothing extra is saved.",
         ) { onGestures(gestures.copy(subframe = it)) }
         SettingsToggle("Compatible wet ink", compatWetInk, onCompatWetInk,
-            hint = "Turn on if strokes only appear once the pen lifts. On by default on the Galaxy Tab S6 Lite.")
+            hint = "Turn on if strokes only appear once the pen lifts.",
+            disabledReason = if (frontBufferInkUnreliable()) {
+                "Always on for this tablet: without it, strokes only appear once the pen lifts."
+            } else null)
         SettingsToggle("Sharpen after zooming", deferDetail, onDeferDetail,
             hint = "While zooming the page is drawn as it is, then redrawn sharp when your fingers lift.")
         SettingsToggle("Mesh rendering (experimental)", meshInk, onMeshInk,

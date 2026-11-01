@@ -163,6 +163,8 @@ internal object InteractionGovernor {
         prefs = app.getSharedPreferences("pens", Context.MODE_PRIVATE).also {
             batteryOptimization = it.getBoolean(KEY_BATTERY_OPTIMIZATION, true)
             highRefresh = it.getBoolean(KEY_HIGH_REFRESH, true)
+            slowDevice = DeviceClass.isSlow(app)
+            lightMode = it.getBoolean(KEY_LIGHT_MODE, slowDevice)
         }
         systemPowerSave = power?.isPowerSaveMode == true
         followPowerSave()
@@ -194,13 +196,36 @@ internal object InteractionGovernor {
     }
 
     private fun followPowerSave() {
-        powerSave = systemPowerSave && batteryOptimization
+        powerSave = (systemPowerSave && batteryOptimization) || lightMode
         observedPowerSave = powerSave
         applySettle()
     }
 
     private const val KEY_BATTERY_OPTIMIZATION = "batteryOptimization"
     private const val KEY_HIGH_REFRESH = "highRefresh"
+    private const val KEY_LIGHT_MODE = "lightMode"
+
+    /** Whether this device was found to be a slower one; see [DeviceClass]. */
+    var slowDevice = false
+        private set
+
+    /**
+     * Running light all the time, whatever battery saver says: the same
+     * measures as saving power - plain solid glass, a still lens, fewer
+     * pages read ahead, less background work - for a tablet that cannot
+     * keep the full effects and the pen at speed together. On by default
+     * where [slowDevice].
+     */
+    var lightMode by mutableStateOf(false)
+        private set
+
+    fun updateLightMode(on: Boolean) {
+        if (lightMode == on) return
+        lightMode = on
+        prefs?.edit()?.putBoolean(KEY_LIGHT_MODE, on)?.apply()
+        followPowerSave()
+        publish()
+    }
 
     /** Whether the app asks the display for its fastest refresh rate; see [DisplayRate]. */
     var highRefresh by mutableStateOf(true)

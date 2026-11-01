@@ -3974,7 +3974,9 @@ class InkCanvasView @JvmOverloads constructor(
         // without this the barrel-button eraser never sees a single event.
         val sideButtonAction = samsungSidePenAction(event.actionMasked)
             ?: run {
-                samsungSideButton = false
+                // Normally turned into standard actions by the activity
+                // already, which marks the gesture as the button's.
+                samsungSideButton = SamsungSidePen.gesture
                 return onTouch(event)
             }
         samsungSideButton = true
@@ -4200,9 +4202,14 @@ class InkCanvasView @JvmOverloads constructor(
                 stopFling(resumeDetail = false)
                 releaseVelocity()
                 zooming = false
-                // Unbuffered dispatch is what gets the S Pen's full sample rate
-                // instead of one point per display frame.
-                requestUnbufferedDispatch(event)
+                // Unbuffered dispatch hands the front buffer each sample as it
+                // comes, so it can draw between frames. The compatible ink is
+                // drawn once a frame whatever arrives: there the samples come
+                // batched with their history - every one still there - and a
+                // slow tablet handles one event a frame instead of one per
+                // sample, with the stroke built and predicted once, not five
+                // times, per frame anyone sees.
+                if (!compatWetInk) requestUnbufferedDispatch(event)
                 // A tab on a page's edge opens what is kept there, in any tool.
                 if (openAttachmentAt(event.getX(event.actionIndex), event.getY(event.actionIndex))) return true
                 val index = pageUnder(event, event.actionIndex)
@@ -10380,6 +10387,15 @@ internal fun samsungSidePenAction(actionMasked: Int): Int? = when (actionMasked)
     SAMSUNG_ACTION_PEN_MOVE -> MotionEvent.ACTION_MOVE
     SAMSUNG_ACTION_PEN_CANCEL -> MotionEvent.ACTION_CANCEL
     else -> null
+}
+
+/**
+ * Whether the touch gesture in progress came in as Samsung's side-button
+ * actions, which the activity turns into standard ones before Compose sees
+ * them; see MainActivity.dispatchTouchEvent. Main thread only.
+ */
+internal object SamsungSidePen {
+    var gesture = false
 }
 
 private const val SAMSUNG_ACTION_PEN_DOWN = 211

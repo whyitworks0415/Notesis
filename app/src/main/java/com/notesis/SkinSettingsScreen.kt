@@ -567,6 +567,13 @@ private fun StyleGroup(
     ToolbarOrientationChoice(toolbarSize)
     SettingsSectionHeader("Smoothness")
     SettingsToggle(
+        "Light mode", InteractionGovernor.lightMode, InteractionGovernor::updateLightMode,
+        hint = (if (InteractionGovernor.lightMode)
+            "The glass is drawn plain and solid, the lens stays still, fewer pages are read ahead and background work takes fewer cores, so the pen and scrolling keep their speed."
+        else "Glass, lens and reading ahead as set. Turn on if writing or scrolling stutters.") +
+            if (InteractionGovernor.slowDevice) " On by default on this device." else "",
+    )
+    SettingsToggle(
         "Highest refresh rate", InteractionGovernor.highRefresh, InteractionGovernor::updateHighRefresh,
         hint = if (InteractionGovernor.highRefresh)
             "Asks the screen for its fastest rate, such as 120 Hz, while the app is open. Some phones keep apps at 60 Hz unless they ask. Not while battery saver makes the app save power."
