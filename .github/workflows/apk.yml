@@ -100,7 +100,7 @@ jobs:
           "$BT/apksigner" rotate --out "$KEYS/lineage" --old-signer "${FIRST[@]}" --new-signer "${NEW[@]}"
           "$BT/zipalign" -p -f 4 unsigned.apk "$KEYS/aligned.apk"
           "$BT/apksigner" sign "${FIRST[@]}" --v1-signing-enabled false --v2-signing-enabled false --v3-signing-enabled true \
-            --next-signer "${NEW[@]}" --lineage "$KEYS/lineage" \
+            --next-signer "${NEW[@]}" --rotation-min-sdk-version 28 --lineage "$KEYS/lineage" \
             --out "Notesis-${{ steps.name.outputs.version }}-${{ steps.name.outputs.code }}.apk" "$KEYS/aligned.apk"
           # It must be the key that was meant, and verify.
           "$BT/apksigner" verify --verbose --print-certs Notesis-*.apk | tee "$KEYS/verify.txt"
