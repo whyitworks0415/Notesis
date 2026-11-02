@@ -91,7 +91,17 @@ jobs:
           test -x "$BT/apksigner" || { echo "::error::build-tools 34.0.0 did not install"; exit 1; }
           KEYS="$RUNNER_TEMP/keys"
           mkdir -p "$KEYS"
-          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$KEYS/release.jks"
+          # A pasted secret can carry spaces, line breaks or quotes; none belongs to it.
+          KEYSTORE_PASSWORD="$(printf '%s' "$KEYSTORE_PASSWORD" | tr -d '\r\n')"
+          export KEYSTORE_PASSWORD
+          printf '%s' "$KEYSTORE_BASE64" | tr -d ' \t\r\n"' > "$KEYS/release.b64"
+          echo "NOTESIS_KEYSTORE_BASE64 holds $(wc -c < "$KEYS/release.b64") characters."
+          base64 -d "$KEYS/release.b64" > "$KEYS/release.jks" || {
+            echo "::error::NOTESIS_KEYSTORE_BASE64 is not valid base64 - most likely cut short or changed when pasted. Paste the whole keystore.base64.txt again. See docs/signing.md."
+            exit 1; }
+          keytool -list -keystore "$KEYS/release.jks" -storepass:env KEYSTORE_PASSWORD -alias notesis >/dev/null 2>&1 || {
+            echo "::error::The keystore did not open with NOTESIS_KEYSTORE_PASSWORD under the alias notesis."
+            exit 1; }
           NEW=(--ks "$KEYS/release.jks" --ks-key-alias notesis --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEYSTORE_PASSWORD)
           # Devices that have the app signed with the first key accept an update
           # signed with the new one only with proof that the first key handed
