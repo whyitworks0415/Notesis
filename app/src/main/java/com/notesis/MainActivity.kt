@@ -1576,12 +1576,15 @@ private fun NoteListScreen(
                     val ids = selectedIds.filter { id -> notes.any { it.id == id && it.kind == NoteKind.INK } }
                     busy = "Merging notes"
                     scope.launch {
-                        val merged = withContext(Dispatchers.IO) {
+                        val result = withContext(Dispatchers.IO) {
                             store.mergeNotes(ids, "Merged note")
                         }
                         busy = null
-                        if (merged == null) report = "Couldn't merge the notes"
-                        else {
+                        val merged = result.getOrNull()
+                        if (merged == null) {
+                            val why = result.exceptionOrNull()?.message?.takeIf { it.isNotBlank() }
+                            report = if (why != null) "Couldn't merge the notes: $why" else "Couldn't merge the notes"
+                        } else {
                             clearSelection(); revision++
                             onOpen(merged)
                         }

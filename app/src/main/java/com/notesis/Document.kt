@@ -1224,28 +1224,40 @@ class NoteStore(context: Context) {
         }
     }.isSuccess
 
-    /** Copies editable pages, ink, pictures and PDF backgrounds into one new note. */
-    fun mergeNotes(ids: List<String>, title: String): NoteMeta? = runCatching {
+    /**
+     * Copies editable pages, ink, pictures and PDF backgrounds into one new
+     * note. The result says why when it fails, instead of only that it did.
+     */
+    fun mergeNotes(ids: List<String>, title: String): Result<NoteMeta> = runCatching {
         val sources = ids.distinct().mapNotNull { id ->
             readMeta(File(root, id))?.takeIf { it.kind == NoteKind.INK }?.let { id to load(id) }
         }
-        require(sources.size >= 2)
+        require(sources.size >= 2) { "Pick at least two handwritten notes" }
         PDFBoxResourceLoader.init(appContext)
         val newId = UUID.randomUUID().toString()
         val target = File(root, newId).apply { mkdirs() }
         val pagesDir = File(target, "pages").apply { mkdirs() }
         val pdf = PDDocument(MemoryUsageSetting.setupTempFileOnly().setTempDir(appContext.cacheDir))
         val pages = mutableListOf<Page>()
+        // An imported page still reads its content from the document it came
+        // from: every source stays open until the merged PDF has been saved.
+        // Closing each one as soon as its pages were copied left the save
+        // reading from closed files, and any note with a PDF page failed.
+        val openSources = mutableListOf<PDDocument>()
         try {
             for ((id, document) in sources) {
                 val oldPdf = pdfFile(id).takeIf { it.isFile }?.let {
                     PDDocument.load(it, MemoryUsageSetting.setupTempFileOnly().setTempDir(appContext.cacheDir))
-                }
-                try {
+                }?.also { openSources += it }
+                // New ids for the pages, and a practice page keeps the page it sits beside.
+                val newIds = document.pages.associate { it.id to UUID.randomUUID().toString() }
+                run {
                     for (old in document.pages) {
-                        val pageId = UUID.randomUUID().toString()
-                        val pdfIndex = if (old.background == PageBackground.PDF) {
-                            require(oldPdf != null && old.pdfPageIndex in 0 until oldPdf.numberOfPages)
+                        val pageId = newIds.getValue(old.id)
+                        // A PDF page whose PDF is gone, or shorter than it says, becomes a blank one
+                        // rather than failing every page after it.
+                        val pdfIndex = if (old.background == PageBackground.PDF && oldPdf != null &&
+                            old.pdfPageIndex in 0 until oldPdf.numberOfPages) {
                             val index = pdf.numberOfPages
                             pdf.importPage(oldPdf.getPage(old.pdfPageIndex))
                             index
@@ -1261,12 +1273,15 @@ class NoteStore(context: Context) {
                         }.toMutableList()
                         val page = Page(
                             id = pageId, width = old.width, height = old.height,
-                            background = old.background, templateId = old.templateId,
+                            background = if (pdfIndex < 0 && old.background == PageBackground.PDF) PageBackground.BLANK
+                                else old.background,
+                            templateId = old.templateId,
                             pdfPageIndex = pdfIndex, tocTitle = old.tocTitle,
                             tocHighlighted = old.tocHighlighted, tocLevel = old.tocLevel,
                             bookmarked = old.bookmarked, images = images,
                             links = old.links.toMutableMap(), attachments = old.attachments.toMutableList(),
                             attachmentsHidden = old.attachmentsHidden,
+                            besideOf = old.besideOf?.let(newIds::get),
                         ).also {
                             it.loaded = false
                             it.dirty = false
@@ -1279,7 +1294,7 @@ class NoteStore(context: Context) {
                         }
                         pages += page
                     }
-                } finally { oldPdf?.close() }
+                }
             }
             if (pdf.numberOfPages > 0) pdf.save(pdfFile(newId))
             val merged = Document(pages)
@@ -1289,8 +1304,11 @@ class NoteStore(context: Context) {
         } catch (error: Throwable) {
             target.deleteRecursively()
             throw error
-        } finally { pdf.close() }
-    }.getOrNull()
+        } finally {
+            runCatching { pdf.close() }
+            openSources.forEach { runCatching { it.close() } }
+        }
+    }
 
     /**
      * Notes whose title, extracted PDF text, or recognised handwriting contains
