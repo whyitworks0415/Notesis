@@ -85,8 +85,10 @@ jobs:
             echo "::error::NOTESIS_KEYSTORE_BASE64 and NOTESIS_KEYSTORE_PASSWORD are not set as repository secrets, so the APK cannot be signed. See docs/signing.md."
             exit 1
           fi
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;34.0.0" >/dev/null
+          # yes is cut off when sdkmanager has read its answers: not a failure.
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;34.0.0" >/dev/null || true
           BT="$ANDROID_HOME/build-tools/34.0.0"
+          test -x "$BT/apksigner" || { echo "::error::build-tools 34.0.0 did not install"; exit 1; }
           KEYS="$RUNNER_TEMP/keys"
           mkdir -p "$KEYS"
           printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$KEYS/release.jks"
