@@ -1943,6 +1943,8 @@ private const val PLAYBACK_TICK_MS = 120L
 private const val LIBRARY_SORT_MODIFIED = 0
 /** Between one choice of the + menu and the next, so the whole menu is out in little more than one motion. */
 private const val DIAL_STAGGER_MS = 12
+/** How long the way back stays offered after a jump. */
+private const val BACK_OFFER_MS = 8_000L
 /** How long a capture waits for the chat to load and offer somewhere to put it. */
 private const val AI_ATTACH_WAIT_MS = 12_000L
 private const val AI_ATTACH_RETRY_MS = 600L
@@ -4045,6 +4047,8 @@ private fun NoteScreen(
     }
     var linking by remember { mutableStateOf(false) }
     var canGoBack by remember { mutableStateOf(false) }
+    // Counts every time a way back is offered, to start its time over.
+    var backTick by remember { mutableIntStateOf(0) }
     /** The page the way back returns to, for its label. */
     var backPage by remember { mutableStateOf<Int?>(null) }
     /** Where a finger was held on the page, in screen pixels, while its menu is up. */
@@ -4469,6 +4473,13 @@ private fun NoteScreen(
     val liveZoom = remember { floatArrayOf(1f) }
     var zoomMenu by remember { mutableStateOf(false) }
     var canvas by remember { mutableStateOf<InkCanvasView?>(null) }
+    // The way back after a jump is offered for a while, then let go: it used to stay until
+    // gone back through, however far the page had been left behind.
+    LaunchedEffect(backTick) {
+        if (backTick == 0) return@LaunchedEffect
+        delay(BACK_OFFER_MS)
+        canvas?.dismissBack()
+    }
     // A capture headed straight for the chat in the web panel, not the capture dialog.
     var captureToAi by remember { mutableStateOf(false) }
     var modeBeforeAiCapture by remember { mutableStateOf<EditMode?>(null) }
@@ -5094,7 +5105,7 @@ private fun NoteScreen(
                         { mode = beforeEraser }
                     } else null
                     view.showLinkOverlay = gestures.linkOverlay
-                    view.onLinkBackChanged = { canGoBack = it; backPage = view.backTarget() }
+                    view.onLinkBackChanged = { canGoBack = it; backPage = view.backTarget(); if (it) backTick++ }
                     view.onOpenNoteLink = { noteId, pageIndex ->
                         store.list().firstOrNull { it.id == noteId }?.let { target ->
                             penStore.setLastPage(target.id, pageIndex)
@@ -6086,9 +6097,15 @@ private fun NoteScreen(
         if (canGoBack) SkinSurface(
             modifier = Modifier.align(Alignment.TopCenter).windowInsetsPadding(ChromeInsets).padding(top = 72.dp),
         ) {
-            TextButton(onClick = { canvas?.goBack() }, modifier = Modifier.padding(horizontal = Ui.Space.s, vertical = Ui.Space.xs)) {
-                Icon(Reicons.ArrowBack, contentDescription = null)
-                Text(backPage?.let { " Back to page ${it + 1}" } ?: " Back to previous spot")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { canvas?.goBack() }, modifier = Modifier.padding(start = Ui.Space.s, top = Ui.Space.xs, bottom = Ui.Space.xs)) {
+                    Icon(Reicons.ArrowBack, contentDescription = null)
+                    Text(backPage?.let { " Back to page ${it + 1}" } ?: " Back to previous spot")
+                }
+                // Put away at once, for whoever does not mean to go back.
+                IconButton(onClick = { canvas?.dismissBack() }) {
+                    Icon(Reicons.Close, contentDescription = "Dismiss")
+                }
             }
         }
         sendingPages?.let { (indices, move) ->

@@ -1242,6 +1242,7 @@ class InkCanvasView @JvmOverloads constructor(
     var onOpenNoteLink: ((String, Int) -> Unit)? = null
     /** Pages left by following a link, newest last, for going back. */
     private val linkBackStack = ArrayList<Int>()
+    private val MAX_BACK_STEPS = 5
     /** Whether there is somewhere to go back to; called after every jump and return. */
     var onLinkBackChanged: ((Boolean) -> Unit)? = null
 
@@ -3960,6 +3961,11 @@ class InkCanvasView @JvmOverloads constructor(
         if (index != currentPage) {
             lastPageDirection = if (index > currentPage) 1 else -1
             currentPage = index
+            // Back at the page a jump was made from, by scrolling: nothing left to go back to.
+            if (linkBackStack.lastOrNull() == index) {
+                linkBackStack.removeAt(linkBackStack.lastIndex)
+                onLinkBackChanged?.invoke(linkBackStack.isNotEmpty())
+            }
             val fast = flinging || viewportSpeedPxPerSecond > FAST_VIEWPORT_PX_PER_SECOND
             prioritizePdf(movingPdfRadius(fast, InteractionGovernor.thermalStatus))
             onCurrentPageChanged?.invoke(index)
@@ -7187,9 +7193,19 @@ class InkCanvasView @JvmOverloads constructor(
     /** Goes to page [index], remembering where from so [goBack] can return. */
     fun jumpToPage(index: Int) {
         if (index !in document.pages.indices || index == currentPage) return
-        linkBackStack += currentPage
+        // The same place twice in a row is one way back, and only the last few are kept:
+        // every jump used to add one, and each had to be gone back through.
+        if (linkBackStack.lastOrNull() != currentPage) linkBackStack += currentPage
+        while (linkBackStack.size > MAX_BACK_STEPS) linkBackStack.removeAt(0)
         scrollToPage(index)
         onLinkBackChanged?.invoke(true)
+    }
+
+    /** Lets go of the way back: the button's own close, or the time it was offered running out. */
+    fun dismissBack() {
+        if (linkBackStack.isEmpty()) return
+        linkBackStack.clear()
+        onLinkBackChanged?.invoke(false)
     }
 
     /** The page [goBack] would return to, or null with nowhere to go back to. */
