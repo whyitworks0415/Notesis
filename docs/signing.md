@@ -32,6 +32,11 @@
 
 두 값이 없으면 빌드는 "서명할 수 없음"으로 실패합니다(서명 없는 APK를 내보내지 않습니다).
 
+### 붙여넣기가 중간에 잘릴 때
+키 파일을 base64로 바꾸면 약 5,800자입니다. 복사하는 곳에 따라 앞부분만 붙을 수 있습니다(빌드 로그의 `NOTESIS_KEYSTORE_BASE64 holds N characters`가 5776이 아니면 그렇습니다).
+- 이어서 `NOTESIS_KEYSTORE_BASE64_2`, `_3`, `_4`, `_5`에 나머지를 순서대로 나눠 넣을 수 있습니다. 빌드는 `NOTESIS_KEYSTORE_BASE64` 뒤에 이 조각들을 차례로 이어 붙입니다. 조각이 없으면 건너뜁니다.
+- 한 번에 잘 붙는 환경이라면 `NOTESIS_KEYSTORE_BASE64` 하나에 전부 넣으면 됩니다.
+
 직접 새 키를 만들고 싶다면:
 ```bash
 keytool -genkeypair -keystore notesis.jks -storetype PKCS12 -alias notesis \

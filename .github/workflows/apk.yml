@@ -78,6 +78,11 @@ jobs:
       - name: Sign the APK with the release key
         env:
           KEYSTORE_BASE64: ${{ secrets.NOTESIS_KEYSTORE_BASE64 }}
+          # The same text in further pieces, for when a long paste gets cut short.
+          KEYSTORE_BASE64_2: ${{ secrets.NOTESIS_KEYSTORE_BASE64_2 }}
+          KEYSTORE_BASE64_3: ${{ secrets.NOTESIS_KEYSTORE_BASE64_3 }}
+          KEYSTORE_BASE64_4: ${{ secrets.NOTESIS_KEYSTORE_BASE64_4 }}
+          KEYSTORE_BASE64_5: ${{ secrets.NOTESIS_KEYSTORE_BASE64_5 }}
           KEYSTORE_PASSWORD: ${{ secrets.NOTESIS_KEYSTORE_PASSWORD }}
         run: |
           set -euo pipefail
@@ -94,7 +99,7 @@ jobs:
           # A pasted secret can carry spaces, line breaks or quotes; none belongs to it.
           KEYSTORE_PASSWORD="$(printf '%s' "$KEYSTORE_PASSWORD" | tr -d '\r\n')"
           export KEYSTORE_PASSWORD
-          printf '%s' "$KEYSTORE_BASE64" | tr -d ' \t\r\n"' > "$KEYS/release.b64"
+          printf '%s' "$KEYSTORE_BASE64${KEYSTORE_BASE64_2:-}${KEYSTORE_BASE64_3:-}${KEYSTORE_BASE64_4:-}${KEYSTORE_BASE64_5:-}" | tr -d ' \t\r\n"' > "$KEYS/release.b64"
           echo "NOTESIS_KEYSTORE_BASE64 holds $(wc -c < "$KEYS/release.b64") characters."
           base64 -d "$KEYS/release.b64" > "$KEYS/release.jks" || {
             echo "::error::NOTESIS_KEYSTORE_BASE64 is not valid base64 - most likely cut short or changed when pasted. Paste the whole keystore.base64.txt again. See docs/signing.md."
