@@ -14,31 +14,19 @@ android {
         // dependable from Q onward, even though ink itself declares minSdk 23.
         minSdk = 29
         targetSdk = 36
-        versionCode = 176
-        versionName = "0.82.3"
+        versionCode = 177
+        versionName = "0.83.0"
         testInstrumentationRunner = "com.notesis.CustomizationInstrumentation"
         // Ship arm64 for the tablet; opt into x86_64 for emulator GPU checks.
         ndk { abiFilters += providers.gradleProperty("notesis.testAbi").getOrElse("arm64-v8a") }
     }
 
-    signingConfigs {
-        create("release") {
-            // Not a secret worth hiding - this never goes to a store, only
-            // sideloaded onto one tablet, and the whole point of a key of its
-            // own is that it stays the same key. The debug keystore CI used to
-            // sign with is regenerated fresh on every runner, so every release
-            // carried a different, random certificate and every install
-            // conflicted with the one already on the tablet - this is the fix.
-            storeFile = file("../keystore/release.jks")
-            storePassword = "notesis-release"
-            keyAlias = "notesis"
-            keyPassword = "notesis-release"
-        }
-    }
-
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("release")
+            // Built unsigned. The key is not in this repository: the release
+            // workflow signs the APK with it afterwards, from a secret, with
+            // apksigner (see docs/signing.md). An earlier version kept the
+            // keystore and its password here, in the open.
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(

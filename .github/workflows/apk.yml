@@ -33,6 +33,10 @@ jobs:
       RELEASES_TOKEN: ${{ secrets.RELEASES_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The whole history: signing builds its key-rotation lineage from the
+          # old key, which is only there (see docs/signing.md).
+          fetch-depth: 0
 
       - uses: actions/setup-java@v4
         with:
@@ -69,7 +73,41 @@ jobs:
           CODE=$(grep -oP '^\s*versionCode = \K\d+' app/build.gradle.kts)
           echo "code=$CODE" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION-$CODE" >> "$GITHUB_OUTPUT"
-          cp app/build/outputs/apk/release/app-release.apk "Notesis-$VERSION-$CODE.apk"
+          cp app/build/outputs/apk/release/app-release-unsigned.apk unsigned.apk
+
+      - name: Sign the APK with the release key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.NOTESIS_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.NOTESIS_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$KEYSTORE_PASSWORD" ]; then
+            echo "::error::NOTESIS_KEYSTORE_BASE64 and NOTESIS_KEYSTORE_PASSWORD are not set as repository secrets, so the APK cannot be signed. See docs/signing.md."
+            exit 1
+          fi
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;34.0.0" >/dev/null
+          BT="$ANDROID_HOME/build-tools/34.0.0"
+          KEYS="$RUNNER_TEMP/keys"
+          mkdir -p "$KEYS"
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$KEYS/release.jks"
+          NEW=(--ks "$KEYS/release.jks" --ks-key-alias notesis --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEYSTORE_PASSWORD)
+          # Devices that have the app signed with the first key accept an update
+          # signed with the new one only with proof that the first key handed
+          # over to it: a lineage. It is made here from the first key, which is
+          # public (it was committed) and so protects nothing, and the new one.
+          git show 598b9d7:keystore/release.jks > "$KEYS/first.jks"
+          FIRST=(--ks "$KEYS/first.jks" --ks-key-alias notesis --ks-pass pass:notesis-release)
+          "$BT/apksigner" rotate --out "$KEYS/lineage" --old-signer "${FIRST[@]}" --new-signer "${NEW[@]}"
+          "$BT/zipalign" -p -f 4 unsigned.apk "$KEYS/aligned.apk"
+          "$BT/apksigner" sign "${FIRST[@]}" --v1-signing-enabled false --v2-signing-enabled false --v3-signing-enabled true \
+            --next-signer "${NEW[@]}" --lineage "$KEYS/lineage" \
+            --out "Notesis-${{ steps.name.outputs.version }}-${{ steps.name.outputs.code }}.apk" "$KEYS/aligned.apk"
+          # It must be the key that was meant, and verify.
+          "$BT/apksigner" verify --verbose --print-certs Notesis-*.apk | tee "$KEYS/verify.txt"
+          WANT=$(tr -d ' \n:' < signing/CERT_SHA256 | tr 'A-F' 'a-f')
+          grep -iq "certificate SHA-256 digest: $WANT" "$KEYS/verify.txt" || {
+            echo "::error::The APK is signed by a different key than signing/CERT_SHA256 names."; exit 1; }
+          rm -rf "$KEYS" unsigned.apk
 
       - name: Mark a manual update
         if: ${{ github.event.inputs.update == 'manual' }}

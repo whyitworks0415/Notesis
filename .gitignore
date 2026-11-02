@@ -10,3 +10,10 @@ local.properties
 .idea/
 node_modules/
 tools/document-viewer/test-output/
+
+# Signing keys never go in the repository; see docs/signing.md.
+*.jks
+*.keystore
+*.p12
+*.pfx
+/keystore/
