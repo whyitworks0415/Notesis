@@ -47,8 +47,16 @@ internal data class AppRelease(
  * tag alone says whether it is newer than what is running.
  */
 internal object AppUpdate {
-    private const val LATEST_URL = "https://api.github.com/repos/whyitworks0415/Notesis/releases/latest"
-    private const val RECENT_URL = "https://api.github.com/repos/whyitworks0415/Notesis/releases?per_page=20"
+    /**
+     * Where releases are looked for, in this order. The releases-only
+     * repository comes first: the source repository can be private, and then
+     * neither its API nor its downloads are open to the app. The source
+     * repository is still asked, for builds released before the other existed
+     * and for as long as it is public; the newest of what is found counts.
+     */
+    private val REPOS = listOf("whyitworks0415/Notesis-releases", "whyitworks0415/Notesis")
+    private fun latestUrl(repo: String) = "https://api.github.com/repos/$repo/releases/latest"
+    private fun recentUrl(repo: String) = "https://api.github.com/repos/$repo/releases?per_page=20"
 
     /**
      * How a release says it is a manual update: this line anywhere in its
@@ -110,15 +118,26 @@ internal object AppUpdate {
         .trim()
 
     /** The newest release, or null when it cannot be read or carries no APK. Network: call off the main thread. */
-    fun fetchLatest(): AppRelease? = fetch(LATEST_URL)?.let { runCatching { parseRelease(JSONObject(it)) }.getOrNull() }
+    fun fetchLatest(): AppRelease? = mergeReleases(REPOS.map { repo ->
+        listOfNotNull(fetch(latestUrl(repo))?.let { runCatching { parseRelease(JSONObject(it)) }.getOrNull() })
+    }).firstOrNull()
 
     /** The newest releases, newest first, each that carries an APK. Network: call off the main thread. */
-    fun fetchRecent(): List<AppRelease> = fetch(RECENT_URL)?.let { json ->
-        runCatching {
-            val array = org.json.JSONArray(json)
-            (0 until array.length()).mapNotNull { parseRelease(array.getJSONObject(it)) }
-        }.getOrNull()
-    }.orEmpty()
+    fun fetchRecent(): List<AppRelease> = mergeReleases(REPOS.map { repo ->
+        fetch(recentUrl(repo))?.let { json ->
+            runCatching {
+                val array = org.json.JSONArray(json)
+                (0 until array.length()).mapNotNull { parseRelease(array.getJSONObject(it)) }
+            }.getOrNull()
+        }.orEmpty()
+    }).take(20)
+
+    /**
+     * What several repositories found as one list, newest first. A build in
+     * more than one is listed once, from the first repository that has it.
+     */
+    fun mergeReleases(found: List<List<AppRelease>>): List<AppRelease> =
+        found.flatten().distinctBy { it.versionCode }.sortedByDescending { it.versionCode }
 
     /**
      * Whether a check made as the app opens should offer [latest]: a build

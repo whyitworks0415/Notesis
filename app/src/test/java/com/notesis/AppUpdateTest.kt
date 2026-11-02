@@ -67,4 +67,22 @@ class AppUpdateTest {
         assertTrue(AppUpdate.shouldNotify(release(10, manual = true), 8) { listOf(release(10, true), release(9, false)) })
         assertFalse(AppUpdate.shouldNotify(release(10, manual = true), 9) { listOf(release(10, true), release(9, false)) })
     }
+
+    private fun release(code: Long, url: String) = AppRelease("0.0.$code", code, url, 1L, null, "", false)
+
+    @Test fun `releases from several repositories are one list, newest first, each build once`() {
+        val releases = AppUpdate.mergeReleases(listOf(
+            listOf(release(175, "releases/175"), release(174, "releases/174")),
+            listOf(release(175, "source/175"), release(173, "source/173")),
+        ))
+        assertEquals(listOf(175L, 174L, 173L), releases.map { it.versionCode })
+        // The first repository that has a build is the one its download comes from.
+        assertEquals("releases/175", releases.first().apkUrl)
+    }
+
+    @Test fun `a repository that cannot be read leaves the others' releases`() {
+        val releases = AppUpdate.mergeReleases(listOf(emptyList(), listOf(release(7, "source/7"))))
+        assertEquals(7L, releases.single().versionCode)
+        assertTrue(AppUpdate.mergeReleases(listOf(emptyList(), emptyList())).isEmpty())
+    }
 }
