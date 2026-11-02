@@ -8446,6 +8446,17 @@ class InkCanvasView @JvmOverloads constructor(
     @Volatile var lastCapture: CaptureRegion? = null
         private set
 
+    /**
+     * The page in view, whole, as a capture, handed to [onCaptured] as a
+     * region drawn by hand would be: what a one-tap "send this page" takes.
+     */
+    fun captureWholePage(index: Int = currentPage) {
+        val page = document.pages.getOrNull(index) ?: return
+        capturePage = index
+        captureRect.set(0f, 0f, page.width, page.height)
+        finishCapture()
+    }
+
     private fun finishCapture() {
         capturing = false
         lastCapturePage = capturePage

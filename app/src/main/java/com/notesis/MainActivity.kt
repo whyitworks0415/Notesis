@@ -163,6 +163,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
@@ -1939,6 +1940,11 @@ private const val PLAYBACK_TICK_MS = 120L
 private const val LIBRARY_SORT_MODIFIED = 0
 /** Between one choice of the + menu and the next, so the whole menu is out in little more than one motion. */
 private const val DIAL_STAGGER_MS = 12
+/** How long a capture waits for the chat to load and offer somewhere to put it. */
+private const val AI_ATTACH_WAIT_MS = 12_000L
+private const val AI_ATTACH_RETRY_MS = 600L
+/** A capture sent to the chat is no bigger than this on its long side: sharp to read, quick to send. */
+private const val AI_CAPTURE_MAX_PX = 2048f
 /** How far a note's page sits in from its card's edge. */
 private val NOTE_CARD_INSET = 8.dp
 /** Narrower than this, the whole bar (1/4) is shown as the one-row bar (2/4). */
@@ -3343,6 +3349,10 @@ private fun WebPanel(
     insets: Boolean = true,
     /** Floating, the panel is moved by a handle along its top. */
     onMove: ((Float, Float) -> Unit)? = null,
+    /** Starts a capture on the note that lands in the chat; null where there is no note. */
+    onCaptureToChat: (() -> Unit)? = null,
+    /** Sends the page in view to the chat, whole. */
+    onSendPage: (() -> Unit)? = null,
 ) {
     val web = holder.value
     var address by remember(url) { mutableStateOf(url) }
@@ -3423,13 +3433,18 @@ private fun WebPanel(
         unfocusedContainerColor = Color.Transparent,
     )
 
-    SkinSurface(modifier = modifier, corner = corner) {
+    SkinSurface(modifier = modifier, corner = corner, role = ChromeRole.SIDEBAR) {
         // The whole panel keeps clear of the system bars, not just its header: a
         // chat composer pinned to the bottom of the page was sitting under the
         // navigation bar with nothing holding it up.
         Column(
             Modifier
                 .fillMaxHeight()
+                // Round, as the glass is: the page's colour and the page itself
+                // were painted square into the corners, so the round corner
+                // showed a white square of the chat's background instead of
+                // what lies behind the panel.
+                .clip(RoundedCornerShape(corner))
                 .background(pageBottom)
                 .then(if (insets) Modifier.windowInsetsPadding(ChromeInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
                     else Modifier)
@@ -3485,6 +3500,9 @@ private fun WebPanel(
                         .weight(1f)
                         .padding(horizontal = Ui.Space.xs),
                 )
+                // Into the chat in one move: tap, then drag over the note.
+                if (onCaptureToChat != null) AppIconButton(onClick = onCaptureToChat, icon = AppIcons.capture,
+                    contentDescription = "Capture to the chat")
                 AppIconButton(onClick = onTogglePopup,
                     icon = if (popup) AppIconStyle.pick(Lucide.PanelLeft, Reicons.CloseFullscreen)
                         else AppIconStyle.pick(Lucide.PictureInPicture, Reicons.OpenInFull),
@@ -3494,6 +3512,16 @@ private fun WebPanel(
                         // A logged error shows on the button that hides the log.
                         tint = if (log.isEmpty()) null else MaterialTheme.colorScheme.error)
                     DropdownMenu(more, onDismissRequest = { more = false }) {
+                        if (onSendPage != null) DropdownMenuItem(
+                            text = { Text("Send this page to the chat") },
+                            leadingIcon = { Icon(Reicons.Image, contentDescription = null) },
+                            onClick = { more = false; onSendPage() },
+                        )
+                        if (onCaptureToChat != null) DropdownMenuItem(
+                            text = { Text("Capture part of the note") },
+                            leadingIcon = { Icon(AppIcons.capture, contentDescription = null) },
+                            onClick = { more = false; onCaptureToChat() },
+                        )
                         DropdownMenuItem(
                             text = { Text(if (desktop) "Mobile site" else "Desktop site") },
                             leadingIcon = {
@@ -4438,6 +4466,82 @@ private fun NoteScreen(
     val liveZoom = remember { floatArrayOf(1f) }
     var zoomMenu by remember { mutableStateOf(false) }
     var canvas by remember { mutableStateOf<InkCanvasView?>(null) }
+    // A capture headed straight for the chat in the web panel, not the capture dialog.
+    var captureToAi by remember { mutableStateOf(false) }
+    var modeBeforeAiCapture by remember { mutableStateOf<EditMode?>(null) }
+    // Another tool picked before the drag: the capture for the chat is off.
+    LaunchedEffect(mode) {
+        if (mode != EditMode.CAPTURE && modeBeforeAiCapture != null) {
+            captureToAi = false
+            modeBeforeAiCapture = null
+        }
+    }
+    /**
+     * Puts [bitmap] in the chat open beside the note - opening one if none is
+     * - as a paste into its message box (see [AiAttach]). The page may still
+     * be loading, so it is offered again for a few seconds; a chat that never
+     * takes it gets it the old way, waiting for its "+ › Files".
+     */
+    fun sendToAi(bitmap: Bitmap) {
+        if (webUrl == null) webUrl = AI_SITES.first().second
+        scope.launch {
+            val encoded = withContext(Dispatchers.Default) { runCatching { AiAttach.encode(bitmap) }.getOrNull() }
+            if (encoded == null) {
+                KToast.makeText(context, "Couldn't save the capture", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            var result = AiAttach.NONE
+            val until = android.os.SystemClock.uptimeMillis() + AI_ATTACH_WAIT_MS
+            while (true) {
+                val web = browser.value
+                if (web != null && web.progress >= 100) result = AiAttach.offer(web, encoded)
+                if (AiAttach.taken(result) || android.os.SystemClock.uptimeMillis() > until) break
+                delay(AI_ATTACH_RETRY_MS)
+            }
+            if (AiAttach.taken(result)) {
+                KToast.makeText(context, "Attached to the chat", Toast.LENGTH_SHORT).show()
+            } else {
+                val uri = withContext(Dispatchers.IO) { captureUri(context, bitmap) }
+                if (uri == null) {
+                    KToast.makeText(context, "Couldn't save the capture", Toast.LENGTH_SHORT).show()
+                } else {
+                    pendingAttachment.value = uri
+                    // Naming the two taps: the sheet behind "+" offers a
+                    // camera and a photo picker too, and neither of those
+                    // is the file chooser this capture is waiting for.
+                    KToast.makeText(context, "Tap + in the chat and choose \"Files\"", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+    /** The region just captured, rendered sharp enough to read and sent to the chat. */
+    fun sendCaptureToAi() {
+        captureToAi = false
+        modeBeforeAiCapture?.let { mode = it }
+        modeBeforeAiCapture = null
+        val view = canvas ?: return
+        val region = view.lastCapture ?: return
+        scope.launch {
+            val longest = maxOf(region.rect.width(), region.rect.height(), 1f)
+            val scale = minOf(AI_CAPTURE_MAX_PX / longest, maxOf(region.screenScale, 1f) * 2f)
+            val bitmap = withContext(Dispatchers.Default) { view.renderCapture(region, scale) }
+            if (bitmap == null) KToast.makeText(context, "Couldn't render the capture at this size", Toast.LENGTH_SHORT).show()
+            else sendToAi(bitmap)
+        }
+    }
+    /** From the chat: drag over the part of the note to send. */
+    fun startAiCapture() {
+        modeBeforeAiCapture = mode.takeIf { it != EditMode.CAPTURE } ?: EditMode.PEN
+        captureToAi = true
+        mode = EditMode.CAPTURE
+        KToast.makeText(context, "Drag over the part to send to the chat", Toast.LENGTH_SHORT).show()
+    }
+    /** From the chat: the page in view, whole, in one tap. */
+    fun sendPageToAi() {
+        val view = canvas ?: return
+        captureToAi = true
+        view.captureWholePage()
+    }
     /** Puts [text] on the page as a text box in the middle of the screen. */
     fun putTypedText(text: String) {
         val content = TextBoxContent(text.take(4000))
@@ -4595,6 +4699,8 @@ private fun NoteScreen(
                 webPopup = false
             },
             onSite = { webUrl = it },
+            onCaptureToChat = ::startAiCapture,
+            onSendPage = ::sendPageToAi,
             insets = onMove == null,
             onMove = onMove,
             onFile = { callback ->
@@ -4782,6 +4888,9 @@ private fun NoteScreen(
             }
         }
     } ?: Modifier
+    // The docked web panel lies over the note's right edge by its corner (see
+    // below); what is set against that edge stands clear of it by as much.
+    val webOverlap = if (webUrl != null && !webPopup) Ui.Corner.sheet else 0.dp
     Box(Modifier.weight(1f).fillMaxHeight().background(desk)) {
     Box(
         Modifier
@@ -4924,7 +5033,7 @@ private fun NoteScreen(
                             }.getOrNull().also { if (it != null) imageCache.put(key, it) else unreadable += key }
                         }
                         // Rendered on a worker; the dialog is a UI thing.
-                        onCaptured = { bitmap -> post { captured = bitmap } }
+                        onCaptured = { bitmap -> post { if (captureToAi) sendCaptureToAi() else captured = bitmap } }
                         canvas = this
                     }
                 },
@@ -5289,6 +5398,7 @@ private fun NoteScreen(
             exit = fadeOut(Ui.Motion.tween()),
             modifier = Modifier
                 .align(Alignment.CenterEnd)
+                .padding(end = webOverlap)
                 .awayUpwards(chromeAway)
                 .fillMaxHeight(0.70f)
                 .windowInsetsPadding(ChromeInsets)
@@ -5324,6 +5434,7 @@ private fun NoteScreen(
                 modifier = Modifier.awayUpwards(chromeAway).then(when {
                     barRight -> Modifier
                         .align(Alignment.TopEnd)
+                        .padding(end = webOverlap)
                         .windowInsetsPadding(ChromeInsets)
                         .padding(top = 12.dp, end = (if (barDocked) Ui.Space.s else 12.dp) + BAR_CAPSULE_SIDE)
                     barVertical -> Modifier
@@ -5816,22 +5927,7 @@ private fun NoteScreen(
                 },
                 onAttach = {
                     withOutput { bitmap ->
-                        val options = captureOptions
-                        val uri = captureUri(context, bitmap, options.format, options.jpegQuality)
-                        if (uri == null) {
-                            KToast.makeText(context, "Couldn't save the capture", Toast.LENGTH_SHORT).show()
-                        } else {
-                            pendingAttachment.value = uri
-                            if (webUrl == null) webUrl = AI_SITES.first().second
-                            // Naming the two taps: the sheet behind "+" offers a
-                            // camera and a photo picker too, and neither of those
-                            // is the file chooser this capture is waiting for.
-                            KToast.makeText(
-                                context,
-                                "Tap + in the chat and choose \"Files\"",
-                                Toast.LENGTH_LONG,
-                            ).show()
-                        }
+                        sendToAi(bitmap)
                         captured = null
                     }
                 },
@@ -6309,13 +6405,14 @@ private fun NoteScreen(
             visible = showLayers && canvas != null,
             enter = slideInHorizontally(Ui.Motion.tween()) { it },
             exit = slideOutHorizontally(Ui.Motion.tween()) { it },
-            modifier = Modifier.align(Alignment.CenterEnd),
+            modifier = Modifier.align(Alignment.CenterEnd).padding(end = webOverlap),
         ) {
             canvas?.let { view -> LayerPanel(view, onClose = { showLayers = false }) }
         }
         if (pullingForPage) Box(
             Modifier
                 .align(if (pageLayout == PageLayoutMode.HORIZONTAL) Alignment.CenterEnd else Alignment.BottomCenter)
+                .padding(end = webOverlap)
                 .padding(32.dp)
                 .size(56.dp)
                 .clip(CircleShape)
@@ -6472,7 +6569,7 @@ private fun NoteScreen(
             visible = showPages,
             enter = slideInHorizontally(Ui.Motion.tween()) { it },
             exit = if (pagesClosedByPen) ExitTransition.None else slideOutHorizontally(Ui.Motion.tween()) { it },
-            modifier = Modifier.align(Alignment.CenterEnd),
+            modifier = Modifier.align(Alignment.CenterEnd).padding(end = webOverlap),
         ) {
             PageSidebar(
                 pdfOutline = pdfOutline,
@@ -6750,6 +6847,7 @@ private fun NoteScreen(
                     .awayUpwards(chromeAway).then(when {
                     // Docked down the side: against the chosen edge, in the middle of it.
                     barRight -> Modifier.align(Alignment.CenterEnd)
+                        .padding(end = webOverlap)
                         .onSizeChanged { sideBarWidth = it.width }
                         .windowInsetsPadding(ChromeInsets.only(WindowInsetsSides.End))
                         .padding(end = Ui.Space.s)
@@ -6778,7 +6876,25 @@ private fun NoteScreen(
                 // to give the browser more room, or less - a pill on the panel's
                 // own edge that goes solid while it is held.
                 val dragging = draftWebWidth != null
-                Box(Modifier.fillMaxHeight().width(webWidth).background(deskColor())) {
+                // Laid over the note by its own corner: what shows past the
+                // round corners on the note's side is the note, not a band of
+                // desk beside it. The desk stays only behind the window side.
+                val overlap = Ui.Corner.sheet
+                val desk = deskColor()
+                Box(
+                    Modifier
+                        .fillMaxHeight()
+                        .layout { measurable, constraints ->
+                            val shift = overlap.roundToPx()
+                            val full = webWidth.roundToPx()
+                            val placeable = measurable.measure(constraints.copy(minWidth = full, maxWidth = full))
+                            layout((full - shift).coerceAtLeast(0), placeable.height) { placeable.place(-shift, 0) }
+                        }
+                        .drawBehind {
+                            drawRect(desk, topLeft = Offset(size.width / 2f, 0f),
+                                size = androidx.compose.ui.geometry.Size(size.width / 2f, size.height))
+                        },
+                ) {
                     panel(Modifier.fillMaxSize(), null)
                     Box(
                         Modifier
