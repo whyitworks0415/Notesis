@@ -303,6 +303,35 @@ internal fun wikiTargets(text: String): Set<String> =
 internal fun tagsIn(text: String): Set<String> =
     markdownSpans(text).filter { it.kind == MdKind.TAG }.mapNotNull { it.target }.toSet()
 
+/**
+ * An Obsidian callout: a quote whose first line is `[!type]`, with an
+ * optional title after it and `+` or `-` to make it foldable (open or shut
+ * to begin with). The same marks the PDF layout reads (see md-print.js), so
+ * a note reads the same on screen as on paper.
+ */
+internal data class MdCallout(
+    /** Lower case, as written: note, tip, warning... */
+    val type: String,
+    /** The title written after the mark, or the type's own name. */
+    val title: String,
+    val body: String,
+    /** Null for a callout that does not fold; otherwise whether it starts open. */
+    val startsOpen: Boolean?,
+)
+
+/** [quote]'s text as a callout, or null for a plain quote. */
+internal fun calloutOf(quote: String): MdCallout? {
+    val firstEnd = quote.indexOf('\n').let { if (it < 0) quote.length else it }
+    val match = CALLOUT.find(quote.substring(0, firstEnd)) ?: return null
+    val type = match.groupValues[1].lowercase()
+    val fold = match.groupValues[2]
+    val title = match.groupValues[3].trim().ifEmpty { type.replaceFirstChar { it.uppercase() } }
+    val body = if (firstEnd < quote.length) quote.substring(firstEnd + 1) else ""
+    return MdCallout(type, title, body, when (fold) { "+" -> true; "-" -> false; else -> null })
+}
+
+private val CALLOUT = Regex("""^\s*\[!([\w-]+)]([+-]?)[ \t]*(.*)$""")
+
 internal data class MdHeading(val level: Int, val title: String, val start: Int)
 
 /** The headings of [text], for its outline. */

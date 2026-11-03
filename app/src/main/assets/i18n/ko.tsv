@@ -1438,3 +1438,8 @@ Tap one to use it; hold it to remove it	눌러서 쓰고, 길게 눌러서 지�
 Recognized text	인식한 글자
 Other readings	다른 인식 결과
 Picking one replaces that line; it starts the text again from the readings chosen	하나를 고르면 그 줄이 바뀝니다. 고른 결과로 글자를 다시 만듭니다
+Laser pointer	레이저 포인터
+Points (laser)	가리키기(레이저)
+Laser pointer leaves a trail	레이저 포인터가 자국을 남김
+Held, the pen button points instead of writing: red over the screen, fading behind the pen. Nothing is added to the note.	펜 버튼을 누른 채 쓰면 쓰지 않고 가리킵니다. 화면 위에 빨갛게 나타나고 펜 뒤로 사라지며, 노트에는 아무것도 더해지지 않습니다.
+Copied to page {0}	{0}쪽에 복사함

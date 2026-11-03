@@ -51,6 +51,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -624,10 +625,14 @@ private fun MarkdownReader(
                         textDecoration = if (block.task == true) TextDecoration.LineThrough else null,
                         modifier = Modifier.padding(top = if (block.task != null) 12.dp else 0.dp))
                 }
-                is MdBlock.Quote -> Row(Modifier.height(IntrinsicSize.Min)) {
-                    Box(Modifier.width(3.dp).fillMaxHeight().background(MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)))
-                    Text(inline(block.text), fontSize = BODY_SIZE, fontStyle = FontStyle.Italic, color = colors.quote,
-                        modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp))
+                is MdBlock.Quote -> {
+                    val callout = remember(block.text) { calloutOf(block.text) }
+                    if (callout != null) MarkdownCallout(callout, ::inline)
+                    else Row(Modifier.height(IntrinsicSize.Min)) {
+                        Box(Modifier.width(3.dp).fillMaxHeight().background(MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)))
+                        Text(inline(block.text), fontSize = BODY_SIZE, fontStyle = FontStyle.Italic, color = colors.quote,
+                            modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp))
+                    }
                 }
                 is MdBlock.Code -> Surface(color = colors.codeBack, shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(12.dp)) {
@@ -648,6 +653,49 @@ private fun MarkdownReader(
             }
         }
     }
+}
+
+/**
+ * A callout as reading mode shows it: a tinted box with its type's colour
+ * down the side and its title on top; one marked + or - folds at the title.
+ */
+@Composable
+private fun MarkdownCallout(callout: MdCallout, inline: (String) -> AnnotatedString) {
+    val tint = calloutColor(callout.type)
+    var open by remember(callout) { mutableStateOf(callout.startsOpen ?: true) }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(IntrinsicSize.Min)
+            .clip(RoundedCornerShape(8.dp))
+            .background(tint.copy(alpha = 0.10f)),
+    ) {
+        Box(Modifier.width(4.dp).fillMaxHeight().background(tint))
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = if (callout.startsOpen != null) Modifier.clickable { open = !open } else Modifier,
+            ) {
+                Text(inline(callout.title), fontSize = BODY_SIZE, fontWeight = FontWeight.SemiBold, color = tint,
+                    modifier = Modifier.weight(1f, fill = false))
+                if (callout.startsOpen != null) Text(if (open) "  ▾" else "  ▸", color = tint)
+            }
+            if (open && callout.body.isNotBlank()) {
+                Text(inline(callout.body), fontSize = BODY_SIZE, lineHeight = 1.5.em, modifier = Modifier.padding(top = 4.dp))
+            }
+        }
+    }
+}
+
+/** The colour Obsidian gives each kind of callout, near enough; anything unknown reads as a note. */
+private fun calloutColor(type: String): Color = when (type) {
+    "tip", "hint", "important", "success", "check", "done" -> Color(0xFF2E9E5B)
+    "question", "help", "faq" -> Color(0xFFD08A1B)
+    "warning", "caution", "attention" -> Color(0xFFE07B1F)
+    "failure", "fail", "missing", "danger", "error", "bug" -> Color(0xFFD9443A)
+    "example" -> Color(0xFF7B5CD6)
+    "quote", "cite" -> Color(0xFF8A8A8A)
+    else -> Color(0xFF3B7DDD)
 }
 
 @Composable

@@ -777,9 +777,14 @@ private class LaserView(context: Context) : View(context) {
     private val xs = FloatArray(CAPACITY)
     private val ys = FloatArray(CAPACITY)
     private val times = LongArray(CAPACITY)
+    /** Whether each sample starts a stroke: no line is drawn into it from the one before. */
+    private val breaks = BooleanArray(CAPACITY)
     private var start = 0
     private var count = 0
     private var touching = false
+
+    /** A fading line behind the pen; off, only the dot where the pen is. */
+    var trail = true
     private val density = resources.displayMetrics.density
     private val glow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xFFFF3B30.toInt()
@@ -824,7 +829,7 @@ private class LaserView(context: Context) : View(context) {
         setWillNotDraw(false)
     }
 
-    fun add(x: Float, y: Float, time: Long, down: Boolean) {
+    fun add(x: Float, y: Float, time: Long, down: Boolean, startsStroke: Boolean = false) {
         touching = down
         if (count == CAPACITY) {
             start = (start + 1) % CAPACITY
@@ -834,6 +839,7 @@ private class LaserView(context: Context) : View(context) {
         xs[at] = x
         ys[at] = y
         times[at] = time
+        breaks[at] = startsStroke
         count++
         postInvalidateOnAnimation()
     }
@@ -872,8 +878,11 @@ private class LaserView(context: Context) : View(context) {
             return
         }
         for (i in 1 until count) {
+            if (!trail) break
             val a = (start + i - 1) % CAPACITY
             val b = (start + i) % CAPACITY
+            // A new stroke is not joined to the last one's end.
+            if (breaks[b]) continue
             val fade = (1f - (now - times[b]).toFloat() / LIFE_MS).coerceIn(0f, 1f)
             glow.alpha = (110 * fade).toInt()
             glow.strokeWidth = 12f * density * (0.35f + 0.65f * fade)
@@ -1196,8 +1205,14 @@ class InkCanvasView @JvmOverloads constructor(
     }
     private var longPressFired = false
 
+    /** The note this view shows, for links it makes to its own pages; blank when not known. */
+    var noteId: String = ""
+
     /** What holding the pen's barrel button while writing does: one of PEN_BUTTON_*. */
     var penButton: Int = PEN_BUTTON_ERASE
+
+    /** Whether the pen-button pointer leaves a trail or is only a dot; see [PEN_BUTTON_POINTER]. */
+    var laserTrail: Boolean = true
 
     /** The eraser grows with pressure: a light touch takes a fraction of [eraserWidth], a firm one all of it. */
     var pressureEraser: Boolean = false
@@ -1804,6 +1819,9 @@ class InkCanvasView @JvmOverloads constructor(
      */
     private fun startGestureTrail(event: MotionEvent, button: Boolean) {
         val i = event.actionIndex
+        // The same view draws the pen-button pointer, in its own colour and style.
+        laser.tint(GESTURE_TRAIL_COLOR)
+        laser.trail = true
         gestureTrail = true
         gestureButton = button
         gestureTrailMoved = false
@@ -4114,7 +4132,8 @@ class InkCanvasView @JvmOverloads constructor(
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 if (laserPointer != null) return true
                 laserPointer = event.getPointerId(event.actionIndex)
-                laser.add(event.getX(event.actionIndex), event.getY(event.actionIndex), event.eventTime, true)
+                laser.add(event.getX(event.actionIndex), event.getY(event.actionIndex), event.eventTime, true,
+                    startsStroke = true)
             }
             MotionEvent.ACTION_MOVE -> {
                 val index = event.findPointerIndex(laserPointer ?: return true)
@@ -4253,6 +4272,17 @@ class InkCanvasView @JvmOverloads constructor(
                 if (!compatWetInk) requestUnbufferedDispatch(event)
                 // A tab on a page's edge opens what is kept there, in any tool.
                 if (openAttachmentAt(event.getX(event.actionIndex), event.getY(event.actionIndex))) return true
+                // The barrel button held, set to point: a laser over the screen,
+                // anywhere, page or not. Nothing about it reaches the note -
+                // not its strokes, its undo or its handwriting index - and
+                // when the pen lifts, the tool in hand is the one it was.
+                if (!readMode && penButton == PEN_BUTTON_POINTER && (samsungSideButton ||
+                        (event.getToolType(event.actionIndex) != MotionEvent.TOOL_TYPE_ERASER && event.isEraserGesture()))
+                ) {
+                    laser.tint(LASER_POINTER_COLOR)
+                    laser.trail = laserTrail
+                    return onLaser(event)
+                }
                 val index = pageUnder(event, event.actionIndex)
                 if (index < 0) return true
                 val pointerId = event.getPointerId(event.actionIndex)
@@ -8452,6 +8482,17 @@ class InkCanvasView @JvmOverloads constructor(
         image.group = group
         page.links[group] = link
         afterEdit(page)
+        // Both ways within the note: the page it was taken from keeps a tab
+        // that opens the page it went to, as the copy links back to it.
+        // Across notes the other note is not open here, and the link stays
+        // one way.
+        val sourceId = link.removePrefix("page:").takeIf { link.startsWith("page:") } ?: return
+        val source = document.pages.indexOfFirst { it.id == sourceId }
+        val target = document.pages.indexOf(page)
+        if (noteId.isBlank() || source < 0 || target < 0 || source == target) return
+        val back = PageAttachment(PageAttachment.Kind.PAGE, text = "Copied to page ${target + 1}",
+            noteId = noteId, pageIndex = target)
+        if (document.pages[source].attachments.none { it == back }) addPageAttachment(source, back)
     }
 
     // ---- in-note search results ------------------------------------------
@@ -10387,6 +10428,8 @@ class InkCanvasView @JvmOverloads constructor(
         /** Wider than this, a page picture is a close look (the page peek), kept in full colour. */
         private const val LARGE_THUMBNAIL_PX = 640
         const val GESTURE_TRAIL_COLOR = 0xFF3B7DDD.toInt()
+        /** The pen-button pointer's red, as laser pointers are. */
+        const val LASER_POINTER_COLOR = 0xFFFF3B30.toInt()
         const val MEASURED_LATENCY_REFRESH_MS = 500L
         /** How far outside a checkbox, in screen pixels, a tap still ticks it. */
         const val CHECKBOX_TOUCH_SLOP_PX = 14f
