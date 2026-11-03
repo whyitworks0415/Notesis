@@ -3359,6 +3359,29 @@ class InkCanvasView @JvmOverloads constructor(
         insertPage(page, (after + 1).coerceIn(0, document.pages.size))
     }
 
+    /**
+     * Adds a page after [after], or at the end with [atEnd]: [width] by
+     * [height] in page units (null keeps the size of the page it follows),
+     * on [paper]. An endless paper starts at its own size, as when a page is
+     * turned endless.
+     */
+    fun addPage(after: Int, width: Float?, height: Float?, paper: NewPagePaper, atEnd: Boolean): Int {
+        val template = document.pages.getOrNull(after)
+        val baseWidth = width ?: template?.width?.takeIf { template.background != PageBackground.INFINITE_ALL } ?: Page.A4_WIDTH
+        val baseHeight = height ?: template?.height?.takeIf { !template.background.isEndless } ?: Page.A4_HEIGHT
+        val (background, templateId) = when (paper) {
+            NewPagePaper.Same -> (template?.background?.takeIf { it != PageBackground.PDF } ?: PageBackground.BLANK) to
+                template?.templateId
+            is NewPagePaper.Plain -> paper.background to null
+            is NewPagePaper.Template -> PageBackground.CUSTOM to paper.id
+        }
+        val (w, h) = if (background.isEndless) endlessStartSize(background, baseWidth) else baseWidth to baseHeight
+        val page = Page(width = w, height = h, background = background, templateId = templateId)
+        val at = if (atEnd) document.pages.size else (after + 1).coerceIn(0, document.pages.size)
+        insertPage(page, at)
+        return at
+    }
+
     private fun insertPage(page: Page, at: Int) {
         putPageBack(page, at)
         recordPageEdit(Edit.PageInserted(page, at))

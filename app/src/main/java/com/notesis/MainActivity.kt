@@ -4714,6 +4714,20 @@ private fun NoteScreen(
         if (selectedText != null) canvas?.clearSelection() else onBack()
     }
 
+    // Adding a page asks what kind: size, paper and where it goes.
+    var addingPage by remember { mutableStateOf(false) }
+    if (addingPage) AddPageDialog(
+        userTemplates = remember(edits) { store.pageTemplates() },
+        onDismiss = { addingPage = false },
+    ) { spec ->
+        addingPage = false
+        canvas?.let { view ->
+            val at = view.addPage(view.currentPageIndex(), spec.width, spec.height, spec.paper, spec.atEnd)
+            view.scrollToPage(at)
+        }
+        edits++
+    }
+
     // Split screen and pop-up view resize the window, and every resize is a
     // configuration change; reading it here re-evaluates this then.
     val sharedScreen = LocalConfiguration.current.let {
@@ -4845,10 +4859,7 @@ private fun NoteScreen(
             },
             onZoomLabel = { zoomMenu = true },
             zoomLabel = "${(zoom * 100).roundToInt()}%",
-            onAddPage = {
-                canvas?.let { it.addPage(it.currentPageIndex()); it.scrollToPage(it.currentPageIndex() + 1) }
-                edits++
-            },
+            onAddPage = { addingPage = true },
             onLayers = { showLayers = true },
             onSplit = { choosingSplit = true },
             split = split != null,
@@ -6710,10 +6721,7 @@ private fun NoteScreen(
                     canvas?.deleteMask(index, maskIndex)
                     edits++
                 },
-                onAdd = {
-                    canvas?.addPage(currentPage)
-                    edits++
-                },
+                onAdd = { addingPage = true },
                 onDelete = {
                     canvas?.deletePage(it)
                     edits++
