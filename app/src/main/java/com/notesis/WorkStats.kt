@@ -30,4 +30,6 @@ internal object WorkStats {
     val tilesDeferred = AtomicLong()
     /** Clean pages whose previous autosave copy was handed over again instead of rebuilt. */
     val savePagesReused = AtomicLong()
+    /** Thumbnails that waited for a pen to lift before they were drawn. */
+    val thumbnailsHeld = AtomicLong()
 }

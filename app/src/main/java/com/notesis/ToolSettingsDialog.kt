@@ -11,6 +11,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -220,6 +221,7 @@ internal fun PenDialog(
     var autoShapes by remember(pen) { mutableStateOf(pen.autoShapes) }
     var straightLine by remember(pen) { mutableStateOf(pen.straightLine) }
     var nibAngle by remember(pen) { mutableStateOf(pen.nibAngle) }
+    var density by remember(pen) { mutableStateOf(pen.density) }
     var details by remember { mutableStateOf(false) }
     val joined = remember { store.colorPickerJoined }
     val opacity = allowsOpacity(mode)
@@ -240,6 +242,7 @@ internal fun PenDialog(
         autoShapes = autoShapes,
         straightLine = straightLine,
         nibAngle = nibAngle,
+        density = density,
     )
 
     // Open: grow from the bar. Close: fold back, and only then hand the
@@ -305,6 +308,27 @@ internal fun PenDialog(
             }
         }
         val strokePart: @Composable () -> Unit = {
+            if (mode != EditMode.ERASE) {
+                SavedPensSection(
+                    mode = mode,
+                    store = store,
+                    current = { current() },
+                    onUse = { saved ->
+                        color.set(saved.colorArgb)
+                        width = saved.width
+                        pressure = saved.pressure
+                        nib = saved.nib
+                        maxWidth = saved.maxWidth
+                        leadMs = saved.leadMs
+                        stabilizer = saved.stabilizer
+                        linePattern = saved.linePattern
+                        autoShapes = saved.autoShapes
+                        straightLine = saved.straightLine
+                        nibAngle = saved.nibAngle
+                        density = saved.density
+                    },
+                )
+            }
             PanelSectionHeader(if (mode == EditMode.PEN) "Pen width" else "Width")
             WidthSection(
                 mode = mode,
@@ -334,6 +358,8 @@ internal fun PenDialog(
                     PanelSwitchRow("Pressure", pressure, hint = "Pressing harder draws a wider line") { pressure = it }
                 }
                 if (drawing.hasNib()) NibAngleRow(drawing, nibAngle) { nibAngle = it }
+                // The graphite pencil's own axis, beside its width and pressure.
+                if (drawing == Tool.PENCIL) DensityRow(density) { density = it }
             }
 
             if (freehand && !drawing.isDabbed()) {
@@ -603,7 +629,7 @@ private fun PredictionSetting(leadMs: Int, onLead: (Int) -> Unit) {
         step = 1f,
     )
     Text(
-        if (auto) "Automatic draws 9 ms ahead at 60 Hz (12 ms with compatible wet ink) and 6 ms at 90 Hz and up"
+        if (auto) "Automatic draws half a frame ahead: 8 ms at 60 Hz, 6 ms at 90 Hz and 4 ms at 120 Hz (12, 8 and 6 ms with compatible wet ink), a little more when the ink is late to appear"
         else "Draws this far ahead of the pen. 0 turns prediction off. Longer feels faster, but stroke ends can wobble",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.outline,
@@ -648,6 +674,13 @@ private fun EraserSection(
         gestures.pressureEraser,
         hint = "The set size is the lightest touch; pressing harder grows it up to 2.5 times",
     ) { onGestures(gestures.copy(pressureEraser = it)) }
+    // With the eraser's other choices rather than only in Settings: what the
+    // eraser does after a stroke is part of how it is set up.
+    PanelSwitchRow(
+        "Back to the previous tool after erasing",
+        gestures.eraserReturns,
+        hint = "One stroke of the eraser, then the pen you had is back",
+    ) { onGestures(gestures.copy(eraserReturns = it)) }
 }
 
 /** Choice chips that wrap onto as many lines as they need instead of scrolling out of sight. */
@@ -1207,7 +1240,10 @@ private fun WidthSection(
             SkinSlider(value = shown, onValueChange = onWidth, valueRange = range, step = WIDTH_SLIDER_STEP)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = { onWidth((shown - WIDTH_STEP).coerceIn(range)) }) { Text("−") }
-                Text(widthLabel(shown), style = MaterialTheme.typography.bodyMedium)
+                // In millimetres on an A4 page as well, a size people know; not
+                // for the eraser, whose size is on the screen, not the page.
+                Text(if (mode == EditMode.ERASE) widthLabel(shown) else "${widthLabel(shown)} · ${millimetreLabel(shown)}",
+                    style = MaterialTheme.typography.bodyMedium)
                 TextButton(onClick = { onWidth((shown + WIDTH_STEP).coerceIn(range)) }) { Text("+") }
                 val starred = favorites.any { kotlin.math.abs(it - shown) < 0.005f }
                 TextButton(onClick = {
@@ -1334,6 +1370,95 @@ private fun NibAngleRow(tool: Tool, angle: Int?, onAngle: (Int?) -> Unit) {
             }
         }
     }
+}
+
+/**
+ * Whole pens kept for this tool: a tap takes one up - type, width, colour
+ * and every other setting at once - and a long press lets it go. "Save this
+ * pen" keeps the one being set. A set of pens rather than separate favourite
+ * widths and colours, so a pen comes back exactly as it was made.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun SavedPensSection(
+    mode: EditMode,
+    store: PenStore,
+    current: () -> PenPreset,
+    onUse: (PenPreset) -> Unit,
+) {
+    var saved by remember(mode) { mutableStateOf(store.savedPens(mode)) }
+    PanelSectionHeader("Saved pens")
+    WrappingChips {
+        saved.forEach { pen ->
+            Row(
+                Modifier
+                    .clip(CircleShape)
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                    .combinedClickable(
+                        onClickLabel = "Use this pen",
+                        onLongClickLabel = "Remove this pen",
+                        onClick = { onUse(pen) },
+                        onLongClick = {
+                            saved = saved - pen
+                            store.saveSavedPens(mode, saved)
+                        },
+                    )
+                    .padding(horizontal = Ui.Space.m, vertical = Ui.Space.xs),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    Modifier
+                        .size(16.dp)
+                        .clip(CircleShape)
+                        .background(Color(pen.colorArgb or PenColorState.OPAQUE))
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape),
+                )
+                Spacer(Modifier.width(Ui.Space.xs))
+                Text(
+                    nibsFor(pen.tool).firstOrNull { it.first == pen.nib }?.second?.let { "$it · " }.orEmpty() +
+                        widthLabel(pen.width),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+            }
+        }
+        OutlinedButton(onClick = {
+            val pen = current()
+            saved = (saved.filterNot { it == pen } + pen).takeLast(PenStore.MAX_SAVED_PENS)
+            store.saveSavedPens(mode, saved)
+        }) { Text("Save this pen") }
+    }
+    if (saved.isNotEmpty()) {
+        Text("Tap one to use it; hold it to remove it",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+    }
+}
+
+/**
+ * The graphite pencil's density: how much of the paper's grain it fills, in
+ * ten steps. Its own control rather than opacity's, which fades the whole
+ * line evenly; density leaves more or less paper showing through the tooth.
+ */
+@Composable
+private fun DensityRow(density: Int?, onDensity: (Int?) -> Unit) {
+    val shown = density ?: GRAPHITE_DENSITY_DEFAULT
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Density", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Text("${shown * 10}%", style = MaterialTheme.typography.labelLarge)
+        if (density != null && density != GRAPHITE_DENSITY_DEFAULT) {
+            TextButton(onClick = { onDensity(null) }) { Text("Reset") }
+        }
+    }
+    SkinSlider(
+        value = shown.toFloat(),
+        onValueChange = {
+            val level = it.roundToInt().coerceIn(GRAPHITE_DENSITY_MIN, GRAPHITE_DENSITY_MAX)
+            onDensity(level.takeIf { l -> l != GRAPHITE_DENSITY_DEFAULT })
+        },
+        valueRange = GRAPHITE_DENSITY_MIN.toFloat()..GRAPHITE_DENSITY_MAX.toFloat(),
+        step = 1f,
+    )
+    Text("Lower leaves more paper showing through the grain; higher fills it in",
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
 }
 
 /** The nib angle's slider moves in steps of this many degrees. */

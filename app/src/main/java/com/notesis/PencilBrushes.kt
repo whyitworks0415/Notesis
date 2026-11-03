@@ -37,7 +37,10 @@ internal object PencilBrushes {
      * the lead shades broad and soft. The grain is fixed to the page, as paper
      * is, so crossing strokes share it instead of each carrying its own.
      */
-    val graphite: BrushFamily by lazy {
+    val graphite: BrushFamily by lazy { graphiteFamily(GRAPHITE_TEXTURE, GRAPHITE_ID) }
+
+    /** The graphite pencil drawn through tooth [texture], under family id [id]. */
+    private fun graphiteFamily(texture: String, id: String): BrushFamily =
         BrushFamily(
             tip = BrushTip(
                 behaviors = listOf(
@@ -60,7 +63,7 @@ internal object PencilBrushes {
             paint = BrushPaint(
                 textureLayers = listOf(
                     BrushPaint.TextureLayer(
-                        clientTextureId = GRAPHITE_TEXTURE,
+                        clientTextureId = texture,
                         sizeX = GRAPHITE_TILE_UNITS,
                         sizeY = GRAPHITE_TILE_UNITS,
                         sizeUnit = BrushPaint.TextureSizeUnit.STROKE_COORDINATES,
@@ -68,9 +71,8 @@ internal object PencilBrushes {
                     ),
                 ),
             ),
-            clientBrushFamilyId = GRAPHITE_ID,
+            clientBrushFamilyId = id,
         )
-    }
 
     /** Overlapping dabs build up where they cross, which is the whole look. */
     private val dabPaint by lazy { BrushPaint(selfOverlap = SelfOverlap.ACCUMULATE) }
@@ -269,8 +271,43 @@ internal object PencilBrushes {
         it == STAMP_ID || it == BUBBLE_ID || it == SPRAY_ID || it == SOFT_ID
     }
 
-    /** Whether [family] is the graphite pencil, by its id. */
-    fun isGraphite(family: BrushFamily): Boolean = family.clientBrushFamilyId == GRAPHITE_ID
+    /** Whether [family] is the graphite pencil, by its id, at any density. */
+    fun isGraphite(family: BrushFamily): Boolean = family.clientBrushFamilyId.let {
+        it == GRAPHITE_ID || it.startsWith(GRAPHITE_ID + DENSITY_MARK)
+    }
+
+    /** Written into a family's and its texture's id, before the density level. */
+    const val DENSITY_MARK = "@density"
+
+    private val densities = java.util.concurrent.ConcurrentHashMap<Int, BrushFamily>()
+
+    /**
+     * Graphite at density [level] (see [graphiteToothAlpha]): the same pencil
+     * drawn through a fuller or sparser tooth. The default level is [graphite]
+     * itself, so every stroke written before density could be set is the
+     * same family, saved and drawn as it was.
+     */
+    fun graphiteAt(level: Int): BrushFamily {
+        val density = level.coerceIn(GRAPHITE_DENSITY_MIN, GRAPHITE_DENSITY_MAX)
+        if (density == GRAPHITE_DENSITY_DEFAULT) return graphite
+        return densities.getOrPut(density) {
+            graphiteFamily(GRAPHITE_TEXTURE + DENSITY_MARK + density, GRAPHITE_ID + DENSITY_MARK + density)
+        }
+    }
+
+    /** The density a graphite family was made at, or null for the default and any other family. */
+    fun densityOf(family: BrushFamily): Int? {
+        val id = family.clientBrushFamilyId
+        if (!id.startsWith(GRAPHITE_ID + DENSITY_MARK)) return null
+        return id.substring(GRAPHITE_ID.length + DENSITY_MARK.length).toIntOrNull()
+    }
+
+    /** The density in a graphite texture's id, or null when it has none. */
+    fun densityOfTexture(id: String): Int? {
+        val at = id.indexOf(DENSITY_MARK)
+        if (at < 0) return null
+        return id.substring(at + DENSITY_MARK.length).toIntOrNull()
+    }
 
     private const val GRAPHITE_ID = "notesis.pencil.graphite"
 

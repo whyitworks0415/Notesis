@@ -4131,7 +4131,11 @@ private fun NoteScreen(
     /** True while the colour and thickness of the tool in hand is being set. */
     var editingPen by remember { mutableStateOf(false) }
     var lassoCount by remember { mutableIntStateOf(0) }
+    /** Bumped whenever the selection's box moves on screen, so its action bar follows it. */
+    var lassoMoves by remember { mutableIntStateOf(0) }
     var regionOcrText by remember { mutableStateOf<String?>(null) }
+    /** What the selection read as, line by line, for the person to choose and correct; null when not open. */
+    var regionOcrLines by remember { mutableStateOf<List<OcrLine>?>(null) }
     var regionOcrBusy by remember { mutableStateOf(false) }
     val pen = settings[mode] ?: PenStore.DEFAULTS.getValue(EditMode.PEN)
     val eraserWidth = (settings[EditMode.ERASE] ?: PenStore.DEFAULTS.getValue(EditMode.ERASE)).width
@@ -4343,6 +4347,20 @@ private fun NoteScreen(
             start, horizontal, vertical, drag.x, drag.y, minSize,
             containerSize.width.toFloat(), containerSize.height.toFloat(),
         )
+    }
+    // The window it floats in changed - turned, resized, split, a sidebar
+    // opened beside it: put the panel back inside, smaller if it must be, so
+    // its bar can always be taken hold of again. Dragging already stops at
+    // the edges; only a change of window could leave it outside.
+    LaunchedEffect(containerSize) {
+        if (containerSize.width <= 0 || containerSize.height <= 0) return@LaunchedEffect
+        val minSize = with(density) { REFERENCE_MIN_SIZE.toPx() }
+        val kept = clampPanel(
+            PanelBounds(referenceOffset.x, referenceOffset.y, referenceSize.width, referenceSize.height),
+            containerSize.width.toFloat(), containerSize.height.toFloat(), minSize,
+        )
+        referenceOffset = Offset(kept.left, kept.top)
+        referenceSize = Size(kept.width, kept.height)
     }
     // Its top bar, dragged: the panel goes where the hand takes it. Three
     // fingers no longer move it; on the panel as on the page they only open
@@ -5027,7 +5045,8 @@ private fun NoteScreen(
                         onTextRequested = { page, x, y ->
                             replacingText = null; textPosition = Triple(page, x, y); showTextBox = true
                         }
-                        onLassoSelected = { lassoCount = it }
+                        onLassoSelected = { lassoCount = it; lassoMoves++ }
+                        onLassoScreenMoved = { lassoMoves++ }
                         // A file that cannot be read is remembered as such: it was
                         // read and failed again on every frame that drew its page.
                         val unreadable = HashSet<String>()
@@ -5126,6 +5145,7 @@ private fun NoteScreen(
                     view.axisSnapEnabled = axisSnap
                     view.dottedPattern = dottedPattern
                     view.nibAngle = pen.nibAngle
+                    view.pencilDensity = pen.density
                     view.setPageLayout(pageLayout)
                     view.tool = tool
                     view.readMode = mode == EditMode.READ
@@ -6006,7 +6026,24 @@ private fun NoteScreen(
         }
 
         if (lassoCount > 0) {
+            // Next to the selection, above it when there is room, rather than
+            // across the bottom of the screen far from what it acts on.
+            AnchoredMenu(
+                target = {
+                    // Read at placement: a pan re-places the bar, nothing recomposes.
+                    lassoMoves
+                    canvas?.let { v ->
+                        v.lassoScreenBounds()?.let { box ->
+                            val at = IntArray(2).also(v::getLocationInWindow)
+                            androidx.compose.ui.geometry.Rect(box.left + at[0], box.top + at[1],
+                                box.right + at[0], box.bottom + at[1])
+                        }
+                    }
+                },
+                modifier = Modifier.matchParentSize(),
+            ) {
             LassoActions(
+                floating = true,
                 count = lassoCount,
                 onDelete = {
                     canvas?.deleteLassoSelection()
@@ -6016,8 +6053,9 @@ private fun NoteScreen(
                     val strokes = canvas?.selectedLassoStrokes().orEmpty()
                     regionOcrBusy = true
                     scope.launch {
-                        regionOcrText = withContext(Dispatchers.IO) { indexer.textOf(strokes, firstReading = true) }
-                            ?: "Recognition model unavailable"
+                        val lines = withContext(Dispatchers.IO) { indexer.readingsOf(strokes) }
+                        if (lines == null) regionOcrText = "Recognition model unavailable"
+                        else regionOcrLines = lines
                         regionOcrBusy = false
                     }
                 },
@@ -6067,8 +6105,8 @@ private fun NoteScreen(
                     edits++
                 },
                 onDone = { canvas?.clearLassoSelection() },
-                modifier = Modifier.align(Alignment.BottomCenter),
             )
+            }
         } else if (mode == EditMode.LASSO) {
             PasteBar(
                 clipRevision = clipRevision,
@@ -6314,39 +6352,42 @@ private fun NoteScreen(
         if (regionOcrBusy) AlertDialog(
             onDismissRequest = {}, title = { Text("Reading selected handwriting…") }, confirmButton = {},
         )
-        regionOcrText?.let { recognized -> AlertDialog(
+        regionOcrText?.let { message -> AlertDialog(
             onDismissRequest = { regionOcrText = null },
             title = { Text("Handwriting recognition") },
-            text = { Text(recognized.ifBlank { "No text recognized" }) },
-            confirmButton = { TextButton(onClick = {
-                clipboard.setText(AnnotatedString(recognized))
-                regionOcrText = null
-            }) { Text("Copy") } },
-            dismissButton = {
-                Row {
-                    // The handwriting gives way to typed text where it stood.
-                    if (recognized.isNotBlank()) TextButton(onClick = {
-                        regionOcrText = null
-                        val place = canvas?.lassoPlacement()
-                        val content = TextBoxContent(recognized.trim(), size = place?.third ?: 32f)
-                        scope.launch {
-                            val result = withContext(Dispatchers.IO) { runCatching {
-                                val bitmap = renderTextBox(content)
-                                try { store.addImage(note.id, bitmap)?.let { Triple(it.first, bitmap.width, bitmap.height) } }
-                                finally { bitmap.recycle() }
-                            }.getOrNull() }
-                            if (result != null && place != null) {
-                                canvas?.deleteLassoSelection()
-                                canvas?.putTextBox(result.first, result.second, result.third, content,
-                                    at = Triple(place.first, place.second.left, place.second.top))
-                                edits++
-                            }
-                        }
-                    }) { Text("Convert to text") }
-                    TextButton(onClick = { regionOcrText = null }) { Text("Close") }
-                }
-            },
+            text = { Text(message) },
+            confirmButton = { TextButton(onClick = { regionOcrText = null }) { Text("Close") } },
         ) }
+        regionOcrLines?.let { lines ->
+            OcrResultDialog(
+                lines = lines,
+                onCopy = { text ->
+                    clipboard.setText(AnnotatedString(text))
+                    regionOcrLines = null
+                },
+                // The handwriting gives way to typed text where it stood - only
+                // once the text has been looked at, and as one undoable step.
+                onConvert = { recognized ->
+                    regionOcrLines = null
+                    val place = canvas?.lassoPlacement()
+                    val content = TextBoxContent(recognized.trim(), size = place?.third ?: 32f)
+                    scope.launch {
+                        val result = withContext(Dispatchers.IO) { runCatching {
+                            val bitmap = renderTextBox(content)
+                            try { store.addImage(note.id, bitmap)?.let { Triple(it.first, bitmap.width, bitmap.height) } }
+                            finally { bitmap.recycle() }
+                        }.getOrNull() }
+                        if (result != null && place != null) {
+                            canvas?.deleteLassoSelection()
+                            canvas?.putTextBox(result.first, result.second, result.third, content,
+                                at = Triple(place.first, place.second.left, place.second.top))
+                            edits++
+                        }
+                    }
+                },
+                onClose = { regionOcrLines = null },
+            )
+        }
 
         if (showTextBox) TextBoxDialog(replacingText?.textContent,
             onDismiss = { showTextBox = false }, onSave = { content ->
@@ -7094,9 +7135,11 @@ private fun LassoActions(
     onGroup: ((Boolean) -> Unit)? = null,
     onDone: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Placed by [AnchoredMenu] next to the selection: it keeps clear of the bars itself. */
+    floating: Boolean = false,
 ) {
     SkinSurface(
-        modifier = modifier
+        modifier = if (floating) modifier else modifier
             .windowInsetsPadding(ChromeInsets)
             .padding(Ui.Space.l),
     ) {
@@ -7881,6 +7924,7 @@ private fun ReferencePanel(
                             v.axisSnapEnabled = axisSnap
                             v.dottedPattern = dottedPattern
                             v.nibAngle = pen.nibAngle
+                            v.pencilDensity = pen.density
                         },
                     )
                     if (popupLassoCount > 0) {

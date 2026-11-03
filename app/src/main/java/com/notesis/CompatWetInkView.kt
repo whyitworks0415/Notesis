@@ -63,6 +63,11 @@ internal fun inkOrientationRadians(axisOrientation: Float): Float {
  * GPU the other content is competing for. A rotated note cannot place a
  * surface, so it falls back to drawing in this View.
  */
+/** Primitive arguments, so a frame's timings are passed without boxing. */
+internal fun interface WetStageListener {
+    fun onStages(geometryNanos: Long, lockNanos: Long, drawNanos: Long, dirtyPixels: Long)
+}
+
 internal class CompatWetInkView(context: Context) : FrameLayout(context), SurfaceHolder.Callback {
     /** One stroke being written or waiting for the page to draw it. Reused. */
     private class Wet {
@@ -189,6 +194,13 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
      * that frame being posted, in nanoseconds.
      */
     var onFramePosted: ((Long) -> Unit)? = null
+
+    /**
+     * Each surface frame split into its stages, for the latency readout:
+     * null unless the readout is on, so the hot path reads one field.
+     */
+    @Volatile
+    var stageListener: WetStageListener? = null
     private var newestUnpostedEventMillis = Long.MIN_VALUE
 
     /**
@@ -580,6 +592,8 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
     private fun renderSurface() {
         val view = surface
         if (view == null || !usingSurface()) return
+        val stages = stageListener
+        val geometryStarted = if (stages != null) System.nanoTime() else 0L
         dirtyF.set(pendingClear)
         pendingClear.setEmpty()
         for (wet in strokes) {
@@ -622,14 +636,21 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
             ceil(dirtyF.right).toInt() + 1, ceil(dirtyF.bottom).toInt() + 1)
         if (!dirty.intersect(0, 0, width, height)) return
         val holder = view.holder
+        val lockStarted = if (stages != null) System.nanoTime() else 0L
         // The dirty rectangle may grow, for instance to the whole surface on
         // its first frame; everything inside what comes back is redrawn.
         val canvas = try { holder.lockCanvas(dirty) } catch (_: Exception) { null } ?: return
+        val drawStarted = if (stages != null) System.nanoTime() else 0L
         try {
             canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
             drawContent(canvas, dirty)
         } finally {
             runCatching { holder.unlockCanvasAndPost(canvas) }
+        }
+        if (stages != null) {
+            val posted = System.nanoTime()
+            stages.onStages(lockStarted - geometryStarted, drawStarted - lockStarted, posted - drawStarted,
+                dirty.width().toLong() * dirty.height().toLong())
         }
         surfaceHasContent = strokes.isNotEmpty() || cursorVisible
         val newest = newestUnpostedEventMillis

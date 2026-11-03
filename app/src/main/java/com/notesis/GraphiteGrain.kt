@@ -53,14 +53,30 @@ private fun grainHash(a: Int, b: Int, seed: Int): Int {
  * rather than islands. Never fully empty - even the hollows hold a little -
  * which keeps a light line reading as one line instead of dots.
  */
-internal fun graphiteToothAlpha(x: Int, y: Int): Int {
+internal fun graphiteToothAlpha(x: Int, y: Int, density: Int = GRAPHITE_DENSITY_DEFAULT): Int {
     val noise = latticeNoise(x, y, 8, 0x6A09E667) * 0.25f +
         latticeNoise(x, y, 4, 0x3C6EF372) * 0.35f +
         latticeNoise(x, y, 2, 0x510E527F) * 0.4f
-    val t = ((noise - TOOTH_LOW) / (TOOTH_HIGH - TOOTH_LOW)).coerceIn(0f, 1f)
+    // Density is how much of the paper's tooth the graphite fills: the same
+    // grain at every level, its threshold lowered and its floor raised as the
+    // level goes up, so a denser pencil darkens the valleys first and a
+    // lighter one leaves more paper showing. The default is the tooth as it
+    // always was; every level is the same pattern, only filled more or less.
+    val shift = (density.coerceIn(GRAPHITE_DENSITY_MIN, GRAPHITE_DENSITY_MAX) - GRAPHITE_DENSITY_DEFAULT) *
+        DENSITY_SHIFT_PER_LEVEL
+    val low = TOOTH_LOW - shift
+    val high = TOOTH_HIGH - shift
+    val floor = (TOOTH_FLOOR + shift).coerceIn(0.05f, 0.9f)
+    val t = ((noise - low) / (high - low)).coerceIn(0f, 1f)
     val shaped = t * t * (3f - 2f * t)
-    return ((TOOTH_FLOOR + (1f - TOOTH_FLOOR) * shaped) * 255f).toInt()
+    return ((floor + (1f - floor) * shaped) * 255f).toInt()
 }
+
+/** The pencil's density levels, 1 sparse to 10 dense; [GRAPHITE_DENSITY_DEFAULT] is the pencil as it always drew. */
+internal const val GRAPHITE_DENSITY_MIN = 1
+internal const val GRAPHITE_DENSITY_MAX = 10
+internal const val GRAPHITE_DENSITY_DEFAULT = 5
+private const val DENSITY_SHIFT_PER_LEVEL = 0.06f
 
 private const val TOOTH_LOW = 0.3f
 private const val TOOTH_HIGH = 0.7f

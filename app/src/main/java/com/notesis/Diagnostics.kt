@@ -234,6 +234,9 @@ private val METRIC_LABELS = listOf(
     PerformanceMetric.FIRST_INK to "First ink (pen down to frame submitted)",
     PerformanceMetric.INPUT_HANDLED to "Input handled (event to end of handling)",
     PerformanceMetric.WET_INK to "Wet ink (event to frame submitted)",
+    PerformanceMetric.WET_GEOMETRY to "Compatible ink: geometry update",
+    PerformanceMetric.WET_SURFACE_LOCK to "Compatible ink: waiting for the surface",
+    PerformanceMetric.WET_SURFACE_DRAW to "Compatible ink: draw and post",
     PerformanceMetric.PEN_FINALIZE to "Pen-up finish",
     PerformanceMetric.PAGE_APPLY to "Page apply (UI thread)",
     PerformanceMetric.SAVE_SNAPSHOT to "Save snapshot (UI thread)",
@@ -250,7 +253,7 @@ private val WORK_COUNTERS
         WorkStats.refinesApplied, WorkStats.refinesStale, WorkStats.prefetched,
         WorkStats.pdfRenders, WorkStats.pdfDeferred, WorkStats.tilesRecorded,
         WorkStats.layerSettlesFull, WorkStats.layerSettlesTail,
-        WorkStats.tilesDeferred, WorkStats.savePagesReused,
+        WorkStats.tilesDeferred, WorkStats.savePagesReused, WorkStats.thumbnailsHeld,
     )
 
 private fun thermalName(status: Int): String = when (status) {
@@ -294,6 +297,7 @@ private fun takeSnapshot(context: Context, view: InkCanvasView?): DiagnosticSnap
             "Layer settles, tail only" to WorkStats.layerSettlesTail.get(),
             "Ink tiles left for a later frame" to WorkStats.tilesDeferred.get(),
             "Unchanged pages reused by autosave" to WorkStats.savePagesReused.get(),
+            "Thumbnails held while writing" to WorkStats.thumbnailsHeld.get(),
         ),
         thermal = thermal?.let(::thermalName) ?: "Not reported",
         throttled = StrokeBuilder.thermalThrottle,

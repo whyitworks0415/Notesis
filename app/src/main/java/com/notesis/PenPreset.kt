@@ -46,6 +46,12 @@ data class PenPreset(
      * page's horizontal; null for the nib's own. See [Tool.brushFamily].
      */
     val nibAngle: Int? = null,
+    /**
+     * How much of the paper's tooth the graphite pencil fills, 1-10; null for
+     * the pencil's own. Separate from colour and opacity: a dense pencil is
+     * darker in the grain, not more opaque on top of it.
+     */
+    val density: Int? = null,
 ) {
     /** The tool as it actually draws, which is where pressure and the nib are decided. */
     fun drawingTool(): Tool = when {
@@ -273,6 +279,23 @@ class PenStore(context: Context) {
 
     fun saveFavoriteWidths(mode: EditMode, widths: List<Float>) {
         prefs.edit().putString("widths:$mode", JSONArray(widths.distinct().sorted()).toString()).apply()
+    }
+
+    /**
+     * Whole pens kept for [mode] - type, width, colour, pressure, density and
+     * the rest, as one - to be taken up again with a tap. In the order they
+     * were saved; at most [MAX_SAVED_PENS], the oldest dropped past that.
+     */
+    fun savedPens(mode: EditMode): List<PenPreset> = runCatching {
+        val fallback = DEFAULTS[mode] ?: return emptyList()
+        val array = JSONArray(prefs.getString("savedPens:$mode", "[]"))
+        (0 until array.length()).map { penFromJson(array.getJSONObject(it), fallback, mode) }
+    }.getOrDefault(emptyList())
+
+    fun saveSavedPens(mode: EditMode, pens: List<PenPreset>) {
+        val array = JSONArray()
+        pens.distinct().takeLast(MAX_SAVED_PENS).forEach { array.put(penToJson(it)) }
+        prefs.edit().putString("savedPens:$mode", array.toString()).apply()
     }
 
     fun colorTemplates(): List<Pair<String, List<Int>>> = runCatching {
@@ -567,26 +590,7 @@ class PenStore(context: Context) {
             DEFAULTS.keys.mapNotNull { mode ->
                 val item = json.optJSONObject(mode.name) ?: return@mapNotNull null
                 val fallback = defaults.getValue(mode)
-                mode to PenPreset(
-                    tool = fallback.tool,
-                    colorArgb = item.optInt("color", fallback.colorArgb),
-                    width = item.optDouble("width", fallback.width.toDouble()).toFloat()
-                        .takeIf { it.isFinite() }?.coerceIn(widthRange(mode)) ?: fallback.width,
-                    pressure = item.optBoolean("pressure", fallback.pressure),
-                    maxWidth = item.optDouble("maxWidth", fallback.maxWidth.toDouble()).toFloat()
-                        .takeIf { it.isFinite() }?.coerceIn(0f, widthRange(mode).endInclusive) ?: 0f,
-                    nib = runCatching { Tool.valueOf(item.optString("nib", fallback.nib.name)) }
-                        .getOrDefault(fallback.nib)
-                        .takeIf { nib -> nibsFor(fallback.tool).any { it.first == nib } } ?: fallback.nib,
-                    leadMs = item.optInt("leadMs", fallback.leadMs).let {
-                        if (it == LEAD_AUTO) it else it.coerceIn(0, MAX_LEAD_MS)
-                    },
-                    stabilizer = item.optInt("stabilizer", fallback.stabilizer).coerceIn(0, 100),
-                    linePattern = item.optInt("linePattern", fallback.linePattern).coerceIn(0, 3),
-                    autoShapes = item.optBoolean("autoShapes", fallback.autoShapes),
-                    straightLine = item.optBoolean("straightLine", fallback.straightLine),
-                    nibAngle = if (item.has("nibAngle")) item.optInt("nibAngle").coerceIn(Tool.NIB_ANGLES) else null,
-                )
+                mode to penFromJson(item, fallback, mode)
             }.toMap()
         }.getOrNull().orEmpty()
         // Defaults underneath, so a tool added in a later version arrives set up
@@ -606,18 +610,7 @@ class PenStore(context: Context) {
         for ((mode, pen) in settings) {
             json.put(
                 mode.name,
-                JSONObject()
-                    .put("color", pen.colorArgb)
-                    .put("width", pen.width.toDouble())
-                    .put("pressure", pen.pressure)
-                    .put("maxWidth", pen.maxWidth.toDouble())
-                    .put("nib", pen.nib.name)
-                    .put("leadMs", pen.leadMs)
-                    .put("stabilizer", pen.stabilizer)
-                    .put("linePattern", pen.linePattern)
-                    .put("autoShapes", pen.autoShapes)
-                    .put("straightLine", pen.straightLine)
-                    .apply { pen.nibAngle?.let { put("nibAngle", it) } },
+                penToJson(pen),
             )
         }
         prefs.edit().putString(KEY, json.toString()).apply()
@@ -636,6 +629,9 @@ class PenStore(context: Context) {
         private const val LAST_PAGE = "lastPage:"
         private const val REFERENCE_NOTE = "referenceNote"
         private const val REFERENCE_FIT = "referenceFit"
+
+        /** How many whole pens [savedPens] keeps for one tool. */
+        const val MAX_SAVED_PENS = 12
 
         /** The thickness slider's range depends on what is being made thick. */
         fun widthRange(mode: EditMode): ClosedFloatingPointRange<Float> = when (mode) {
@@ -683,3 +679,44 @@ class PenStore(context: Context) {
         )
     }
 }
+
+/** A pen's settings read back from [item], with [fallback] for anything missing, kept to [mode]'s ranges. */
+internal fun penFromJson(item: JSONObject, fallback: PenPreset, mode: EditMode): PenPreset =
+    PenPreset(
+            tool = fallback.tool,
+            colorArgb = item.optInt("color", fallback.colorArgb),
+            width = item.optDouble("width", fallback.width.toDouble()).toFloat()
+                .takeIf { it.isFinite() }?.coerceIn(PenStore.widthRange(mode)) ?: fallback.width,
+            pressure = item.optBoolean("pressure", fallback.pressure),
+            maxWidth = item.optDouble("maxWidth", fallback.maxWidth.toDouble()).toFloat()
+                .takeIf { it.isFinite() }?.coerceIn(0f, PenStore.widthRange(mode).endInclusive) ?: 0f,
+            nib = runCatching { Tool.valueOf(item.optString("nib", fallback.nib.name)) }
+                .getOrDefault(fallback.nib)
+                .takeIf { nib -> nibsFor(fallback.tool).any { it.first == nib } } ?: fallback.nib,
+            leadMs = item.optInt("leadMs", fallback.leadMs).let {
+                if (it == LEAD_AUTO) it else it.coerceIn(0, MAX_LEAD_MS)
+            },
+            stabilizer = item.optInt("stabilizer", fallback.stabilizer).coerceIn(0, 100),
+            linePattern = item.optInt("linePattern", fallback.linePattern).coerceIn(0, 3),
+            autoShapes = item.optBoolean("autoShapes", fallback.autoShapes),
+            straightLine = item.optBoolean("straightLine", fallback.straightLine),
+            nibAngle = if (item.has("nibAngle")) item.optInt("nibAngle").coerceIn(Tool.NIB_ANGLES) else null,
+            density = if (item.has("density"))
+                item.optInt("density").coerceIn(GRAPHITE_DENSITY_MIN, GRAPHITE_DENSITY_MAX) else null,
+        )
+
+/** A pen's settings as JSON, the form [penFromJson] reads. */
+internal fun penToJson(pen: PenPreset): JSONObject =
+    JSONObject()
+            .put("color", pen.colorArgb)
+            .put("width", pen.width.toDouble())
+            .put("pressure", pen.pressure)
+            .put("maxWidth", pen.maxWidth.toDouble())
+            .put("nib", pen.nib.name)
+            .put("leadMs", pen.leadMs)
+            .put("stabilizer", pen.stabilizer)
+            .put("linePattern", pen.linePattern)
+            .put("autoShapes", pen.autoShapes)
+            .put("straightLine", pen.straightLine)
+            .apply { pen.nibAngle?.let { put("nibAngle", it) } }
+            .apply { pen.density?.let { put("density", it) } }

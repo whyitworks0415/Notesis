@@ -839,8 +839,11 @@ class PdfSource private constructor(
      * after the pen lifted, or just after its page was asked for by a draw.
      */
     private fun deferForPen(key: Long, generation: Int, job: Runnable): Boolean = synchronized(stateLock) {
-        !closed && generation == viewportGeneration && pending[key] == generation &&
+        val deferred = !closed && generation == viewportGeneration && pending[key] == generation &&
             penDeferral.deferIfWriting(key, job)
+        // Counted for the latency readout, which showed this line at 0 whatever happened.
+        if (deferred) WorkStats.pdfDeferred.incrementAndGet()
+        deferred
     }
 
     private fun isRelevant(page: Int, generation: Int): Boolean =

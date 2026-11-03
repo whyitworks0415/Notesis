@@ -84,7 +84,11 @@ class InkIndexer(private val context: Context) {
      */
     fun prepare(): Boolean {
         var ready = false
-        for (tag in languages(context)) {
+        val wanted = languages(context)
+        // A language taken out of the settings stops being read: the models
+        // used to stay for as long as the app ran, and went on reading.
+        recognizers.keys.filter { it !in wanted }.forEach { tag -> recognizers.remove(tag)?.close() }
+        for (tag in wanted) {
             if (recognizers.containsKey(tag)) {
                 ready = true
                 continue
@@ -134,7 +138,9 @@ class InkIndexer(private val context: Context) {
         for (line in lines) {
             if (!keepGoing()) return null
             val ink = inkOf(line.map { strokes[usable[it].index] }) ?: continue
-            for (recognizer in recognizers.values) {
+            // In the order the languages are set, the first one first: the
+            // models were tried in the order they happened to be loaded.
+            for (recognizer in ordered()) {
                 val text = runCatching {
                     Tasks.await(recognizer.recognize(ink)).candidates.firstOrNull()?.text
                 }.getOrNull().orEmpty()
@@ -147,18 +153,56 @@ class InkIndexer(private val context: Context) {
         return out.toString()
     }
 
+    /** The recognizers in the order the languages are set. */
+    private fun ordered(): List<DigitalInkRecognizer> = languages(context).mapNotNull { recognizers[it] }
+
+    /**
+     * Each line of [strokes], read in every language set, with up to
+     * [perLanguage] readings from each, best first - for a person to choose
+     * from and correct. Blocking; null when no model can be used yet.
+     */
+    fun readingsOf(strokes: List<Stroke>, perLanguage: Int = 3): List<OcrLine>? {
+        if (strokes.isEmpty()) return emptyList()
+        if (!prepare()) return null
+        val boxes = strokes.mapNotNull { stroke ->
+            stroke.shape.computeBoundingBox()?.let { stroke to InkBox(it.xMin, it.yMin, it.xMax, it.yMax) }
+        }
+        if (boxes.isEmpty()) return emptyList()
+        val lines = groupIntoLines(boxes.map { it.second })
+        return lines.mapNotNull { line ->
+            val ink = inkOf(line.map { boxes[it].first }) ?: return@mapNotNull null
+            val readings = ArrayList<OcrReading>()
+            for (tag in languages(context)) {
+                val recognizer = recognizers[tag] ?: continue
+                val candidates = runCatching { Tasks.await(recognizer.recognize(ink)).candidates }.getOrNull().orEmpty()
+                candidates.take(perLanguage).forEach { candidate ->
+                    val text = candidate.text.trim()
+                    if (text.isNotEmpty() && readings.none { it.text == text }) readings += OcrReading(text, tag)
+                }
+            }
+            OcrLine(readings).takeIf { readings.isNotEmpty() }
+        }
+    }
+
     private fun inkOf(strokes: List<Stroke>): Ink? {
         val builder = Ink.builder()
         val scratch = StrokeInput()
         var points = 0
+        // Each stroke's times start again at zero; the recogniser reads the
+        // ink as one piece of writing, in time, and took every stroke as
+        // written at once. Laid end to end, a little apart, in the order given.
+        var base = 0L
         for (stroke in strokes) {
             val line = Ink.Stroke.builder()
+            var last = 0L
             for (i in 0 until stroke.inputs.size) {
                 val input = stroke.inputs.populate(i, scratch)
-                line.addPoint(Ink.Point.create(input.x, input.y, input.elapsedTimeMillis))
+                last = input.elapsedTimeMillis
+                line.addPoint(Ink.Point.create(input.x, input.y, base + last))
                 points++
             }
             builder.addStroke(line.build())
+            base += last + STROKE_GAP_MS
         }
         return if (points == 0) null else builder.build()
     }
@@ -196,6 +240,15 @@ class InkIndexer(private val context: Context) {
         }
     }
 }
+
+/** One way a line of handwriting was read: the text, and the language that read it. */
+data class OcrReading(val text: String, val language: String)
+
+/** A line of handwriting and its readings, the first the one shown by default. */
+data class OcrLine(val readings: List<OcrReading>)
+
+/** The time put between strokes laid end to end for the recogniser; a quick pen lift. */
+private const val STROKE_GAP_MS = 120L
 
 /** How much of the shorter stroke has to overlap the line to join it. */
 private const val LINE_OVERLAP = 0.35f

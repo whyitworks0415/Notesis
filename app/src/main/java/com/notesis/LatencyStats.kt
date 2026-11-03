@@ -18,6 +18,12 @@ internal enum class PerformanceMetric {
     PAGE_APPLY,
     /** The autosave snapshot taken on the UI thread. */
     SAVE_SNAPSHOT,
+    /** Compatible wet ink: Ink re-meshing the strokes that changed, per frame. */
+    WET_GEOMETRY,
+    /** Compatible wet ink: waiting for the surface's canvas. */
+    WET_SURFACE_LOCK,
+    /** Compatible wet ink: clearing, drawing and posting the changed area. */
+    WET_SURFACE_DRAW,
 }
 
 internal data class Percentiles(
@@ -55,6 +61,7 @@ class LatencyStats(private val capacity: Int = 512) {
     private var inkCacheBytes = 0
     private var inkCacheRecorded = 0L
     private var inkCacheFrameRecorded = 0L
+    private val wetDirtyPixels = LongRing(240)
 
     /**
      * The display's refresh period, set by whoever shows the numbers. A frame
@@ -122,6 +129,16 @@ class LatencyStats(private val capacity: Int = 512) {
         inkCacheBytes = stats.layerBytes
         inkCacheFrameRecorded = (stats.recordedStrokes - inkCacheRecorded).coerceAtLeast(0L)
         inkCacheRecorded = stats.recordedStrokes
+    }
+
+    /** One compatible wet-ink frame, split into its stages; [dirtyPixels] is the area repainted. */
+    @Synchronized
+    fun addWetStages(geometryNanos: Long, lockNanos: Long, drawNanos: Long, dirtyPixels: Long) {
+        if (!enabled) return
+        if (geometryNanos > 0L) metrics[PerformanceMetric.WET_GEOMETRY.ordinal].add(geometryNanos)
+        if (lockNanos > 0L) metrics[PerformanceMetric.WET_SURFACE_LOCK.ordinal].add(lockNanos)
+        if (drawNanos > 0L) metrics[PerformanceMetric.WET_SURFACE_DRAW.ordinal].add(drawNanos)
+        if (dirtyPixels > 0L) wetDirtyPixels.add(dirtyPixels)
     }
 
     @Synchronized
@@ -203,6 +220,7 @@ class LatencyStats(private val capacity: Int = 512) {
         framesCounted = framesCounted,
         framesMissed = framesMissed,
         refreshPeriodMs = refreshPeriodNanos / NANOS_PER_MS,
+        wetDirtyKilopixels = wetDirtyPixels.snapshot(1000.0),
     )
 
     /**
@@ -234,6 +252,10 @@ class LatencyStats(private val capacity: Int = 512) {
             metricLine("first ink (submitted)", PerformanceMetric.FIRST_INK),
             metricLine("input handled", PerformanceMetric.INPUT_HANDLED),
             metricLine("wet ink (submitted)", PerformanceMetric.WET_INK),
+            metricLine("compat geometry", PerformanceMetric.WET_GEOMETRY),
+            metricLine("compat surface lock", PerformanceMetric.WET_SURFACE_LOCK),
+            metricLine("compat draw+post", PerformanceMetric.WET_SURFACE_DRAW,
+                wetDirtyPixels.snapshot(1000.0)?.let { "area p50 %.0fk px p95 %.0fk px".format(it.p50, it.p95) }),
             metricLine("pen-up finalize", PerformanceMetric.PEN_FINALIZE),
             "$frame   $missed",
             metricLine("page apply", PerformanceMetric.PAGE_APPLY),
@@ -283,6 +305,7 @@ class LatencyStats(private val capacity: Int = 512) {
         frames.clear()
         predictionLeads.clear()
         allocationRates.clear()
+        wetDirtyPixels.clear()
         lastInputRateHz = 0.0
         lastRefinedStrokes = 0
         lastPdfPixels = 0L
@@ -321,6 +344,8 @@ internal data class LatencyExtras(
     val framesCounted: Long = 0L,
     val framesMissed: Long = 0L,
     val refreshPeriodMs: Double = 0.0,
+    /** Area each compatible wet-ink frame repainted, in thousands of pixels. */
+    val wetDirtyKilopixels: Percentiles? = null,
 )
 
 /**

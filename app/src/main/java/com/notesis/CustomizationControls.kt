@@ -30,6 +30,12 @@ import java.util.Locale
 internal fun widthLabel(width: Float): String = String.format(Locale.US, "%.2f", width)
     .trimEnd('0').trimEnd('.')
 
+/** A width in page units as millimetres on an A4 page: 1240 units across 210 mm. */
+internal fun millimetreLabel(width: Float): String =
+    String.format(Locale.US, "%.2f", width * A4_MM_PER_UNIT).trimEnd('0').trimEnd('.') + " mm"
+
+private const val A4_MM_PER_UNIT = 210f / 1240f
+
 internal fun parseWidth(text: String, range: ClosedFloatingPointRange<Float>): Float? =
     text.replace(',', '.').toFloatOrNull()?.takeIf { it.isFinite() && it in range }
 

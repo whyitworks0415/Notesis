@@ -481,6 +481,9 @@ enum class Tool {
      * notes written before the angle could be set draw exactly as they did.
      */
     fun brushFamily(nibAngle: Int?): BrushFamily {
+        // The graphite pencil has no nib; the same saved byte holds its
+        // density instead (see [nibAngleOf]), so no new page format was needed.
+        if (this == PENCIL) return nibAngle?.let(PencilBrushes::graphiteAt) ?: brushFamily()
         if (nibAngle == null || !hasNib() || nibAngle == defaultNibAngle()) return brushFamily()
         return angled(this, nibAngle.coerceIn(NIB_ANGLES))
     }
@@ -507,6 +510,8 @@ enum class Tool {
 
         /** The angle [family]'s nib was turned to, or null for a family at its tool's own angle. */
         fun nibAngleOf(family: BrushFamily): Int? {
+            // A pencil's density rides in the nib's byte; see [brushFamily].
+            PencilBrushes.densityOf(family)?.let { return it }
             val id = family.clientBrushFamilyId
             val at = id.indexOf(NIB_MARK)
             if (at < 0) return null
@@ -702,7 +707,7 @@ enum class Tool {
             speedFountain -> SPEED_FOUNTAIN
             PencilBrushes.soft -> SOFT_PENCIL
             vanishing -> VANISHING_PEN
-            else -> ofAngled(family) ?: PEN
+            else -> ofAngled(family) ?: if (PencilBrushes.isGraphite(family)) PENCIL else PEN
         }
     }
 }
@@ -1040,6 +1045,9 @@ class InkCanvasView @JvmOverloads constructor(
      * null for each nib's own default. Only those pens read it.
      */
     var nibAngle: Int? = null
+
+    /** The graphite pencil's density, [GRAPHITE_DENSITY_MIN]-[GRAPHITE_DENSITY_MAX]; null for the default. */
+    var pencilDensity: Int? = null
     private var playbackPage = -1
     private var playbackStrokeCount: Int? = null
 
@@ -1419,6 +1427,8 @@ class InkCanvasView @JvmOverloads constructor(
             if (field == value) return
             field = value
             latency.setEnabled(value)
+            // The compatible surface times its own stages only while the numbers are shown.
+            compatWet.stageListener = if (value) compatStages else null
             if (value && !frameClockRunning && isAttachedToWindow) {
                 frameClockRunning = true
                 lastFrameNanos = 0L
@@ -1517,6 +1527,9 @@ class InkCanvasView @JvmOverloads constructor(
 
     private val wet = InProgressStrokesView(context)
     private val compatWet = CompatWetInkView(context)
+    private val compatStages = WetStageListener { geometry, lock, draw, area ->
+        latency.addWetStages(geometry, lock, draw, area)
+    }
     private var compatWetStrokeId: InProgressStrokeId? = null
 
     /**
@@ -2969,6 +2982,22 @@ class InkCanvasView @JvmOverloads constructor(
         }
     }
 
+    /** On a thumbnail worker: sleeps while a pen is down anywhere, for at most [THUMBNAIL_WRITING_WAIT_MS]. */
+    private fun waitWhileWriting() {
+        if (InteractionGovernor.state != Interaction.WRITING) return
+        WorkStats.thumbnailsHeld.incrementAndGet()
+        var waited = 0L
+        while (InteractionGovernor.state == Interaction.WRITING && waited < THUMBNAIL_WRITING_WAIT_MS && !disposed) {
+            try {
+                Thread.sleep(THUMBNAIL_WRITING_POLL_MS)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return
+            }
+            waited += THUMBNAIL_WRITING_POLL_MS
+        }
+    }
+
     /** The last picture drawn of page [index], at any width or count of strokes; null if none is kept. */
     fun stalePageThumbnail(index: Int): Bitmap? {
         val page = document.pages.getOrNull(index) ?: return null
@@ -3018,6 +3047,11 @@ class InkCanvasView @JvmOverloads constructor(
         val pageId = page.id
         val accepted = runCatching {
             thumbnailWorker.execute {
+                // A picture is extra work: while a pen writes - here or in
+                // another pane - it waits for the lift rather than take a
+                // core and memory bandwidth from the ink, up to a limit so a
+                // long session of writing still gets its cards in the end.
+                waitWhileWriting()
                 // Asked for by a card that has since left: nobody to show it to.
                 if (key in skippable && key !in thumbnailsWanted) {
                     post { thumbnailsPending -= key; skippable -= key }
@@ -3884,6 +3918,7 @@ class InkCanvasView @JvmOverloads constructor(
     private fun afterTransform() {
         growEndlessPages()
         onViewportChanged?.invoke()
+        if (hasLassoSelection()) onLassoScreenMoved?.invoke()
         ruler.pxPerMm = currentScale() * Page.A4_WIDTH / A4_MM_WIDTH
         updateCurrentPage()
         if (!pdfPriorityInitialized && pdf != null) {
@@ -5826,7 +5861,12 @@ class InkCanvasView @JvmOverloads constructor(
         // just after the pen lifted - a visible hitch for broad pencil strokes.
         val epsilon = if (brushTool.isDabbed()) dabEpsilon(strokeWidth)
             else strokeEpsilon(strokeWidth, epsilonFor(tessellationBucket(currentScale())))
-        val nib = nibAngle?.takeIf { brushTool.hasNib() } ?: Tool.NO_NIB
+        // A nib's angle, or the pencil's density, which is saved in the same place.
+        val nib = when {
+            brushTool.hasNib() -> nibAngle
+            brushTool == Tool.PENCIL -> pencilDensity?.takeIf { it != GRAPHITE_DENSITY_DEFAULT }
+            else -> null
+        } ?: Tool.NO_NIB
         cachedBrush?.takeIf {
             cachedBrushTool == brushTool &&
                 cachedBrushColor == colorArgb &&
@@ -7105,6 +7145,23 @@ class InkCanvasView @JvmOverloads constructor(
             if (lassoBounds.isEmpty) lassoBounds.set(image.x, image.y, image.x + image.width, image.y + image.height)
             else lassoBounds.union(image.x, image.y, image.x + image.width, image.y + image.height)
         }
+        onLassoScreenMoved?.invoke()
+    }
+
+    /**
+     * Called when the selection's box moves on screen - the page moved under
+     * it, or it was moved, resized or changed - so its action bar can follow.
+     */
+    var onLassoScreenMoved: (() -> Unit)? = null
+
+    /** The selection's box in this view's pixels, rotation included as its bounding box; null with nothing selected. */
+    fun lassoScreenBounds(): RectF? {
+        if (!hasLassoSelection() || lassoBounds.isEmpty || lassoPage !in document.pages.indices) return null
+        val left = document.leftOf(lassoPage)
+        val top = document.topOf(lassoPage)
+        val box = RectF(lassoBounds.left + left, lassoBounds.top + top, lassoBounds.right + left, lassoBounds.bottom + top)
+        documentToScreen.mapRect(box)
+        return box
     }
 
     /**
@@ -7782,6 +7839,7 @@ class InkCanvasView @JvmOverloads constructor(
         lassoStrokes.clear()
         lassoStrokes += after
         lassoBounds.offset(dx, dy)
+        onLassoScreenMoved?.invoke()
         afterEdit(page)
     }
 
@@ -10321,6 +10379,9 @@ class InkCanvasView @JvmOverloads constructor(
         private const val THUMBNAIL_THREAD_PRIORITY = 4
         /** How many pages are pictured at once. The PDF behind them still renders one page at a time. */
         private const val THUMBNAIL_WORKERS = 2
+        /** The longest a thumbnail waits for the pen to lift; after that it is drawn anyway. */
+        private const val THUMBNAIL_WRITING_WAIT_MS = 4_000L
+        private const val THUMBNAIL_WRITING_POLL_MS = 16L
         /** The zoom a page's ink is read at for its picture alone: far coarser than any page on screen. */
         private const val THUMBNAIL_TESSELLATION_SCALE = 0.25f
         /** Wider than this, a page picture is a close look (the page peek), kept in full colour. */
