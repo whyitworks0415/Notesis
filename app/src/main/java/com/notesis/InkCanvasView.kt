@@ -95,6 +95,10 @@ const val TESSELLATION_TARGET_PX = 0.1f
  * rebuilding when the zoom moves, gets the same picture for what the picture
  * actually needs.
  */
+/** The whiteboard's side room, in note widths: see InkCanvasView.boardMargin. */
+internal const val BOARD_MARGIN_MIN = 0.02f
+internal const val BOARD_MARGIN_MAX = 3f
+
 fun epsilonFor(scale: Float): Float =
     TESSELLATION_TARGET_PX / scale.coerceIn(1f, MAX_CANVAS_SCALE)
 
@@ -3365,7 +3369,7 @@ class InkCanvasView @JvmOverloads constructor(
      * on [paper]. An endless paper starts at its own size, as when a page is
      * turned endless.
      */
-    fun addPage(after: Int, width: Float?, height: Float?, paper: NewPagePaper, atEnd: Boolean): Int {
+    internal fun addPage(after: Int, width: Float?, height: Float?, paper: NewPagePaper, atEnd: Boolean): Int {
         val template = document.pages.getOrNull(after)
         val baseWidth = width ?: template?.width?.takeIf { template.background != PageBackground.INFINITE_ALL } ?: Page.A4_WIDTH
         val baseHeight = height ?: template?.height?.takeIf { !template.background.isEndless } ?: Page.A4_HEIGHT
@@ -10456,8 +10460,6 @@ class InkCanvasView @JvmOverloads constructor(
         const val LOAD_TESSELLATION_SCALE = 2f
         /** The page index ink on the whiteboard is taken under: document coordinates, no page offset. */
         const val BOARD_INDEX = -2
-        const val BOARD_MARGIN_MIN = 0.02f
-        const val BOARD_MARGIN_MAX = 3f
         const val MAX_SCREEN_BRUSHES = 256
         /** A few pens, colours and zoom levels; see [currentBrush]. */
         const val RECENT_BRUSHES = 8

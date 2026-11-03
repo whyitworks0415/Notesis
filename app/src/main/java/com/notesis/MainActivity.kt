@@ -5506,7 +5506,7 @@ private fun NoteScreen(
                     onDrag = { dx ->
                         val width = canvas?.noteWidthOnScreen()?.takeIf { it > 1f } ?: return@WhiteboardGrip
                         whiteboardMargin = (whiteboardMargin + outward * dx / width)
-                            .coerceIn(InkCanvasView.BOARD_MARGIN_MIN, InkCanvasView.BOARD_MARGIN_MAX)
+                            .coerceIn(BOARD_MARGIN_MIN, BOARD_MARGIN_MAX)
                     },
                     onDragEnd = { penStore.whiteboardMargin = whiteboardMargin },
                     modifier = Modifier.align(corner).awayUpwards(chromeAway)
@@ -5727,7 +5727,7 @@ private fun NoteScreen(
                                     whiteboardMargin = it
                                     penStore.whiteboardMargin = it
                                 },
-                                valueRange = InkCanvasView.BOARD_MARGIN_MIN..InkCanvasView.BOARD_MARGIN_MAX,
+                                valueRange = BOARD_MARGIN_MIN..BOARD_MARGIN_MAX,
                                 step = 0.01f,
                             )
                             SettingsNote("Of the page's width. Small, and the page barely slides sideways. " +
