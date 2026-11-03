@@ -146,6 +146,15 @@ internal object PenPopupAnchor {
     @Volatile private var tap: Offset? = null
     @Volatile private var tapAt = 0L
 
+    /** The bar on screen, where [touchedScreen] counts a touch as the bar's; null while there is none. */
+    @Volatile var barBounds: androidx.compose.ui.geometry.Rect? = null
+
+    /** Every touch down in the window, in screen pixels; kept when it is on the bar. */
+    fun touchedScreen(x: Float, y: Float) {
+        val bar = barBounds ?: return
+        if (bar.contains(Offset(x, y))) tapped(Offset(x, y))
+    }
+
     /** Called for every touch that lands on the bar, before anything handles it. */
     fun tapped(at: Offset) {
         tap = at

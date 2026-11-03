@@ -671,15 +671,20 @@ internal fun SpotiGlassToolbar(
     // Where the Functions button is on screen, for a menu not opened by a tap.
     val functionsAt = remember { arrayOfNulls<Offset>(1) }
     val barPlaced = remember { arrayOfNulls<LayoutCoordinates>(1) }
+    // Where the bar is on screen, so the activity can note each touch that
+    // lands on it (see PenPopupAnchor.touchedScreen): a popup opened by that
+    // touch - the pen panel, this menu - grows from there. Not a pointerInput
+    // here: one over the bar's whole box took every touch in it, the clear
+    // part beside a short row of tools included, and the pen could not write
+    // next to the bar.
+    DisposableEffect(Unit) { onDispose { if (coachTargets != null) PenPopupAnchor.barBounds = null } }
     Box(modifier
-        .onGloballyPositioned { barPlaced[0] = it }
-        // Notes where each touch on the bar lands, without taking it: a popup
-        // opened by that touch - the pen panel, this menu - grows from there.
-        .pointerInput(Unit) {
-            awaitEachGesture {
-                val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                val placed = barPlaced[0]
-                if (placed != null && placed.isAttached) PenPopupAnchor.tapped(placed.localToScreen(down.position))
+        .onGloballyPositioned {
+            barPlaced[0] = it
+            if (coachTargets != null && it.isAttached) {
+                val topLeft = it.localToScreen(Offset.Zero)
+                PenPopupAnchor.barBounds = androidx.compose.ui.geometry.Rect(topLeft,
+                    androidx.compose.ui.geometry.Size(it.size.width.toFloat(), it.size.height.toFloat()))
             }
         }) {
         // The full bar is one surface. The strip on it is content, not a

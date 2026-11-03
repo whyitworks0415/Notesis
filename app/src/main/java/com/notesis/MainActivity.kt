@@ -538,6 +538,7 @@ class MainActivity : ComponentActivity() {
         // know them and drops them before any view inside it is asked, so the
         // canvas never saw the barrel-button eraser. Turned into the standard
         // actions here, with the gesture marked as the button's.
+        if (ev.actionMasked == android.view.MotionEvent.ACTION_DOWN) PenPopupAnchor.touchedScreen(ev.rawX, ev.rawY)
         val side = samsungSidePenAction(ev.actionMasked)
         if (side == null) {
             if (ev.actionMasked == android.view.MotionEvent.ACTION_DOWN) SamsungSidePen.gesture = false
