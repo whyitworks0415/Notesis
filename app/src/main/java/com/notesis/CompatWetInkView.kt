@@ -1,6 +1,7 @@
 package com.notesis
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Matrix
@@ -8,9 +9,13 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
 import android.graphics.RectF
 import android.os.Build
+import android.os.Handler
+import android.os.HandlerThread
+import android.os.Process
 import android.os.SystemClock
 import android.view.Choreographer
 import android.view.MotionEvent
@@ -25,6 +30,9 @@ import androidx.ink.rendering.android.canvas.CanvasStrokeRenderer
 import androidx.ink.strokes.InProgressStroke
 import androidx.ink.strokes.MutableStrokeInputBatch
 import androidx.ink.strokes.StrokeInput
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.locks.ReentrantLock
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.sqrt
@@ -62,6 +70,14 @@ internal fun inkOrientationRadians(axisOrientation: Float): Float {
  * stroke, so a pen frame touches neither the window, the RenderThread nor the
  * GPU the other content is competing for. A rotated note cannot place a
  * surface, so it falls back to drawing in this View.
+ *
+ * Locking the surface waits for the display to hand a buffer back - on the
+ * S6 Lite most of a frame. Done on the UI thread, that wait held up the next
+ * pen events and everything else the window had to do. So the UI thread
+ * draws the ink into a bitmap the size of the surface, and a thread of its
+ * own waits for the buffer and copies the changed part across. The copy is
+ * taken once the buffer is there, so samples that arrived during the wait go
+ * out in the same frame.
  */
 /** Primitive arguments, so a frame's timings are passed without boxing. */
 internal fun interface WetStageListener {
@@ -161,7 +177,37 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
 
     private var surface: SurfaceView? = null
     private var surfaceReady = false
+
+    // The surface's picture, drawn on the UI thread and copied to the surface
+    // by [presenter]. Everything below up to [presentLock] is guarded by
+    // [bitmapLock]; the UI thread holds it while drawing, the presenter while
+    // copying, never while waiting for a buffer.
+    private val bitmapLock = Any()
+    private var picture: Bitmap? = null
+    private val pictureCanvas = Canvas()
+    /** What changed in [picture] and has not reached the surface yet. */
+    private val unposted = Rect()
+    private var unpostedNewestEventMillis = Long.MIN_VALUE
+    private var unpostedGeometryNanos = 0L
+    private var unpostedDrawNanos = 0L
+    private val unpostedFirstShown = LongArray(MAX_FIRST_SHOWN)
+    private var unpostedFirstShownCount = 0
+
+    /** Held from locking the surface to posting it; [surfaceDestroyed] waits on it. */
+    private val presentLock = ReentrantLock()
+    @Volatile private var presentHolder: SurfaceHolder? = null
+    // Started and stopped on the UI thread; the presenter only posts to it.
+    private var presenterThread: HandlerThread? = null
+    @Volatile private var presenter: Handler? = null
+    private val presentScheduled = AtomicBoolean(false)
+    private val presentRunnable = Runnable { present() }
+    private val copyPaint = Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC) }
+    // The presenter's own, so the UI thread's never change under it.
+    private val presentRect = Rect()
+    private val presentFirstShown = LongArray(MAX_FIRST_SHOWN)
     private var surfaceHasContent = false
+    /** Where anything has been drawn since the surface was last left empty. */
+    private val everDrawn = Rect()
     private var framePosted = false
     private val pendingClear = RectF()
     private val dirtyF = RectF()
@@ -291,10 +337,136 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
         surface = null
         surfaceReady = false
         surfaceHasContent = false
+        releaseHolder()
+        stopPresenter()
+        synchronized(bitmapLock) {
+            picture?.recycle()
+            picture = null
+            unposted.setEmpty()
+        }
         removeView(view)
     }
 
+    /** The surface is gone or going: the presenter lets go of it before this returns. */
+    private fun releaseHolder() {
+        presentHolder = null
+        // A presenter still waiting for a buffer finishes that frame first. A
+        // display that never hands one back must not hang the UI thread, so
+        // the wait is bounded; the presenter checks the holder again anyway.
+        val locked = runCatching { presentLock.tryLock(SURFACE_RELEASE_WAIT_MS, TimeUnit.MILLISECONDS) }
+            .getOrDefault(false)
+        if (locked) presentLock.unlock()
+    }
+
+    /** Sizes [picture] to the surface; a new one starts clear and is copied across whole. */
+    private fun preparePicture(width: Int, height: Int) {
+        if (width <= 0 || height <= 0) return
+        synchronized(bitmapLock) {
+            val current = picture
+            if (current == null || current.width != width || current.height != height) {
+                current?.recycle()
+                picture = runCatching { Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888) }.getOrNull()
+                picture?.let { pictureCanvas.setBitmap(it) }
+            } else {
+                current.eraseColor(Color.TRANSPARENT)
+            }
+            unposted.set(0, 0, width, height)
+        }
+    }
+
+    private fun schedulePresent() {
+        if (!presentScheduled.compareAndSet(false, true)) return
+        val handler = presenter ?: HandlerThread("wet-ink", Process.THREAD_PRIORITY_DISPLAY).let { thread ->
+            thread.start()
+            presenterThread = thread
+            Handler(thread.looper).also { presenter = it }
+        }
+        if (!handler.post(presentRunnable)) presentScheduled.set(false)
+    }
+
+    private fun stopPresenter() {
+        presenter?.removeCallbacks(presentRunnable)
+        presenterThread?.quitSafely()
+        presenterThread = null
+        presenter = null
+        presentScheduled.set(false)
+    }
+
+    /**
+     * On the presenter thread: waits for a buffer, then copies what changed
+     * in [picture] - as it is by then - and posts it.
+     */
+    private fun present() {
+        presentScheduled.set(false)
+        var more = false
+        presentLock.lock()
+        try {
+            val holder = presentHolder ?: return
+            val rect = presentRect
+            synchronized(bitmapLock) {
+                val bitmap = picture ?: return
+                if (unposted.isEmpty) return
+                rect.set(unposted)
+                // Room for the pen to move on while the buffer is waited for.
+                rect.inset(-LATE_MARGIN_PX, -LATE_MARGIN_PX)
+                if (!rect.intersect(0, 0, bitmap.width, bitmap.height)) return
+            }
+            val lockStarted = System.nanoTime()
+            // The rectangle may grow, to the whole surface for one; all of
+            // what comes back is copied.
+            val canvas = try { holder.lockCanvas(rect) } catch (_: Exception) { null } ?: return
+            val copyStarted = System.nanoTime()
+            var newest = Long.MIN_VALUE
+            var geometry = 0L
+            var drawing = 0L
+            var firstShown = 0
+            var area = 0L
+            try {
+                synchronized(bitmapLock) {
+                    val bitmap = picture
+                    if (bitmap == null) {
+                        canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+                    } else {
+                        canvas.drawBitmap(bitmap, rect, rect, copyPaint)
+                    }
+                    area = rect.width().toLong() * rect.height().toLong()
+                    if (rect.contains(unposted)) {
+                        unposted.setEmpty()
+                        newest = unpostedNewestEventMillis
+                        unpostedNewestEventMillis = Long.MIN_VALUE
+                        firstShown = unpostedFirstShownCount
+                        unpostedFirstShown.copyInto(presentFirstShown, 0, 0, firstShown)
+                        unpostedFirstShownCount = 0
+                    } else {
+                        // Moved past the margin: the rest goes in the next frame.
+                        more = true
+                    }
+                    geometry = unpostedGeometryNanos
+                    drawing = unpostedDrawNanos
+                    unpostedGeometryNanos = 0L
+                    unpostedDrawNanos = 0L
+                }
+            } finally {
+                runCatching { holder.unlockCanvasAndPost(canvas) }
+            }
+            val posted = System.nanoTime()
+            stageListener?.onStages(geometry, copyStarted - lockStarted, drawing + (posted - copyStarted), area)
+            // Event times and System.nanoTime share the monotonic clock.
+            if (newest != Long.MIN_VALUE) onFramePosted?.invoke(posted - newest * 1_000_000L)
+            for (i in 0 until firstShown) onFirstShown?.invoke(presentFirstShown[i])
+        } finally {
+            presentLock.unlock()
+        }
+        if (more && presentScheduled.compareAndSet(false, true) && presenter?.post(presentRunnable) != true) {
+            presentScheduled.set(false)
+        }
+    }
+
     override fun surfaceCreated(holder: SurfaceHolder) {
+        val frame = holder.surfaceFrame
+        preparePicture(frame.width(), frame.height())
+        presentHolder = holder
+        everDrawn.setEmpty()
         surfaceReady = true
         // Undefined until drawn; the first lock covers the whole surface.
         surfaceHasContent = true
@@ -303,12 +475,16 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
     }
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+        preparePicture(width, height)
+        presentHolder = holder
+        everDrawn.setEmpty()
         surfaceHasContent = true
         markAllChanged()
         modeChanged()
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
+        releaseHolder()
         surfaceReady = false
         surfaceHasContent = false
         if (framePosted) {
@@ -318,7 +494,9 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
         modeChanged()
     }
 
-    private fun usingSurface(): Boolean = surface != null && surfaceReady && surfaceAllowed
+    // Without its picture (no memory for it) the ink is drawn in the window instead.
+    // [picture] only changes on the UI thread, where this is asked.
+    private fun usingSurface(): Boolean = surface != null && surfaceReady && surfaceAllowed && picture != null
 
     private fun markAllChanged() {
         for (wet in strokes) wet.changed = true
@@ -590,8 +768,7 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
     }
 
     private fun renderSurface() {
-        val view = surface
-        if (view == null || !usingSurface()) return
+        if (surface == null || !usingSurface()) return
         val stages = stageListener
         val geometryStarted = if (stages != null) System.nanoTime() else 0L
         dirtyF.set(pendingClear)
@@ -629,35 +806,48 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
         }
         if (surfaceHasContent && strokes.isEmpty() && !cursorVisible) {
             // Nothing left to show: make sure nothing is left behind either.
-            dirtyF.set(0f, 0f, width.toFloat(), height.toFloat())
+            // The surface shows the picture and nothing else, so only where
+            // something was drawn needs clearing, not the whole screen.
+            if (everDrawn.isEmpty) everDrawn.set(0, 0, width, height)
+            dirtyF.union(everDrawn.left.toFloat(), everDrawn.top.toFloat(),
+                everDrawn.right.toFloat(), everDrawn.bottom.toFloat())
         }
         if (dirtyF.isEmpty) return
         dirty.set(floor(dirtyF.left).toInt() - 1, floor(dirtyF.top).toInt() - 1,
             ceil(dirtyF.right).toInt() + 1, ceil(dirtyF.bottom).toInt() + 1)
         if (!dirty.intersect(0, 0, width, height)) return
-        val holder = view.holder
-        val lockStarted = if (stages != null) System.nanoTime() else 0L
-        // The dirty rectangle may grow, for instance to the whole surface on
-        // its first frame; everything inside what comes back is redrawn.
-        val canvas = try { holder.lockCanvas(dirty) } catch (_: Exception) { null } ?: return
         val drawStarted = if (stages != null) System.nanoTime() else 0L
-        try {
-            canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
-            drawContent(canvas, dirty)
-        } finally {
-            runCatching { holder.unlockCanvasAndPost(canvas) }
+        synchronized(bitmapLock) {
+            if (picture == null) return
+            val canvas = pictureCanvas
+            val saved = canvas.save()
+            try {
+                canvas.clipRect(dirty)
+                canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+                drawContent(canvas, dirty)
+            } finally {
+                canvas.restoreToCount(saved)
+            }
+            unposted.union(dirty)
+            if (newestUnpostedEventMillis > unpostedNewestEventMillis) {
+                unpostedNewestEventMillis = newestUnpostedEventMillis
+            }
+            for (wet in strokes) {
+                if (wet.shown || !wet.hasInputs) continue
+                wet.shown = true
+                if (unpostedFirstShownCount < MAX_FIRST_SHOWN) {
+                    unpostedFirstShown[unpostedFirstShownCount++] = wet.startTime
+                }
+            }
+            if (stages != null) {
+                unpostedGeometryNanos += drawStarted - geometryStarted
+                unpostedDrawNanos += System.nanoTime() - drawStarted
+            }
         }
-        if (stages != null) {
-            val posted = System.nanoTime()
-            stages.onStages(lockStarted - geometryStarted, drawStarted - lockStarted, posted - drawStarted,
-                dirty.width().toLong() * dirty.height().toLong())
-        }
-        surfaceHasContent = strokes.isNotEmpty() || cursorVisible
-        val newest = newestUnpostedEventMillis
         newestUnpostedEventMillis = Long.MIN_VALUE
-        // Event times and System.nanoTime share the monotonic clock.
-        if (newest != Long.MIN_VALUE) onFramePosted?.invoke(System.nanoTime() - newest * 1_000_000L)
-        reportFirstShown()
+        surfaceHasContent = strokes.isNotEmpty() || cursorVisible
+        if (surfaceHasContent) everDrawn.union(dirty) else everDrawn.setEmpty()
+        schedulePresent()
     }
 
     /**
@@ -779,6 +969,8 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
             Choreographer.getInstance().removeFrameCallback(frameCallback)
             framePosted = false
         }
+        // Started again by the next frame that has something to post.
+        stopPresenter()
     }
 
     /** [OutlineSource] over an in-progress stroke's outlines. */
@@ -801,6 +993,12 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
         const val REGION_PAD_PX = 4f
         const val STALE_FINISHED_MS = 1_500L
         const val SPARE_STROKES = 4
+        /** How far past the changed area a frame's copy reaches, for samples that arrive while it waits. */
+        const val LATE_MARGIN_PX = 48
+        /** Strokes whose first frame one post can report; more than the fingers on a pen. */
+        const val MAX_FIRST_SHOWN = 8
+        /** The longest the UI thread waits for a frame in flight when the surface goes. */
+        const val SURFACE_RELEASE_WAIT_MS = 100L
 
         // One colour, translucent, for both the inside and the rim. The rim is
         // the same paint drawn once more, so it reads as a slightly denser
