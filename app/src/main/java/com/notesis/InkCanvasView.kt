@@ -3342,7 +3342,7 @@ class InkCanvasView @JvmOverloads constructor(
         onStrokesChanged?.invoke()
         // An undone erase puts back strokes built at whatever zoom they were
         // erased at, so history changes need a refine too.
-        scheduleRefine()
+        scheduleRefine(afterInk = true)
     }
 
     fun addPage(after: Int) {
@@ -6438,7 +6438,7 @@ class InkCanvasView @JvmOverloads constructor(
         refiningPages = emptyList()
     }
 
-    private fun scheduleRefine() {
+    private fun scheduleRefine(afterInk: Boolean = false) {
         if (disposed) return
         if (holdingDetail() && (refineRunnablePosted || refineFuture?.isDone == false)) return
         cancelDetailWork()
@@ -6449,7 +6449,16 @@ class InkCanvasView @JvmOverloads constructor(
         // A page with nothing on it yet should not wait out the settle delay -
         // that delay exists to avoid rebuilding mid-pinch, not to hold up the
         // first paint of a note.
-        val delay = if (missing) 0L else REFINE_DEBOUNCE_MS
+        // After an edit, the hand resting first: strokes just written are
+        // already meshed at this zoom, and between strokes of handwriting the
+        // check - every visible stroke against the zoom, and the far pages
+        // let go - ran on the UI thread in the gap before the next one began.
+        // The ink cache waits for the same rest (see [INK_CACHE_IDLE_MS]).
+        val delay = when {
+            missing -> 0L
+            afterInk -> INK_CACHE_IDLE_MS
+            else -> REFINE_DEBOUNCE_MS
+        }
         refineRunnablePosted = true
         postDelayed(refineRunnable, delay)
     }

@@ -703,7 +703,11 @@ internal fun NoteTips(onLastPage: () -> Boolean, modifier: Modifier = Modifier) 
     var showing by remember { mutableStateOf<NoteTip?>(null) }
     var lastShownAt by remember { mutableStateOf(Long.MIN_VALUE / 2) }
     // Tips follow writing in this note, not what was written before it was opened.
-    val strokesAtOpen = remember { Onboarding.strokes }
+    // Read without being watched: read inside remember, it still made the
+    // first stroke after opening recompose this.
+    val strokesAtOpen = remember {
+        androidx.compose.runtime.snapshots.Snapshot.withoutReadObservation { Onboarding.strokes }
+    }
     val latestLastPage by rememberUpdatedState(onLastPage)
     if (!off && seen.size < NoteTip.entries.size) {
         LaunchedEffect(Unit) {

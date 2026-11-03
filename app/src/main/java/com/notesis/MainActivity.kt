@@ -4495,6 +4495,12 @@ private fun NoteScreen(
     val liveZoom = remember { floatArrayOf(1f) }
     var zoomMenu by remember { mutableStateOf(false) }
     var canvas by remember { mutableStateOf<InkCanvasView?>(null) }
+    // Whether undo and redo have anything, each its own state: read as the
+    // edit counter, every stroke recomposed the whole toolbar on the UI thread
+    // at the pen-up, as the next stroke was starting. Derived, the toolbar
+    // recomposes only when one of the two actually changes.
+    val canUndoNow by remember { derivedStateOf { edits; canvas?.canUndo() == true } }
+    val canRedoNow by remember { derivedStateOf { edits; canvas?.canRedo() == true } }
     // The way back after a jump is offered for a while, then let go: it used to stay until
     // gone back through, however far the page had been left behind.
     LaunchedEffect(backTick) {
@@ -4775,10 +4781,8 @@ private fun NoteScreen(
                 val updated = pen.copy(straightLine = !pen.straightLine)
                 settings = settings + (mode to updated)
             },
-            // edits is read here so drawing or erasing recomposes the toolbar and
-            // undo/redo can re-evaluate whether there is anything on the stacks.
-            canUndo = edits.let { canvas?.canUndo() == true },
-            canRedo = edits.let { canvas?.canRedo() == true },
+            canUndo = canUndoNow,
+            canRedo = canRedoNow,
             onEditPen = { editingPen = true },
             onMode = { picked ->
                 // Leaving a mode takes its leftovers with it: a selection that
