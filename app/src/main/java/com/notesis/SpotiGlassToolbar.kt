@@ -772,7 +772,11 @@ internal fun SpotiGlassToolbar(
                                     onSelected = { pick(tools[it]) }, modifier = Modifier.fillMaxWidth(),
                                     showLabels = false, compact = full, corner = stripCorner,
                                     surface = if (full) SpotiBarSurface.NONE else SpotiBarSurface.LIQUID,
-                                    lift = true, role = ChromeRole.TOOLBAR)
+                                    // On the whole bar (1/4) the strip has no glass of its own
+                                    // for a lens to bend: the lens refracted only the clear
+                                    // layer and the icons, and showed as a rim and smear
+                                    // round the selection. The pill slides flat there.
+                                    lift = !full, role = ChromeRole.TOOLBAR)
                                   else ToolStrip(tools, selected, compact = full, corner = stripCorner,
                                     ownSurface = !full, toolColors = toolColors, onPick = ::pick)
                                 }
