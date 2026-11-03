@@ -89,12 +89,12 @@ internal object PencilBrushes {
                         scaleX = 0.46f,
                         scaleY = 0.46f,
                         cornerRounding = 1f,
-                        particleGapDistanceScale = 0.07f,
+                        particleGapDistanceScale = 0.1f,
                         behaviors = listOf(
                             scatter(BrushBehavior.Target.SIZE_MULTIPLIER, 0.7f, 1.25f, seed = 101, period = 3.1f),
                             scatter(LATERAL, -0.27f, 0.27f, seed = 102, period = 3.7f),
                             scatter(FORWARD, -0.08f, 0.08f, seed = 103, period = 2.9f),
-                            scatter(BrushBehavior.Target.OPACITY_MULTIPLIER, 0.4f, 1f, seed = 104, period = 4.3f),
+                            scatter(BrushBehavior.Target.OPACITY_MULTIPLIER, 0.5f, 1f, seed = 104, period = 4.3f),
                             scatter(BrushBehavior.Target.LUMINOSITY, -0.06f, 0.06f, seed = 105, period = 5.3f),
                             fromInput(BrushBehavior.Source.NORMALIZED_PRESSURE, 0f, 0.6f,
                                 BrushBehavior.Target.SIZE_MULTIPLIER, 0.55f, 1f),
@@ -119,7 +119,7 @@ internal object PencilBrushes {
                         scaleX = 0.34f,
                         scaleY = 0.34f,
                         cornerRounding = 1f,
-                        particleGapDistanceScale = 0.2f,
+                        particleGapDistanceScale = 0.24f,
                         behaviors = listOf(
                             scatter(BrushBehavior.Target.SIZE_MULTIPLIER, 0.25f, 2f, seed = 201, period = 9.1f),
                             scatter(LATERAL, -0.55f, 0.55f, seed = 202, period = 10.3f),
@@ -134,7 +134,7 @@ internal object PencilBrushes {
                         scaleX = 0.1f,
                         scaleY = 0.1f,
                         cornerRounding = 1f,
-                        particleGapDistanceScale = 0.12f,
+                        particleGapDistanceScale = 0.16f,
                         behaviors = listOf(
                             scatter(BrushBehavior.Target.SIZE_MULTIPLIER, 0.4f, 2f, seed = 211, period = 5.3f),
                             scatter(LATERAL, -0.62f, 0.62f, seed = 212, period = 6.1f),
@@ -152,21 +152,25 @@ internal object PencilBrushes {
     /**
      * Fine dots thrown in every direction around the pen, thickest along the
      * middle of the line and thinning out towards its edge, like an airbrush.
-     * Three coats, so the dots are dense without each coat being a long chain.
+     * Two coats, so the dots are dense without each coat being a long chain.
+     * There were three, with dots half as far apart: some ninety dots for
+     * every brush width of line, which made the pencil the slowest thing on
+     * the page to write with and to draw. Now about forty, each a little
+     * larger, for much the same spray.
      */
     val spray: BrushFamily by lazy {
         BrushFamily(
-            coats = listOf(sprayCoat(301, 1.43f), sprayCoat(311, 1.61f), sprayCoat(321, 1.87f)),
+            coats = listOf(sprayCoat(301, 1.43f), sprayCoat(311, 1.61f)),
             clientBrushFamilyId = SPRAY_ID,
         )
     }
 
     private fun sprayCoat(seed: Int, period: Float) = BrushCoat(
         tip = BrushTip(
-            scaleX = 0.045f,
-            scaleY = 0.045f,
+            scaleX = 0.055f,
+            scaleY = 0.055f,
             cornerRounding = 1f,
-            particleGapDistanceScale = 0.035f,
+            particleGapDistanceScale = 0.05f,
             behaviors = listOf(
                 scatter(BrushBehavior.Target.SIZE_MULTIPLIER, 0.35f, 1.8f, seed, period),
                 // An even spread of distances from the centre puts more dots
@@ -181,7 +185,7 @@ internal object PencilBrushes {
                         ),
                     ),
                 ),
-                scatter(BrushBehavior.Target.OPACITY_MULTIPLIER, 0.5f, 1f, seed + 3, period * 1.29f),
+                scatter(BrushBehavior.Target.OPACITY_MULTIPLIER, 0.65f, 1f, seed + 3, period * 1.29f),
             ),
         ),
         paint = dabPaint,
@@ -202,17 +206,17 @@ internal object PencilBrushes {
                         scaleX = 0.5f,
                         scaleY = 0.5f,
                         cornerRounding = 1f,
-                        particleGapDistanceScale = 0.12f,
+                        particleGapDistanceScale = 0.16f,
                         behaviors = listOf(
                             scatter(BrushBehavior.Target.SIZE_MULTIPLIER, 0.8f, 1f, seed = 401, period = 3.3f),
                             scatter(LATERAL, -0.22f, 0.22f, seed = 402, period = 2.7f),
                             scatter(FORWARD, -0.06f, 0.06f, seed = 403, period = 3.9f),
                             scatter(BrushBehavior.Target.OPACITY_MULTIPLIER, 0.75f, 1f, seed = 404, period = 4.1f),
-                            // Each dab is faint; about four overlap at any
+                            // Each dab is faint; about three overlap at any
                             // point, so the line runs from ~0.1 to ~0.75 of
                             // the colour across the pressure range.
                             fromInput(BrushBehavior.Source.NORMALIZED_PRESSURE, 0f, 1f,
-                                BrushBehavior.Target.OPACITY_MULTIPLIER, 0.035f, 0.32f),
+                                BrushBehavior.Target.OPACITY_MULTIPLIER, 0.045f, 0.42f),
                         ),
                     ),
                     paint = dabPaint,
@@ -222,12 +226,12 @@ internal object PencilBrushes {
                         scaleX = 0.09f,
                         scaleY = 0.09f,
                         cornerRounding = 1f,
-                        particleGapDistanceScale = 0.09f,
+                        particleGapDistanceScale = 0.13f,
                         behaviors = listOf(
                             scatter(BrushBehavior.Target.SIZE_MULTIPLIER, 0.5f, 1.4f, seed = 411, period = 2.3f),
                             scatter(LATERAL, -0.42f, 0.42f, seed = 412, period = 1.9f),
                             fromInput(BrushBehavior.Source.NORMALIZED_PRESSURE, 0f, 1f,
-                                BrushBehavior.Target.OPACITY_MULTIPLIER, 0.06f, 0.4f),
+                                BrushBehavior.Target.OPACITY_MULTIPLIER, 0.08f, 0.52f),
                         ),
                     ),
                     paint = dabPaint,
@@ -386,7 +390,14 @@ internal object PencilBrushes {
  * depends on the brush's epsilon. Rebuilding a dab stroke at a new zoom's
  * epsilon would move every dab, so these keep one epsilon, set by their size.
  */
-internal fun dabEpsilon(width: Float): Float = (width * 0.004f).coerceAtLeast(0.0001f)
+internal fun dabEpsilon(width: Float): Float = (width * DAB_EPSILON_PER_WIDTH).coerceAtLeast(0.0001f)
+
+/**
+ * A hundredth of the width: well under a dab's own size, and two and a half
+ * times coarser than the 0.004 it was, which modelled the path - and laid
+ * out every dab - from more points than the eye could tell apart.
+ */
+internal const val DAB_EPSILON_PER_WIDTH = 0.01f
 
 /** The epsilon a stroke of [family] should be built at, for a view needing [viewportEpsilon]. */
 internal fun inkEpsilon(family: BrushFamily, width: Float, viewportEpsilon: Float): Float =
