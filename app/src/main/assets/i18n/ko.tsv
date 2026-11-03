@@ -1447,3 +1447,7 @@ Draw it with the rest of the screen	화면의 나머지와 함께 그리기
 Off: the stroke being written goes on a layer of its own, which skips redrawing the page. On: it is drawn with the rest of the screen, which can look steadier on some tablets but slows with a web panel or a second note open. Try both and keep the one that feels smoother.	끄면 쓰고 있는 획을 따로 된 층에 그려 페이지를 다시 그리지 않습니다. 켜면 화면의 나머지와 함께 그립니다. 어떤 태블릿에서는 이쪽이 더 고르게 보이지만, 웹 패널이나 두 번째 노트를 열어 두면 느려집니다. 둘 다 써 보고 더 부드러운 쪽을 고르세요.
 Show folders	폴더 보이기
 Hide folders	폴더 숨기기
+Brightness	밝기
+App brightness	앱 밝기
+Only while Notesis is in front; the tablet's own setting is left as it is.	Notesis가 화면에 있을 때만 적용됩니다. 태블릿의 밝기 설정은 그대로입니다.
+Following the tablet's brightness.	태블릿의 밝기를 따릅니다.

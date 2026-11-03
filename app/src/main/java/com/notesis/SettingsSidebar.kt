@@ -444,6 +444,8 @@ private fun SettingsRoot(quickActions: List<SpotiToolbarAction>, onOpen: (Settin
                 label = language.label)
         }
     }
+    SettingsSectionHeader("Brightness")
+    AppBrightnessSetting()
     if (quickActions.isNotEmpty()) {
         SettingsSectionHeader("Quick actions")
         BoxWithConstraints(Modifier.fillMaxWidth()) {

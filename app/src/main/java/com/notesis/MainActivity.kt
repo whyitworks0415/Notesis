@@ -291,6 +291,9 @@ class MainActivity : ComponentActivity() {
             LaunchedEffect(InteractionGovernor.highRefresh, InteractionGovernor.observedPowerSave) {
                 DisplayRate.apply(this@MainActivity)
             }
+            // The app's own brightness, if one is set, on the window it draws in.
+            LaunchedEffect(Unit) { AppBrightness.load(this@MainActivity) }
+            LaunchedEffect(AppBrightness.level) { AppBrightness.apply(this@MainActivity) }
             // The whole scheme is built from the accent rather than painted over
             // Material's baseline, so the purple that used to survive in every
             // container, outline and tint goes when the accent does. Kept until
