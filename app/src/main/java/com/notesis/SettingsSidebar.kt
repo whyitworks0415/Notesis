@@ -328,6 +328,9 @@ internal fun AnimatedSettingsSidebar(
     LaunchedEffect(open, animate) {
         if (open) {
             present = true
+            // The first frame with the sidebar in it is the slow one; the slide
+            // starts after it (see PopupGrowth.open), not on it.
+            if (animate && progress.value == 0f) awaitFirstFrames()
             if (animate) progress.animateTo(1f, SIDEBAR_OPEN) else progress.snapTo(1f)
         } else {
             if (animate) progress.animateTo(0f, SIDEBAR_CLOSE) else progress.snapTo(0f)

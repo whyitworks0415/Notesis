@@ -1231,6 +1231,15 @@ private fun ToolbarMenuContent(
  * point. Material snaps.
  */
 @Stable
+/**
+ * Lets the frame that first composes and draws something new go by, and the
+ * one after it, before anything is timed from them.
+ */
+internal suspend fun awaitFirstFrames() {
+    androidx.compose.runtime.withFrameNanos { }
+    androidx.compose.runtime.withFrameNanos { }
+}
+
 internal class PopupGrowth(shown: Boolean) {
     val width = Animatable(if (shown) 1f else 0f)
     val height = Animatable(if (shown) 1f else 0f)
@@ -1250,6 +1259,11 @@ internal class PopupGrowth(shown: Boolean) {
 
     suspend fun open(animate: Boolean) {
         closing = false
+        // Opening from nothing: the popup's first frame - composing, measuring
+        // and drawing all of it, its glass included - is the slow one, and a
+        // curve started on it lost its first steps to that frame and jumped.
+        // It goes out unseen; the curve starts on the frame after.
+        if (animate && width.value == 0f && height.value == 0f) awaitFirstFrames()
         move(1f, animate, profile?.open ?: POPUP_OPEN, 0f)
     }
 
