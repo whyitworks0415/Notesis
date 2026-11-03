@@ -511,6 +511,8 @@ internal fun GlobalPenSettings(
     onMeshInk: (Boolean) -> Unit,
     compatWetInk: Boolean,
     onCompatWetInk: (Boolean) -> Unit,
+    compatInkInWindow: Boolean = false,
+    onCompatInkInWindow: (Boolean) -> Unit = {},
     /** Opens the panel of the pen in hand; null leaves the button out. */
     onPenInHand: (() -> Unit)? = null,
 ) {
@@ -579,6 +581,13 @@ internal fun GlobalPenSettings(
             disabledReason = if (frontBufferInkUnreliable()) {
                 "Always on for this tablet: without it, strokes only appear once the pen lifts."
             } else null)
+        if (compatWetInk) {
+            SettingsToggle("Draw it with the rest of the screen", compatInkInWindow, onCompatInkInWindow,
+                hint = "Off: the stroke being written goes on a layer of its own, which skips redrawing " +
+                    "the page. On: it is drawn with the rest of the screen, which can look steadier on " +
+                    "some tablets but slows with a web panel or a second note open. Try both and keep " +
+                    "the one that feels smoother.")
+        }
         SettingsToggle("Sharpen after zooming", deferDetail, onDeferDetail,
             hint = "While zooming the page is drawn as it is, then redrawn sharp when your fingers lift.")
         SettingsToggle("Mesh rendering (experimental)", meshInk, onMeshInk,

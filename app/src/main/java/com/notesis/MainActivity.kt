@@ -4265,6 +4265,7 @@ private fun NoteScreen(
     var highlighterAboveInk by remember { mutableStateOf(penStore.highlighterAboveInk) }
     var meshInk by remember { mutableStateOf(penStore.meshInk) }
     var compatWetInk by remember { mutableStateOf(penStore.compatWetInk) }
+    var compatInkInWindow by remember { mutableStateOf(penStore.compatInkInWindow) }
     var partialEraser by remember { mutableStateOf(penStore.partialEraser) }
     var gestures by remember { mutableStateOf(penStore.gestures) }
     var choosingShape by remember { mutableStateOf(false) }
@@ -5098,6 +5099,7 @@ private fun NoteScreen(
                     view.highlighterAboveInk = highlighterAboveInk
                     view.meshInk = meshInk
                     view.compatWetInk = compatWetInk
+                    view.wetSurfaceAllowed = !compatInkInWindow
                     // Turned inside the canvas, not as a view: a turned view clipped the
                     // page's corners and left the wet ink's surface behind the pen.
                     view.viewRotation = noteRotation
@@ -5624,6 +5626,8 @@ private fun NoteScreen(
                         onMeshInk = { meshInk = it; penStore.meshInk = it },
                         compatWetInk = compatWetInk,
                         onCompatWetInk = { compatWetInk = it; penStore.compatWetInk = it },
+                        compatInkInWindow = compatInkInWindow,
+                        onCompatInkInWindow = { compatInkInWindow = it; penStore.compatInkInWindow = it },
                         onPenInHand = {
                             if (mode !in PenStore.DEFAULTS) mode = EditMode.PEN
                             editingPen = true

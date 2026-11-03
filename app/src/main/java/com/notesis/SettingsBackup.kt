@@ -24,7 +24,7 @@ internal object SettingsBackup {
     private const val PENS = "pens"
     private const val CLOCK = "clock"
 
-    private val DEVICE_KEYS = setOf("diagnosticId", "homePhoto", "compatWetInk", "meshInk")
+    private val DEVICE_KEYS = setOf("diagnosticId", "homePhoto", "compatWetInk", "compatInkInWindow", "meshInk")
     private val NOTE_KEY_PREFIXES = listOf("lastPage:", "layout:")
     private val CLOCK_SETTINGS = setOf(
         "buttonShown", "buttonX", "buttonY", "timerDuration", "alarms",

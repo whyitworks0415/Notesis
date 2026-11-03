@@ -554,6 +554,15 @@ class PenStore(context: Context) {
         get() = frontBufferInkUnreliable() || prefs.getBoolean("compatWetInk", false)
         set(value) = prefs.edit().putBoolean("compatWetInk", value).apply()
 
+    /**
+     * The compatible wet ink drawn in the window instead of on a surface of
+     * its own; see [InkCanvasView.wetSurfaceAllowed]. For comparing the two
+     * on a given tablet.
+     */
+    var compatInkInWindow: Boolean
+        get() = prefs.getBoolean("compatInkInWindow", false)
+        set(value) = prefs.edit().putBoolean("compatInkInWindow", value).apply()
+
     /** Screen rendering only - see [InkCanvasView.meshInk]. */
     var meshInk: Boolean
         get() = prefs.getBoolean("meshInk", true)
