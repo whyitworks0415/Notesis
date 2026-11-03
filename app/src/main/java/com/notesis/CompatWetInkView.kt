@@ -535,7 +535,10 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
         }
         strokes += wet
         enqueue(wet, event, pointerId, null)
-        requestRender()
+        // The first dot goes out now, not at the next frame: a pen-down comes
+        // on its own, between frames, and after a pause the surface has a
+        // buffer free, so waiting for the frame only made the first ink later.
+        if (usingSurface()) renderSurface() else requestRender()
     }
 
     fun add(id: Any, event: MotionEvent, pointerId: Int, prediction: MotionEvent?) {
@@ -991,7 +994,9 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
         const val HANDOFF_TIMEOUT_MS = 250L
         /** Antialiasing reaches a pixel or two past the mesh. */
         const val REGION_PAD_PX = 4f
-        const val STALE_FINISHED_MS = 1_500L
+        // Ink has been seen taking almost 3 s to hand back a stroke written in
+        // a quick run of them; dropped sooner, it could vanish until then.
+        const val STALE_FINISHED_MS = 6_000L
         const val SPARE_STROKES = 4
         /** How far past the changed area a frame's copy reaches, for samples that arrive while it waits. */
         const val LATE_MARGIN_PX = 48
