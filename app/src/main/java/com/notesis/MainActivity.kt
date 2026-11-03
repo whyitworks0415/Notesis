@@ -5753,6 +5753,7 @@ private fun NoteScreen(
                                 }, label = label)
                             }
                         }
+                        AiOcrSettings()
                     }
                     if (filing) FolderDialog(current = meta.folder, folders = remember { store.folders() },
                         onDismiss = { filing = false }, onPick = { store.setFolder(note.id, it); filing = false; edits++ })
@@ -6095,7 +6096,19 @@ private fun NoteScreen(
                     val strokes = canvas?.selectedLassoStrokes().orEmpty()
                     regionOcrBusy = true
                     scope.launch {
-                        val lines = withContext(Dispatchers.IO) { indexer.readingsOf(strokes) }
+                        val ai = AiOcr.enabled(context)
+                        val (lines, failure) = withContext(Dispatchers.IO) {
+                            val device = indexer.readingsOf(strokes)
+                            if (!ai) return@withContext device to null
+                            val read = AiOcr.read(context, strokes, InkIndexer.languages(context))
+                            read.fold(
+                                onSuccess = { text -> mergeAiReadings(text, device.orEmpty()) to null },
+                                // The AI could not be reached or declined: the device's reading, and why.
+                                onFailure = { device to (it.message ?: "AI reading failed") },
+                            )
+                        }
+                        if (failure != null) android.widget.Toast.makeText(context,
+                            L10n.tr("Read on the tablet instead: ") + failure, android.widget.Toast.LENGTH_LONG).show()
                         if (lines == null) regionOcrText = "Recognition model unavailable"
                         else regionOcrLines = lines
                         regionOcrBusy = false

@@ -18,3 +18,16 @@
 # Export only copies existing PDF streams and never asks that optional codec to
 # render them, so the absent classes are safe to leave out of this small APK.
 -dontwarn com.gemalto.jp2.**
+
+# The Claude client (AiOcr) brings optional integrations that are never used
+# on Android: annotations only tools read, tracing, webhooks.
+-dontwarn com.google.errorprone.annotations.**
+-dontwarn io.swagger.v3.oas.annotations.**
+-dontwarn io.opentelemetry.**
+-dontwarn com.standardwebhooks.**
+-dontwarn org.slf4j.**
+-dontwarn javax.annotation.**
+-dontwarn org.conscrypt.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.openjsse.**
+-dontwarn java.beans.**
