@@ -355,6 +355,13 @@ class Document(val pages: MutableList<Page>) {
     /** The note's layers; saved in meta.json. */
     val layers = NoteLayers()
 
+    /**
+     * The whiteboard: ink written on the desk around the pages, kept in
+     * document coordinates on a page of its own that is never laid out,
+     * printed or exported. Saved beside the pages as board.bin.
+     */
+    val board: Page = Page(id = BOARD_PAGE_ID).also { it.loaded = true; it.dirty = false }
+
     /** Runtime ownership only; simultaneous canvases share edited page objects. */
     var liveCanvasCount: Int = 0
         private set
@@ -617,6 +624,9 @@ class Document(val pages: MutableList<Page>) {
 
     companion object {
         const val PAGE_GAP = 48f
+        /** The whiteboard's page id and file; see [board]. */
+        const val BOARD_PAGE_ID = "board"
+        const val BOARD_FILE = "board.bin"
         /** The margin a row keeps for its comments, in page units: about a third of an A4 page. */
         const val MEMO_COLUMN = 400f
         private val nextSaveSession = AtomicLong(1L)
@@ -1489,7 +1499,11 @@ class NoteStore(context: Context) {
             pages += page
         }
         if (pages.isEmpty()) pages += Page()
-        return Document(pages).also { it.layers.copyFrom(NoteLayers.fromJson(json.optJSONObject("layers"))) }
+        return Document(pages).also {
+            it.layers.copyFrom(NoteLayers.fromJson(json.optJSONObject("layers")))
+            it.board.strokes.addAll(readStrokes(File(root, "$id/${Document.BOARD_FILE}")))
+            it.board.dirty = false
+        }
     }
 
     /**
@@ -1547,6 +1561,12 @@ class NoteStore(context: Context) {
             }
             .toSet()
         dir.listFiles()?.forEach { if (it.name !in live) it.delete() }
+        // The whiteboard, whole, when it changed: it is small next to the pages.
+        if (document.board.dirty) {
+            val boardFile = File(root, "$id/${Document.BOARD_FILE}")
+            if (document.board.strokes.isEmpty()) boardFile.delete() else writeStrokes(boardFile, document.board.strokes)
+            document.board.dirty = false
+        }
         writeMeta(id, title, document)
 
         // ponytail: rendering the first page costs a PDF decode, and autosave
@@ -1566,6 +1586,9 @@ class NoteStore(context: Context) {
     private data class SaveSnapshot(
         val document: Document,
         val pages: List<SavePage>,
+        /** The live whiteboard and the revision copied, when it was due to be written. */
+        val board: Page? = null,
+        val boardRevision: Long = 0L,
     )
 
     private data class PendingSave(
@@ -1639,8 +1662,13 @@ class NoteStore(context: Context) {
             SavePage(live, copy, live.revision)
         }
         val copy = Document(captured.map { it.copy }.toMutableList()).also { it.layers.copyFrom(document.layers) }
+        val board = document.board
+        if (board.dirty) {
+            copy.board.strokes.addAll(board.strokes)
+            copy.board.dirty = true
+        }
         document.latency?.record(PerformanceMetric.SAVE_SNAPSHOT, System.nanoTime() - started)
-        return SaveSnapshot(copy, captured)
+        return SaveSnapshot(copy, captured, board.takeIf { it.dirty }, board.revision)
     }
 
     /**
@@ -1738,6 +1766,7 @@ class NoteStore(context: Context) {
                     page.live.savedStrokeCount = page.copy.strokes.size
                     page.live.dirty = false
                 }
+                snapshot.board?.let { if (it.revision == snapshot.boardRevision) it.dirty = false }
             }
         }
     }

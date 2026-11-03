@@ -281,6 +281,21 @@ class PenStore(context: Context) {
         get() = prefs.getString("homePhoto", null)
         set(value) = prefs.edit().putString("homePhoto", value).apply()
 
+    /** The desk round the pages written on as a whiteboard; see InkCanvasView.whiteboard. */
+    var whiteboard: Boolean
+        get() = prefs.getBoolean("whiteboard", false)
+        set(value) = prefs.edit().putBoolean("whiteboard", value).apply()
+
+    /** The whiteboard's colour, ARGB; 0 is plain white. */
+    var whiteboardColor: Int
+        get() = prefs.getInt("whiteboardColor", 0)
+        set(value) = prefs.edit().putInt("whiteboardColor", value).apply()
+
+    /** How far the whiteboard reaches either side of the pages, in note widths. */
+    var whiteboardMargin: Float
+        get() = prefs.getFloat("whiteboardMargin", 0.8f)
+        set(value) = prefs.edit().putFloat("whiteboardMargin", value).apply()
+
     /** The library's folders folded away, so only the notes show. */
     var foldersHidden: Boolean
         get() = prefs.getBoolean("libraryFoldersHidden", false)

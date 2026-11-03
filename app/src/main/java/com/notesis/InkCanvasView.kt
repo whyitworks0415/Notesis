@@ -4006,7 +4006,10 @@ class InkCanvasView @JvmOverloads constructor(
 
         // 0.8 of a note's width of slack past either side, so the edge of the
         // page can be brought to the middle of the screen to write on.
-        val slack = if (keepPageAcross) 0f else document.fitWidth() * scale * 0.8f
+        // With the whiteboard on, as much as its margin says - near nothing
+        // keeps the page from sliding sideways at all.
+        val slack = if (keepPageAcross) 0f
+            else document.fitWidth() * scale * (if (whiteboard) boardMargin else 0.8f)
         val centred = (width - docWidth) / 2f
         x = x.coerceIn(minOf(width - docWidth, centred) - slack, maxOf(0f, centred) + slack)
         y = if (docHeight <= height) {
@@ -4306,8 +4309,11 @@ class InkCanvasView @JvmOverloads constructor(
                     laser.trail = laserTrail
                     return onLaser(event)
                 }
-                val index = pageUnder(event, event.actionIndex)
-                if (index < 0) return true
+                val pageIndex = pageUnder(event, event.actionIndex)
+                // Off the pages: the whiteboard takes ink and the eraser, when it is on.
+                val onBoard = pageIndex < 0
+                if (onBoard && !boardTakes(event)) return true
+                val index = if (onBoard) BOARD_INDEX else pageIndex
                 val pointerId = event.getPointerId(event.actionIndex)
                 activeStylusPointer = pointerId
                 inkCacheWorkGeneration++
@@ -4324,11 +4330,12 @@ class InkCanvasView @JvmOverloads constructor(
                     lastFrameNanos = 0L
                     Choreographer.getInstance().postFrameCallback(frameCallback)
                 }
-                activePage = document.pages[index]
+                activePage = if (onBoard) document.board else document.pages[index]
                 // The barrel button held (not the pen turned to its eraser end) can mean something else.
                 val buttonHeld = samsungSideButton || (event.getToolType(event.actionIndex) != MotionEvent.TOOL_TYPE_ERASER &&
                     event.isEraserGesture())
                 if (buttonHeld && !readMode && penButton == PEN_BUTTON_LASSO) {
+                    if (onBoard) return true
                     onDrawingChanged?.invoke(true)
                     beginLasso(event, index)
                     return true
@@ -4380,7 +4387,7 @@ class InkCanvasView @JvmOverloads constructor(
                     beginImageGesture(event, index)
                     return true
                 }
-                if (!eraserGesture && tool != Tool.ERASER &&
+                if (!onBoard && !eraserGesture && tool != Tool.ERASER &&
                     toggleCheckboxAt(event.getX(event.actionIndex), event.getY(event.actionIndex), index)
                 ) return true
                 // Ink - pen, shape, ruler line, polygon - on a locked or hidden
@@ -4508,7 +4515,7 @@ class InkCanvasView @JvmOverloads constructor(
                         latency.record(PerformanceMetric.FIRST_INK, System.nanoTime() - event.eventTime * 1_000_000L)
                     }
                     if (brush !== stored) activeStrokeId?.let { wetTrueColors[it] = stored.colorIntArgb }
-                    activeStrokeId?.let { wetStarts[it] = WetStart(document.pages[index], strokeIsMask) }
+                    activeStrokeId?.let { wetStarts[it] = WetStart(if (onBoard) document.board else document.pages[index], strokeIsMask) }
                     // Everything below waits until the first mark is handed on.
                     onWritingStarted?.invoke()
                     // MotionEventPredictor is useful only for wet freehand ink.
@@ -4518,12 +4525,12 @@ class InkCanvasView @JvmOverloads constructor(
                     // Once a stroke, after its first point: the rate may have moved
                     // since the last change was heard (the pen asks for a high one).
                     readRefreshRate()
-                    holdingStationaryStart = tool == Tool.PEN && !stabilizingStroke && dottedPattern == 0
+                    holdingStationaryStart = !onBoard && tool == Tool.PEN && !stabilizingStroke && dottedPattern == 0
                     stationaryStartX = event.getX(event.actionIndex)
                     stationaryStartY = event.getY(event.actionIndex)
                     stationaryStartTime = event.eventTime
-                    circleTracking = circleToLasso && tool.isFreehandPen() && !strokeIsMask
-                    holdTracking = holdToDraw && (tool.isFreehandPen() || tool == Tool.HIGHLIGHTER || strokeIsMask)
+                    circleTracking = !onBoard && circleToLasso && tool.isFreehandPen() && !strokeIsMask
+                    holdTracking = !onBoard && holdToDraw && (tool.isFreehandPen() || tool == Tool.HIGHLIGHTER || strokeIsMask)
                     recognizeOnFinish = false
                     if (holdTracking) {
                         holdX = stationaryStartX
@@ -5870,6 +5877,51 @@ class InkCanvasView @JvmOverloads constructor(
         focus[1] = if (n == 0) 0f else y / n
         return focus
     }
+
+    /**
+     * The desk round the pages as a whiteboard: ink and the eraser work on
+     * it, the ink is kept with the note (see Document.board) and never goes
+     * into a PDF. Off, the desk takes nothing, as before.
+     */
+    var whiteboard: Boolean = false
+        set(value) {
+            if (field == value) return
+            field = value
+            clampTransform()
+            dry.invalidate()
+        }
+
+    /**
+     * How far past the pages the whiteboard reaches either side, in note
+     * widths: how far the page can be slid sideways. Dragged at the desk's
+     * edge from the note (see the host); near 0 it barely moves.
+     */
+    var boardMargin: Float = 0.8f
+        set(value) {
+            val clean = value.coerceIn(BOARD_MARGIN_MIN, BOARD_MARGIN_MAX)
+            if (field == clean) return
+            field = clean
+            clampTransform()
+            dry.invalidate()
+        }
+
+    /** The page's width on screen, for turning a drag into [boardMargin]. */
+    fun noteWidthOnScreen(): Float = document.fitWidth() * currentScale()
+
+    /** Whether a pen down off the pages writes on the whiteboard: ink or the eraser, nothing else. */
+    private fun boardTakes(event: MotionEvent): Boolean {
+        if (!whiteboard || readMode || lassoMode || imageMode || captureMode || maskMode) return false
+        if (shapeKind != null || rulerKind != null) return false
+        val eraserGesture = event.isEraserGesture() || samsungSideButton
+        return eraserGesture || tool == Tool.ERASER || tool.isFreehandPen() || tool == Tool.HIGHLIGHTER
+    }
+
+    /** The whiteboard's strokes whose box meets the given one, in document units. */
+    private fun boardStrokesIn(left: Float, top: Float, right: Float, bottom: Float): List<Stroke> =
+        document.board.strokes.filter { stroke ->
+            val box = stroke.shape.computeBoundingBox() ?: return@filter false
+            box.xMax >= left && box.xMin <= right && box.yMax >= top && box.yMin <= bottom
+        }
 
     /** Index of the page under a pointer, or -1 in the gap between pages. */
     private fun pageUnder(event: MotionEvent, pointerIndex: Int): Int {
@@ -8747,8 +8799,9 @@ class InkCanvasView @JvmOverloads constructor(
 
     private fun eraseAlong(event: MotionEvent, pointerIndex: Int, force: Boolean = false) {
         val page = activePage ?: return
-        val index = document.pages.indexOf(page)
-        if (index < 0) return
+        val onBoard = page === document.board
+        val index = if (onBoard) BOARD_INDEX else document.pages.indexOf(page)
+        if (index == -1) return
         val screenX = event.getX(pointerIndex)
         val screenY = event.getY(pointerIndex)
         // A finger reports no real pressure, so only the pen's grows. The set
@@ -8797,9 +8850,8 @@ class InkCanvasView @JvmOverloads constructor(
         val candidateTop = min(if (hadPrevious) previousY else y, y) - radius
         val candidateRight = max(if (hadPrevious) previousX else x, x) + radius
         val candidateBottom = max(if (hadPrevious) previousY else y, y) + radius
-        val candidates = dry.strokesIn(
-            page, candidateLeft, candidateTop, candidateRight, candidateBottom,
-        )
+        val candidates = if (onBoard) boardStrokesIn(candidateLeft, candidateTop, candidateRight, candidateBottom)
+            else dry.strokesIn(page, candidateLeft, candidateTop, candidateRight, candidateBottom)
         // Whole-stroke by default; [partialEraser] then cuts the hits apart
         // below instead of removing them.
         //
@@ -9038,7 +9090,8 @@ class InkCanvasView @JvmOverloads constructor(
                 val mask = PageMask(stroke)
                 page.masks += mask
                 undoStack += Edit.MaskAdded(page, mask, group)
-            } else if (scribbleErase && finishedTool.isFreehandPen() && scribbleOut(page, stroke, group)) {
+            } else if (page !== document.board && scribbleErase && finishedTool.isFreehandPen() &&
+                scribbleOut(page, stroke, group)) {
                 // The scribble took the ink under it and is not kept itself.
             } else {
                 val shape = when {
@@ -9078,7 +9131,9 @@ class InkCanvasView @JvmOverloads constructor(
         wet.removeFinishedStrokes(finished.keys)
         if (compatWetStrokeId in finished.keys) compatWetStrokeId = null
         for ((page, committed) in committedByPage) {
-            if (committed.isNotEmpty()) onStrokesCommitted?.invoke(document.pages.indexOf(page), committed)
+            if (committed.isNotEmpty() && page !== document.board) {
+                onStrokesCommitted?.invoke(document.pages.indexOf(page), committed)
+            }
         }
         // One edit for the batch, whatever pages it touched: one redraw, one save request.
         if (committedByPage.isNotEmpty()) afterEdit(*committedByPage.keys.toTypedArray()) else afterEdit()
@@ -9745,6 +9800,22 @@ class InkCanvasView @JvmOverloads constructor(
                     if (page === selectedImagePage) drawImageHandles(scoped)
                     scoped.restore()
                 }
+                // The whiteboard's ink, over the pages it may run onto, in
+                // document units. Few strokes, drawn directly; only the ones
+                // whose box is on screen.
+                val board = document.board.strokes
+                if (whiteboard && board.isNotEmpty()) {
+                    scoped.save()
+                    scoped.concat(documentToScreen)
+                    for (stroke in board) {
+                        val box = stroke.shape.computeBoundingBox() ?: continue
+                        if (box.xMax < viewport[0] || box.xMin > viewport[2] ||
+                            box.yMax < viewport[1] || box.yMin > viewport[3]) continue
+                        scope.drawStroke(onScreen(stroke))
+                    }
+                    scoped.restore()
+                    visibleCount += board.size
+                }
             }
             if (tileFrame) {
                 inkTiles.endFrame()
@@ -10383,6 +10454,10 @@ class InkCanvasView @JvmOverloads constructor(
         const val BASE_TESSELLATION_SCALE = 1f
         /** The finest zoom a page is first read in at; see refineVisiblePages. */
         const val LOAD_TESSELLATION_SCALE = 2f
+        /** The page index ink on the whiteboard is taken under: document coordinates, no page offset. */
+        const val BOARD_INDEX = -2
+        const val BOARD_MARGIN_MIN = 0.02f
+        const val BOARD_MARGIN_MAX = 3f
         const val MAX_SCREEN_BRUSHES = 256
         /** A few pens, colours and zoom levels; see [currentBrush]. */
         const val RECENT_BRUSHES = 8

@@ -1473,3 +1473,15 @@ No API key set	API 키가 없습니다
 Nothing to read	읽을 것이 없습니다
 The model declined to read this	모델이 이 내용을 읽지 않았습니다
 AI reading failed	AI로 읽지 못했습니다
+Whiteboard	화이트보드
+Write on the desk around the pages	페이지 바깥 바탕에 쓰기
+The space beside the pages becomes a whiteboard for the pen and the eraser. What is written there stays with the note and is left out of PDFs.	페이지 옆 공간이 펜과 지우개를 쓸 수 있는 화이트보드가 됩니다. 거기에 쓴 것은 노트에 남고, PDF에는 들어가지 않습니다.
+Colour	색
+Of the page's width. Small, and the page barely slides sideways. In the note, the grips at the lower left and right edges set it too.	페이지 너비에 대한 비율입니다. 작게 하면 페이지가 옆으로 거의 움직이지 않습니다. 노트 화면 아래쪽 왼쪽·오른쪽 가장자리의 손잡이를 끌어서도 바꿀 수 있습니다.
+White	흰색
+Cream	크림
+Light grey	밝은 회색
+Pale blue	연한 파랑
+Chalkboard	칠판
+Whiteboard width	화이트보드 너비
+Room either side {0}%	양옆 여백 {0}%

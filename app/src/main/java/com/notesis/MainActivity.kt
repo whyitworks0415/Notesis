@@ -4284,6 +4284,9 @@ private fun NoteScreen(
     var meshInk by remember { mutableStateOf(penStore.meshInk) }
     var compatWetInk by remember { mutableStateOf(penStore.compatWetInk) }
     var compatInkInWindow by remember { mutableStateOf(penStore.compatInkInWindow) }
+    var whiteboard by remember { mutableStateOf(penStore.whiteboard) }
+    var whiteboardColor by remember { mutableIntStateOf(penStore.whiteboardColor) }
+    var whiteboardMargin by remember { mutableFloatStateOf(penStore.whiteboardMargin) }
     var partialEraser by remember { mutableStateOf(penStore.partialEraser) }
     var gestures by remember { mutableStateOf(penStore.gestures) }
     var choosingShape by remember { mutableStateOf(false) }
@@ -4947,7 +4950,8 @@ private fun NoteScreen(
     // with the glass tinting nothing but that white. Painting the paper colour
     // the whole way up closes both gaps and gives the glass something of the
     // page's own to sit on.
-    val desk = deskColor()
+    // With the whiteboard on, the desk is the board, in its own colour.
+    val desk = if (whiteboard) Color(if (whiteboardColor == 0) WHITEBOARD_WHITE else whiteboardColor) else deskColor()
     val splitGap = with(density) { SPLIT_GAP.toPx() }
     val paneZeroPadding = split?.takeIf { containerSize.width > 0 }?.let { tree ->
         val w = containerSize.width.toFloat()
@@ -5129,6 +5133,8 @@ private fun NoteScreen(
                     view.meshInk = meshInk
                     view.compatWetInk = compatWetInk
                     view.wetSurfaceAllowed = !compatInkInWindow
+                    view.whiteboard = whiteboard
+                    view.boardMargin = whiteboardMargin
                     // Turned inside the canvas, not as a view: a turned view clipped the
                     // page's corners and left the wet ink's surface behind the pen.
                     view.viewRotation = noteRotation
@@ -5492,6 +5498,23 @@ private fun NoteScreen(
         }
         }
 
+        // The whiteboard's sides, set by hand: a grip at each lower edge, pulled
+        // outwards for more room beside the pages and inwards for less.
+        if (whiteboard && !collapsed) {
+            listOf(Alignment.BottomStart to -1f, Alignment.BottomEnd to 1f).forEach { (corner, outward) ->
+                WhiteboardGrip(
+                    onDrag = { dx ->
+                        val width = canvas?.noteWidthOnScreen()?.takeIf { it > 1f } ?: return@WhiteboardGrip
+                        whiteboardMargin = (whiteboardMargin + outward * dx / width)
+                            .coerceIn(InkCanvasView.BOARD_MARGIN_MIN, InkCanvasView.BOARD_MARGIN_MAX)
+                    },
+                    onDragEnd = { penStore.whiteboardMargin = whiteboardMargin },
+                    modifier = Modifier.align(corner).awayUpwards(chromeAway)
+                        .windowInsetsPadding(ChromeInsets).padding(bottom = 128.dp),
+                )
+            }
+        }
+
         // The smaller bars have no top row, so no way back: a round button of
         // the bar's own material in the top corner, the height of the bar's
         // tool strip and level with it. Down the side, it heads the bar's
@@ -5679,6 +5702,38 @@ private fun NoteScreen(
                     val meta = remember(edits) { store.list().firstOrNull { it.id == note.id } ?: note }
                     var confirmDelete by remember { mutableStateOf(false) }
                     var filing by remember { mutableStateOf(false) }
+                    SettingsCard {
+                        SettingsSectionHeader("Whiteboard")
+                        SettingsToggle("Write on the desk around the pages", whiteboard, {
+                            whiteboard = it
+                            penStore.whiteboard = it
+                        }, hint = "The space beside the pages becomes a whiteboard for the pen and the eraser. " +
+                            "What is written there stays with the note and is left out of PDFs.")
+                        if (whiteboard) {
+                            Text("Colour", style = MaterialTheme.typography.bodyLarge)
+                            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+                                WHITEBOARD_COLORS.forEach { (argb, label) ->
+                                    SettingsChoiceChip(selected = whiteboardColor == argb, onClick = {
+                                        whiteboardColor = argb
+                                        penStore.whiteboardColor = argb
+                                    }, label = label)
+                                }
+                            }
+                            Text("Room either side ${(whiteboardMargin * 100).roundToInt()}%",
+                                style = MaterialTheme.typography.bodyLarge)
+                            SkinSlider(
+                                value = whiteboardMargin,
+                                onValueChange = {
+                                    whiteboardMargin = it
+                                    penStore.whiteboardMargin = it
+                                },
+                                valueRange = InkCanvasView.BOARD_MARGIN_MIN..InkCanvasView.BOARD_MARGIN_MAX,
+                                step = 0.01f,
+                            )
+                            SettingsNote("Of the page's width. Small, and the page barely slides sideways. " +
+                                "In the note, the grips at the lower left and right edges set it too.")
+                        }
+                    }
                     SettingsCard {
                         SettingsSectionHeader("Page layout")
                         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
@@ -8930,6 +8985,40 @@ internal fun isDarkTheme(): Boolean = LocalSkinSettings.current.themeMode == App
  */
 @Composable
 internal fun deskColor(): Color = if (isDarkTheme()) Color(0xFF1C1D20) else Color(0xFFE9E7E2)
+
+/** The whiteboard's own white, a touch warmer than the page so the page's edge still shows. */
+internal const val WHITEBOARD_WHITE = 0xFFF7F7F4.toInt()
+
+/** The colours the whiteboard can take; 0 is [WHITEBOARD_WHITE]. */
+internal val WHITEBOARD_COLORS = listOf(
+    0 to "White",
+    0xFFFFF8E7.toInt() to "Cream",
+    0xFFE9E7E2.toInt() to "Light grey",
+    0xFFDCEBF7.toInt() to "Pale blue",
+    0xFF2E3A33.toInt() to "Chalkboard",
+    0xFF1C1D20.toInt() to "Dark",
+)
+
+/** A small pill at the screen's edge that a finger drags sideways; see the whiteboard's sides. */
+@Composable
+internal fun WhiteboardGrip(onDrag: (Float) -> Unit, onDragEnd: () -> Unit, modifier: Modifier = Modifier) {
+    val ink = MaterialTheme.colorScheme.onSurface
+    Box(
+        modifier
+            .size(width = 28.dp, height = 72.dp)
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures(onDragEnd = onDragEnd, onDragCancel = onDragEnd) { change, dx ->
+                    change.consume()
+                    onDrag(dx)
+                }
+            }
+            .semantics { contentDescription = "Whiteboard width" },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(Modifier.size(width = 6.dp, height = 48.dp).clip(RoundedCornerShape(3.dp))
+            .background(ink.copy(alpha = 0.28f)))
+    }
+}
 
 /**
  * Paper sizes as other apps count them - pixels at 300 dpi - so a size typed
