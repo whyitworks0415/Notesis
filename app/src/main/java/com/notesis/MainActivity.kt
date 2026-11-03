@@ -728,6 +728,7 @@ private fun NoteListScreen(
     var thumbnailFor by remember { mutableStateOf<NoteMeta?>(null) }
     val homeStore = remember { PenStore(context) }
     var librarySort by remember { mutableIntStateOf(homeStore.librarySort) }
+    var foldersHidden by remember { mutableStateOf(homeStore.foldersHidden) }
     var homeRevision by remember { mutableIntStateOf(0) }
     var showHomeBackground by remember { mutableStateOf(false) }
     val homeColor = remember(homeRevision) { homeStore.homeColor }
@@ -1332,7 +1333,8 @@ private fun NoteListScreen(
         ) {
         HomeBackground(homePhoto)
         val emptyHere = shown.isEmpty() && (folder.isNotBlank() || results != null || folders.isEmpty())
-        val showFolders = results == null && folder.isBlank() && folders.isNotEmpty() && tagFilter == null
+        val showFolders = results == null && folder.isBlank() && folders.isNotEmpty() && tagFilter == null &&
+            !foldersHidden
         val side = if (narrowLibrary) Ui.Space.m else Ui.Space.l
         LazyVerticalGrid(
             state = gridState,
@@ -1370,6 +1372,18 @@ private fun NoteListScreen(
                     title = libraryTitle,
                     subtitle = if (selectionMode) "${selectedCount} selected" else countNoun(shown.size, "note"),
                     modifier = Modifier.onSizeChanged { titleHeight = it.height },
+                    trailing = if (results == null && folder.isBlank() && tagFilter == null && folders.isNotEmpty()) {
+                        {
+                            TextButton(onClick = {
+                                foldersHidden = !foldersHidden
+                                homeStore.foldersHidden = foldersHidden
+                            }) {
+                                Icon(Reicons.Folder, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(Ui.Space.xs))
+                                Text(if (foldersHidden) "Show folders" else "Hide folders")
+                            }
+                        }
+                    } else null,
                 )
             }
             item(key = "search", span = { GridItemSpan(maxLineSpan) }) {

@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -182,27 +184,45 @@ private val EDGE_ZONE = 64.dp
 private val EDGE_SPEED = 22.dp
 
 /**
- * The library's big title, as Notes and Files open with it: the place, and
- * under it how much is there. It scrolls up with the notes; the bar above
- * takes the title in small once this has gone under it.
+ * The library's title: the place in one line, with how much is there beside
+ * it and room at the end for what goes with it (the folders' show/hide). It
+ * scrolls up with the notes; the bar above takes the title once this has
+ * gone under it.
  */
 @Composable
-internal fun LibraryLargeTitle(title: String, subtitle: String, modifier: Modifier = Modifier) {
-    Column(modifier.fillMaxWidth().padding(top = Ui.Space.xs, bottom = Ui.Space.s).semantics { heading() }) {
+internal fun LibraryLargeTitle(
+    title: String,
+    subtitle: String,
+    modifier: Modifier = Modifier,
+    trailing: (@Composable () -> Unit)? = null,
+) {
+    Row(
+        modifier.fillMaxWidth().heightIn(min = 48.dp).padding(vertical = Ui.Space.xs).semantics { heading() },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Text(
             title,
-            style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold, fontSize = 34.sp,
-                lineHeight = 40.sp, letterSpacing = (-0.4).sp),
-            maxLines = 2,
+            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold, fontSize = 24.sp,
+                lineHeight = 30.sp, letterSpacing = (-0.2).sp),
+            maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        Text(
+            "·",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = Ui.Space.s),
         )
         Text(
             subtitle,
-            style = MaterialTheme.typography.bodyLarge,
+            style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
         )
+        trailing?.invoke()
     }
 }
 
@@ -216,10 +236,14 @@ internal fun LibrarySection(text: String, modifier: Modifier = Modifier) {
     )
 }
 
+/** The inset between a library card's edge and the page or folder inside it. */
+internal val LIBRARY_CARD_INSET = 8.dp
+
 /**
- * A folder among the notes: an icon on a tinted square, its name and how
- * many notes it holds. The same width as a note and shorter, so the folders
- * read as a row of places above the notes. Its ⋮ renames or deletes it.
+ * A folder among the notes, the same size as a note: a tinted square where
+ * a note has its page, with the folder's mark and how many notes it holds,
+ * and its name under it where a note has its title. Its ⋮ renames or
+ * deletes it.
  */
 @Composable
 internal fun FolderTile(
@@ -234,52 +258,65 @@ internal fun FolderTile(
 ) {
     var menu by remember(name) { mutableStateOf(false) }
     val primary = MaterialTheme.colorScheme.primary
-    val press by animateFloatAsState(if (selected) 0.96f else 1f, Ui.Motion.spring(), label = "folderSelected")
+    val press by animateFloatAsState(if (selected) 0.95f else 1f, Ui.Motion.spring(), label = "folderSelected")
     SkinSurface(
         corner = Ui.Corner.card,
         modifier = modifier
             .graphicsLayer { scaleX = press; scaleY = press }
             .then(if (selected) Modifier.border(2.5.dp, primary, Ui.Shape.card) else Modifier),
     ) {
-        Row(
+        Column(
             Modifier
                 .fillMaxWidth()
-                .heightIn(min = 72.dp)
                 .clickable(onClick = onOpen)
-                .padding(start = Ui.Space.m, end = Ui.Space.xs, top = Ui.Space.s, bottom = Ui.Space.s),
-            verticalAlignment = Alignment.CenterVertically,
+                .padding(start = LIBRARY_CARD_INSET, end = LIBRARY_CARD_INSET, top = LIBRARY_CARD_INSET),
         ) {
+            val inner = RoundedCornerShape(Ui.concentric(Ui.Corner.card, LIBRARY_CARD_INSET))
             Box(
-                Modifier.size(44.dp).clip(Ui.Shape.chip).background(primary.copy(alpha = 0.14f)),
+                Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(0.75f)
+                    .clip(inner)
+                    .background(primary.copy(alpha = 0.12f)),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(if (selectionMode && selected) Reicons.Check else Reicons.Folder, contentDescription = null, tint = primary)
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        if (selectionMode && selected) Reicons.Check else Reicons.Folder,
+                        contentDescription = null,
+                        tint = primary,
+                        modifier = Modifier.size(56.dp),
+                    )
+                    Spacer(Modifier.height(Ui.Space.xs))
+                    Text(countNoun(count, "note"), style = MaterialTheme.typography.labelLarge, color = primary)
+                }
+                if (selectionMode) SelectionMark(selected, Modifier.align(Alignment.TopEnd).padding(8.dp))
             }
-            Spacer(Modifier.width(Ui.Space.m))
-            Column(Modifier.weight(1f)) {
+            Row(
+                Modifier.fillMaxWidth().padding(start = 4.dp, top = 6.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Text(name, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(countNoun(count, "note"), style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                if (!selectionMode) Box {
+                    IconButton(onClick = { menu = true }) {
+                        Icon(Reicons.MoreVert, contentDescription = "Folder options for $name",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    DropdownMenu(menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Rename folder") },
+                            leadingIcon = { Icon(Reicons.Edit, contentDescription = null) },
+                            onClick = { menu = false; onRename() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Delete folder") },
+                            leadingIcon = { Icon(Reicons.Delete, contentDescription = null) },
+                            onClick = { menu = false; onDelete() },
+                        )
+                    }
+                } else Spacer(Modifier.height(48.dp))
             }
-            if (!selectionMode) Box {
-                IconButton(onClick = { menu = true }) {
-                    Icon(Reicons.MoreVert, contentDescription = "Folder options for $name",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                DropdownMenu(menu, onDismissRequest = { menu = false }) {
-                    DropdownMenuItem(
-                        text = { Text("Rename folder") },
-                        leadingIcon = { Icon(Reicons.Edit, contentDescription = null) },
-                        onClick = { menu = false; onRename() },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Delete folder") },
-                        leadingIcon = { Icon(Reicons.Delete, contentDescription = null) },
-                        onClick = { menu = false; onDelete() },
-                    )
-                }
-            } else SelectionMark(selected, Modifier.padding(end = Ui.Space.s))
         }
     }
 }

@@ -281,6 +281,11 @@ class PenStore(context: Context) {
         get() = prefs.getString("homePhoto", null)
         set(value) = prefs.edit().putString("homePhoto", value).apply()
 
+    /** The library's folders folded away, so only the notes show. */
+    var foldersHidden: Boolean
+        get() = prefs.getBoolean("libraryFoldersHidden", false)
+        set(value) = prefs.edit().putBoolean("libraryFoldersHidden", value).apply()
+
     fun favoriteWidths(mode: EditMode): List<Float> = runCatching {
         val array = JSONArray(prefs.getString("widths:$mode", "[]"))
         (0 until array.length()).map { array.getDouble(it).toFloat() }
