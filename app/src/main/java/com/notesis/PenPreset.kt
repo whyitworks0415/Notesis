@@ -296,6 +296,42 @@ class PenStore(context: Context) {
         get() = prefs.getFloat("whiteboardMargin", 0.8f)
         set(value) = prefs.edit().putFloat("whiteboardMargin", value).apply()
 
+    /** The library's handwritten notes folded away under their heading. */
+    var notesSectionHidden: Boolean
+        get() = prefs.getBoolean("libraryNotesHidden", false)
+        set(value) = prefs.edit().putBoolean("libraryNotesHidden", value).apply()
+
+    /** The library's Markdown notes folded away under their heading. */
+    var markdownSectionHidden: Boolean
+        get() = prefs.getBoolean("libraryMarkdownHidden", false)
+        set(value) = prefs.edit().putBoolean("libraryMarkdownHidden", value).apply()
+
+    /** What the library's bottom bar shows: [LIBRARY_ALL], folders, notes or Markdown alone. */
+    var libraryFilter: Int
+        get() = prefs.getInt("libraryFilter", LIBRARY_ALL)
+        set(value) = prefs.edit().putInt("libraryFilter", value).apply()
+
+    /** A folder's own colour (0: the accent) and picture, if it was given them. */
+    fun folderLook(context: android.content.Context, name: String): FolderLook = FolderLook(
+        color = prefs.getInt("folderColor:$name", 0),
+        thumbnail = folderThumbFile(context, name).takeIf { it.isFile },
+    )
+
+    fun setFolderColor(name: String, argb: Int) = prefs.edit().putInt("folderColor:$name", argb).apply()
+
+    fun setFolderThumbnail(context: android.content.Context, name: String, input: java.io.InputStream) {
+        val file = folderThumbFile(context, name)
+        file.parentFile?.mkdirs()
+        file.outputStream().use { input.copyTo(it) }
+    }
+
+    fun clearFolderThumbnail(context: android.content.Context, name: String) {
+        folderThumbFile(context, name).delete()
+    }
+
+    private fun folderThumbFile(context: android.content.Context, name: String) =
+        java.io.File(context.filesDir, "folder-thumbs/" + name.hashCode().toUInt().toString(16) + ".img")
+
     /** The library's folders folded away, so only the notes show. */
     var foldersHidden: Boolean
         get() = prefs.getBoolean("libraryFoldersHidden", false)
@@ -761,3 +797,12 @@ internal fun penToJson(pen: PenPreset): JSONObject =
             .put("straightLine", pen.straightLine)
             .apply { pen.nibAngle?.let { put("nibAngle", it) } }
             .apply { pen.density?.let { put("density", it) } }
+
+
+/** What a folder looks like in the library: its colour (0 for the accent) and its picture. */
+internal data class FolderLook(val color: Int, val thumbnail: java.io.File?)
+
+internal const val LIBRARY_ALL = 0
+internal const val LIBRARY_FOLDERS = 1
+internal const val LIBRARY_NOTES = 2
+internal const val LIBRARY_MARKDOWN = 3

@@ -41,6 +41,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -236,6 +237,43 @@ internal fun LibrarySection(text: String, modifier: Modifier = Modifier) {
     )
 }
 
+/**
+ * A section's heading that folds it away: a chevron pointing right while
+ * it is folded and down while it is open, the name, and how many it holds.
+ */
+@Composable
+internal fun LibrarySectionToggle(text: String, count: Int, expanded: Boolean, onToggle: () -> Unit) {
+    val turn by animateFloatAsState(if (expanded) 90f else 0f, Ui.Motion.spring(), label = "sectionChevron")
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 44.dp).clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onToggle).padding(top = Ui.Space.s).semantics { heading() },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Reicons.ChevronRight, contentDescription = if (expanded) "Fold $text" else "Open $text",
+            modifier = Modifier.size(22.dp).graphicsLayer { rotationZ = turn })
+        Spacer(Modifier.width(Ui.Space.xs))
+        Text(text, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold))
+        Spacer(Modifier.width(Ui.Space.s))
+        Text("$count", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/** The library's floating bar: everything, or folders, handwritten notes or Markdown alone. */
+@Composable
+internal fun LibraryFilterBar(selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifier) {
+    val items = listOf(
+        SpotiGlassItem("All", Reicons.Category),
+        SpotiGlassItem("Folders", Reicons.Folder),
+        SpotiGlassItem("Notes", Reicons.Edit),
+        SpotiGlassItem("Markdown", Reicons.Description),
+    )
+    SpotiGlassBar(
+        items, selectedIndex = selected.coerceIn(0, items.lastIndex), onSelected = onSelect,
+        modifier = modifier.widthIn(max = 420.dp).fillMaxWidth(0.9f),
+        showLabels = true, surface = SpotiBarSurface.LIQUID,
+    )
+}
+
 /** The inset between a library card's edge and the page or folder inside it. */
 internal val LIBRARY_CARD_INSET = 8.dp
 
@@ -255,9 +293,17 @@ internal fun FolderTile(
     onRename: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
+    /** The folder's own colour, ARGB; 0 for the accent. */
+    tint: Int = 0,
+    /** A picture shown where the folder's mark is; null for the mark. */
+    thumbnail: java.io.File? = null,
+    onThumbnail: () -> Unit = {},
+    onClearThumbnail: () -> Unit = {},
+    onColour: () -> Unit = {},
 ) {
     var menu by remember(name) { mutableStateOf(false) }
-    val primary = MaterialTheme.colorScheme.primary
+    val primary = if (tint != 0) Color(tint) else MaterialTheme.colorScheme.primary
+    val picture = rememberFileBitmap(thumbnail, 480)
     val press by animateFloatAsState(if (selected) 0.95f else 1f, Ui.Motion.spring(), label = "folderSelected")
     SkinSurface(
         corner = Ui.Corner.card,
@@ -280,7 +326,17 @@ internal fun FolderTile(
                     .background(primary.copy(alpha = 0.12f)),
                 contentAlignment = Alignment.Center,
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                if (picture != null) {
+                    androidx.compose.foundation.Image(
+                        bitmap = picture.asImageBitmap(), contentDescription = null,
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        modifier = Modifier.matchParentSize(),
+                    )
+                    Box(Modifier.align(Alignment.BottomStart).padding(8.dp).clip(RoundedCornerShape(8.dp))
+                        .background(primary).padding(horizontal = 8.dp, vertical = 4.dp)) {
+                        Text(countNoun(count, "note"), style = MaterialTheme.typography.labelMedium, color = Color.White)
+                    }
+                } else Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(
                         if (selectionMode && selected) Reicons.Check else Reicons.Folder,
                         contentDescription = null,
@@ -308,6 +364,20 @@ internal fun FolderTile(
                             text = { Text("Rename folder") },
                             leadingIcon = { Icon(Reicons.Edit, contentDescription = null) },
                             onClick = { menu = false; onRename() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Folder colour") },
+                            leadingIcon = { Icon(Reicons.Palette, contentDescription = null) },
+                            onClick = { menu = false; onColour() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Set thumbnail") },
+                            leadingIcon = { Icon(Reicons.Image, contentDescription = null) },
+                            onClick = { menu = false; onThumbnail() },
+                        )
+                        if (thumbnail != null) DropdownMenuItem(
+                            text = { Text("Remove thumbnail") },
+                            onClick = { menu = false; onClearThumbnail() },
                         )
                         DropdownMenuItem(
                             text = { Text("Delete folder") },

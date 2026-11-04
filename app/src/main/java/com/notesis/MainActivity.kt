@@ -732,7 +732,14 @@ private fun NoteListScreen(
     var thumbnailFor by remember { mutableStateOf<NoteMeta?>(null) }
     val homeStore = remember { PenStore(context) }
     var librarySort by remember { mutableIntStateOf(homeStore.librarySort) }
+    // Each section folds away under its heading; the bar at the bottom picks which show at all.
     var foldersHidden by remember { mutableStateOf(homeStore.foldersHidden) }
+    var notesHidden by remember { mutableStateOf(homeStore.notesSectionHidden) }
+    var markdownHidden by remember { mutableStateOf(homeStore.markdownSectionHidden) }
+    var libraryFilter by remember { mutableIntStateOf(homeStore.libraryFilter) }
+    var folderLooks by remember { mutableIntStateOf(0) }
+    var pickingFolderThumb by remember { mutableStateOf<String?>(null) }
+    var colouringFolder by remember { mutableStateOf<String?>(null) }
     var homeRevision by remember { mutableIntStateOf(0) }
     var showHomeBackground by remember { mutableStateOf(false) }
     val homeColor = remember(homeRevision) { homeStore.homeColor }
@@ -772,6 +779,42 @@ private fun NoteListScreen(
         }
     }
 
+    // A folder's own picture, copied into the app so it stays when the original moves.
+    val pickFolderThumb = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent(),
+    ) { uri: Uri? ->
+        val target = pickingFolderThumb ?: return@rememberLauncherForActivityResult
+        pickingFolderThumb = null
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openInputStream(uri)?.use { homeStore.setFolderThumbnail(context, target, it) }
+                }
+            }
+            folderLooks++
+        }
+    }
+    colouringFolder?.let { name ->
+        AlertDialog(
+            onDismissRequest = { colouringFolder = null },
+            title = { Text("Folder colour") },
+            text = {
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+                    FOLDER_COLORS.forEach { argb ->
+                        Box(Modifier.size(40.dp).clip(CircleShape)
+                            .background(if (argb == 0) MaterialTheme.colorScheme.primary else Color(argb))
+                            .clickable {
+                                homeStore.setFolderColor(name, argb)
+                                folderLooks++
+                                colouringFolder = null
+                            })
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { colouringFolder = null }) { Text("Close") } },
+        )
+    }
     val pickThumbnail = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent(),
     ) { uri: Uri? ->
@@ -1337,8 +1380,14 @@ private fun NoteListScreen(
         ) {
         HomeBackground(homePhoto)
         val emptyHere = shown.isEmpty() && (folder.isNotBlank() || results != null || folders.isEmpty())
-        val showFolders = results == null && folder.isBlank() && folders.isNotEmpty() && tagFilter == null &&
-            !foldersHidden
+        val foldersHere = results == null && folder.isBlank() && folders.isNotEmpty() && tagFilter == null &&
+            libraryFilter.let { it == LIBRARY_ALL || it == LIBRARY_FOLDERS }
+        val showFolders = foldersHere && !foldersHidden
+        val inkShown = if (libraryFilter == LIBRARY_ALL || libraryFilter == LIBRARY_NOTES)
+            shown.filter { it.kind != NoteKind.MARKDOWN } else emptyList()
+        val mdShown = if (libraryFilter == LIBRARY_ALL || libraryFilter == LIBRARY_MARKDOWN)
+            shown.filter { it.kind == NoteKind.MARKDOWN } else emptyList()
+        val visibleNotes = (if (notesHidden) emptyList() else inkShown) + (if (markdownHidden) emptyList() else mdShown)
         val side = if (narrowLibrary) Ui.Space.m else Ui.Space.l
         LazyVerticalGrid(
             state = gridState,
@@ -1359,7 +1408,7 @@ private fun NoteListScreen(
             verticalArrangement = Arrangement.spacedBy(Ui.Space.m),
             modifier = Modifier.fillMaxSize().dragToSelect(
                 tiles = libraryTiles,
-                order = { (if (showFolders) folders.map(::folderKey) else emptyList()) + shown.map { it.id } },
+                order = { (if (showFolders) folders.map(::folderKey) else emptyList()) + visibleNotes.map { it.id } },
                 selection = { selectionKeys() },
                 onSelection = ::setSelection,
                 onHold = {
@@ -1376,18 +1425,6 @@ private fun NoteListScreen(
                     title = libraryTitle,
                     subtitle = if (selectionMode) "${selectedCount} selected" else countNoun(shown.size, "note"),
                     modifier = Modifier.onSizeChanged { titleHeight = it.height },
-                    trailing = if (results == null && folder.isBlank() && tagFilter == null && folders.isNotEmpty()) {
-                        {
-                            TextButton(onClick = {
-                                foldersHidden = !foldersHidden
-                                homeStore.foldersHidden = foldersHidden
-                            }) {
-                                Icon(Reicons.Folder, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(Ui.Space.xs))
-                                Text(if (foldersHidden) "Show folders" else "Hide folders")
-                            }
-                        }
-                    } else null,
                 )
             }
             item(key = "search", span = { GridItemSpan(maxLineSpan) }) {
@@ -1413,12 +1450,25 @@ private fun NoteListScreen(
             }
             // Folders sit above the notes rather than among them: they
             // are a place, not another note.
+            if (foldersHere) {
+                item(key = "folders-heading", span = { GridItemSpan(maxLineSpan) }) {
+                    LibrarySectionToggle("Folders", folders.size, expanded = !foldersHidden) {
+                        foldersHidden = !foldersHidden
+                        homeStore.foldersHidden = foldersHidden
+                    }
+                }
+            }
             if (showFolders) {
-                item(key = "folders-heading", span = { GridItemSpan(maxLineSpan) }) { LibrarySection("Folders") }
                 items(folders, key = { folderKey(it) }) { name ->
+                    val look = remember(name, folderLooks) { homeStore.folderLook(context, name) }
                     FolderTile(
                         name = name,
                         count = folderCounts[name] ?: 0,
+                        tint = look.color,
+                        thumbnail = look.thumbnail,
+                        onThumbnail = { pickingFolderThumb = name; pickFolderThumb.launch("image/*") },
+                        onClearThumbnail = { homeStore.clearFolderThumbnail(context, name); folderLooks++ },
+                        onColour = { colouringFolder = name },
                         selected = name in selectedFolders,
                         selectionMode = selectionMode,
                         onOpen = {
@@ -1448,9 +1498,6 @@ private fun NoteListScreen(
                         }
                     }
                 }
-                item(span = { GridItemSpan(maxLineSpan) }) { LibrarySection("Notes") }
-            } else if (showFolders && shown.isNotEmpty()) {
-                item(key = "notes-heading", span = { GridItemSpan(maxLineSpan) }) { LibrarySection("Notes") }
             }
             if (emptyHere) item(key = "empty", span = { GridItemSpan(maxLineSpan) }) {
                 Box(Modifier.fillMaxWidth().padding(top = Ui.Space.xl), contentAlignment = Alignment.Center) {
@@ -1491,7 +1538,7 @@ private fun NoteListScreen(
                 }
             }
 
-            items(shown, key = { it.id }) { note ->
+            fun noteItems(list: List<NoteMeta>) = items(list, key = { it.id }) { note ->
                 // The guide's card is where the welcome folds into, and what its first mark points at.
                 Box((if (note.title == GuideNote.TITLE) Modifier.coachTarget(coachTargets, CoachTarget.GUIDE) else Modifier)
                     .libraryTile(libraryTiles, note.id)) {
@@ -1569,7 +1616,33 @@ private fun NoteListScreen(
                 )
                 }
             }
+            // Handwritten notes, then Markdown, each under a heading that folds it away.
+            if (inkShown.isNotEmpty()) {
+                item(key = "notes-heading", span = { GridItemSpan(maxLineSpan) }) {
+                    LibrarySectionToggle("Notes", inkShown.size, expanded = !notesHidden) {
+                        notesHidden = !notesHidden
+                        homeStore.notesSectionHidden = notesHidden
+                    }
+                }
+                if (!notesHidden) noteItems(inkShown)
+            }
+            if (mdShown.isNotEmpty()) {
+                item(key = "markdown-heading", span = { GridItemSpan(maxLineSpan) }) {
+                    LibrarySectionToggle("Markdown", mdShown.size, expanded = !markdownHidden) {
+                        markdownHidden = !markdownHidden
+                        homeStore.markdownSectionHidden = markdownHidden
+                    }
+                }
+                if (!markdownHidden) noteItems(mdShown)
+            }
         }
+        // What the library shows: everything in its sections, or one kind alone.
+        if (!selectionMode) LibraryFilterBar(
+            selected = libraryFilter,
+            onSelect = { libraryFilter = it; homeStore.libraryFilter = it },
+            modifier = Modifier.align(Alignment.BottomCenter)
+                .padding(bottom = padding.calculateBottomPadding() + Ui.Space.l),
+        )
         // Floating bars take the skin's own corner, the toolbar's, so every
         // bar over the page or the list is the same shape.
         if (selectionMode) SkinSurface(
@@ -1578,7 +1651,7 @@ private fun NoteListScreen(
         ) {
             val inkSelected = selectedIds.count { id -> notes.any { it.id == id && it.kind == NoteKind.INK } }
             SelectionActions {
-                val everything = (if (showFolders) folders.map(::folderKey) else emptyList()) + shown.map { it.id }
+                val everything = (if (showFolders) folders.map(::folderKey) else emptyList()) + visibleNotes.map { it.id }
                 val allIn = everything.isNotEmpty() && selectionKeys().containsAll(everything)
                 SelectionAction(Reicons.Checklist, if (allIn) "None" else "All") {
                     setSelection(if (allIn) emptySet() else everything.toSet())
@@ -8985,6 +9058,12 @@ internal fun isDarkTheme(): Boolean = LocalSkinSettings.current.themeMode == App
  */
 @Composable
 internal fun deskColor(): Color = if (isDarkTheme()) Color(0xFF1C1D20) else Color(0xFFE9E7E2)
+
+/** The colours a folder can take in the library; 0 is the accent. */
+internal val FOLDER_COLORS = listOf(
+    0, 0xFFE53935.toInt(), 0xFFFB8C00.toInt(), 0xFFFDD835.toInt(), 0xFF43A047.toInt(),
+    0xFF00ACC1.toInt(), 0xFF1E88E5.toInt(), 0xFF8E24AA.toInt(), 0xFF6D4C41.toInt(), 0xFF546E7A.toInt(),
+)
 
 /** The whiteboard's own white, a touch warmer than the page so the page's edge still shows. */
 internal const val WHITEBOARD_WHITE = 0xFFF7F7F4.toInt()
