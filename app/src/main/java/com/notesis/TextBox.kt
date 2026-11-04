@@ -51,6 +51,12 @@ data class TextBoxContent(
     val padding: Float = DEFAULT_PADDING,
     /** The smallest the box is drawn, in page units; a sticky note is a square however short its text. */
     val minSize: Float = 0f,
+    /** [text] is Markdown: headings, bold, italic, lists, quotes and code are drawn as such. */
+    val markdown: Boolean = false,
+    /** A table instead of text: rows of cells, each as typed (a leading = is a formula); see TableBox. */
+    val table: List<List<String>>? = null,
+    /** The table's first row is its heading, drawn bold on a tint. */
+    val tableHeader: Boolean = true,
 ) {
     companion object {
         /** What every text box had before padding could be set, in page units. */
@@ -65,7 +71,8 @@ internal val TEXT_FONTS = listOf(
 )
 
 internal fun TextBoxContent.styledText(): CharSequence =
-    html?.let { Html.fromHtml(it, Html.FROM_HTML_MODE_COMPACT).trimEnd() } ?: text
+    html?.let { Html.fromHtml(it, Html.FROM_HTML_MODE_COMPACT).trimEnd() }
+        ?: if (markdown) markdownSpanned(text) else text
 
 private fun CharSequence.trimEnd(): CharSequence {
     var end = length
@@ -101,6 +108,7 @@ internal fun drawTextBox(canvas: Canvas, content: TextBoxContent, layout: Static
 }
 
 internal fun renderTextBox(content: TextBoxContent): Bitmap {
+    content.table?.let { return renderTable(content, it) }
     val scale = 2f
     val pad = (content.padding * scale).toInt()
     val maxWidth = 1600
