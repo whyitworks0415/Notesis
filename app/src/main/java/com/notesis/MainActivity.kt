@@ -2128,11 +2128,8 @@ internal fun InputSettingsDialog(gestures: CanvasGestures, onGestures: (CanvasGe
                 toggle("Mark linked objects in blue", gestures.linkOverlay) { onGestures(gestures.copy(linkOverlay = it)) }
                 toggle("Back to the previous tool after erasing", gestures.eraserReturns) { onGestures(gestures.copy(eraserReturns = it)) }
                 choices("Writing with the pen button held", listOf(PEN_BUTTON_ERASE to "Eraser",
-                    PEN_BUTTON_LASSO to "Lasso", PEN_BUTTON_POINTER to "Laser pointer"),
-                    gestures.penButton.takeIf { it != PEN_BUTTON_LASER } ?: PEN_BUTTON_ERASE) { onGestures(gestures.copy(penButton = it)) }
-                if (gestures.penButton == PEN_BUTTON_POINTER) {
-                    toggle("Laser pointer leaves a trail", gestures.laserTrail) { onGestures(gestures.copy(laserTrail = it)) }
-                }
+                    PEN_BUTTON_LASSO to "Lasso"),
+                    gestures.penButton.takeIf { it == PEN_BUTTON_LASSO } ?: PEN_BUTTON_ERASE) { onGestures(gestures.copy(penButton = it)) }
                 Text("If your palm touches the screen, set one finger to 'Ignore' and two fingers to 'Scroll'. In Draw mode, two fingers move the page.",
                     style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
             }
@@ -6699,12 +6696,6 @@ private fun NoteScreen(
                     if (inkClip == null && pastedText == null && uri == null) {
                         DropdownMenuItem(text = { Text("Nothing to paste") }, onClick = { pressMenu = null }, enabled = false)
                     }
-                    DropdownMenuItem(text = { Text("Attach to this page…") }, onClick = {
-                        pressMenu = null
-                        val pressed = canvas?.pagePointAt(at.x, at.y)
-                        attachingPage = pressed?.first ?: currentPage
-                        attachAnchor = pressed?.second
-                    })
                 }
             }
         }
@@ -9523,10 +9514,6 @@ private fun PageCard(
             DropdownMenuItem(
                 text = { Text(if (page.bookmarked) "Remove bookmark" else "Bookmark") },
                 onClick = { menu = false; onBookmark() },
-            )
-            DropdownMenuItem(
-                text = { Text("Attach…") },
-                onClick = { menu = false; onAttach() },
             )
             if (hasAttachments) DropdownMenuItem(
                 text = { Text(if (attachmentsHidden) "Show comments and practice pages" else "Hide comments and practice pages") },

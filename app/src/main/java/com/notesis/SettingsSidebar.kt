@@ -674,15 +674,9 @@ internal fun TouchGestureSettings(gestures: CanvasGestures, onGestures: (CanvasG
     SettingsCard {
         SettingsSectionHeader("Pen and page")
         SettingsChoices("Writing with the pen button held",
-            listOf(PEN_BUTTON_ERASE to "Erases", PEN_BUTTON_LASSO to "Selects (lasso)",
-                PEN_BUTTON_POINTER to "Points (laser)"),
-            gestures.penButton.takeIf { it != PEN_BUTTON_LASER } ?: PEN_BUTTON_ERASE) {
+            listOf(PEN_BUTTON_ERASE to "Erases", PEN_BUTTON_LASSO to "Selects (lasso)"),
+            gestures.penButton.takeIf { it == PEN_BUTTON_LASSO } ?: PEN_BUTTON_ERASE) {
             onGestures(gestures.copy(penButton = it))
-        }
-        if (gestures.penButton == PEN_BUTTON_POINTER) {
-            SettingsToggle("Laser pointer leaves a trail", gestures.laserTrail,
-                { onGestures(gestures.copy(laserTrail = it)) })
-            SettingsNote("Held, the pen button points instead of writing: red over the screen, fading behind the pen. Nothing is added to the note.")
         }
         SettingsToggle("Long press opens a menu", gestures.longPressMenu,
             { onGestures(gestures.copy(longPressMenu = it)) })

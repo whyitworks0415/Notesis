@@ -554,7 +554,8 @@ class PenStore(context: Context) {
             longPressMenu = prefs.getBoolean("longPressMenu", true),
             linkOverlay = prefs.getBoolean("linkOverlay", true),
             eraserReturns = prefs.getBoolean("eraserReturns", false),
-            penButton = prefs.getInt("penButton", PEN_BUTTON_ERASE),
+            // The laser pointer was taken out: a button set to it erases, as it did before.
+            penButton = prefs.getInt("penButton", PEN_BUTTON_ERASE).takeIf { it == PEN_BUTTON_LASSO } ?: PEN_BUTTON_ERASE,
             pressureEraser = prefs.getBoolean("pressureEraser", false),
             pressureResponse = prefs.getInt("pressureResponse", PRESSURE_RESPONSE_DEFAULT).coerceIn(0, 100),
             windowedStabilizer = prefs.getBoolean("windowedStabilizer", false),
