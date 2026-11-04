@@ -5,6 +5,9 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Typeface
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -162,10 +165,12 @@ internal fun renderTable(content: TextBoxContent, cells: List<List<String>>): Bi
 // ---- editing --------------------------------------------------------------------
 
 /**
- * A table edited as a spreadsheet: lettered columns and numbered rows, a
- * formula bar for the cell in hand, and rows and columns added or taken
- * away. A cell shows what it works out to until it is tapped, then what was
- * typed into it.
+ * A table edited as a spreadsheet, on a sheet of its own over a dimmed
+ * screen: lettered columns and numbered rows (tap one to pick it), a formula
+ * bar for the cell in hand, Next on the keyboard moving to the following
+ * cell, Σ to total the column above, and rows and columns added either side
+ * of the cell in hand or taken away. A cell shows what it works out to until
+ * it is tapped, then what was typed into it.
  */
 @Composable
 internal fun TableEditorDialog(initial: TextBoxContent?, onDismiss: () -> Unit, onSave: (TextBoxContent) -> Unit) {
@@ -177,72 +182,125 @@ internal fun TableEditorDialog(initial: TextBoxContent?, onDismiss: () -> Unit, 
     var selRow by remember { mutableIntStateOf(0) }
     var selCol by remember { mutableIntStateOf(0) }
     var revision by remember { mutableIntStateOf(0) }
+    val focusers = remember { HashMap<Pair<Int, Int>, androidx.compose.ui.focus.FocusRequester>() }
+    fun focuser(r: Int, c: Int) = focusers.getOrPut(r to c) { androidx.compose.ui.focus.FocusRequester() }
     fun snapshot(): List<List<String>> = grid.map { it.toList() }
     fun cols() = grid.firstOrNull()?.size ?: 0
-    AlertDialog(
+    fun select(r: Int, c: Int) {
+        selRow = r.coerceIn(0, grid.lastIndex)
+        selCol = c.coerceIn(0, cols() - 1)
+        runCatching { focuser(selRow, selCol).requestFocus() }
+    }
+    fun next() = if (selCol < cols() - 1) select(selRow, selCol + 1)
+        else if (selRow < grid.lastIndex) select(selRow + 1, 0)
+        else { grid.add(mutableStateListOf(*Array(cols()) { "" })); revision++; selRow += 1; selCol = 0 }
+    val scheme = MaterialTheme.colorScheme
+    androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (initial == null) "New table" else "Edit table") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        androidx.compose.material3.Surface(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
+            color = scheme.surface, tonalElevation = 2.dp, shadowElevation = 12.dp,
+            modifier = Modifier.fillMaxWidth(0.92f).widthIn(max = 980.dp),
+        ) {
+            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (initial == null) "New table" else "Edit table", style = MaterialTheme.typography.titleLarge,
+                        modifier = Modifier.weight(1f))
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    androidx.compose.material3.Button(onClick = {
+                        val cells = snapshot()
+                        val plain = cells.joinToString("\n") { row -> row.joinToString("\t") }
+                        onSave((initial ?: TextBoxContent(plain)).copy(text = plain, size = size, html = null,
+                            markdown = false, table = cells, tableHeader = header))
+                    }) { Text("Done") }
+                }
                 // The formula bar: where the cell in hand is, and what is in it.
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("${columnName(selCol)}${selRow + 1}", style = MaterialTheme.typography.labelLarge,
-                        modifier = Modifier.width(44.dp))
+                    Box(Modifier.width(56.dp).height(40.dp).background(scheme.primary.copy(alpha = 0.12f),
+                        androidx.compose.foundation.shape.RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
+                        Text("${columnName(selCol)}${selRow + 1}", style = MaterialTheme.typography.labelLarge, color = scheme.primary)
+                    }
+                    Spacer(Modifier.width(8.dp))
                     OutlinedTextField(
                         value = grid.getOrNull(selRow)?.getOrNull(selCol).orEmpty(),
                         onValueChange = { v -> grid.getOrNull(selRow)?.let { if (selCol < it.size) it[selCol] = v }; revision++ },
-                        singleLine = true, modifier = Modifier.fillMaxWidth(),
+                        singleLine = true, modifier = Modifier.weight(1f),
                         placeholder = { Text("Text, a number, or =SUM(A1:A3)") },
                     )
+                    Spacer(Modifier.width(8.dp))
+                    // Σ: the column above the cell in hand, totalled.
+                    TextButton(enabled = selRow > 0, onClick = {
+                        grid[selRow][selCol] = "=SUM(${columnName(selCol)}1:${columnName(selCol)}$selRow)"; revision++
+                    }) { Text("Σ") }
                 }
-                Box(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())
-                    .horizontalScroll(rememberScrollState())) {
+                Box(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())
+                    .horizontalScroll(rememberScrollState())
+                    .border(1.dp, scheme.outline, androidx.compose.foundation.shape.RoundedCornerShape(8.dp))) {
                     Column {
                         Row {
-                            Spacer(Modifier.width(32.dp))
-                            for (c in 0 until cols()) Box(Modifier.width(CELL_WIDTH).height(24.dp), contentAlignment = Alignment.Center) {
-                                Text(columnName(c), style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.outline)
+                            Spacer(Modifier.width(40.dp))
+                            for (c in 0 until cols()) Box(Modifier.width(CELL_WIDTH).height(28.dp)
+                                .background(if (c == selCol) scheme.primary.copy(alpha = 0.18f) else scheme.surfaceVariant)
+                                .border(0.5.dp, scheme.outlineVariant)
+                                .androidxClick { select(selRow, c) }, contentAlignment = Alignment.Center) {
+                                Text(columnName(c), style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant)
                             }
                         }
                         val values = remember(revision, grid.size, cols()) { snapshot() }
                         for (r in grid.indices) Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.width(32.dp), contentAlignment = Alignment.Center) {
-                                Text("${r + 1}", style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.outline)
+                            Box(Modifier.width(40.dp).height(CELL_HEIGHT)
+                                .background(if (r == selRow) scheme.primary.copy(alpha = 0.18f) else scheme.surfaceVariant)
+                                .border(0.5.dp, scheme.outlineVariant)
+                                .androidxClick { select(r, selCol) }, contentAlignment = Alignment.Center) {
+                                Text("${r + 1}", style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant)
                             }
                             for (c in 0 until cols()) {
                                 val focused = selRow == r && selCol == c
                                 val shown = if (focused) grid[r][c] else tableValue(values, r, c)
+                                val headerRow = header && r == 0
                                 BasicTextField(
                                     value = shown,
                                     onValueChange = { v -> if (focused) { grid[r][c] = v; revision++ } },
                                     singleLine = true,
-                                    textStyle = TextStyle(fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface,
-                                        fontWeight = if (header && r == 0) FontWeight.Bold else FontWeight.Normal),
-                                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                                    modifier = Modifier.width(CELL_WIDTH).height(36.dp)
-                                        .background(if (header && r == 0) MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
-                                            else MaterialTheme.colorScheme.surface)
-                                        .border(if (focused) 2.dp else 0.5.dp,
-                                            if (focused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant)
-                                        .padding(horizontal = 6.dp, vertical = 8.dp)
+                                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                        imeAction = androidx.compose.ui.text.input.ImeAction.Next),
+                                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(onNext = { next() }),
+                                    textStyle = TextStyle(fontSize = 15.sp, color = scheme.onSurface,
+                                        fontWeight = if (headerRow) FontWeight.Bold else FontWeight.Normal,
+                                        textAlign = if (!focused && shown.toDoubleOrNull() != null)
+                                            androidx.compose.ui.text.style.TextAlign.End else androidx.compose.ui.text.style.TextAlign.Start),
+                                    cursorBrush = SolidColor(scheme.primary),
+                                    modifier = Modifier.width(CELL_WIDTH).height(CELL_HEIGHT)
+                                        .background(when {
+                                            focused -> scheme.primary.copy(alpha = 0.10f)
+                                            headerRow -> scheme.primary.copy(alpha = 0.06f)
+                                            r % 2 == 1 -> scheme.onSurface.copy(alpha = 0.03f)
+                                            else -> scheme.surface
+                                        })
+                                        .border(if (focused) 2.dp else 0.5.dp, if (focused) scheme.primary else scheme.outlineVariant)
+                                        .padding(horizontal = 8.dp, vertical = 11.dp)
+                                        .focusRequester(focuser(r, c))
                                         .onFocusChanged { if (it.isFocused) { selRow = r; selCol = c } },
                                 )
                             }
                         }
                     }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(Ui.Space.xs)) {
-                    TextButton(onClick = { grid.add(selRow + 1, mutableStateListOf(*Array(cols()) { "" })); revision++ }) { Text("+ Row") }
-                    TextButton(onClick = { grid.forEach { it.add(selCol + 1, "") }; revision++ }) { Text("+ Column") }
+                Row(horizontalArrangement = Arrangement.spacedBy(Ui.Space.xs), verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                    TextButton(onClick = { grid.add(selRow, mutableStateListOf(*Array(cols()) { "" })); revision++ }) { Text("Row above") }
+                    TextButton(onClick = { grid.add(selRow + 1, mutableStateListOf(*Array(cols()) { "" })); revision++ }) { Text("Row below") }
+                    TextButton(onClick = { grid.forEach { it.add(selCol, "") }; revision++ }) { Text("Column left") }
+                    TextButton(onClick = { grid.forEach { it.add(selCol + 1, "") }; revision++ }) { Text("Column right") }
                     TextButton(enabled = grid.size > 1, onClick = {
                         grid.removeAt(selRow.coerceIn(grid.indices)); selRow = selRow.coerceAtMost(grid.lastIndex); revision++
-                    }) { Text("− Row") }
+                    }) { Text("Delete row") }
                     TextButton(enabled = cols() > 1, onClick = {
                         val at = selCol.coerceIn(0, cols() - 1)
                         grid.forEach { it.removeAt(at) }; selCol = selCol.coerceAtMost(cols() - 1); revision++
-                    }) { Text("− Column") }
+                    }) { Text("Delete column") }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
                     SettingsChoiceChip(selected = header, onClick = { header = !header }, label = "Heading row")
@@ -251,17 +309,11 @@ internal fun TableEditorDialog(initial: TextBoxContent?, onDismiss: () -> Unit, 
                     TextButton(onClick = { size = (size + 2f).coerceAtMost(72f) }) { Text("A+") }
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                val cells = snapshot()
-                val plain = cells.joinToString("\n") { row -> row.joinToString("\t") }
-                onSave((initial ?: TextBoxContent(plain)).copy(text = plain, size = size, html = null,
-                    markdown = false, table = cells, tableHeader = header))
-            }) { Text("Done") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-    )
+        }
+    }
 }
 
-private val CELL_WIDTH = 96.dp
+private fun Modifier.androidxClick(onClick: () -> Unit): Modifier = this.then(Modifier.clickable(onClick = onClick))
+
+private val CELL_WIDTH = 120.dp
+private val CELL_HEIGHT = 44.dp
