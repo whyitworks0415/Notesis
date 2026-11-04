@@ -1142,30 +1142,53 @@ private fun NoteListScreen(
         rememberLiquidGlassBackdrop()
     } else null
     val searchFocus = remember { androidx.compose.ui.focus.FocusRequester() }
-    val floatingSearchFocus = remember { androidx.compose.ui.focus.FocusRequester() }
-    var openSearchNext by remember { mutableStateOf(false) }
+    // Opened again by hand while the list is scrolled; each round button its own.
+    var iconsOpen by remember { mutableStateOf(false) }
+    var searchOpen by remember { mutableStateOf(false) }
+    var searchFocused by remember { mutableStateOf(false) }
     val gridState = rememberLazyGridState()
     val libraryTiles = remember { LibraryTiles() }
     var edgeSpeed by remember { mutableFloatStateOf(0f) }
     var gridHeight by remember { mutableIntStateOf(0) }
-    var titleHeight by remember { mutableIntStateOf(1) }
     val haptics = LocalHapticFeedback.current
     val density = LocalDensity.current
     val narrowLibrary = LocalConfiguration.current.screenWidthDp < FULL_BAR_MIN_WIDTH_DP
+    val librarySide = if (narrowLibrary) Ui.Space.m else Ui.Space.l
     val libraryTitle = when {
         tagFilter != null -> "#$tagFilter"
         folder.isNotBlank() -> folder
         else -> "Notes"
     }
-    // 0 with the big title in full view, 1 once it has gone under the bar.
-    val collapse by remember {
+    // How far the list has gone up under the header: 0 at the top, 1 once it
+    // has gone the first stretch, measured on an empty item of just that
+    // height at the head of the list so it runs smoothly however tall the
+    // rows after it are. Read only where things are laid out and drawn, so
+    // scrolling moves the header without composing it again.
+    val foldPx = with(density) { HOME_FOLD_DISTANCE.toPx() }
+    val scrollFold = remember(foldPx) {
         derivedStateOf {
             if (gridState.firstVisibleItemIndex > 0) 1f
-            else (gridState.firstVisibleItemScrollOffset / titleHeight.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
+            else (gridState.firstVisibleItemScrollOffset / foldPx).coerceIn(0f, 1f)
         }
     }
-    val inlineTitle by remember { derivedStateOf { ((collapse - 0.55f) / 0.45f).coerceIn(0f, 1f) } }
-    val titleGone by remember { derivedStateOf { collapse > 0.9f } }
+    val atTop by remember(scrollFold) { derivedStateOf { scrollFold.value < 0.01f } }
+    LaunchedEffect(atTop) { if (atTop) { iconsOpen = false; searchOpen = false } }
+    val selecting = rememberUpdatedState(selectionMode)
+    val effectsHere = rememberLiquidGlassEffectsAllowed()
+    val unfoldSpec: androidx.compose.animation.core.AnimationSpec<Float> =
+        if (effectsHere) Ui.Motion.spring(0.86f) else snap()
+    val iconsUnfold = androidx.compose.animation.core.animateFloatAsState(
+        if (iconsOpen) 1f else 0f, unfoldSpec, label = "homeIcons")
+    val searchUnfold = androidx.compose.animation.core.animateFloatAsState(
+        if (searchOpen || searchFocused) 1f else 0f, unfoldSpec, label = "homeSearch")
+    val iconsFold = remember(scrollFold) {
+        { if (selecting.value) 0f else scrollFold.value * (1f - iconsUnfold.value) }
+    }
+    val searchFold = remember(scrollFold) {
+        { if (selecting.value) 0f else scrollFold.value * (1f - searchUnfold.value) }
+    }
+    val iconsFolded by remember(iconsFold) { derivedStateOf { iconsFold() > 0.5f } }
+    val searchFolded by remember(searchFold) { derivedStateOf { searchFold() > 0.5f } }
     // A finger held at an edge while selecting scrolls the notes along under it.
     LaunchedEffect(edgeSpeed != 0f) {
         while (edgeSpeed != 0f) {
@@ -1175,10 +1198,8 @@ private fun NoteListScreen(
         }
     }
     fun focusSearch() {
-        scope.launch {
-            gridState.animateScrollToItem(0)
-            runCatching { searchFocus.requestFocus() }
-        }
+        searchOpen = true
+        runCatching { searchFocus.requestFocus() }
     }
     CompositionLocalProvider(
         LocalBackdrop provides backdrop,
@@ -1202,205 +1223,199 @@ private fun NoteListScreen(
             }
         },
         topBar = {
-            // At the top, the title and the field lie in the list and the bar's
-            // buttons sit clear over it. Scrolled, the title goes with the list,
-            // the buttons fold into one round button and the field into another
-            // under it; either opens both again, the field ready to type in. The
-            // list fades out under them rather than meeting a hard bar.
+            // One header, of the same height at every scroll, so the list's
+            // padding never changes under it and nothing jumps. At the top the
+            // title, the buttons and the search lie open over a clear page. As
+            // the list goes up under them the title fades, the buttons are drawn
+            // one by one into the settings button - which itself never moves or
+            // changes - and the field narrows to a round button under it, each
+            // by exactly how far the list has gone. A tap on either round button
+            // opens its own part again; a second tap folds it back.
             var homeMore by remember { mutableStateOf(false) }
-            var chromeOpen by remember { mutableStateOf(false) }
-            val compact = titleGone && !selectionMode
-            LaunchedEffect(compact) { if (!compact) chromeOpen = false }
-            val folded = compact && !chromeOpen
             val fade = homeColor?.let { Color(it) } ?: MaterialTheme.colorScheme.surface
-            val effects = rememberLiquidGlassEffectsAllowed()
             val capsule = RoundedCornerShape(50)
+            val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+            val button = LIBRARY_SEARCH_HEIGHT
             Box(Modifier.fillMaxWidth()) {
-                Box(Modifier.matchParentSize().graphicsLayer { alpha = collapse }
+                Box(Modifier.matchParentSize().graphicsLayer { alpha = scrollFold.value }
                     .background(androidx.compose.ui.graphics.Brush.verticalGradient(
                         listOf(fade.copy(alpha = 0.94f), fade.copy(alpha = 0.6f), fade.copy(alpha = 0f)))))
                 Column(
                     Modifier.windowInsetsPadding(TopAppBarDefaults.windowInsets).fillMaxWidth()
-                        .padding(horizontal = Ui.Space.s, vertical = Ui.Space.xs),
-                    horizontalAlignment = Alignment.End,
+                        .padding(start = librarySide, end = librarySide, top = Ui.Space.xs, bottom = Ui.Space.s),
                 ) {
-                    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
+                    CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides button) {
+                    Row(Modifier.fillMaxWidth().height(HOME_BAR_HEIGHT), verticalAlignment = Alignment.CenterVertically) {
                         // Only inside a folder: at the top level there is nowhere
                         // to go back to, and an arrow that does nothing is a lie.
                         if (folder.isNotBlank() && !selectionMode) {
-                            IconButton(onClick = { folder = "" }) {
-                                Icon(Reicons.ArrowBack, contentDescription = "All notes")
-                            }
-                        }
-                        if (selectionMode) Text(
-                            "${selectedCount} selected",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                            maxLines = 1, modifier = Modifier.padding(start = Ui.Space.m),
-                        )
-                        Spacer(Modifier.weight(1f))
-                        androidx.compose.animation.AnimatedContent(
-                            targetState = folded,
-                            transitionSpec = {
-                                (androidx.compose.animation.fadeIn(Ui.Motion.tween()) +
-                                    androidx.compose.animation.scaleIn(Ui.Motion.tween(), initialScale = 0.6f,
-                                        transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 0.5f)))
-                                    .togetherWith(androidx.compose.animation.fadeOut(Ui.Motion.tween()) +
-                                        androidx.compose.animation.scaleOut(Ui.Motion.tween(), targetScale = 0.6f,
-                                            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 0.5f)))
-                                    .using(androidx.compose.animation.SizeTransform(clip = false) { _, _ ->
-                                        if (effects) Ui.Motion.spring(0.86f) else androidx.compose.animation.core.snap()
-                                    })
-                            },
-                            contentAlignment = Alignment.CenterEnd,
-                            label = "homeActions",
-                        ) { isFolded ->
-                            if (isFolded) {
-                                // Folded into one round button, of the toolbar's glass.
-                                Box(Modifier.size(52.dp).skinMaterial(CircleShape, role = ChromeRole.TOOLBAR)
-                                    .clip(CircleShape).clickable { chromeOpen = true },
-                                    contentAlignment = Alignment.Center) {
-                                    Icon(Reicons.Tune, contentDescription = "Show the library's buttons")
+                            Box(Modifier.size(button), contentAlignment = Alignment.Center) {
+                                Box(Modifier.matchParentSize().graphicsLayer { alpha = scrollFold.value }
+                                    .skinMaterial(CircleShape, role = ChromeRole.TOOLBAR))
+                                IconButton(onClick = { folder = "" }) {
+                                    Icon(Reicons.ArrowBack, contentDescription = "All notes")
                                 }
-                            } else Row(
-                                (if (compact) Modifier.skinMaterial(capsule, role = ChromeRole.TOOLBAR).clip(capsule) else Modifier)
-                                    .padding(horizontal = Ui.Space.xs),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                if (selectionMode) {
-                                    TextButton(onClick = { clearSelection() }) { Text("Done", maxLines = 1) }
-                                } else {
-                                    IconButton(onClick = { selectionMode = true }) {
-                                        Icon(Reicons.CheckBox, contentDescription = "Select")
-                                    }
-                                    Box {
-                                        IconButton(onClick = { sortMenu = true }) {
-                                            Icon(LibraryIcons.Sort, contentDescription = "Sort")
+                            }
+                            Spacer(Modifier.width(Ui.Space.s))
+                        }
+                        LibraryLargeTitle(
+                            title = libraryTitle,
+                            subtitle = if (selectionMode) "${selectedCount} selected" else countNoun(shown.size, "note"),
+                            modifier = Modifier.weight(1f).graphicsLayer {
+                                alpha = if (selecting.value) 1f else (1f - scrollFold.value * 2f).coerceIn(0f, 1f)
+                            },
+                        )
+                        Box(Modifier.height(button)) {
+                            // The bar's glass, gathering round the buttons as they fold.
+                            Box(Modifier.matchParentSize().graphicsLayer { alpha = iconsFold() }
+                                .skinMaterial(capsule, role = ChromeRole.TOOLBAR))
+                            Row(Modifier.height(button), verticalAlignment = Alignment.CenterVertically) {
+                                Row(
+                                    Modifier.foldTowardsEnd(iconsFold)
+                                        .graphicsLayer { alpha = (1f - iconsFold() * 1.4f).coerceIn(0f, 1f) }
+                                        .padding(start = Ui.Space.xs),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    if (selectionMode) {
+                                        TextButton(onClick = { clearSelection() }) { Text("Done", maxLines = 1) }
+                                    } else {
+                                        IconButton(onClick = { selectionMode = true }) {
+                                            Icon(Reicons.CheckBox, contentDescription = "Select")
                                         }
-                                        GlassMenu(sortMenu, onDismissRequest = { sortMenu = false }) {
-                                            listOf(
-                                                LIBRARY_SORT_MODIFIED to "Last modified",
-                                                LIBRARY_SORT_TITLE to "Name",
-                                                LIBRARY_SORT_PAGES to "Most pages",
-                                            ).forEach { (mode, label) ->
-                                                GlassMenuItem(
-                                                    text = { Text(label) },
-                                                    leadingIcon = if (librarySort == mode) {
-                                                        { Icon(Reicons.Check, contentDescription = null) }
-                                                    } else null,
-                                                    onClick = {
-                                                        librarySort = mode
-                                                        homeStore.librarySort = mode
-                                                        sortMenu = false
-                                                    },
-                                                )
+                                        Box {
+                                            IconButton(onClick = { sortMenu = true }) {
+                                                Icon(LibraryIcons.Sort, contentDescription = "Sort")
+                                            }
+                                            GlassMenu(sortMenu, onDismissRequest = { sortMenu = false }) {
+                                                listOf(
+                                                    LIBRARY_SORT_MODIFIED to "Last modified",
+                                                    LIBRARY_SORT_TITLE to "Name",
+                                                    LIBRARY_SORT_PAGES to "Most pages",
+                                                ).forEach { (mode, label) ->
+                                                    GlassMenuItem(
+                                                        text = { Text(label) },
+                                                        leadingIcon = if (librarySort == mode) {
+                                                            { Icon(Reicons.Check, contentDescription = null) }
+                                                        } else null,
+                                                        onClick = {
+                                                            librarySort = mode
+                                                            homeStore.librarySort = mode
+                                                            sortMenu = false
+                                                        },
+                                                    )
+                                                }
                                             }
                                         }
-                                    }
-                                    // A phone keeps the bar to what is used most; the rest is in the menu.
-                                    if (!narrowLibrary) {
-                                        IconButton(onClick = { creatingFolder = true }) {
-                                            Icon(Reicons.Folder, contentDescription = "New folder")
+                                        // A phone keeps the bar to what is used most; the rest is in the menu.
+                                        if (!narrowLibrary) {
+                                            IconButton(onClick = { creatingFolder = true }) {
+                                                Icon(Reicons.Folder, contentDescription = "New folder")
+                                            }
+                                            ToolsMenuButton()
+                                            AppIconButton(
+                                                onClick = { Onboarding.tutorialOpen = true },
+                                                icon = AppIcons.tutorial,
+                                                contentDescription = "Tutorial",
+                                                modifier = Modifier.coachTarget(coachTargets, CoachTarget.TUTORIAL),
+                                            )
                                         }
-                                        ToolsMenuButton()
-                                        AppIconButton(
-                                            onClick = { Onboarding.tutorialOpen = true },
-                                            icon = AppIcons.tutorial,
-                                            contentDescription = "Tutorial",
-                                            modifier = Modifier.coachTarget(coachTargets, CoachTarget.TUTORIAL),
+                                    }
+                                }
+                                // The one button that stays: settings and everything
+                                // used now and then at the top; scrolled, it opens and
+                                // folds the buttons beside it, and a long press still
+                                // opens the menu.
+                                Box(
+                                    Modifier.size(button).coachTarget(coachTargets, CoachTarget.HELP)
+                                        .coachTarget(coachTargets, CoachTarget.LOOK)
+                                        .clip(CircleShape)
+                                        .combinedClickable(
+                                            onClick = {
+                                                when {
+                                                    selectionMode || scrollFold.value < 0.01f -> homeMore = true
+                                                    else -> iconsOpen = !iconsOpen
+                                                }
+                                            },
+                                            onLongClick = { homeMore = true },
+                                            onClickLabel = if (iconsFolded) L10n.tr("Show the library's buttons") else null,
+                                        ),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(Reicons.Tune, contentDescription = "Settings and more")
+                                    GlassMenu(homeMore, onDismissRequest = { homeMore = false }) {
+                                        GlassMenuItem(
+                                            text = { Text("Appearance") },
+                                            leadingIcon = { Icon(Reicons.Palette, contentDescription = null) },
+                                            onClick = { homeMore = false; onSettings() },
+                                        )
+                                        if (narrowLibrary) {
+                                            GlassMenuItem(
+                                                text = { Text("New folder") },
+                                                leadingIcon = { Icon(Reicons.Folder, contentDescription = null) },
+                                                onClick = { homeMore = false; creatingFolder = true },
+                                            )
+                                            GlassMenuItem(
+                                                text = { Text("Tools") },
+                                                leadingIcon = { Icon(AppIcons.tools, contentDescription = null) },
+                                                onClick = { homeMore = false; Planner.show(Planner.lastPanel) },
+                                            )
+                                            GlassMenuItem(
+                                                text = { Text("Tutorial") },
+                                                leadingIcon = { Icon(AppIcons.tutorial, contentDescription = null) },
+                                                onClick = { homeMore = false; Onboarding.tutorialOpen = true },
+                                            )
+                                        }
+                                        if (folder.isNotBlank()) {
+                                            GlassMenuItem(text = { Text("Rename folder") }, onClick = {
+                                                homeMore = false; renamingFolder = true
+                                            })
+                                            GlassMenuItem(text = { Text("Delete folder") }, onClick = {
+                                                homeMore = false; deletingFolder = true
+                                            })
+                                        }
+                                        GlassMenuItem(
+                                            text = { Text("Trash") },
+                                            leadingIcon = { Icon(Reicons.Delete, contentDescription = null) },
+                                            onClick = { homeMore = false; showTrash = true },
+                                        )
+                                        GlassMenuItem(
+                                            text = { Text("Library background") },
+                                            leadingIcon = { Icon(Reicons.Image, contentDescription = null) },
+                                            onClick = { homeMore = false; showHomeBackground = true },
+                                        )
+                                        GlassMenuItem(
+                                            text = { Text("About · Help") },
+                                            leadingIcon = { Icon(Reicons.BugReport, contentDescription = null) },
+                                            onClick = { homeMore = false; showHelp = true },
                                         )
                                     }
-                                    // Appearance and everything used now and then, in one menu.
-                                    Box(Modifier.coachTarget(coachTargets, CoachTarget.HELP)
-                                        .coachTarget(coachTargets, CoachTarget.LOOK)) {
-                                        IconButton(onClick = { homeMore = true }) {
-                                            Icon(Reicons.Tune, contentDescription = "Settings and more")
-                                        }
-                                        GlassMenu(homeMore, onDismissRequest = { homeMore = false }) {
-                                            GlassMenuItem(
-                                                text = { Text("Appearance") },
-                                                leadingIcon = { Icon(Reicons.Palette, contentDescription = null) },
-                                                onClick = { homeMore = false; onSettings() },
-                                            )
-                                            if (narrowLibrary) {
-                                                GlassMenuItem(
-                                                    text = { Text("New folder") },
-                                                    leadingIcon = { Icon(Reicons.Folder, contentDescription = null) },
-                                                    onClick = { homeMore = false; creatingFolder = true },
-                                                )
-                                                GlassMenuItem(
-                                                    text = { Text("Tools") },
-                                                    leadingIcon = { Icon(AppIcons.tools, contentDescription = null) },
-                                                    onClick = { homeMore = false; Planner.show(Planner.lastPanel) },
-                                                )
-                                                GlassMenuItem(
-                                                    text = { Text("Tutorial") },
-                                                    leadingIcon = { Icon(AppIcons.tutorial, contentDescription = null) },
-                                                    onClick = { homeMore = false; Onboarding.tutorialOpen = true },
-                                                )
-                                            }
-                                            if (folder.isNotBlank()) {
-                                                GlassMenuItem(text = { Text("Rename folder") }, onClick = {
-                                                    homeMore = false; renamingFolder = true
-                                                })
-                                                GlassMenuItem(text = { Text("Delete folder") }, onClick = {
-                                                    homeMore = false; deletingFolder = true
-                                                })
-                                            }
-                                            GlassMenuItem(
-                                                text = { Text("Trash") },
-                                                leadingIcon = { Icon(Reicons.Delete, contentDescription = null) },
-                                                onClick = { homeMore = false; showTrash = true },
-                                            )
-                                            GlassMenuItem(
-                                                text = { Text("Library background") },
-                                                leadingIcon = { Icon(Reicons.Image, contentDescription = null) },
-                                                onClick = { homeMore = false; showHomeBackground = true },
-                                            )
-                                            GlassMenuItem(
-                                                text = { Text("About · Help") },
-                                                leadingIcon = { Icon(Reicons.BugReport, contentDescription = null) },
-                                                onClick = { homeMore = false; showHelp = true },
-                                            )
-                                        }
-                                    }
                                 }
                             }
                         }
                     }
-                    // Scrolled: the search, folded to a round button under the bar's, or open.
-                    if (compact) androidx.compose.animation.AnimatedContent(
-                        targetState = folded,
-                        transitionSpec = {
-                            (androidx.compose.animation.fadeIn(Ui.Motion.tween()) +
-                                androidx.compose.animation.scaleIn(Ui.Motion.tween(), initialScale = 0.5f,
-                                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 0f)))
-                                .togetherWith(androidx.compose.animation.fadeOut(Ui.Motion.tween()) +
-                                    androidx.compose.animation.scaleOut(Ui.Motion.tween(), targetScale = 0.5f,
-                                        transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 0f)))
-                                .using(androidx.compose.animation.SizeTransform(clip = false))
-                        },
-                        contentAlignment = Alignment.TopEnd,
-                        modifier = Modifier.padding(top = Ui.Space.s),
-                        label = "homeSearch",
-                    ) { isFolded ->
-                        if (isFolded) {
-                            Box(Modifier.size(52.dp).skinMaterial(CircleShape, role = ChromeRole.TOOLBAR)
-                                .clip(CircleShape).clickable { chromeOpen = true; openSearchNext = true },
-                                contentAlignment = Alignment.Center) {
-                                Icon(Reicons.Search, contentDescription = "Search")
+                    }
+                    Spacer(Modifier.height(HOME_ROW_GAP))
+                    LibrarySearchMorph(
+                        query = query,
+                        onQuery = { query = it },
+                        fold = searchFold,
+                        onIcon = {
+                            when {
+                                searchFolded -> {
+                                    searchOpen = true
+                                    runCatching { searchFocus.requestFocus() }
+                                }
+                                !selectionMode && scrollFold.value >= 0.01f -> {
+                                    searchOpen = false
+                                    focusManager.clearFocus()
+                                }
+                                else -> runCatching { searchFocus.requestFocus() }
                             }
-                        } else Box(Modifier.widthIn(max = 460.dp).fillMaxWidth(0.6f)
-                            .skinMaterial(capsule, role = ChromeRole.TOOLBAR).clip(capsule)) {
-                            LibrarySearchField(query, { query = it }, Modifier.focusRequester(floatingSearchFocus))
-                        }
-                    }
-                    LaunchedEffect(chromeOpen, openSearchNext) {
-                        if (chromeOpen && openSearchNext) {
-                            openSearchNext = false
-                            kotlinx.coroutines.delay(250)
-                            runCatching { floatingSearchFocus.requestFocus() }
-                        }
-                    }
+                        },
+                        onFocus = { searchFocused = it },
+                        focusRequester = searchFocus,
+                        modifier = Modifier.coachTarget(coachTargets, CoachTarget.SEARCH),
+                    )
                 }
             }
         },
@@ -1469,7 +1484,7 @@ private fun NoteListScreen(
         val mdShown = if (libraryFilter == LIBRARY_ALL || libraryFilter == LIBRARY_MARKDOWN)
             shown.filter { it.kind == NoteKind.MARKDOWN } else emptyList()
         val visibleNotes = (if (notesHidden) emptyList() else inkShown) + (if (markdownHidden) emptyList() else mdShown)
-        val side = if (narrowLibrary) Ui.Space.m else Ui.Space.l
+        val side = librarySide
         LazyVerticalGrid(
             state = gridState,
             // Two notes across even on a small phone: at the tablet's width a
@@ -1481,7 +1496,9 @@ private fun NoteListScreen(
             contentPadding = PaddingValues(
                 start = side,
                 end = side,
-                top = padding.calculateTopPadding(),
+                // Less the empty stretch at the head, so the first row starts
+                // just under the header as before.
+                top = (padding.calculateTopPadding() - HOME_FOLD_DISTANCE - Ui.Space.m).coerceAtLeast(0.dp),
                 // Clear of the + button, so the last row can be scrolled out from under it.
                 bottom = padding.calculateBottomPadding() + 96.dp,
             ),
@@ -1501,18 +1518,9 @@ private fun NoteListScreen(
                 onEdge = { edgeSpeed = it },
             ).onSizeChanged { gridHeight = it.height },
         ) {
-            item(key = "title", span = { GridItemSpan(maxLineSpan) }) {
-                LibraryLargeTitle(
-                    title = libraryTitle,
-                    subtitle = if (selectionMode) "${selectedCount} selected" else countNoun(shown.size, "note"),
-                    modifier = Modifier.onSizeChanged { titleHeight = it.height },
-                )
-            }
-            item(key = "search", span = { GridItemSpan(maxLineSpan) }) {
-                Box(contentAlignment = Alignment.Center) {
-                    LibrarySearchField(query, { query = it },
-                        Modifier.focusRequester(searchFocus).coachTarget(coachTargets, CoachTarget.SEARCH))
-                }
+            // The stretch the header folds over; see scrollFold.
+            item(key = "fold", span = { GridItemSpan(maxLineSpan) }) {
+                Spacer(Modifier.fillMaxWidth().height(HOME_FOLD_DISTANCE))
             }
             // Tags cut across folders, so picking one shows every note that carries it.
             if (results == null && allTags.isNotEmpty()) {
@@ -9539,6 +9547,13 @@ internal val FOLDER_COLORS = listOf(
 )
 
 /** The whiteboard's own white, a touch warmer than the page so the page's edge still shows. */
+/** The library header's top row: four fifths of the bar it had before. */
+internal val HOME_BAR_HEIGHT = 44.dp
+/** Between the header's row of buttons and its search. */
+internal val HOME_ROW_GAP = 6.dp
+/** How far the list scrolls while the header folds from open to its round buttons. */
+internal val HOME_FOLD_DISTANCE = 72.dp
+
 internal const val WHITEBOARD_WHITE = 0xFFF7F7F4.toInt()
 
 /** The colours the whiteboard can take; 0 is [WHITEBOARD_WHITE]. */

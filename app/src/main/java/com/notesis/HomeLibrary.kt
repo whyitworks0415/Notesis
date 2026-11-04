@@ -55,6 +55,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.Constraints
+import kotlin.math.roundToInt
 import kotlin.math.max
 import kotlin.math.min
 
@@ -198,13 +210,13 @@ internal fun LibraryLargeTitle(
     trailing: (@Composable () -> Unit)? = null,
 ) {
     Row(
-        modifier.fillMaxWidth().heightIn(min = 48.dp).padding(vertical = Ui.Space.xs).semantics { heading() },
+        modifier.fillMaxWidth().heightIn(min = 40.dp).semantics { heading() },
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             title,
-            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold, fontSize = 24.sp,
-                lineHeight = 30.sp, letterSpacing = (-0.2).sp),
+            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold, fontSize = 22.sp,
+                lineHeight = 28.sp, letterSpacing = (-0.2).sp),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f, fill = false),
@@ -440,34 +452,112 @@ internal fun SelectionActions(content: @Composable () -> Unit) {
     ) { content() }
 }
 
-/** The search field under the big title: a filled capsule, as search sits in Notes and Files. */
+/** The height of the library's search, open or folded, and of the round buttons beside it. */
+internal val LIBRARY_SEARCH_HEIGHT = 42.dp
+
+/**
+ * The library's search, one shape all the way from a field across the top to
+ * a round button under the bar's: [fold] runs from 0, the field, to 1, the
+ * button. The magnifier sits in a square of the field's own height at its
+ * start, so as the field narrows towards the right it is left exactly in the
+ * middle of the circle; the words keep their width and are cut off and faded
+ * rather than squeezed. The field's fill gives way to the bar's glass as it
+ * folds, so the button is of the same stuff as the one above it.
+ */
 @Composable
-internal fun LibrarySearchField(
+internal fun LibrarySearchMorph(
     query: String,
     onQuery: (String) -> Unit,
+    fold: () -> Float,
+    onIcon: () -> Unit,
+    onFocus: (Boolean) -> Unit,
+    focusRequester: FocusRequester,
     modifier: Modifier = Modifier,
 ) {
-    androidx.compose.material3.TextField(
-        value = query,
-        onValueChange = onQuery,
-        singleLine = true,
-        shape = RoundedCornerShape(50),
-        placeholder = { Text("Search titles, PDFs and handwriting", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-        leadingIcon = { Icon(Reicons.Search, contentDescription = null) },
-        trailingIcon = if (query.isNotEmpty()) {
-            {
-                IconButton(onClick = { onQuery("") }) {
-                    Icon(Reicons.Close, contentDescription = "Clear search")
+    val height = LIBRARY_SEARCH_HEIGHT
+    val capsule = RoundedCornerShape(50)
+    val fill = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.85f)
+    BoxWithConstraints(modifier.fillMaxWidth().height(height)) {
+        val full = if (maxWidth < 720.dp) maxWidth else 720.dp
+        Box(
+            Modifier.layout { measurable, constraints ->
+                val side = height.roundToPx()
+                val (x, w) = searchMorphSpan(constraints.maxWidth, full.roundToPx(), side, fold())
+                val placeable = measurable.measure(Constraints.fixed(w, side))
+                layout(constraints.maxWidth, side) { placeable.place(x, 0) }
+            },
+        ) {
+            Box(Modifier.matchParentSize().graphicsLayer { alpha = 1f - fold() }.background(fill, capsule))
+            Box(Modifier.matchParentSize().graphicsLayer { alpha = fold() }
+                .skinMaterial(capsule, role = ChromeRole.TOOLBAR))
+            Box(Modifier.matchParentSize().clip(capsule)) {
+                Row(
+                    Modifier.wrapContentWidth(Alignment.Start, unbounded = true).width(full).fillMaxHeight(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(Modifier.size(height).clip(CircleShape).clickable(onClick = onIcon),
+                        contentAlignment = Alignment.Center) {
+                        Icon(Reicons.Search, contentDescription = "Search")
+                    }
+                    Box(
+                        Modifier.weight(1f).padding(end = Ui.Space.m)
+                            .graphicsLayer { alpha = (1f - fold() * 1.6f).coerceIn(0f, 1f) },
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        BasicTextField(
+                            value = query,
+                            onValueChange = onQuery,
+                            singleLine = true,
+                            textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                            modifier = Modifier.fillMaxWidth().focusRequester(focusRequester)
+                                .onFocusChanged { onFocus(it.isFocused) },
+                            decorationBox = { inner ->
+                                Box(contentAlignment = Alignment.CenterStart) {
+                                    if (query.isEmpty()) Text(
+                                        "Search titles, PDFs and handwriting",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    inner()
+                                }
+                            },
+                        )
+                    }
+                    if (query.isNotEmpty()) {
+                        IconButton(onClick = { onQuery("") }, modifier = Modifier.padding(end = Ui.Space.xs)) {
+                            Icon(Reicons.Close, contentDescription = "Clear search")
+                        }
+                    }
                 }
             }
-        } else null,
-        colors = androidx.compose.material3.TextFieldDefaults.colors(
-            focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.85f),
-            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.85f),
-            focusedIndicatorColor = Color.Transparent,
-            unfocusedIndicatorColor = Color.Transparent,
-            disabledIndicatorColor = Color.Transparent,
-        ),
-        modifier = modifier.widthIn(max = 720.dp).fillMaxWidth(),
-    )
+        }
+    }
+}
+
+/**
+ * Where the search sits in a row [row] wide, as (start, width): [full] wide in
+ * the middle at [fold] 0, a [side] square at the row's right end at 1, and
+ * every step between on the way, so it slides as it narrows.
+ */
+internal fun searchMorphSpan(row: Int, full: Int, side: Int, fold: Float): Pair<Int, Int> {
+    val f = fold.coerceIn(0f, 1f)
+    val open = full.coerceAtMost(row)
+    val w = (open + (side - open) * f).roundToInt()
+    val centred = (row - w) / 2f
+    val right = (row - w).toFloat()
+    return (centred + (right - centred) * f).roundToInt() to w
+}
+
+/**
+ * Narrows what it wraps from the start by [fold] of its width, its end staying
+ * where it was, and cuts off what no longer fits: buttons drawn one by one
+ * into the button at their end.
+ */
+internal fun Modifier.foldTowardsEnd(fold: () -> Float): Modifier = clipToBounds().layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints.copy(minWidth = 0, maxWidth = Constraints.Infinity))
+    val w = constraints.constrainWidth((placeable.width * (1f - fold().coerceIn(0f, 1f))).roundToInt())
+    layout(w, placeable.height) { placeable.place(w - placeable.width, 0) }
 }
