@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.MaterialTheme
@@ -26,6 +27,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
@@ -95,6 +97,34 @@ internal fun InlineTextEditor(
                     .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f))
                     .padding(6.dp),
             )
+        }
+    }
+}
+
+/**
+ * What a link leads to, shown beside the pen resting over it: the note's or
+ * page's picture and its name, or the address. Draws only; it takes no touch.
+ */
+@Composable
+internal fun LinkPreviewCard(windowAt: Offset, title: String, file: java.io.File?, picture: android.graphics.Bitmap?) {
+    var origin by remember { mutableStateOf(Offset.Zero) }
+    val fromFile = rememberFileBitmap(file, 360)
+    val shown = picture ?: fromFile
+    Box(Modifier.fillMaxSize().onGloballyPositioned { origin = it.positionInWindow() }) {
+        Column(
+            Modifier.offset {
+                IntOffset((windowAt.x - origin.x + 16.dp.toPx()).toInt(), (windowAt.y - origin.y + 16.dp.toPx()).toInt())
+            }.widthIn(max = 220.dp)
+                .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(12.dp))
+                .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
+                .padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            if (shown != null) androidx.compose.foundation.Image(
+                bitmap = shown.asImageBitmap(), contentDescription = null,
+                modifier = Modifier.widthIn(max = 204.dp).heightIn(max = 260.dp),
+            )
+            Text(title, style = MaterialTheme.typography.labelLarge, maxLines = 2)
         }
     }
 }

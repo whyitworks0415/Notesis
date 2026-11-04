@@ -4152,8 +4152,12 @@ class InkCanvasView @JvmOverloads constructor(
                 if (show) showEraserCursor(event.x, event.y, eraserScreenRadius())
                 else compatWet.hideCursor()
             }
-            MotionEvent.ACTION_HOVER_EXIT -> compatWet.hideCursor()
+            MotionEvent.ACTION_HOVER_EXIT -> {
+                compatWet.hideCursor()
+                trackLinkHover(0f, 0f, leaving = true)
+            }
         }
+        if (event.actionMasked != MotionEvent.ACTION_HOVER_EXIT) trackLinkHover(event.x, event.y, leaving = false)
         return true
     }
 
@@ -7410,20 +7414,58 @@ class InkCanvasView @JvmOverloads constructor(
 
     private val linkBox = RectF()
 
-    /** A tap on a linked object follows it. True when there was one under the tap. */
-    private fun followObjectLink(screenX: Float, screenY: Float): Boolean {
+    /** The link of the linked object under a screen point, if there is one. */
+    private fun objectLinkAt(screenX: Float, screenY: Float): String? {
         scratch[0] = screenX
         scratch[1] = screenY
         screenToDocument.mapPoints(scratch)
         val index = document.pageAt(scratch[0], scratch[1])
-        val page = document.pages.getOrNull(index) ?: return false
-        if (page.links.isEmpty() || !page.loaded) return false
+        val page = document.pages.getOrNull(index) ?: return null
+        if (page.links.isEmpty() || !page.loaded) return null
         pageLocalInto(screenX, screenY, index, pageProbe)
         val reach = touchSlop / currentScale().coerceAtLeast(0.001f)
         for ((group, target) in page.links) {
             groupBounds(page, group, linkBox)
             linkBox.inset(-reach, -reach)
-            if (!linkBox.contains(pageProbe[0], pageProbe[1])) continue
+            if (linkBox.contains(pageProbe[0], pageProbe[1])) return target
+        }
+        return null
+    }
+
+    /**
+     * Called with a link when the pen has rested over a linked object for a
+     * moment, and with null when it moves off: what is at the other end of
+     * the link can be shown beside the pen. [x], [y] are window pixels.
+     */
+    var onLinkHover: ((target: String?, x: Float, y: Float) -> Unit)? = null
+    private var hoverLink: String? = null
+    private var hoverLinkX = 0f
+    private var hoverLinkY = 0f
+    private val hoverLinkShow = Runnable {
+        val target = hoverLink ?: return@Runnable
+        val at = IntArray(2)
+        getLocationInWindow(at)
+        onLinkHover?.invoke(target, hoverLinkX + at[0], hoverLinkY + at[1])
+    }
+
+    /** Follows the pen hovering over linked objects; see [onLinkHover]. */
+    private fun trackLinkHover(x: Float, y: Float, leaving: Boolean) {
+        if (onLinkHover == null) return
+        val target = if (leaving || !document.pages.any { it.links.isNotEmpty() }) null else objectLinkAt(x, y)
+        hoverLinkX = x
+        hoverLinkY = y
+        if (target == hoverLink) return
+        removeCallbacks(hoverLinkShow)
+        val had = hoverLink != null
+        hoverLink = target
+        if (target != null) postDelayed(hoverLinkShow, LINK_PREVIEW_HOLD_MS)
+        else if (had) onLinkHover?.invoke(null, 0f, 0f)
+    }
+
+    /** A tap on a linked object follows it. True when there was one under the tap. */
+    private fun followObjectLink(screenX: Float, screenY: Float): Boolean {
+        val target = objectLinkAt(screenX, screenY) ?: return false
+        run {
             when {
                 target.startsWith("page:") -> {
                     val at = document.pages.indexOfFirst { it.id == target.removePrefix("page:") }
@@ -7438,7 +7480,6 @@ class InkCanvasView @JvmOverloads constructor(
             performClick()
             return true
         }
-        return false
     }
 
     fun lassoSelectionGrouped(): Boolean =
@@ -10475,6 +10516,8 @@ class InkCanvasView @JvmOverloads constructor(
         const val LOAD_TESSELLATION_SCALE = 2f
         /** The page index ink on the whiteboard is taken under: document coordinates, no page offset. */
         const val BOARD_INDEX = -2
+        /** How long the pen rests over a link before what it leads to is shown. */
+        const val LINK_PREVIEW_HOLD_MS = 600L
         const val MAX_SCREEN_BRUSHES = 256
         /** A few pens, colours and zoom levels; see [currentBrush]. */
         const val RECENT_BRUSHES = 8

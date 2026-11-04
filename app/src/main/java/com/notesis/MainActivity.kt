@@ -4252,6 +4252,8 @@ private fun NoteScreen(
     var textDialogInitial by remember { mutableStateOf<TextBoxContent?>(null) }
     var tableEditing by remember { mutableStateOf<Triple<TextBoxContent?, PageImage?, Triple<Int, Float, Float>?>?>(null) }
     var textToolPanel by remember { mutableStateOf(false) }
+    // What a link the pen rests over leads to, and where (window pixels).
+    var linkPreview by remember { mutableStateOf<Triple<String, Float, Float>?>(null) }
     var textToolTable by remember { mutableStateOf(penStore.textToolTable) }
     var textMarkdown by remember { mutableStateOf(penStore.textMarkdown) }
     var captured by remember { mutableStateOf<Bitmap?>(null) }
@@ -5304,6 +5306,7 @@ private fun NoteScreen(
                     } else null
                     view.showLinkOverlay = gestures.linkOverlay
                     view.onLinkBackChanged = { canGoBack = it; backPage = view.backTarget(); if (it) backTick++ }
+                    view.onLinkHover = { target, x, y -> linkPreview = target?.let { Triple(it, x, y) } }
                     view.onOpenNoteLink = { noteId, pageIndex ->
                         store.list().firstOrNull { it.id == noteId }?.let { target ->
                             penStore.setLastPage(target.id, pageIndex)
@@ -6655,6 +6658,22 @@ private fun NoteScreen(
                 }
             })
 
+        linkPreview?.let { (target, x, y) ->
+            val linkedNote = target.takeIf { it.startsWith("note:") }?.removePrefix("note:")?.substringBefore('#')
+                ?.let { id -> otherNotes.firstOrNull { it.id == id } }
+            val pageIndex = target.takeIf { it.startsWith("page:") }?.removePrefix("page:")
+                ?.let { id -> canvas?.document?.pages?.indexOfFirst { it.id == id } }
+            LinkPreviewCard(
+                windowAt = Offset(x, y),
+                title = when {
+                    linkedNote != null -> linkedNote.title
+                    pageIndex != null && pageIndex >= 0 -> "Page ${pageIndex + 1}"
+                    else -> target
+                },
+                file = linkedNote?.thumbnail,
+                picture = if (pageIndex != null && pageIndex >= 0) remember(target) { canvas?.pageThumbnail(pageIndex, 360) } else null,
+            )
+        }
         inlineText?.let { target ->
             InlineTextEditor(
                 target = target,
