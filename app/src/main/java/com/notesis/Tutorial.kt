@@ -35,6 +35,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -227,8 +228,16 @@ internal fun TutorialOverlay(
                             )
                             AppIconButton(onClick = onClose, icon = AppIcons.close, contentDescription = "Close tutorial")
                         }
-                        HorizontalPager(pager, Modifier.weight(1f, fill = false)) { page ->
-                            LessonPage(LESSONS[page])
+                        // Every lesson laid out unseen under the pager, so the card
+                        // is as tall as the tallest of them on every page, instead
+                        // of growing and shrinking as the lessons turn.
+                        Box(Modifier.weight(1f, fill = false)) {
+                            Box(Modifier.alpha(0f).clearAndSetSemantics { }) {
+                                LESSONS.forEach { LessonPage(it) }
+                            }
+                            HorizontalPager(pager, Modifier.matchParentSize()) { page ->
+                                LessonPage(LESSONS[page])
+                            }
                         }
                         Row(
                             Modifier.fillMaxWidth(),
