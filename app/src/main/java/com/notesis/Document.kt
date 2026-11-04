@@ -1785,7 +1785,12 @@ class NoteStore(context: Context) {
                         .put("value", content.text).put("size", content.size.toDouble()).put("color", content.color)
                         .put("html", content.html ?: "").put("font", content.font).put("bg", content.background)
                         .put("corner", content.corner.toDouble()).put("pad", content.padding.toDouble())
-                        .put("min", content.minSize.toDouble()) })
+                        .put("min", content.minSize.toDouble())
+                        .put("md", content.markdown)
+                        .put("th", content.tableHeader)
+                        .also { json -> content.table?.let { rows ->
+                            json.put("table", JSONArray().also { array -> rows.forEach { row -> array.put(JSONArray(row)) } })
+                        } } })
                     .put("locked", image.locked)
                     .put("group", image.group)
                     .put("opacity", image.opacity.toDouble())
@@ -1836,7 +1841,15 @@ class NoteStore(context: Context) {
                         background = content.optInt("bg", 0),
                         corner = content.optDouble("corner", 0.0).toFloat(),
                         padding = content.optDouble("pad", TextBoxContent.DEFAULT_PADDING.toDouble()).toFloat(),
-                        minSize = content.optDouble("min", 0.0).toFloat())
+                        minSize = content.optDouble("min", 0.0).toFloat(),
+                        markdown = content.optBoolean("md", false),
+                        table = content.optJSONArray("table")?.let { rows ->
+                            (0 until rows.length()).map { r ->
+                                val row = rows.optJSONArray(r) ?: JSONArray()
+                                (0 until row.length()).map { c -> row.optString(c) }
+                            }
+                        },
+                        tableHeader = content.optBoolean("th", true))
                 },
                 locked = item.optBoolean("locked", false),
                 group = item.optInt("group", 0),
