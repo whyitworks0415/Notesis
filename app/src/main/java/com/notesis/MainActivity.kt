@@ -9061,6 +9061,8 @@ private fun PageSidebar(
                         }
                         PAGE_PANEL_TOC -> {
                             val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+                            val tocFolded = remember { androidx.compose.runtime.mutableStateListOf<String>() }
+                            var tocPictures by remember { mutableStateOf(false) }
                             LazyColumn(
                                 Modifier.weight(1f).glassEdges(listState),
                                 state = listState,
@@ -9118,13 +9120,44 @@ private fun PageSidebar(
                                         )
                                     }
                                 }
-                                items(entries, key = { it.id }) { page ->
+                                // The outline as a tree, the way an editor shows a file's
+                                // structure: indent guides, a chevron on every entry that has
+                                // entries under it, folded or open.
+                                if (entries.isNotEmpty()) item(key = "toc-tools") {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text("OUTLINE", style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.outline, modifier = Modifier.weight(1f))
+                                        TextButton(onClick = {
+                                            tocFolded.clear()
+                                            entries.forEachIndexed { i, e ->
+                                                if (entries.getOrNull(i + 1)?.let { it.tocLevel > e.tocLevel } == true) tocFolded += e.id
+                                            }
+                                        }) { Text("Fold all") }
+                                        TextButton(onClick = { tocFolded.clear() }) { Text("Open all") }
+                                        TextButton(onClick = { tocPictures = !tocPictures }) {
+                                            Text(if (tocPictures) "Hide pictures" else "Pictures")
+                                        }
+                                    }
+                                }
+                                var foldedAt = Int.MAX_VALUE
+                                val visible = ArrayList<Pair<Page, Boolean>>()
+                                entries.forEachIndexed { i, page ->
+                                    if (page.tocLevel > foldedAt) return@forEachIndexed
+                                    foldedAt = Int.MAX_VALUE
+                                    val parent = entries.getOrNull(i + 1)?.let { it.tocLevel > page.tocLevel } == true
+                                    visible += page to parent
+                                    if (parent && page.id in tocFolded) foldedAt = page.tocLevel
+                                }
+                                items(visible, key = { it.first.id }) { (page, parent) ->
                                     val index = pages.indexOf(page)
-                                    TocChip(
+                                    TocTreeRow(
                                         index = index,
                                         page = page,
-                                        picture = picture(index),
+                                        picture = if (tocPictures) picture(index) else null,
                                         selected = index == currentPage,
+                                        hasChildren = parent,
+                                        folded = page.id in tocFolded,
+                                        onToggle = { if (page.id in tocFolded) tocFolded -= page.id else tocFolded += page.id },
                                         onJump = { onJump(index) },
                                         onEdit = { editToc(page) },
                                         onHighlight = { onHighlightToc(index, !page.tocHighlighted) },
@@ -9230,6 +9263,67 @@ private fun PageSidebar(
 
 /** The page panel's tabs, in order. */
 private val PAGE_PANEL_TABS = listOf("Pages", "TOC", "Masks", "Notes")
+
+/**
+ * One entry of the outline tree: indent guides for its depth, a chevron when
+ * entries sit under it, its title and its page. Tapped, the page; the chevron
+ * folds it; its menu renames, marks, moves in or out, or removes it.
+ */
+@Composable
+private fun TocTreeRow(
+    index: Int, page: Page, picture: android.graphics.Bitmap?, selected: Boolean,
+    hasChildren: Boolean, folded: Boolean, onToggle: () -> Unit,
+    onJump: () -> Unit, onEdit: () -> Unit, onHighlight: () -> Unit, onDelete: () -> Unit,
+    onIndent: () -> Unit, onOutdent: () -> Unit,
+) {
+    var menu by remember { mutableStateOf(false) }
+    val scheme = MaterialTheme.colorScheme
+    val guide = scheme.outlineVariant
+    val depth = page.tocLevel.coerceIn(0, 8)
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 32.dp).clip(RoundedCornerShape(6.dp))
+            .background(if (selected) scheme.primary.copy(alpha = 0.12f) else Color.Transparent)
+            .clickable(onClick = onJump)
+            .drawBehind {
+                // A thin line down each level above this one, as an editor's tree draws them.
+                for (level in 0 until depth) {
+                    val x = (12 + level * 16).dp.toPx()
+                    drawLine(guide, Offset(x, 0f), Offset(x, size.height), 1.dp.toPx())
+                }
+            }
+            .padding(start = (depth * 16).dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(24.dp).clickable(enabled = hasChildren, onClick = onToggle), contentAlignment = Alignment.Center) {
+            if (hasChildren) Icon(Reicons.ChevronRight, contentDescription = if (folded) "Open" else "Fold",
+                modifier = Modifier.size(18.dp).graphicsLayer { rotationZ = if (folded) 0f else 90f })
+        }
+        if (picture != null) Box(Modifier.width(36.dp).padding(end = 6.dp)) {
+            PagePicture(picture, page.width / page.height, index + 1)
+        }
+        Text(
+            page.tocTitle.orEmpty(),
+            style = MaterialTheme.typography.bodyMedium.copy(
+                fontWeight = if (page.tocHighlighted || depth == 0) FontWeight.SemiBold else FontWeight.Normal),
+            color = if (page.tocHighlighted) scheme.primary else scheme.onSurface,
+            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+        )
+        Text("${index + 1}", style = MaterialTheme.typography.labelSmall, color = scheme.outline,
+            modifier = Modifier.padding(horizontal = 6.dp))
+        Box {
+            IconButton(onClick = { menu = true }, modifier = Modifier.size(32.dp)) {
+                Icon(Reicons.MoreVert, contentDescription = "Contents entry options", modifier = Modifier.size(18.dp))
+            }
+            DropdownMenu(menu, onDismissRequest = { menu = false }) {
+                DropdownMenuItem(text = { Text("Rename") }, onClick = { menu = false; onEdit() })
+                DropdownMenuItem(text = { Text(if (page.tocHighlighted) "Unmark" else "Mark") }, onClick = { menu = false; onHighlight() })
+                DropdownMenuItem(text = { Text("Move in") }, onClick = { menu = false; onIndent() })
+                if (depth > 0) DropdownMenuItem(text = { Text("Move out") }, onClick = { menu = false; onOutdent() })
+                DropdownMenuItem(text = { Text("Remove from contents") }, onClick = { menu = false; onDelete() })
+            }
+        }
+    }
+}
 private const val PAGE_PANEL_PAGES = 0
 private const val PAGE_PANEL_TOC = 1
 private const val PAGE_PANEL_MASKS = 2

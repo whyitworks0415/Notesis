@@ -1508,3 +1508,14 @@ Text, a number, or =SUM(A1:A3)	글자, 숫자, 또는 =SUM(A1:A3)
 − Column	− 열
 Heading row	제목 행
 The table is too big. Split it into more tables.	표가 너무 큽니다. 여러 표로 나눠 주세요.
+OUTLINE	목차
+Fold all	모두 접기
+Open all	모두 펼치기
+Hide pictures	그림 숨기기
+Contents entry options	목차 항목 옵션
+Mark	강조
+Unmark	강조 해제
+Move in	안으로
+Move out	밖으로
+Remove from contents	목차에서 빼기
+Fold	접기
