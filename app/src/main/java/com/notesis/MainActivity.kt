@@ -5425,6 +5425,9 @@ private fun NoteScreen(
                     view.showLinkOverlay = gestures.linkOverlay
                     view.onLinkBackChanged = { canGoBack = it; backPage = view.backTarget(); if (it) backTick++ }
                     view.onLinkHover = { target, x, y -> linkPreview = target?.let { Triple(it, x, y) } }
+                    view.onTextBoxResized = { image ->
+                        image.textContent?.let { placeText(it.copy(wrapWidth = image.width), image, null) }
+                    }
                     view.onOpenNoteLink = { noteId, pageIndex ->
                         store.list().firstOrNull { it.id == noteId }?.let { target ->
                             penStore.setLastPage(target.id, pageIndex)
@@ -6802,6 +6805,18 @@ private fun NoteScreen(
         inlineText?.let { target ->
             InlineTextEditor(
                 target = target,
+                // Where the text goes, read again every frame: it moves and
+                // scales with the page as it is scrolled and zoomed.
+                locate = locate@{
+                    val view = canvas ?: return@locate null
+                    val pageIndex = target.position?.first ?: target.replacing?.let(view::pageIndexOfImage) ?: return@locate null
+                    if (pageIndex < 0) return@locate null
+                    val x = target.position?.second ?: target.replacing?.x ?: 0f
+                    val y = target.position?.third ?: target.replacing?.y ?: 0f
+                    val at = view.windowPointOfPage(pageIndex, x, y)
+                    Offset(at.x, at.y) to view.pageScaleOnScreen()
+                },
+                markdown = textMarkdown,
                 text = inlineDraft,
                 onText = { inlineDraft = it },
                 size = inlineSize,

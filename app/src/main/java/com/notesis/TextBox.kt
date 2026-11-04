@@ -57,6 +57,12 @@ data class TextBoxContent(
     val table: List<List<String>>? = null,
     /** The table's first row is its heading, drawn bold on a tint. */
     val tableHeader: Boolean = true,
+    /**
+     * How wide the box is kept, in page units, the text wrapping inside it; 0
+     * for as wide as its longest line. Set by resizing the box, so a bigger
+     * box holds more on a line instead of drawing larger letters.
+     */
+    val wrapWidth: Float = 0f,
 ) {
     companion object {
         /** What every text box had before padding could be set, in page units. */
@@ -112,7 +118,8 @@ internal fun renderTextBox(content: TextBoxContent): Bitmap {
     val scale = 2f
     val pad = (content.padding * scale).toInt()
     val maxWidth = 1600
-    val desired = Layout.getDesiredWidth(content.styledText(), textPaint(content, scale)).toInt().coerceIn(1, maxWidth)
+    val wrap = if (content.wrapWidth > 0f) ((content.wrapWidth * scale).toInt() - pad * 2).coerceIn(16, 4096) else null
+    val desired = wrap ?: Layout.getDesiredWidth(content.styledText(), textPaint(content, scale)).toInt().coerceIn(1, maxWidth)
     val layout = textBoxLayout(content, desired, scale)
     require(layout.height <= 8192) { "The text is too long. Split it into more boxes." }
     val width = maxOf(desired + pad * 2, (content.minSize * scale).toInt())

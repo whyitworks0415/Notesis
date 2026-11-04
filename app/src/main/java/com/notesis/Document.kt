@@ -1788,6 +1788,7 @@ class NoteStore(context: Context) {
                         .put("min", content.minSize.toDouble())
                         .put("md", content.markdown)
                         .put("th", content.tableHeader)
+                        .put("wrap", content.wrapWidth.toDouble())
                         .also { json -> content.table?.let { rows ->
                             json.put("table", JSONArray().also { array -> rows.forEach { row -> array.put(JSONArray(row)) } })
                         } } })
@@ -1849,7 +1850,8 @@ class NoteStore(context: Context) {
                                 (0 until row.length()).map { c -> row.optString(c) }
                             }
                         },
-                        tableHeader = content.optBoolean("th", true))
+                        tableHeader = content.optBoolean("th", true),
+                        wrapWidth = content.optDouble("wrap", 0.0).toFloat())
                 },
                 locked = item.optBoolean("locked", false),
                 group = item.optInt("group", 0),

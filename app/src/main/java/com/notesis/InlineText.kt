@@ -32,6 +32,8 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.foundation.layout.width
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 
@@ -56,6 +58,10 @@ internal data class InlineTextTarget(
 @Composable
 internal fun InlineTextEditor(
     target: InlineTextTarget,
+    /** Where the text's corner is in the window and a page unit's size in pixels, now; null to stay put. */
+    locate: () -> Pair<Offset, Float>?,
+    /** The text is Markdown, drawn as it is typed. */
+    markdown: Boolean,
     text: String,
     onText: (String) -> Unit,
     size: Float,
@@ -66,14 +72,27 @@ internal fun InlineTextEditor(
     var origin by remember { mutableStateOf(Offset.Zero) }
     val focus = remember { FocusRequester() }
     val density = LocalDensity.current
+    var windowAt by remember(target) { mutableStateOf(target.windowAt) }
+    var pageScale by remember(target) { mutableStateOf(target.pageScale) }
     LaunchedEffect(target) { runCatching { focus.requestFocus() } }
+    // Kept on the page: each frame, where its corner has gone and how far the page is zoomed.
+    LaunchedEffect(target) {
+        while (true) {
+            androidx.compose.runtime.withFrameNanos { }
+            val (at, scale) = locate() ?: continue
+            if (at != windowAt) windowAt = at
+            if (scale != pageScale) pageScale = scale
+        }
+    }
     // The box's text size in page units, on screen at the page's zoom.
-    val fontSize = with(density) { (size * target.pageScale).coerceIn(10f, 200f).toSp() }
+    val fontSize = with(density) { (size * pageScale).coerceIn(4f, 400f).toSp() }
+    // A box given a width by resizing keeps it here too, the text wrapping inside.
+    val wrap = target.initial?.wrapWidth?.takeIf { it > 0f }?.let { with(density) { (it * pageScale).toDp() } }
     Box(Modifier.fillMaxSize().onGloballyPositioned { origin = it.positionInWindow() }) {
         Column(
             Modifier.offset {
-                IntOffset((target.windowAt.x - origin.x).toInt(),
-                    (target.windowAt.y - origin.y - 44.dp.toPx()).toInt().coerceAtLeast(0))
+                IntOffset((windowAt.x - origin.x).toInt(),
+                    (windowAt.y - origin.y - 44.dp.toPx()).toInt().coerceAtLeast(0))
             },
         ) {
             Row(
@@ -92,7 +111,9 @@ internal fun InlineTextEditor(
                 onValueChange = onText,
                 textStyle = TextStyle(fontSize = fontSize, color = Color(target.initial?.color ?: 0xFF000000.toInt())),
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                modifier = Modifier.focusRequester(focus).widthIn(min = 160.dp, max = 560.dp)
+                visualTransformation = if (markdown) MarkdownLiveTransformation else VisualTransformation.None,
+                modifier = Modifier.focusRequester(focus)
+                    .then(if (wrap != null) Modifier.width(wrap) else Modifier.widthIn(min = 160.dp, max = 720.dp))
                     .background(Color.White.copy(alpha = 0.92f))
                     .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f))
                     .padding(6.dp),
@@ -128,3 +149,78 @@ internal fun LinkPreviewCard(windowAt: Offset, title: String, file: java.io.File
         }
     }
 }
+
+
+/**
+ * Markdown drawn as it is typed: the text itself is left exactly as written
+ * (every mark stays, so the cursor never jumps), with headings larger and
+ * bold, **bold**, *italic*, ~~struck~~ and `code` styled, links underlined,
+ * and the marks themselves faint.
+ */
+internal object MarkdownLiveTransformation : VisualTransformation {
+    override fun filter(text: androidx.compose.ui.text.AnnotatedString): androidx.compose.ui.text.input.TransformedText =
+        androidx.compose.ui.text.input.TransformedText(markdownLive(text.text),
+            androidx.compose.ui.text.input.OffsetMapping.Identity)
+}
+
+private val LIVE_MARK = androidx.compose.ui.graphics.Color(0x66808080)
+private val LIVE_INLINE = Regex("""\*\*(.+?)\*\*|~~(.+?)~~|`([^`]+)`|\[([^\]]+)\]\(([^)]*)\)|(?<![*\w])\*([^*\s][^*]*?)\*(?!\*)|(?<!\w)_([^_\s][^_]*?)_(?!\w)""")
+
+internal fun markdownLive(source: String): androidx.compose.ui.text.AnnotatedString =
+    androidx.compose.ui.text.buildAnnotatedString {
+        append(source)
+        var lineStart = 0
+        for (line in source.split('\n')) {
+            val end = lineStart + line.length
+            val heading = Regex("^(#{1,3}) ").find(line)
+            when {
+                heading != null -> {
+                    val level = heading.groupValues[1].length
+                    addStyle(androidx.compose.ui.text.SpanStyle(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                        fontSize = androidx.compose.ui.unit.TextUnit(when (level) { 1 -> 1.6f; 2 -> 1.35f; else -> 1.15f },
+                            androidx.compose.ui.unit.TextUnitType.Em)), lineStart, end)
+                    addStyle(androidx.compose.ui.text.SpanStyle(color = LIVE_MARK), lineStart, lineStart + level + 1)
+                }
+                line.startsWith("> ") -> {
+                    addStyle(androidx.compose.ui.text.SpanStyle(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                        color = androidx.compose.ui.graphics.Color(0xFF6B6B6B)), lineStart, end)
+                }
+                Regex("^\\s*([-*+]|\\d+[.)]) ").containsMatchIn(line) -> {
+                    val m = Regex("^\\s*([-*+]|\\d+[.)])( \\[[ xX]\\])? ").find(line)!!
+                    addStyle(androidx.compose.ui.text.SpanStyle(color = androidx.compose.ui.graphics.Color(0xFF1E66D0),
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold), lineStart, lineStart + m.value.length)
+                }
+            }
+            for (m in LIVE_INLINE.findAll(line)) {
+                val s = lineStart + m.range.first
+                val e = lineStart + m.range.last + 1
+                val whole = m.value
+                when {
+                    whole.startsWith("**") -> {
+                        addStyle(androidx.compose.ui.text.SpanStyle(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold), s, e)
+                        addStyle(androidx.compose.ui.text.SpanStyle(color = LIVE_MARK), s, s + 2)
+                        addStyle(androidx.compose.ui.text.SpanStyle(color = LIVE_MARK), e - 2, e)
+                    }
+                    whole.startsWith("~~") -> {
+                        addStyle(androidx.compose.ui.text.SpanStyle(textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough), s, e)
+                        addStyle(androidx.compose.ui.text.SpanStyle(color = LIVE_MARK), s, s + 2)
+                        addStyle(androidx.compose.ui.text.SpanStyle(color = LIVE_MARK), e - 2, e)
+                    }
+                    whole.startsWith("`") -> {
+                        addStyle(androidx.compose.ui.text.SpanStyle(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            background = androidx.compose.ui.graphics.Color(0x22808080)), s, e)
+                    }
+                    whole.startsWith("[") -> {
+                        addStyle(androidx.compose.ui.text.SpanStyle(color = androidx.compose.ui.graphics.Color(0xFF1E66D0),
+                            textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline), s, e)
+                    }
+                    else -> {
+                        addStyle(androidx.compose.ui.text.SpanStyle(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic), s, e)
+                        addStyle(androidx.compose.ui.text.SpanStyle(color = LIVE_MARK), s, s + 1)
+                        addStyle(androidx.compose.ui.text.SpanStyle(color = LIVE_MARK), e - 1, e)
+                    }
+                }
+            }
+            lineStart = end + 1
+        }
+    }

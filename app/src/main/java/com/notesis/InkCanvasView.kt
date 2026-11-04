@@ -4827,9 +4827,16 @@ class InkCanvasView @JvmOverloads constructor(
                     return true
                 }
                 if (movingImage || resizingImage) {
+                    val resized = resizingImage
                     movingImage = false
                     resizingImage = false
                     selectedImagePage?.let { afterEdit(it) }
+                    // A text box made bigger or smaller wraps its text to the new
+                    // width rather than keeping it stretched; the host draws it again.
+                    val image = selectedImage
+                    if (resized && image?.textContent != null && image.textContent.table == null) {
+                        onTextBoxResized?.invoke(image)
+                    }
                     endStylus()
                     return true
                 }
@@ -8360,6 +8367,9 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** How many screen pixels a page unit is at the zoom in use. */
     fun pageScaleOnScreen(): Float = currentScale()
+
+    /** A text box was resized by hand: the host draws its text again to the box's new width. */
+    var onTextBoxResized: ((PageImage) -> Unit)? = null
 
     /** The page a picture or text box is on, or -1. */
     fun pageIndexOfImage(image: PageImage): Int = document.pages.indexOfFirst { page -> page.images.any { it === image } }
