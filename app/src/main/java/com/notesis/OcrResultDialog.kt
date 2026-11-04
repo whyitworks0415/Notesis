@@ -90,19 +90,5 @@ internal fun OcrResultDialog(
 
 /** How a recognition language is shown: its own name, as the settings offer it. */
 private fun languageName(tag: String): String =
-    if (tag == AiOcr.LANGUAGE) "Claude" else InkIndexer.OFFERED.firstOrNull { it.first == tag }?.second ?: tag
+    InkIndexer.OFFERED.firstOrNull { it.first == tag }?.second ?: tag
 
-/**
- * Claude's lines first, each with the tablet's readings of the same line as
- * other choices when the two split the writing into as many lines; when they
- * do not, Claude's lines alone.
- */
-internal fun mergeAiReadings(ai: List<String>, device: List<OcrLine>): List<OcrLine> {
-    if (ai.isEmpty()) return device
-    val aligned = ai.size == device.size
-    return ai.mapIndexed { index, text ->
-        val own = OcrReading(text, AiOcr.LANGUAGE)
-        val others = if (aligned) device[index].readings.filter { it.text != text } else emptyList()
-        OcrLine(listOf(own) + others)
-    }
-}

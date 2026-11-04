@@ -42,18 +42,6 @@ android {
     }
     buildFeatures { compose = true }
 
-    // The Claude client's Jackson and OkHttp jars each carry their own
-    // licence files; one copy of each is enough in the APK.
-    packaging {
-        resources {
-            excludes += listOf(
-                "META-INF/DEPENDENCIES", "META-INF/INDEX.LIST",
-                "META-INF/LICENSE", "META-INF/LICENSE.txt", "META-INF/LICENSE.md",
-                "META-INF/NOTICE", "META-INF/NOTICE.txt", "META-INF/NOTICE.md",
-            )
-        }
-    }
-
     kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
 }
 
@@ -70,10 +58,6 @@ dependencies {
     // Handwriting search: the models are downloaded on demand and the
     // recognition runs on the device.
     implementation("com.google.mlkit:digital-ink-recognition:18.1.0")
-    // Reading a selection with Claude, when the person turns it on and gives
-    // their own API key; see AiOcr. R8 keeps what it needs from the rules the
-    // library ships.
-    implementation("com.anthropic:anthropic-java:3.2.0")
     implementation("androidx.ink:ink-storage:1.0.0")
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation(platform("androidx.compose:compose-bom:2026.06.01"))
