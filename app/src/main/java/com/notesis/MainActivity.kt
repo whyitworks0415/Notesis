@@ -1713,7 +1713,37 @@ private fun NoteListScreen(
                         homeStore.markdownSectionHidden = markdownHidden
                     }
                 }
-                if (!markdownHidden) noteItems(mdShown)
+                // Markdown files are many and small: a compact list, two across,
+                // opened from the vault's own entry for the folder tree.
+                if (!markdownHidden) {
+                    item(key = "markdown-vault", span = { GridItemSpan(maxLineSpan) }) {
+                        TextButton(onClick = onOpenVault) {
+                            Icon(Reicons.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(Ui.Space.xs))
+                            Text("Open the Markdown vault")
+                        }
+                    }
+                    items(mdShown, key = { it.id }, span = { GridItemSpan((maxLineSpan / 2).coerceAtLeast(1)) }) { note ->
+                        MarkdownNoteRow(
+                            note = note,
+                            selected = note.id in selectedIds,
+                            selectionMode = selectionMode,
+                            modifier = Modifier.libraryTile(libraryTiles, note.id),
+                            onOpen = {
+                                if (selectionMode) {
+                                    if (note.id in selectedIds) selectedIds.remove(note.id) else selectedIds.add(note.id)
+                                } else onOpen(note)
+                            },
+                            onRename = { renamingNote = note },
+                            onMove = { filing = note },
+                            onExport = {
+                                markdownExportId = note.id
+                                saveMarkdown.launch(safeFileName(note.title) + ".md")
+                            },
+                            onDelete = { pendingDelete = note },
+                        )
+                    }
+                }
             }
         }
 
@@ -9438,6 +9468,53 @@ internal const val DROP_LEFT = 0
 internal const val DROP_RIGHT = 1
 internal const val DROP_TOP = 2
 internal const val DROP_BOTTOM = 3
+
+/** A Markdown note in the library's compact list: its mark, name, when it changed, its tags. */
+@Composable
+private fun MarkdownNoteRow(
+    note: NoteMeta, selected: Boolean, selectionMode: Boolean, modifier: Modifier,
+    onOpen: () -> Unit, onRename: () -> Unit, onMove: () -> Unit, onExport: () -> Unit, onDelete: () -> Unit,
+) {
+    var menu by remember { mutableStateOf(false) }
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        modifier.fillMaxWidth().heightIn(min = 64.dp).clip(Ui.Shape.card)
+            .background(scheme.surface.copy(alpha = 0.72f))
+            .then(if (selected) Modifier.border(2.dp, scheme.primary, Ui.Shape.card) else Modifier)
+            .clickable(onClick = onOpen)
+            .padding(start = Ui.Space.m, end = Ui.Space.xs),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(if (selectionMode && selected) Reicons.Check else Reicons.Description, contentDescription = null,
+            tint = scheme.primary, modifier = Modifier.size(28.dp))
+        Spacer(Modifier.width(Ui.Space.m))
+        Column(Modifier.weight(1f)) {
+            Text(note.title.ifBlank { "Untitled" }, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                listOfNotNull(
+                    java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT)
+                        .format(Date(note.modified)),
+                    note.folder.takeIf { it.isNotBlank() },
+                    note.tags.takeIf { it.isNotEmpty() }?.joinToString(" ") { "#$it" },
+                ).joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (!selectionMode) Box {
+            IconButton(onClick = { menu = true }) {
+                Icon(Reicons.MoreVert, contentDescription = "Options for ${note.title}", tint = scheme.onSurfaceVariant)
+            }
+            GlassMenu(menu, onDismissRequest = { menu = false }) {
+                GlassMenuItem(text = { Text("Rename") }, onClick = { menu = false; onRename() })
+                GlassMenuItem(text = { Text("Move to folder") }, onClick = { menu = false; onMove() })
+                GlassMenuItem(text = { Text("Export as .md") }, onClick = { menu = false; onExport() })
+                GlassMenuItem(text = { Text("Delete") }, onClick = { menu = false; onDelete() })
+            }
+        }
+    }
+}
 
 /** The colours a folder can take in the library; 0 is the accent. */
 internal val FOLDER_COLORS = listOf(
