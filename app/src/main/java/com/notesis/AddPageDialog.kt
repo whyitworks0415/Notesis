@@ -70,12 +70,6 @@ internal fun newPageDimensions(size: NewPageSize, landscape: Boolean, customW: F
         else if (landscape) upright.second to upright.first else upright
 }
 
-private val PLAIN_PAPERS = listOf(
-    PageBackground.BLANK to "Blank", PageBackground.LINED to "Lined",
-    PageBackground.NARROW_LINED to "Narrow lined", PageBackground.GRID to "Grid",
-    PageBackground.DOT to "Dot", PageBackground.CORNELL to "Cornell",
-    PageBackground.INFINITE to "Infinite down", PageBackground.INFINITE_ALL to "Infinite all ways",
-)
 
 /**
  * Adds a page: its size and which way up, its paper, and where it goes. Opens
@@ -88,6 +82,8 @@ internal fun AddPageDialog(
     userTemplates: List<UserPageTemplate>,
     onDismiss: () -> Unit,
     onAdd: (NewPageSpec) -> Unit,
+    templateFile: (String) -> java.io.File,
+    onRenameTemplate: (String, String) -> Boolean,
 ) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("pens", Context.MODE_PRIVATE) }
@@ -148,19 +144,18 @@ internal fun AddPageDialog(
                         color = MaterialTheme.colorScheme.outline)
                 }
                 Text("Paper", style = MaterialTheme.typography.labelLarge)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(Ui.Space.s),
-                    verticalArrangement = Arrangement.spacedBy(Ui.Space.xs)) {
-                    SettingsChoiceChip(selected = paper == NewPagePaper.Same, onClick = { paper = NewPagePaper.Same },
-                        label = "Same as this page")
-                    PLAIN_PAPERS.forEach { (background, label) ->
-                        SettingsChoiceChip(selected = paper == NewPagePaper.Plain(background),
-                            onClick = { paper = NewPagePaper.Plain(background) }, label = label)
-                    }
-                    userTemplates.forEach { template ->
-                        SettingsChoiceChip(selected = paper == NewPagePaper.Template(template.id),
-                            onClick = { paper = NewPagePaper.Template(template.id) }, label = template.name)
-                    }
-                }
+                PaperPicker(
+                    selectedPlain = (paper as? NewPagePaper.Plain)?.background,
+                    selectedTemplate = (paper as? NewPagePaper.Template)?.id,
+                    userTemplates = userTemplates,
+                    templateFile = templateFile,
+                    onPlain = { paper = NewPagePaper.Plain(it) },
+                    onTemplate = { paper = NewPagePaper.Template(it) },
+                    onRenameTemplate = onRenameTemplate,
+                    same = true,
+                    sameSelected = paper == NewPagePaper.Same,
+                    onSame = { paper = NewPagePaper.Same },
+                )
                 Text("Where", style = MaterialTheme.typography.labelLarge)
                 Row(horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
                     SettingsChoiceChip(selected = !atEnd, onClick = { atEnd = false }, label = "After this page")

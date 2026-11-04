@@ -255,10 +255,16 @@ internal fun LibrarySection(text: String, modifier: Modifier = Modifier) {
  * it is folded and down while it is open, the name, and how many it holds.
  */
 @Composable
-internal fun LibrarySectionToggle(text: String, count: Int, expanded: Boolean, onToggle: () -> Unit) {
+internal fun LibrarySectionToggle(
+    text: String,
+    count: Int,
+    expanded: Boolean,
+    modifier: Modifier = Modifier,
+    onToggle: () -> Unit,
+) {
     val turn by animateFloatAsState(if (expanded) 90f else 0f, Ui.Motion.spring(), label = "sectionChevron")
     Row(
-        Modifier.fillMaxWidth().heightIn(min = 44.dp).clip(RoundedCornerShape(10.dp))
+        modifier.fillMaxWidth().heightIn(min = 44.dp).clip(RoundedCornerShape(10.dp))
             // No press highlight: the chevron turning is the answer to the tap.
             .clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
                 indication = null, onClick = onToggle)

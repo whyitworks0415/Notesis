@@ -769,8 +769,8 @@ class NoteStore(context: Context) {
      * stops existing, which is the behaviour worth having for something created
      * by typing a name.
      */
-    fun folders(): List<String> =
-        (savedFolders() + list().map { it.folder }).filter { it.isNotBlank() }.distinct().sorted()
+    /** Every folder, by path, with the folders that hold each one. */
+    fun folders(): List<String> = withAncestorFolders(savedFolders() + list().map { it.folder })
 
     private fun savedFolders(): List<String> = runCatching {
         val array = JSONArray(File(root, "folders.json").readText())
@@ -781,20 +781,22 @@ class NoteStore(context: Context) {
         atomicText(File(root, "folders.json"), JSONArray(names.map { it.trim() }
             .filter { it.isNotBlank() }.distinct().sorted()).toString())
 
-    fun createFolder(name: String): Boolean {
-        val clean = name.trim()
-        if (clean.isEmpty() || clean.contains('/')) return false
+    /** Makes the folder at [path] ("School/Maths" is Maths in School), and the folders above it. */
+    fun createFolder(path: String): Boolean {
+        val clean = normalizeFolderPath(path) ?: return false
         if (clean in folders()) return true
         writeFolders(savedFolders() + clean)
         return true
     }
 
+    /** Moves the folder [from] to the path [to], with every note and folder inside it. */
     fun renameFolder(from: String, to: String): Boolean {
-        val clean = to.trim()
-        if (from.isBlank() || clean.isBlank() || clean.contains('/') ||
+        val clean = normalizeFolderPath(to) ?: return false
+        if (from.isBlank() || isInFolder(clean, from) && clean != from ||
             (clean != from && clean in folders())) return false
-        list().filter { it.folder == from }.forEach { setFolder(it.id, clean) }
-        writeFolders(savedFolders().filterNot { it == from } + clean)
+        if (clean == from) return true
+        list().filter { isInFolder(it.folder, from) }.forEach { setFolder(it.id, movedFolderPath(it.folder, from, clean)) }
+        writeFolders(savedFolders().map { movedFolderPath(it, from, clean) } + clean)
         return true
     }
 
@@ -804,10 +806,11 @@ class NoteStore(context: Context) {
      * the top level instead.
      */
     fun deleteFolder(name: String, keepNotes: Boolean = false) {
-        list().filter { it.folder == name }.forEach {
-            if (keepNotes) setFolder(it.id, "") else moveToTrash(it.id)
+        // The folders inside go with it; kept notes go up to the folder it was in.
+        list().filter { isInFolder(it.folder, name) }.forEach {
+            if (keepNotes) setFolder(it.id, folderParent(name)) else moveToTrash(it.id)
         }
-        writeFolders(savedFolders().filterNot { it == name })
+        writeFolders(savedFolders().filterNot { isInFolder(it, name) })
     }
 
     fun pageTemplates(): List<UserPageTemplate> = runCatching {
@@ -819,6 +822,17 @@ class NoteStore(context: Context) {
     }.getOrDefault(emptyList())
 
     fun templateFile(id: String): File = File(root, "templates/$id.png")
+
+    /** Gives the page template [id] a new [name]; a blank name is refused. */
+    fun renamePageTemplate(id: String, name: String): Boolean = runCatching {
+        val clean = name.trim()
+        if (clean.isEmpty()) return false
+        val entries = pageTemplates().map { if (it.id == id) it.copy(name = clean) else it }
+        atomicText(File(root, "templates.json"), JSONArray(entries.map {
+            JSONObject().put("id", it.id).put("name", it.name)
+        }).toString())
+        true
+    }.getOrDefault(false)
 
     fun addPageTemplate(name: String, input: java.io.InputStream): UserPageTemplate? = runCatching {
         val bitmap = decodeSampled(input, MAX_TEMPLATE_PX) ?: error("Can't read the image")
@@ -842,11 +856,12 @@ class NoteStore(context: Context) {
 
     /** Files a note. A blank name puts it back at the top level. */
     fun setFolder(id: String, folder: String) {
-        if (folder.isNotBlank()) createFolder(folder)
+        val path = normalizeFolderPath(folder) ?: ""
+        if (path.isNotBlank()) createFolder(path)
         val file = File(root, "$id/meta.json")
         runCatching {
             val json = JSONObject(file.readText())
-            json.put("folder", folder.trim())
+            json.put("folder", path)
             file.writeText(json.toString())
         }
     }

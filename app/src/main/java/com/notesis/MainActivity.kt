@@ -345,6 +345,7 @@ class MainActivity : ComponentActivity() {
                 // A folder of Markdown files opened as a vault, and the file open in it.
                 var vaultTree by remember { mutableStateOf<Uri?>(null) }
                 var vaultFile by remember { mutableStateOf<VaultFile?>(null) }
+                var vaultFromHome by remember { mutableStateOf(false) }
                 // The notes a followed [[link]] came from, for the way back.
                 val vaultBack = remember { mutableStateListOf<VaultFile>() }
                 val markdownBack = remember { mutableStateListOf<NoteMeta>() }
@@ -456,14 +457,22 @@ class MainActivity : ComponentActivity() {
                                 source = remember(file.uri) {
                                     VaultMarkdownSource(vault, file) { next -> vaultBack += file; vaultFile = next }
                                 },
-                                onBack = { vaultFile = vaultBack.removeLastOrNull() },
+                                // A file opened from the library goes back there, not into the vault.
+                                onBack = {
+                                    val previous = vaultBack.removeLastOrNull()
+                                    if (previous == null && vaultFromHome) {
+                                        vaultFromHome = false
+                                        vaultFile = null
+                                        vaultTree = null
+                                    } else vaultFile = previous
+                                },
                                 onPdf = { text -> pickedDocument = markdownPdfRequest(this@MainActivity, file.name, text) },
                             )
                         }
                     } else {
                         MarkdownVaultScreen(
                             vault = vault,
-                            onOpen = { vaultBack.clear(); vaultFile = it },
+                            onOpen = { vaultBack.clear(); vaultFromHome = false; vaultFile = it },
                             onChangeFolder = { pickVault.launch(null) },
                             onBack = { vaultTree = null },
                         )
@@ -482,6 +491,13 @@ class MainActivity : ComponentActivity() {
                         initialFolder = libraryFolder,
                         onFolder = { libraryFolder = it },
                         onOpenVault = ::openVault,
+                        vaultTree = remember(vaultTree) { vaultTree ?: MarkdownVault.last(this@MainActivity) },
+                        onOpenVaultFile = { tree, file ->
+                            vaultBack.clear()
+                            vaultFromHome = true
+                            vaultTree = tree
+                            vaultFile = file
+                        },
                     )
                 } else if (note.kind == NoteKind.MARKDOWN) {
                     key(note.id) {
@@ -644,6 +660,10 @@ private fun NoteListScreen(
     onFolder: (String) -> Unit = {},
     /** Opens the folder of Markdown files kept as a vault, asking for one the first time. */
     onOpenVault: () -> Unit = {},
+    /** The vault opened last, if the app may still read it. */
+    vaultTree: Uri? = null,
+    /** Opens one of the vault's files straight from the library. */
+    onOpenVaultFile: (Uri, VaultFile) -> Unit = { _, _ -> },
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -671,6 +691,8 @@ private fun NoteListScreen(
     var bulkFolder by remember { mutableStateOf(false) }
     var naming by remember { mutableStateOf(false) }
     var templateRevision by remember { mutableIntStateOf(0) }
+    // A template just added, asked for its name.
+    var namingTemplate by remember { mutableStateOf<UserPageTemplate?>(null) }
     val userTemplates = remember(templateRevision) { store.pageTemplates() }
     var importing by remember { mutableStateOf(false) }
     // Which note is being written out, and whether as a PDF rather than a backup.
@@ -739,6 +761,14 @@ private fun NoteListScreen(
     var foldersHidden by remember { mutableStateOf(homeStore.foldersHidden) }
     var notesHidden by remember { mutableStateOf(homeStore.notesSectionHidden) }
     var markdownHidden by remember { mutableStateOf(homeStore.markdownSectionHidden) }
+    var vaultHidden by remember { mutableStateOf(homeStore.vaultSectionHidden) }
+    // The vault opened last, and its files newest first, read while its section is open.
+    val homeVault = remember(vaultTree) { vaultTree?.let { MarkdownVault(context, it) } }
+    val vaultFiles by produceState<List<VaultFile>?>(null, homeVault, vaultHidden, markdownHidden, revision) {
+        val vault = homeVault ?: run { value = null; return@produceState }
+        if (vaultHidden || markdownHidden) return@produceState
+        value = withContext(Dispatchers.IO) { runCatching { vault.files().sortedByDescending { it.modified } }.getOrNull() }
+    }
     var libraryFilter by remember { mutableIntStateOf(homeStore.libraryFilter) }
     var folderLooks by remember { mutableIntStateOf(0) }
     var pickingFolderThumb by remember { mutableStateOf<String?>(null) }
@@ -855,7 +885,7 @@ private fun NoteListScreen(
     // Kept by the caller too, so closing a note comes back to this folder.
     LaunchedEffect(folder) { onFolder(folder) }
     // Back leaves the folder before it leaves the app.
-    BackHandler(enabled = folder.isNotBlank()) { folder = "" }
+    BackHandler(enabled = folder.isNotBlank()) { folder = folderParent(folder) }
     // And selecting ends before either.
     BackHandler(enabled = selectionMode) { clearSelection() }
     var filing by remember { mutableStateOf<NoteMeta?>(null) }
@@ -865,7 +895,11 @@ private fun NoteListScreen(
     var menuFolder by remember { mutableStateOf<String?>(null) }
     var renamingNote by remember { mutableStateOf<NoteMeta?>(null) }
     val folders = remember(revision) { store.folders() }
-    val folderCounts = remember(notes) { notes.groupingBy { it.folder }.eachCount() }
+    // The folders in the one open, or at the top level; each counts what is in it and below.
+    val subfolders = remember(folders, folder) { folderChildren(folders, folder) }
+    val folderCounts = remember(notes, subfolders) {
+        subfolders.associateWith { path -> notes.count { isInFolder(it.folder, path) } }
+    }
     // Favourites first, then the chosen order within each group.
     val shown = (results ?: if (tagFilter != null) notes.filter { tagFilter in it.tags }
         else notes.filter { it.folder == folder }).sortedWith(
@@ -972,7 +1006,7 @@ private fun NoteListScreen(
                 }
             }
             if (added == null) report = "Couldn't add the template image"
-            else templateRevision++
+            else { templateRevision++; namingTemplate = added }
         }
     }
 
@@ -1156,27 +1190,34 @@ private fun NoteListScreen(
     val librarySide = if (narrowLibrary) Ui.Space.m else Ui.Space.l
     val libraryTitle = when {
         tagFilter != null -> "#$tagFilter"
-        folder.isNotBlank() -> folder
+        folder.isNotBlank() -> folderLeaf(folder)
         else -> "Notes"
     }
-    // How far the list has gone up under the header: 0 at the top, 1 once it
-    // has gone the first stretch, measured on an empty item of just that
-    // height at the head of the list so it runs smoothly however tall the
-    // rows after it are. Read only where things are laid out and drawn, so
-    // scrolling moves the header without composing it again.
+    // The header is either open or folded, never left half way: past half
+    // the empty stretch at the head of the list it folds, back above it it
+    // opens, each in one eased move. The moving value is read only where
+    // things are laid out and drawn, so it moves without composing the header.
     val foldPx = with(density) { HOME_FOLD_DISTANCE.toPx() }
-    val scrollFold = remember(foldPx) {
-        derivedStateOf {
-            if (gridState.firstVisibleItemIndex > 0) 1f
-            else (gridState.firstVisibleItemScrollOffset / foldPx).coerceIn(0f, 1f)
+    val scrolledPast by remember(foldPx) {
+        derivedStateOf { gridState.firstVisibleItemIndex > 0 || gridState.firstVisibleItemScrollOffset > foldPx / 2f }
+    }
+    val unfoldSpec: androidx.compose.animation.core.AnimationSpec<Float> =
+        tween(HOME_FOLD_MS, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+    val scrollFold = androidx.compose.animation.core.animateFloatAsState(
+        if (scrolledPast) 1f else 0f, unfoldSpec, label = "homeFold")
+    LaunchedEffect(scrolledPast) { if (!scrolledPast) { iconsOpen = false; searchOpen = false } }
+    val homeFocus = androidx.compose.ui.platform.LocalFocusManager.current
+    // Opened by hand while scrolled, either part folds back in as soon as the list moves again.
+    LaunchedEffect(gridState) {
+        snapshotFlow { gridState.isScrollInProgress }.collect { moving ->
+            if (moving && (iconsOpen || searchOpen || searchFocused)) {
+                iconsOpen = false
+                searchOpen = false
+                if (searchFocused) homeFocus.clearFocus()
+            }
         }
     }
-    val atTop by remember(scrollFold) { derivedStateOf { scrollFold.value < 0.01f } }
-    LaunchedEffect(atTop) { if (atTop) { iconsOpen = false; searchOpen = false } }
     val selecting = rememberUpdatedState(selectionMode)
-    val effectsHere = rememberLiquidGlassEffectsAllowed()
-    val unfoldSpec: androidx.compose.animation.core.AnimationSpec<Float> =
-        if (effectsHere) Ui.Motion.spring(0.86f) else snap()
     val iconsUnfold = androidx.compose.animation.core.animateFloatAsState(
         if (iconsOpen) 1f else 0f, unfoldSpec, label = "homeIcons")
     val searchUnfold = androidx.compose.animation.core.animateFloatAsState(
@@ -1237,9 +1278,12 @@ private fun NoteListScreen(
             val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
             val button = LIBRARY_SEARCH_HEIGHT
             Box(Modifier.fillMaxWidth()) {
-                Box(Modifier.matchParentSize().graphicsLayer { alpha = scrollFold.value }
-                    .background(androidx.compose.ui.graphics.Brush.verticalGradient(
-                        listOf(fade.copy(alpha = 0.94f), fade.copy(alpha = 0.6f), fade.copy(alpha = 0f)))))
+                // A quarter of the header's height of fade at the very top, over the status bar.
+                Box(Modifier.matchParentSize()) {
+                    Box(Modifier.fillMaxWidth().fillMaxHeight(0.25f).graphicsLayer { alpha = scrollFold.value }
+                        .background(androidx.compose.ui.graphics.Brush.verticalGradient(
+                            listOf(fade.copy(alpha = 0.94f), fade.copy(alpha = 0.6f), fade.copy(alpha = 0f)))))
+                }
                 Column(
                     Modifier.windowInsetsPadding(TopAppBarDefaults.windowInsets).fillMaxWidth()
                         .padding(start = librarySide, end = librarySide, top = Ui.Space.xs, bottom = Ui.Space.s),
@@ -1252,8 +1296,8 @@ private fun NoteListScreen(
                             Box(Modifier.size(button), contentAlignment = Alignment.Center) {
                                 Box(Modifier.matchParentSize().graphicsLayer { alpha = scrollFold.value }
                                     .skinMaterial(CircleShape, role = ChromeRole.TOOLBAR))
-                                IconButton(onClick = { folder = "" }) {
-                                    Icon(Reicons.ArrowBack, contentDescription = "All notes")
+                                IconButton(onClick = { folder = folderParent(folder) }) {
+                                    Icon(Reicons.ArrowBack, contentDescription = "Back")
                                 }
                             }
                             Spacer(Modifier.width(Ui.Space.s))
@@ -1332,7 +1376,7 @@ private fun NoteListScreen(
                                         .combinedClickable(
                                             onClick = {
                                                 when {
-                                                    selectionMode || scrollFold.value < 0.01f -> homeMore = true
+                                                    selectionMode || !scrolledPast -> homeMore = true
                                                     else -> iconsOpen = !iconsOpen
                                                 }
                                             },
@@ -1405,7 +1449,7 @@ private fun NoteListScreen(
                                     searchOpen = true
                                     runCatching { searchFocus.requestFocus() }
                                 }
-                                !selectionMode && scrollFold.value >= 0.01f -> {
+                                !selectionMode && scrolledPast -> {
                                     searchOpen = false
                                     focusManager.clearFocus()
                                 }
@@ -1475,8 +1519,9 @@ private fun NoteListScreen(
                 .background(homeColor?.let { Color(it) } ?: MaterialTheme.colorScheme.surface),
         ) {
         HomeBackground(homePhoto)
-        val emptyHere = shown.isEmpty() && (folder.isNotBlank() || results != null || folders.isEmpty())
-        val foldersHere = results == null && folder.isBlank() && folders.isNotEmpty() && tagFilter == null &&
+        val emptyHere = shown.isEmpty() &&
+            (results != null || subfolders.isEmpty() || libraryFilter == LIBRARY_NOTES || libraryFilter == LIBRARY_MARKDOWN)
+        val foldersHere = results == null && subfolders.isNotEmpty() && tagFilter == null &&
             libraryFilter.let { it == LIBRARY_ALL || it == LIBRARY_FOLDERS }
         val showFolders = foldersHere && !foldersHidden
         val inkShown = if (libraryFilter == LIBRARY_ALL || libraryFilter == LIBRARY_NOTES)
@@ -1506,7 +1551,7 @@ private fun NoteListScreen(
             verticalArrangement = Arrangement.spacedBy(Ui.Space.m),
             modifier = Modifier.fillMaxSize().dragToSelect(
                 tiles = libraryTiles,
-                order = { (if (showFolders) folders.map(::folderKey) else emptyList()) + visibleNotes.map { it.id } },
+                order = { (if (showFolders) subfolders.map(::folderKey) else emptyList()) + visibleNotes.map { it.id } },
                 selection = { selectionKeys() },
                 onSelection = ::setSelection,
                 onHold = {
@@ -1541,17 +1586,17 @@ private fun NoteListScreen(
             // are a place, not another note.
             if (foldersHere) {
                 item(key = "folders-heading", span = { GridItemSpan(maxLineSpan) }) {
-                    LibrarySectionToggle("Folders", folders.size, expanded = !foldersHidden) {
+                    LibrarySectionToggle("Folders", subfolders.size, expanded = !foldersHidden) {
                         foldersHidden = !foldersHidden
                         homeStore.foldersHidden = foldersHidden
                     }
                 }
             }
             if (showFolders) {
-                items(folders, key = { folderKey(it) }) { name ->
+                items(subfolders, key = { folderKey(it) }) { name ->
                     val look = remember(name, folderLooks) { homeStore.folderLook(context, name) }
                     FolderTile(
-                        name = name,
+                        name = folderLeaf(name),
                         count = folderCounts[name] ?: 0,
                         tint = look.color,
                         thumbnail = look.thumbnail,
@@ -1636,6 +1681,9 @@ private fun NoteListScreen(
                     selected = note.id in selectedIds,
                     selectionMode = selectionMode,
                     hasCustomThumbnail = note.thumbnail?.name == NoteStore.CUSTOM_THUMB,
+                    markdownSource = if (note.kind == NoteKind.MARKDOWN) {
+                        { runCatching { store.loadMarkdown(note.id) }.getOrNull() }
+                    } else null,
                     onOpen = {
                         if (selectionMode) {
                             if (note.id in selectedIds) selectedIds.remove(note.id)
@@ -1715,42 +1763,49 @@ private fun NoteListScreen(
                 }
                 if (!notesHidden) noteItems(inkShown)
             }
-            if (mdShown.isNotEmpty()) {
+            // Markdown notes are cards like the rest, and under them the vault -
+            // the folder of .md files kept outside the app - folds away on its own.
+            val vaultHere = results == null && folder.isBlank() && tagFilter == null &&
+                (libraryFilter == LIBRARY_ALL || libraryFilter == LIBRARY_MARKDOWN)
+            if (mdShown.isNotEmpty() || vaultHere) {
                 item(key = "markdown-heading", span = { GridItemSpan(maxLineSpan) }) {
                     LibrarySectionToggle("Markdown", mdShown.size, expanded = !markdownHidden) {
                         markdownHidden = !markdownHidden
                         homeStore.markdownSectionHidden = markdownHidden
                     }
                 }
-                // Markdown files are many and small: a compact list, two across,
-                // opened from the vault's own entry for the folder tree.
                 if (!markdownHidden) {
-                    item(key = "markdown-vault", span = { GridItemSpan(maxLineSpan) }) {
-                        TextButton(onClick = onOpenVault) {
-                            Icon(Reicons.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(Ui.Space.xs))
-                            Text("Open the Markdown vault")
+                    noteItems(mdShown)
+                    if (vaultHere) {
+                        item(key = "vault-heading", span = { GridItemSpan(maxLineSpan) }) {
+                            LibrarySectionToggle(
+                                if (homeVault != null) "Vault · ${homeVault.label}" else "Vault",
+                                vaultFiles?.size ?: 0,
+                                expanded = !vaultHidden,
+                                modifier = Modifier.padding(start = Ui.Space.m),
+                            ) {
+                                vaultHidden = !vaultHidden
+                                homeStore.vaultSectionHidden = vaultHidden
+                            }
                         }
-                    }
-                    items(mdShown, key = { it.id }, span = { GridItemSpan((maxLineSpan / 2).coerceAtLeast(1)) }) { note ->
-                        MarkdownNoteRow(
-                            note = note,
-                            selected = note.id in selectedIds,
-                            selectionMode = selectionMode,
-                            modifier = Modifier.libraryTile(libraryTiles, note.id),
-                            onOpen = {
-                                if (selectionMode) {
-                                    if (note.id in selectedIds) selectedIds.remove(note.id) else selectedIds.add(note.id)
-                                } else onOpen(note)
-                            },
-                            onRename = { renamingNote = note },
-                            onMove = { filing = note },
-                            onExport = {
-                                markdownExportId = note.id
-                                saveMarkdown.launch(safeFileName(note.title) + ".md")
-                            },
-                            onDelete = { pendingDelete = note },
-                        )
+                        if (!vaultHidden) {
+                            vaultFiles.orEmpty().take(HOME_VAULT_FILES).forEach { file ->
+                                item(key = "vault:${file.uri}", span = { GridItemSpan((maxLineSpan / 2).coerceAtLeast(1)) }) {
+                                    VaultFileRow(file, onOpen = { homeVault?.let { onOpenVaultFile(it.tree, file) } })
+                                }
+                            }
+                            item(key = "vault-open", span = { GridItemSpan(maxLineSpan) }) {
+                                TextButton(onClick = onOpenVault, modifier = Modifier.padding(start = Ui.Space.s)) {
+                                    Icon(Reicons.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(Ui.Space.xs))
+                                    Text(when {
+                                        homeVault == null -> "Choose a folder of Markdown files"
+                                        (vaultFiles?.size ?: 0) > HOME_VAULT_FILES -> "Open the vault for all ${vaultFiles?.size} files"
+                                        else -> "Open the vault"
+                                    })
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1764,7 +1819,7 @@ private fun NoteListScreen(
         ) {
             val inkSelected = selectedIds.count { id -> notes.any { it.id == id && it.kind == NoteKind.INK } }
             SelectionActions {
-                val everything = (if (showFolders) folders.map(::folderKey) else emptyList()) + visibleNotes.map { it.id }
+                val everything = (if (showFolders) subfolders.map(::folderKey) else emptyList()) + visibleNotes.map { it.id }
                 val allIn = everything.isNotEmpty() && selectionKeys().containsAll(everything)
                 SelectionAction(Reicons.Checklist, if (allIn) "None" else "All") {
                     setSelection(if (allIn) emptySet() else everything.toSet())
@@ -1899,12 +1954,12 @@ private fun NoteListScreen(
         val folderCount = selectedFolders.size
         // Notes inside the selected folders that are not selected themselves.
         val inside = remember(selectedFolders.toList(), selectedIds.toList(), revision) {
-            store.list().count { it.folder in selectedFolders && it.id !in selectedIds }
+            store.list().count { note -> selectedFolders.any { isInFolder(note.folder, it) } && note.id !in selectedIds }
         }
         fun finish(keepNotes: Boolean) {
             selectedIds.forEach(store::moveToTrash)
             selectedFolders.forEach { store.deleteFolder(it, keepNotes = keepNotes) }
-            if (folder in selectedFolders) folder = ""
+            selectedFolders.firstOrNull { isInFolder(folder, it) }?.let { folder = folderParent(it) }
             clearSelection(); bulkDelete = false; revision++
         }
         AlertDialog(
@@ -1941,13 +1996,15 @@ private fun NoteListScreen(
     if (creatingFolder || renamingFolder) {
         val rename = renamingFolder
         FolderNameDialog(
-            title = if (rename) "Rename folder" else "New folder",
-            initial = if (rename) folderTarget else "",
+            title = if (rename) "Rename folder" else if (folder.isBlank()) "New folder" else "New folder in ${folderLeaf(folder)}",
+            initial = if (rename) folderLeaf(folderTarget) else "",
             onDismiss = { creatingFolder = false; renamingFolder = false; menuFolder = null },
             onConfirm = { name ->
-                val ok = if (rename) store.renameFolder(folderTarget, name) else store.createFolder(name)
+                // A new folder goes in the one open; a renamed one stays where it is.
+                val path = folderChild(if (rename) folderParent(folderTarget) else folder, name)
+                val ok = if (rename) store.renameFolder(folderTarget, path) else store.createFolder(path)
                 if (ok) {
-                    if (rename && folder == folderTarget) folder = name.trim()
+                    if (rename) folder = movedFolderPath(folder, folderTarget, path)
                     revision++
                 } else report = "That folder name can't be used"
                 creatingFolder = false; renamingFolder = false; menuFolder = null
@@ -1955,16 +2012,16 @@ private fun NoteListScreen(
         )
     }
     if (deletingFolder) {
-        val count = remember(folderTarget, revision) { store.list().count { it.folder == folderTarget } }
+        val count = remember(folderTarget, revision) { store.list().count { isInFolder(it.folder, folderTarget) } }
         fun deleted() {
-            if (folder == folderTarget) folder = ""
+            if (isInFolder(folder, folderTarget)) folder = folderParent(folderTarget)
             revision++
             deletingFolder = false
             menuFolder = null
         }
         AlertDialog(
             onDismissRequest = { deletingFolder = false; menuFolder = null },
-            title = { Text("Delete folder \"$folderTarget\"?") },
+            title = { Text("Delete folder \"${folderLeaf(folderTarget)}\"?") },
             text = { Text(if (count == 0) "The folder is empty." else
                 "${countNoun(count, "note")} in it. Move them to Trash with the folder, or keep them in the library. " +
                     "Restoring a note from Trash brings the folder back.") },
@@ -2033,9 +2090,22 @@ private fun NoteListScreen(
         )
     }
 
+    namingTemplate?.let { added ->
+        TemplateNameDialog(
+            title = "Name the template",
+            initial = added.name,
+            onDismiss = { namingTemplate = null },
+            onConfirm = { name ->
+                if (store.renamePageTemplate(added.id, name)) templateRevision++
+                namingTemplate = null
+            },
+        )
+    }
     if (naming) {
         NameDialog(
             userTemplates = userTemplates,
+            templateFile = store::templateFile,
+            onRenameTemplate = { id, name -> store.renamePageTemplate(id, name).also { if (it) templateRevision++ } },
             onAddTemplate = { addPageTemplate.launch("image/*") },
             onDismiss = { naming = false },
             onConfirm = { title, kind, background, templateId ->
@@ -2577,8 +2647,14 @@ private fun NoteCard(
     onLabel: () -> Unit = {},
     onLock: () -> Unit = {},
     onMoveFavorite: ((Int) -> Unit)? = null,
+    /** A Markdown note's words, read off the main thread, to show on the card until it has a picture of its own. */
+    markdownSource: (() -> String?)? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    val markdown by produceState<MdPreview?>(null, note.id, note.modified, markdownSource != null) {
+        val read = markdownSource ?: return@produceState
+        value = withContext(Dispatchers.Default) { read()?.let { markdownPreview(it) } }
+    }
     // Read off the main thread and scaled down to the card, keyed on the file's
     // timestamp so a replaced picture is read again. Decoded whole in
     // composition, one per card as it scrolled in, it made a long list stutter.
@@ -2636,7 +2712,20 @@ private fun NoteCard(
                     .border(Dp.Hairline, MaterialTheme.colorScheme.outlineVariant, paper),
                 contentAlignment = Alignment.Center,
             ) {
-                if (preview != null && !note.locked) {
+                val words = markdown
+                if (words != null && !hasCustomThumbnail && !note.locked) {
+                    // The note's own words, set as they read, from the top of the page.
+                    val scheme = MaterialTheme.colorScheme
+                    Text(
+                        remember(words, scheme.primary) {
+                            markdownPreviewText(words, MD_CARD_BODY, scheme.primary, scheme.onSurfaceVariant)
+                        },
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = MD_CARD_BODY, lineHeight = MD_CARD_BODY * 1.35f),
+                        color = scheme.onSurface,
+                        overflow = TextOverflow.Clip,
+                        modifier = Modifier.fillMaxSize().padding(10.dp),
+                    )
+                } else if (preview != null && !note.locked) {
                     Image(
                         bitmap = preview.asImageBitmap(),
                         contentDescription = null,
@@ -4078,6 +4167,8 @@ private fun NameDialog(
     onAddTemplate: () -> Unit,
     onDismiss: () -> Unit,
     onConfirm: (String, NoteKind, PageBackground, String?) -> Unit,
+    templateFile: (String) -> java.io.File,
+    onRenameTemplate: (String, String) -> Boolean,
 ) {
     var title by remember { mutableStateOf("") }
     var kind by remember { mutableStateOf(NoteKind.INK) }
@@ -4087,7 +4178,7 @@ private fun NameDialog(
         onDismissRequest = onDismiss,
         title = { Text("New note") },
         text = {
-            Column {
+            Column(Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState())) {
                 OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
@@ -4108,41 +4199,16 @@ private fun NameDialog(
                 if (kind == NoteKind.INK) {
                     Spacer(Modifier.height(12.dp))
                     Text("First page template", style = MaterialTheme.typography.labelMedium)
-                    val labels = listOf(
-                        PageBackground.BLANK to "Blank", PageBackground.LINED to "Lined",
-                        PageBackground.NARROW_LINED to "Narrow lined", PageBackground.GRID to "Grid",
-                        PageBackground.DOT to "Dot", PageBackground.CORNELL to "Cornell",
-                        PageBackground.INFINITE to "Infinite down", PageBackground.INFINITE_ALL to "Infinite all ways",
+                    Spacer(Modifier.height(Ui.Space.xs))
+                    PaperPicker(
+                        selectedPlain = background,
+                        selectedTemplate = templateId,
+                        userTemplates = userTemplates,
+                        templateFile = templateFile,
+                        onPlain = { background = it; templateId = null },
+                        onTemplate = { templateId = it; background = PageBackground.CUSTOM },
+                        onRenameTemplate = onRenameTemplate,
                     )
-                    Column {
-                        labels.chunked(3).forEach { row ->
-                            Row(horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
-                                row.forEach { (choice, label) ->
-                                    FilterChip(
-                                        selected = background == choice && templateId == null,
-                                        onClick = { background = choice; templateId = null },
-                                        label = { Text(label) },
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    if (userTemplates.isNotEmpty()) {
-                        Text("Custom templates", style = MaterialTheme.typography.labelMedium)
-                        Row(Modifier.horizontalScroll(rememberScrollState())) {
-                            userTemplates.forEach { template ->
-                                FilterChip(
-                                    selected = templateId == template.id,
-                                    onClick = {
-                                        templateId = template.id
-                                        background = PageBackground.CUSTOM
-                                    },
-                                    label = { Text(template.name) },
-                                )
-                                Spacer(Modifier.width(6.dp))
-                            }
-                        }
-                    }
                     TextButton(onClick = onAddTemplate) { Text("+ Add image template") }
                 }
             }
@@ -4984,14 +5050,16 @@ private fun NoteScreen(
     if (addingPage) AddPageDialog(
         userTemplates = remember(edits) { store.pageTemplates() },
         onDismiss = { addingPage = false },
-    ) { spec ->
+        templateFile = store::templateFile,
+        onRenameTemplate = store::renamePageTemplate,
+        onAdd = { spec ->
         addingPage = false
         canvas?.let { view ->
             val at = view.addPage(view.currentPageIndex(), spec.width, spec.height, spec.paper, spec.atEnd)
             view.scrollToPage(at)
         }
         edits++
-    }
+    })
 
     // Split screen and pop-up view resize the window, and every resize is a
     // configuration change; reading it here re-evaluates this then.
@@ -8480,7 +8548,8 @@ private fun FolderNameDialog(
         title = { Text(title) },
         text = { OutlinedTextField(
             value = name,
-            onValueChange = { name = it },
+            // A '/' would make a folder inside it; folders inside go through New folder there.
+            onValueChange = { name = it.replace("/", "") },
             singleLine = true,
             label = { Text("Folder name") },
         ) },
@@ -9493,49 +9562,35 @@ internal const val DROP_RIGHT = 1
 internal const val DROP_TOP = 2
 internal const val DROP_BOTTOM = 3
 
-/** A Markdown note in the library's compact list: its mark, name, when it changed, its tags. */
+/** How many of the vault's files the library shows, newest first; the rest are in the vault. */
+internal const val HOME_VAULT_FILES = 12
+
+/** One of the vault's Markdown files in the library: its mark, name, where it is and when it changed. */
 @Composable
-private fun MarkdownNoteRow(
-    note: NoteMeta, selected: Boolean, selectionMode: Boolean, modifier: Modifier,
-    onOpen: () -> Unit, onRename: () -> Unit, onMove: () -> Unit, onExport: () -> Unit, onDelete: () -> Unit,
-) {
-    var menu by remember { mutableStateOf(false) }
+private fun VaultFileRow(file: VaultFile, onOpen: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     Row(
-        modifier.fillMaxWidth().heightIn(min = 64.dp).clip(Ui.Shape.card)
+        Modifier.fillMaxWidth().heightIn(min = 56.dp).clip(Ui.Shape.card)
             .background(scheme.surface.copy(alpha = 0.72f))
-            .then(if (selected) Modifier.border(2.dp, scheme.primary, Ui.Shape.card) else Modifier)
             .clickable(onClick = onOpen)
-            .padding(start = Ui.Space.m, end = Ui.Space.xs),
+            .padding(horizontal = Ui.Space.m),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(if (selectionMode && selected) Reicons.Check else Reicons.Description, contentDescription = null,
-            tint = scheme.primary, modifier = Modifier.size(28.dp))
+        Icon(Reicons.Description, contentDescription = null, tint = scheme.primary, modifier = Modifier.size(24.dp))
         Spacer(Modifier.width(Ui.Space.m))
         Column(Modifier.weight(1f)) {
-            Text(note.title.ifBlank { "Untitled" }, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+            Text(file.name, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
                 listOfNotNull(
-                    java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT)
-                        .format(Date(note.modified)),
-                    note.folder.takeIf { it.isNotBlank() },
-                    note.tags.takeIf { it.isNotEmpty() }?.joinToString(" ") { "#$it" },
+                    file.path.substringBeforeLast('/', "").takeIf { it.isNotBlank() },
+                    file.modified.takeIf { it > 0 }?.let {
+                        java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM).format(Date(it))
+                    },
                 ).joinToString(" · "),
                 style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant,
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
-        }
-        if (!selectionMode) Box {
-            IconButton(onClick = { menu = true }) {
-                Icon(Reicons.MoreVert, contentDescription = "Options for ${note.title}", tint = scheme.onSurfaceVariant)
-            }
-            GlassMenu(menu, onDismissRequest = { menu = false }) {
-                GlassMenuItem(text = { Text("Rename") }, onClick = { menu = false; onRename() })
-                GlassMenuItem(text = { Text("Move to folder") }, onClick = { menu = false; onMove() })
-                GlassMenuItem(text = { Text("Export as .md") }, onClick = { menu = false; onExport() })
-                GlassMenuItem(text = { Text("Delete") }, onClick = { menu = false; onDelete() })
-            }
         }
     }
 }
@@ -9546,14 +9601,16 @@ internal val FOLDER_COLORS = listOf(
     0xFF00ACC1.toInt(), 0xFF1E88E5.toInt(), 0xFF8E24AA.toInt(), 0xFF6D4C41.toInt(), 0xFF546E7A.toInt(),
 )
 
-/** The whiteboard's own white, a touch warmer than the page so the page's edge still shows. */
 /** The library header's top row: four fifths of the bar it had before. */
 internal val HOME_BAR_HEIGHT = 44.dp
 /** Between the header's row of buttons and its search. */
 internal val HOME_ROW_GAP = 6.dp
-/** How far the list scrolls while the header folds from open to its round buttons. */
+/** The empty stretch at the head of the library; past half of it the header folds. */
 internal val HOME_FOLD_DISTANCE = 72.dp
+/** How long the header takes to fold or open, eased in and out. */
+internal const val HOME_FOLD_MS = 300
 
+/** The whiteboard's own white, a touch warmer than the page so the page's edge still shows. */
 internal const val WHITEBOARD_WHITE = 0xFFF7F7F4.toInt()
 
 /** The colours the whiteboard can take; 0 is [WHITEBOARD_WHITE]. */

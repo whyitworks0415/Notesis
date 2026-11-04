@@ -316,6 +316,11 @@ class PenStore(context: Context) {
         get() = prefs.getBoolean("libraryMarkdownHidden", false)
         set(value) = prefs.edit().putBoolean("libraryMarkdownHidden", value).apply()
 
+    /** The vault's part of the library's Markdown section, folded away. */
+    var vaultSectionHidden: Boolean
+        get() = prefs.getBoolean("libraryVaultHidden", false)
+        set(value) = prefs.edit().putBoolean("libraryVaultHidden", value).apply()
+
     /** What the library's bottom bar shows: [LIBRARY_ALL], folders, notes or Markdown alone. */
     var libraryFilter: Int
         get() = prefs.getInt("libraryFilter", LIBRARY_ALL)
