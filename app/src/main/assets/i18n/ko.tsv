@@ -1492,3 +1492,19 @@ Fold {0}	{0} 접기
 Open {0}	{0} 펼치기
 Dims the app itself; the screen's brightness and other apps are left as they are.	앱 화면만 어둡게 합니다. 기기 밝기와 다른 앱은 그대로입니다.
 The app as bright as the screen.	앱이 화면 밝기 그대로입니다.
+Text tool	텍스트 도구
+Tap the page to type there.	페이지를 누르면 그 자리에 바로 씁니다.
+Tap the page to put a table there. Cells take numbers, text and formulas such as =SUM(A1:A3).	페이지를 누르면 그 자리에 표를 넣습니다. 칸에는 숫자, 글자, =SUM(A1:A3) 같은 수식을 쓸 수 있습니다.
+Add a table	표 추가
+Add styled text	서식 있는 텍스트 추가
+# heading, **bold**, *italic*, - list, - [ ] box, `code`, > quote	# 제목, **굵게**, *기울임*, - 목록, - [ ] 체크, `코드`, > 인용
+Styles	서식
+New table	새 표
+Edit table	표 편집
+Text, a number, or =SUM(A1:A3)	글자, 숫자, 또는 =SUM(A1:A3)
++ Row	+ 행
++ Column	+ 열
+− Row	− 행
+− Column	− 열
+Heading row	제목 행
+The table is too big. Split it into more tables.	표가 너무 큽니다. 여러 표로 나눠 주세요.

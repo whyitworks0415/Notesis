@@ -296,6 +296,16 @@ class PenStore(context: Context) {
         get() = prefs.getFloat("whiteboardMargin", 0.8f)
         set(value) = prefs.edit().putFloat("whiteboardMargin", value).apply()
 
+    /** The text tool puts tables rather than text. */
+    var textToolTable: Boolean
+        get() = prefs.getBoolean("textToolTable", false)
+        set(value) = prefs.edit().putBoolean("textToolTable", value).apply()
+
+    /** Text typed on the page is Markdown. */
+    var textMarkdown: Boolean
+        get() = prefs.getBoolean("textMarkdown", true)
+        set(value) = prefs.edit().putBoolean("textMarkdown", value).apply()
+
     /** The library's handwritten notes folded away under their heading. */
     var notesSectionHidden: Boolean
         get() = prefs.getBoolean("libraryNotesHidden", false)

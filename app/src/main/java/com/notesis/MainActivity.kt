@@ -4245,6 +4245,15 @@ private fun NoteScreen(
     var editingPicture by remember { mutableIntStateOf(0) }
     var replacingText by remember { mutableStateOf<PageImage?>(null) }
     var textPosition by remember { mutableStateOf<Triple<Int, Float, Float>?>(null) }
+    // Text typed on the page where it was tapped, and tables; see InlineTextEditor and TableEditorDialog.
+    var inlineText by remember { mutableStateOf<InlineTextTarget?>(null) }
+    var inlineDraft by remember { mutableStateOf("") }
+    var inlineSize by remember { mutableFloatStateOf(32f) }
+    var textDialogInitial by remember { mutableStateOf<TextBoxContent?>(null) }
+    var tableEditing by remember { mutableStateOf<Triple<TextBoxContent?, PageImage?, Triple<Int, Float, Float>?>?>(null) }
+    var textToolPanel by remember { mutableStateOf(false) }
+    var textToolTable by remember { mutableStateOf(penStore.textToolTable) }
+    var textMarkdown by remember { mutableStateOf(penStore.textMarkdown) }
     var captured by remember { mutableStateOf<Bitmap?>(null) }
     // How captures come out, kept between them: picking 4x once is picking it.
     val captureOptionPrefs = remember { context.getSharedPreferences("capture", android.content.Context.MODE_PRIVATE) }
@@ -4775,6 +4784,57 @@ private fun NoteScreen(
     }
     // The gallery, not the file browser: the system photo picker opens on the
     // pictures themselves and needs no storage permission.
+    /** Puts [content] on the page as a text box or table: in place of [replacing], or at [position]. */
+    fun placeText(content: TextBoxContent, replacing: PageImage?, position: Triple<Int, Float, Float>?) {
+        scope.launch {
+            val result = withContext(Dispatchers.IO) { runCatching {
+                val bitmap = renderTextBox(content)
+                try {
+                    val image = store.addImage(note.id, bitmap) ?: error("Couldn't save the text")
+                    Triple(image.first, bitmap.width, bitmap.height)
+                } finally { bitmap.recycle() }
+            } }
+            result.onSuccess { (id, width, height) ->
+                canvas?.putTextBox(id, width, height, content, replacing, position)
+                edits++
+            }.onFailure {
+                KToast.makeText(context, it.message ?: "Couldn't save the text", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    /** What is being typed on the page goes onto it; nothing typed, nothing changes. */
+    fun commitInlineText() {
+        val target = inlineText ?: return
+        inlineText = null
+        val typed = inlineDraft.trimEnd()
+        if (typed.isBlank()) return
+        val base = target.initial ?: TextBoxContent(typed)
+        placeText(base.copy(text = typed, size = inlineSize, html = null, markdown = textMarkdown),
+            target.replacing, target.position)
+    }
+
+    /** Typing starts on the page: at [position], or over the box [replacing] holding [initial]. */
+    fun openInlineText(position: Triple<Int, Float, Float>?, replacing: PageImage?, initial: TextBoxContent?) {
+        commitInlineText()
+        val view = canvas ?: return
+        val pageIndex = position?.first ?: replacing?.let(view::pageIndexOfImage) ?: return
+        if (pageIndex < 0) return
+        val x = position?.second ?: replacing?.x ?: 0f
+        val y = position?.third ?: replacing?.y ?: 0f
+        val at = view.windowPointOfPage(pageIndex, x, y)
+        inlineDraft = initial?.text.orEmpty()
+        inlineSize = initial?.size ?: 32f
+        inlineText = InlineTextTarget(position, replacing, Offset(at.x, at.y), view.pageScaleOnScreen(), initial)
+    }
+
+    /** The page tapped with the text tool: a table there, or typing there. */
+    fun textAt(page: Int, x: Float, y: Float) {
+        if (inlineText != null) { commitInlineText(); return }
+        if (textToolTable) tableEditing = Triple(null, null, Triple(page, x, y))
+        else openInlineText(Triple(page, x, y), null, null)
+    }
+
     val pickImage = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia(),
     ) { uri: Uri? ->
@@ -4786,6 +4846,10 @@ private fun NoteScreen(
     BackHandler {
         if (selectedText != null) canvas?.clearSelection() else onBack()
     }
+
+    // Text being typed on the page goes on it when the tool changes or Back is pressed.
+    LaunchedEffect(mode) { if (mode != EditMode.TEXT) commitInlineText() }
+    BackHandler(enabled = inlineText != null) { commitInlineText() }
 
     // Adding a page asks what kind: size, paper and where it goes.
     var addingPage by remember { mutableStateOf(false) }
@@ -4912,7 +4976,8 @@ private fun NoteScreen(
                 pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
             },
             onText = {
-                if (mode == EditMode.TEXT) { replacingText = null; textPosition = null; showTextBox = true }
+                // Tapped again, the text tool's own panel: text or table, and how.
+                if (mode == EditMode.TEXT) textToolPanel = true
                 mode = EditMode.TEXT
                 canvas?.clearSelection()
             },
@@ -5155,9 +5220,7 @@ private fun NoteScreen(
                         }
                         onSelectionChanged = { selectedText = it?.text; selectedPdf = it }
                         onImageSelected = { imageSelected = it; edits++ }
-                        onTextRequested = { page, x, y ->
-                            replacingText = null; textPosition = Triple(page, x, y); showTextBox = true
-                        }
+                        onTextRequested = { page, x, y -> textAt(page, x, y) }
                         onLassoSelected = { lassoCount = it; lassoMoves++ }
                         onLassoScreenMoved = { lassoMoves++ }
                         // A file that cannot be read is remembered as such: it was
@@ -6569,9 +6632,10 @@ private fun NoteScreen(
             )
         }
 
-        if (showTextBox) TextBoxDialog(replacingText?.textContent,
-            onDismiss = { showTextBox = false }, onSave = { content ->
+        if (showTextBox) TextBoxDialog(textDialogInitial ?: replacingText?.textContent,
+            onDismiss = { showTextBox = false; textDialogInitial = null }, onSave = { content ->
                 val replacing = replacingText
+                textDialogInitial = null
                 scope.launch {
                     val result = withContext(Dispatchers.IO) { runCatching {
                         val bitmap = renderTextBox(content)
@@ -6591,13 +6655,81 @@ private fun NoteScreen(
                 }
             })
 
+        inlineText?.let { target ->
+            InlineTextEditor(
+                target = target,
+                text = inlineDraft,
+                onText = { inlineDraft = it },
+                size = inlineSize,
+                onSize = { inlineSize = it },
+                onMoreStyles = {
+                    // The full editor, with what has been typed so far.
+                    val base = target.initial ?: TextBoxContent(inlineDraft)
+                    textDialogInitial = base.copy(text = inlineDraft, size = inlineSize)
+                    replacingText = target.replacing
+                    textPosition = target.position
+                    inlineText = null
+                    showTextBox = true
+                },
+                onDone = { commitInlineText() },
+            )
+        }
+        tableEditing?.let { (initial, replacing, position) ->
+            TableEditorDialog(initial, onDismiss = { tableEditing = null }) { content ->
+                tableEditing = null
+                placeText(content, replacing, position)
+            }
+        }
+        if (textToolPanel) AlertDialog(
+            onDismissRequest = { textToolPanel = false },
+            title = { Text("Text tool") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+                        SettingsChoiceChip(selected = !textToolTable, onClick = {
+                            textToolTable = false; penStore.textToolTable = false
+                        }, label = "Text")
+                        SettingsChoiceChip(selected = textToolTable, onClick = {
+                            textToolTable = true; penStore.textToolTable = true
+                        }, label = "Table")
+                    }
+                    if (!textToolTable) {
+                        SettingsToggle("Markdown", textMarkdown, {
+                            textMarkdown = it; penStore.textMarkdown = it
+                        }, hint = "# heading, **bold**, *italic*, - list, - [ ] box, `code`, > quote")
+                        SettingsNote("Tap the page to type there.")
+                    } else {
+                        SettingsNote("Tap the page to put a table there. Cells take numbers, text and formulas such as =SUM(A1:A3).")
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    textToolPanel = false
+                    if (textToolTable) tableEditing = Triple(null, null, null)
+                    else { replacingText = null; textPosition = null; textDialogInitial = null; showTextBox = true }
+                }) { Text(if (textToolTable) "Add a table" else "Add styled text") }
+            },
+            dismissButton = { TextButton(onClick = { textToolPanel = false }) { Text("Close") } },
+        )
+
         if (imageSelected) {
             val selectedBox = edits.let { canvas?.selectedImageBox() ?: PageImage.BOX_NONE }
             ImageActions(
                 isText = canvas?.selectedTextBox() != null,
                 box = selectedBox,
                 onFold = { canvas?.toggleSelectedFolded(); edits++ },
-                onEdit = { replacingText = canvas?.selectedTextBox(); showTextBox = true },
+                onEdit = {
+                    val box = canvas?.selectedTextBox()
+                    val content = box?.textContent
+                    when {
+                        box == null || content == null -> Unit
+                        content.table != null -> tableEditing = Triple(content, box, null)
+                        // Plain or Markdown text is changed where it is; styled text in the full editor.
+                        content.html == null -> openInlineText(null, box, content)
+                        else -> { replacingText = box; showTextBox = true }
+                    }
+                },
                 onDelete = {
                     canvas?.deleteSelectedImage()
                     edits++

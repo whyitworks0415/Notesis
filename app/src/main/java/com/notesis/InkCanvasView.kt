@@ -8308,6 +8308,21 @@ class InkCanvasView @JvmOverloads constructor(
 
     fun selectedTextBox(): PageImage? = selectedImage?.takeIf { it.textContent != null }
 
+    /** Where point [x], [y] of page [pageIndex] is in the window, in pixels. */
+    fun windowPointOfPage(pageIndex: Int, x: Float, y: Float): android.graphics.PointF {
+        val point = floatArrayOf(document.leftOf(pageIndex) + x, document.topOf(pageIndex) + y)
+        documentToScreen.mapPoints(point)
+        val at = IntArray(2)
+        getLocationInWindow(at)
+        return android.graphics.PointF(point[0] + at[0], point[1] + at[1])
+    }
+
+    /** How many screen pixels a page unit is at the zoom in use. */
+    fun pageScaleOnScreen(): Float = currentScale()
+
+    /** The page a picture or text box is on, or -1. */
+    fun pageIndexOfImage(image: PageImage): Int = document.pages.indexOfFirst { page -> page.images.any { it === image } }
+
     fun putTextBox(imageId: String, bitmapWidth: Int, bitmapHeight: Int, content: TextBoxContent,
         replacing: PageImage? = null, at: Triple<Int, Float, Float>? = null, box: Int = PageImage.BOX_NONE) {
         val page = if (replacing != null) document.pages.firstOrNull { replacing in it.images } ?: return
