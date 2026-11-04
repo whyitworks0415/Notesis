@@ -322,7 +322,7 @@ class PenStore(context: Context) {
         set(value) = prefs.edit().putInt("libraryFilter", value).apply()
 
     /** A folder's own colour (0: the accent) and picture, if it was given them. */
-    fun folderLook(context: android.content.Context, name: String): FolderLook = FolderLook(
+    internal fun folderLook(context: android.content.Context, name: String): FolderLook = FolderLook(
         color = prefs.getInt("folderColor:$name", 0),
         thumbnail = folderThumbFile(context, name).takeIf { it.isFile },
     )
