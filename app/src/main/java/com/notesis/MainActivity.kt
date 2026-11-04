@@ -155,6 +155,7 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -4384,6 +4385,9 @@ private fun NoteScreen(
     // there is no sensible centre to store before anything has been measured.
     var barOffset by remember { mutableStateOf<Offset?>(null) }
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
+    // Where the note area is in the window, and a note being dragged over it from the list.
+    var containerOrigin by remember { mutableStateOf(Offset.Zero) }
+    var noteDrag by remember { mutableStateOf<Offset?>(null) }
     var barSize by remember { mutableStateOf(IntSize.Zero) }
     val density = LocalDensity.current
     // Bumped when a note is made from inside this one - a practice page - so the lists below find it.
@@ -5106,7 +5110,8 @@ private fun NoteScreen(
     Box(
         Modifier
             .fillMaxSize()
-            .onSizeChanged { containerSize = it },
+            .onSizeChanged { containerSize = it }
+            .onGloballyPositioned { containerOrigin = it.positionInWindow() },
     ) {
         val ready = opened
         // Only the page is recorded, never the chrome above it. A pane that
@@ -5632,6 +5637,26 @@ private fun NoteScreen(
                 thumbnail = { index -> canvas?.pageThumbnail(index, SCRUBBER_THUMBNAIL_PX) },
             )
         }
+        }
+
+        // A note dragged from the list: the half it would open in, lit.
+        noteDrag?.let { at ->
+            val local = at - containerOrigin
+            val w = containerSize.width.toFloat()
+            val h = containerSize.height.toFloat()
+            if (w > 0f && h > 0f && local.x in 0f..w && local.y in 0f..h) {
+                val zone = noteDropZone(local.x / w, local.y / h)
+                val tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+                androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+                    val (l, t, r, b) = when (zone) {
+                        DROP_LEFT -> listOf(0f, 0f, size.width / 2f, size.height)
+                        DROP_RIGHT -> listOf(size.width / 2f, 0f, size.width, size.height)
+                        DROP_TOP -> listOf(0f, 0f, size.width, size.height / 2f)
+                        else -> listOf(0f, size.height / 2f, size.width, size.height)
+                    }
+                    drawRect(tint, topLeft = Offset(l, t), size = androidx.compose.ui.geometry.Size(r - l, b - t))
+                }
+            }
         }
 
         // The whiteboard's sides, set by hand: a grip at each lower edge, pulled
@@ -7074,6 +7099,41 @@ private fun NoteScreen(
                 onOpenNote = { picked ->
                     showPages = false
                     onOpenNote(picked)
+                },
+                onDragNote = { noteDrag = it },
+                onDropNote = { picked, at ->
+                    noteDrag = null
+                    val local = at - containerOrigin
+                    val w = containerSize.width.toFloat()
+                    val h = containerSize.height.toFloat()
+                    if (w > 0f && h > 0f && local.x in 0f..w && local.y in 0f..h) {
+                        val zone = noteDropZone(local.x / w, local.y / h)
+                        val sideBySide = zone == DROP_LEFT || zone == DROP_RIGHT
+                        val before = zone == DROP_LEFT || zone == DROP_TOP
+                        val current = split
+                        val newId: Int?
+                        if (current == null) {
+                            newId = 1
+                            referenceOpen = false
+                            split = SplitNode.Branch(sideBySide,
+                                if (before) listOf(SplitNode.Pane(1), SplitNode.Pane(0)) else listOf(SplitNode.Pane(0), SplitNode.Pane(1)))
+                        } else {
+                            // Into the part it was dropped on, on the side it was dropped.
+                            val parts = current.layout(SplitRect(0f, 0f, w, h), with(density) { SPLIT_GAP.toPx() })
+                            val target = parts.entries.firstOrNull { (_, r) ->
+                                local.x in r.left..r.right && local.y in r.top..r.bottom
+                            }?.key ?: 0
+                            val id = current.nextPaneId()
+                            val next = current.splitPane(target, sideBySide, id)
+                            newId = if (next == current) null else id
+                            split = next
+                        }
+                        if (newId != null) {
+                            paneNotes[newId] = picked.id
+                            panePages[newId] = restoredPage(penStore.lastPage(picked.id), picked.pageCount)
+                            showPages = false
+                        }
+                    }
                 },
                 onOpenBeside = { picked ->
                     // The note beside this one: the first other part of a split, made if need be.
@@ -8637,6 +8697,9 @@ private fun PageSidebar(
     currentNoteId: String = "",
     onOpenNote: (NoteMeta) -> Unit = {},
     onOpenBeside: (NoteMeta) -> Unit = {},
+    /** A note held and dragged out of the list: where it is in the window, null when let go. */
+    onDragNote: (androidx.compose.ui.geometry.Offset?) -> Unit = {},
+    onDropNote: (NoteMeta, androidx.compose.ui.geometry.Offset) -> Unit = { _, _ -> },
     onNewNote: () -> Unit = {},
     onAttach: (Int) -> Unit = {},
     onAttachmentsHidden: (Int, Boolean) -> Unit = { _, _ -> },
@@ -9152,6 +9215,8 @@ private fun PageSidebar(
                                         current = other.id == currentNoteId,
                                         onOpen = { onOpenNote(other) },
                                         onOpenBeside = { onOpenBeside(other) },
+                                        onDrag = onDragNote,
+                                        onDrop = { at -> onDropNote(other, at) },
                                     )
                                 }
                             }
@@ -9200,6 +9265,15 @@ internal fun isDarkTheme(): Boolean = LocalSkinSettings.current.themeMode == App
  */
 @Composable
 internal fun deskColor(): Color = if (isDarkTheme()) Color(0xFF1C1D20) else Color(0xFFE9E7E2)
+
+/** Which side of the note a note dropped at [fx], [fy] (fractions of the area) opens on: the nearest edge. */
+internal fun noteDropZone(fx: Float, fy: Float): Int =
+    listOf(fx to DROP_LEFT, 1f - fx to DROP_RIGHT, fy to DROP_TOP, 1f - fy to DROP_BOTTOM).minByOrNull { it.first }!!.second
+
+internal const val DROP_LEFT = 0
+internal const val DROP_RIGHT = 1
+internal const val DROP_TOP = 2
+internal const val DROP_BOTTOM = 3
 
 /** The colours a folder can take in the library; 0 is the accent. */
 internal val FOLDER_COLORS = listOf(

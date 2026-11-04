@@ -37,6 +37,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -250,8 +253,15 @@ internal fun NoteTile(
     note: NoteMeta, current: Boolean,
     onOpen: () -> Unit, onOpenBeside: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Held and dragged: where the finger is in the window, null once let go or called off. */
+    onDrag: (androidx.compose.ui.geometry.Offset?) -> Unit = {},
+    /** Held, dragged and let go at a point in the window. */
+    onDrop: (androidx.compose.ui.geometry.Offset) -> Unit = {},
 ) {
     var menu by remember { mutableStateOf(false) }
+    val placed = remember { arrayOfNulls<androidx.compose.ui.layout.LayoutCoordinates>(1) }
+    var travelled by remember { mutableStateOf(0f) }
+    var last by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
     val scheme = MaterialTheme.colorScheme
     val picture = rememberFileBitmap(note.thumbnail, NOTE_TILE_PX)
     Box(modifier) {
@@ -259,7 +269,30 @@ internal fun NoteTile(
             Modifier
                 .fillMaxWidth()
                 .clip(Ui.Shape.chip)
-                .combinedClickable(onClick = { if (!current) onOpen() }, onLongClick = { if (!current) menu = true })
+                .onGloballyPositioned { placed[0] = it }
+                .combinedClickable(onClick = { if (!current) onOpen() })
+                // Held: dragged onto the note it opens beside it there; held still, its menu.
+                .pointerInput(current) {
+                    if (current) return@pointerInput
+                    detectDragGesturesAfterLongPress(
+                        onDragStart = { at ->
+                            travelled = 0f
+                            last = placed[0]?.takeIf { it.isAttached }?.localToWindow(at) ?: at
+                            onDrag(last)
+                        },
+                        onDrag = { change, delta ->
+                            change.consume()
+                            travelled += delta.getDistance()
+                            last = placed[0]?.takeIf { it.isAttached }?.localToWindow(change.position) ?: last
+                            onDrag(last)
+                        },
+                        onDragEnd = {
+                            onDrag(null)
+                            if (travelled < 24f) menu = true else onDrop(last)
+                        },
+                        onDragCancel = { onDrag(null) },
+                    )
+                }
                 .padding(Ui.Space.xs),
             verticalArrangement = Arrangement.spacedBy(Ui.Space.xs),
         ) {
