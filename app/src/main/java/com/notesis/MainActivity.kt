@@ -47,6 +47,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.aspectRatio
@@ -1140,6 +1141,8 @@ private fun NoteListScreen(
         rememberLiquidGlassBackdrop()
     } else null
     val searchFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    val floatingSearchFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    var openSearchNext by remember { mutableStateOf(false) }
     val gridState = rememberLazyGridState()
     val libraryTiles = remember { LibraryTiles() }
     var edgeSpeed by remember { mutableFloatStateOf(0f) }
@@ -1179,6 +1182,8 @@ private fun NoteListScreen(
     CompositionLocalProvider(
         LocalBackdrop provides backdrop,
         LocalLiquidGlassBackdrop provides if (currentSkin.isRefractive) liquidBackdrop else null,
+        // The menus opened from inside the list look at the page through this.
+        LocalSpotiPopupBackdrop provides if (currentSkin.isRefractive) liquidBackdrop else null,
     ) {
     // The clock floats over the library too, on the same glass as its bars.
     Box(Modifier.fillMaxSize()) {
@@ -1196,129 +1201,203 @@ private fun NoteListScreen(
             }
         },
         topBar = {
-            // Apple's large title: the bar starts clear, with the big title in
-            // the list under it; as the notes scroll up under the bar its
-            // material comes in and the title moves into it, small.
+            // At the top, the title and the field lie in the list and the bar's
+            // buttons sit clear over it. Scrolled, the title goes with the list,
+            // the buttons fold into one round button and the field into another
+            // under it; either opens both again, the field ready to type in. The
+            // list fades out under them rather than meeting a hard bar.
             var homeMore by remember { mutableStateOf(false) }
+            var chromeOpen by remember { mutableStateOf(false) }
+            val compact = titleGone && !selectionMode
+            LaunchedEffect(compact) { if (!compact) chromeOpen = false }
+            val folded = compact && !chromeOpen
+            val fade = homeColor?.let { Color(it) } ?: MaterialTheme.colorScheme.surface
+            val effects = rememberLiquidGlassEffectsAllowed()
+            val capsule = RoundedCornerShape(50)
             Box(Modifier.fillMaxWidth()) {
-                SkinSurface(flush = true, modifier = Modifier.matchParentSize().graphicsLayer { alpha = collapse }) {}
-                Row(
+                Box(Modifier.matchParentSize().graphicsLayer { alpha = collapse }
+                    .background(androidx.compose.ui.graphics.Brush.verticalGradient(
+                        listOf(fade.copy(alpha = 0.94f), fade.copy(alpha = 0.6f), fade.copy(alpha = 0f)))))
+                Column(
                     Modifier.windowInsetsPadding(TopAppBarDefaults.windowInsets).fillMaxWidth()
-                        .heightIn(min = 56.dp).padding(horizontal = Ui.Space.xs),
-                    verticalAlignment = Alignment.CenterVertically,
+                        .padding(horizontal = Ui.Space.s, vertical = Ui.Space.xs),
+                    horizontalAlignment = Alignment.End,
                 ) {
-                    // Only inside a folder: at the top level there is nowhere
-                    // to go back to, and an arrow that does nothing is a lie.
-                    if (folder.isNotBlank() && !selectionMode) {
-                        IconButton(onClick = { folder = "" }) {
-                            Icon(Reicons.ArrowBack, contentDescription = "All notes")
+                    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
+                        // Only inside a folder: at the top level there is nowhere
+                        // to go back to, and an arrow that does nothing is a lie.
+                        if (folder.isNotBlank() && !selectionMode) {
+                            IconButton(onClick = { folder = "" }) {
+                                Icon(Reicons.ArrowBack, contentDescription = "All notes")
+                            }
                         }
-                    } else Spacer(Modifier.width(Ui.Space.m))
-                    Text(
-                        if (selectionMode) "${selectedCount} selected" else libraryTitle,
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f).graphicsLayer { alpha = inlineTitle },
-                    )
-                    // Once the field has gone up with the title, a way back to it.
-                    if (!selectionMode && titleGone) IconButton(onClick = { focusSearch() }) {
-                        Icon(Reicons.Search, contentDescription = "Search")
+                        if (selectionMode) Text(
+                            "${selectedCount} selected",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                            maxLines = 1, modifier = Modifier.padding(start = Ui.Space.m),
+                        )
+                        Spacer(Modifier.weight(1f))
+                        androidx.compose.animation.AnimatedContent(
+                            targetState = folded,
+                            transitionSpec = {
+                                (androidx.compose.animation.fadeIn(Ui.Motion.tween()) +
+                                    androidx.compose.animation.scaleIn(Ui.Motion.tween(), initialScale = 0.6f,
+                                        transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 0.5f)))
+                                    .togetherWith(androidx.compose.animation.fadeOut(Ui.Motion.tween()) +
+                                        androidx.compose.animation.scaleOut(Ui.Motion.tween(), targetScale = 0.6f,
+                                            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 0.5f)))
+                                    .using(androidx.compose.animation.SizeTransform(clip = false) { _, _ ->
+                                        if (effects) Ui.Motion.spring(0.86f) else androidx.compose.animation.core.snap()
+                                    })
+                            },
+                            contentAlignment = Alignment.CenterEnd,
+                            label = "homeActions",
+                        ) { isFolded ->
+                            if (isFolded) {
+                                // Folded into one round button, of the toolbar's glass.
+                                Box(Modifier.size(52.dp).skinMaterial(CircleShape, role = ChromeRole.TOOLBAR)
+                                    .clip(CircleShape).clickable { chromeOpen = true },
+                                    contentAlignment = Alignment.Center) {
+                                    Icon(Reicons.Tune, contentDescription = "Show the library's buttons")
+                                }
+                            } else Row(
+                                (if (compact) Modifier.skinMaterial(capsule, role = ChromeRole.TOOLBAR).clip(capsule) else Modifier)
+                                    .padding(horizontal = Ui.Space.xs),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                if (selectionMode) {
+                                    TextButton(onClick = { clearSelection() }) { Text("Done", maxLines = 1) }
+                                } else {
+                                    IconButton(onClick = { selectionMode = true }) {
+                                        Icon(Reicons.CheckBox, contentDescription = "Select")
+                                    }
+                                    Box {
+                                        IconButton(onClick = { sortMenu = true }) {
+                                            Icon(LibraryIcons.Sort, contentDescription = "Sort")
+                                        }
+                                        GlassMenu(sortMenu, onDismissRequest = { sortMenu = false }) {
+                                            listOf(
+                                                LIBRARY_SORT_MODIFIED to "Last modified",
+                                                LIBRARY_SORT_TITLE to "Name",
+                                                LIBRARY_SORT_PAGES to "Most pages",
+                                            ).forEach { (mode, label) ->
+                                                GlassMenuItem(
+                                                    text = { Text(label) },
+                                                    leadingIcon = if (librarySort == mode) {
+                                                        { Icon(Reicons.Check, contentDescription = null) }
+                                                    } else null,
+                                                    onClick = {
+                                                        librarySort = mode
+                                                        homeStore.librarySort = mode
+                                                        sortMenu = false
+                                                    },
+                                                )
+                                            }
+                                        }
+                                    }
+                                    // A phone keeps the bar to what is used most; the rest is in the menu.
+                                    if (!narrowLibrary) {
+                                        IconButton(onClick = { creatingFolder = true }) {
+                                            Icon(Reicons.Folder, contentDescription = "New folder")
+                                        }
+                                        ToolsMenuButton()
+                                        AppIconButton(
+                                            onClick = { Onboarding.tutorialOpen = true },
+                                            icon = AppIcons.tutorial,
+                                            contentDescription = "Tutorial",
+                                            modifier = Modifier.coachTarget(coachTargets, CoachTarget.TUTORIAL),
+                                        )
+                                    }
+                                    // Appearance and everything used now and then, in one menu.
+                                    Box(Modifier.coachTarget(coachTargets, CoachTarget.HELP)
+                                        .coachTarget(coachTargets, CoachTarget.LOOK)) {
+                                        IconButton(onClick = { homeMore = true }) {
+                                            Icon(Reicons.Tune, contentDescription = "Settings and more")
+                                        }
+                                        GlassMenu(homeMore, onDismissRequest = { homeMore = false }) {
+                                            GlassMenuItem(
+                                                text = { Text("Appearance") },
+                                                leadingIcon = { Icon(Reicons.Palette, contentDescription = null) },
+                                                onClick = { homeMore = false; onSettings() },
+                                            )
+                                            if (narrowLibrary) {
+                                                GlassMenuItem(
+                                                    text = { Text("New folder") },
+                                                    leadingIcon = { Icon(Reicons.Folder, contentDescription = null) },
+                                                    onClick = { homeMore = false; creatingFolder = true },
+                                                )
+                                                GlassMenuItem(
+                                                    text = { Text("Tools") },
+                                                    leadingIcon = { Icon(AppIcons.tools, contentDescription = null) },
+                                                    onClick = { homeMore = false; Planner.show(Planner.lastPanel) },
+                                                )
+                                                GlassMenuItem(
+                                                    text = { Text("Tutorial") },
+                                                    leadingIcon = { Icon(AppIcons.tutorial, contentDescription = null) },
+                                                    onClick = { homeMore = false; Onboarding.tutorialOpen = true },
+                                                )
+                                            }
+                                            if (folder.isNotBlank()) {
+                                                GlassMenuItem(text = { Text("Rename folder") }, onClick = {
+                                                    homeMore = false; renamingFolder = true
+                                                })
+                                                GlassMenuItem(text = { Text("Delete folder") }, onClick = {
+                                                    homeMore = false; deletingFolder = true
+                                                })
+                                            }
+                                            GlassMenuItem(
+                                                text = { Text("Trash") },
+                                                leadingIcon = { Icon(Reicons.Delete, contentDescription = null) },
+                                                onClick = { homeMore = false; showTrash = true },
+                                            )
+                                            GlassMenuItem(
+                                                text = { Text("Library background") },
+                                                leadingIcon = { Icon(Reicons.Image, contentDescription = null) },
+                                                onClick = { homeMore = false; showHomeBackground = true },
+                                            )
+                                            GlassMenuItem(
+                                                text = { Text("About · Help") },
+                                                leadingIcon = { Icon(Reicons.BugReport, contentDescription = null) },
+                                                onClick = { homeMore = false; showHelp = true },
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
-                    TextButton(onClick = {
-                        if (selectionMode) clearSelection() else selectionMode = true
-                    }) { Text(if (selectionMode) "Done" else "Select", maxLines = 1) }
-                    if (!selectionMode) {
-                        Box {
-                            IconButton(onClick = { sortMenu = true }) {
-                                Icon(LibraryIcons.Sort, contentDescription = "Sort")
+                    // Scrolled: the search, folded to a round button under the bar's, or open.
+                    if (compact) androidx.compose.animation.AnimatedContent(
+                        targetState = folded,
+                        transitionSpec = {
+                            (androidx.compose.animation.fadeIn(Ui.Motion.tween()) +
+                                androidx.compose.animation.scaleIn(Ui.Motion.tween(), initialScale = 0.5f,
+                                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 0f)))
+                                .togetherWith(androidx.compose.animation.fadeOut(Ui.Motion.tween()) +
+                                    androidx.compose.animation.scaleOut(Ui.Motion.tween(), targetScale = 0.5f,
+                                        transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 0f)))
+                                .using(androidx.compose.animation.SizeTransform(clip = false))
+                        },
+                        contentAlignment = Alignment.TopEnd,
+                        modifier = Modifier.padding(top = Ui.Space.s),
+                        label = "homeSearch",
+                    ) { isFolded ->
+                        if (isFolded) {
+                            Box(Modifier.size(52.dp).skinMaterial(CircleShape, role = ChromeRole.TOOLBAR)
+                                .clip(CircleShape).clickable { chromeOpen = true; openSearchNext = true },
+                                contentAlignment = Alignment.Center) {
+                                Icon(Reicons.Search, contentDescription = "Search")
                             }
-                            DropdownMenu(sortMenu, onDismissRequest = { sortMenu = false }) {
-                                listOf(
-                                    LIBRARY_SORT_MODIFIED to "Last modified",
-                                    LIBRARY_SORT_TITLE to "Name",
-                                    LIBRARY_SORT_PAGES to "Most pages",
-                                ).forEach { (mode, label) ->
-                                    DropdownMenuItem(
-                                        text = { Text(label) },
-                                        leadingIcon = if (librarySort == mode) {
-                                            { Icon(Reicons.Check, contentDescription = null) }
-                                        } else null,
-                                        onClick = {
-                                            librarySort = mode
-                                            homeStore.librarySort = mode
-                                            sortMenu = false
-                                        },
-                                    )
-                                }
-                            }
+                        } else Box(Modifier.widthIn(max = 460.dp).fillMaxWidth(0.6f)
+                            .skinMaterial(capsule, role = ChromeRole.TOOLBAR).clip(capsule)) {
+                            LibrarySearchField(query, { query = it }, Modifier.focusRequester(floatingSearchFocus))
                         }
-                        // A phone keeps the bar to what is used most; the rest is in ⋮.
-                        if (!narrowLibrary) {
-                            IconButton(onClick = { creatingFolder = true }) {
-                                Icon(Reicons.Folder, contentDescription = "New folder")
-                            }
-                            ToolsMenuButton()
-                            AppIconButton(
-                                onClick = { Onboarding.tutorialOpen = true },
-                                icon = AppIcons.tutorial,
-                                contentDescription = "Tutorial",
-                                modifier = Modifier.coachTarget(coachTargets, CoachTarget.TUTORIAL),
-                            )
-                        }
-                        IconButton(onClick = onSettings, modifier = Modifier.coachTarget(coachTargets, CoachTarget.LOOK)) {
-                            Icon(Reicons.Tune, contentDescription = "Display settings")
-                        }
-                        // The rest, used now and then, in one menu: the trash, the
-                        // library's picture, help, and the open folder's own options.
-                        Box(Modifier.coachTarget(coachTargets, CoachTarget.HELP)) {
-                            IconButton(onClick = { homeMore = true }) {
-                                Icon(Reicons.MoreVert, contentDescription = "More")
-                            }
-                            DropdownMenu(homeMore, onDismissRequest = { homeMore = false }) {
-                                if (narrowLibrary) {
-                                    DropdownMenuItem(
-                                        text = { Text("New folder") },
-                                        leadingIcon = { Icon(Reicons.Folder, contentDescription = null) },
-                                        onClick = { homeMore = false; creatingFolder = true },
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Tools") },
-                                        leadingIcon = { Icon(AppIcons.tools, contentDescription = null) },
-                                        onClick = { homeMore = false; Planner.show(Planner.lastPanel) },
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Tutorial") },
-                                        leadingIcon = { Icon(AppIcons.tutorial, contentDescription = null) },
-                                        onClick = { homeMore = false; Onboarding.tutorialOpen = true },
-                                    )
-                                    HorizontalDivider()
-                                }
-                                if (folder.isNotBlank()) {
-                                    DropdownMenuItem(text = { Text("Rename folder") }, onClick = {
-                                        homeMore = false; renamingFolder = true
-                                    })
-                                    DropdownMenuItem(text = { Text("Delete folder") }, onClick = {
-                                        homeMore = false; deletingFolder = true
-                                    })
-                                    HorizontalDivider()
-                                }
-                                DropdownMenuItem(
-                                    text = { Text("Trash") },
-                                    leadingIcon = { Icon(Reicons.Delete, contentDescription = null) },
-                                    onClick = { homeMore = false; showTrash = true },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Library background") },
-                                    leadingIcon = { Icon(Reicons.Image, contentDescription = null) },
-                                    onClick = { homeMore = false; showHomeBackground = true },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("About · Help") },
-                                    leadingIcon = { Icon(Reicons.BugReport, contentDescription = null) },
-                                    onClick = { homeMore = false; showHelp = true },
-                                )
-                            }
+                    }
+                    LaunchedEffect(chromeOpen, openSearchNext) {
+                        if (chromeOpen && openSearchNext) {
+                            openSearchNext = false
+                            kotlinx.coroutines.delay(250)
+                            runCatching { floatingSearchFocus.requestFocus() }
                         }
                     }
                 }
@@ -1637,13 +1716,7 @@ private fun NoteListScreen(
                 if (!markdownHidden) noteItems(mdShown)
             }
         }
-        // What the library shows: everything in its sections, or one kind alone.
-        if (!selectionMode) LibraryFilterBar(
-            selected = libraryFilter,
-            onSelect = { libraryFilter = it; homeStore.libraryFilter = it },
-            modifier = Modifier.align(Alignment.BottomCenter)
-                .padding(bottom = padding.calculateBottomPadding() + Ui.Space.l),
-        )
+
         // Floating bars take the skin's own corner, the toolbar's, so every
         // bar over the page or the list is the same shape.
         if (selectionMode) SkinSurface(
@@ -1691,6 +1764,16 @@ private fun NoteListScreen(
         }
         }
     }
+    // What the library shows: everything in its sections, or one kind alone.
+    // Outside the list's recording, so its glass looks at the notes under it,
+    // as the toolbar's does.
+    if (!selectionMode) LibraryFilterBar(
+        selected = libraryFilter,
+        onSelect = { libraryFilter = it; homeStore.libraryFilter = it },
+        modifier = Modifier.align(Alignment.BottomCenter)
+            .windowInsetsPadding(WindowInsets.navigationBars)
+            .padding(bottom = Ui.Space.l),
+    )
     ClockOverlay()
     when (onboarding) {
         OnboardingStep.WELCOME -> WelcomeOverlay(
@@ -2591,8 +2674,8 @@ private fun NoteCard(
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    DropdownMenu(menuOpen, onDismissRequest = { menuOpen = false }) {
-                        DropdownMenuItem(
+                    GlassMenu(menuOpen, onDismissRequest = { menuOpen = false }) {
+                        GlassMenuItem(
                             text = { Text("Set thumbnail") },
                             leadingIcon = { Icon(Reicons.Image, contentDescription = null) },
                             onClick = {
@@ -2601,7 +2684,7 @@ private fun NoteCard(
                             },
                         )
                         if (onExportMarkdown != null) {
-                            DropdownMenuItem(
+                            GlassMenuItem(
                                 text = { Text("Export as .md") },
                                 leadingIcon = { Icon(Reicons.Description, contentDescription = null) },
                                 onClick = {
@@ -2611,7 +2694,7 @@ private fun NoteCard(
                             )
                         }
                         if (hasCustomThumbnail) {
-                            DropdownMenuItem(
+                            GlassMenuItem(
                                 text = { Text("Reset to first page") },
                                 onClick = {
                                     menuOpen = false
@@ -2620,7 +2703,7 @@ private fun NoteCard(
                             )
                         }
                         HorizontalDivider()
-                        DropdownMenuItem(
+                        GlassMenuItem(
                             text = { Text(if (note.favorite) "Remove from favorites" else "Add to favorites") },
                             leadingIcon = { Icon(LibraryIcons.Star, contentDescription = null) },
                             onClick = {
@@ -2629,29 +2712,29 @@ private fun NoteCard(
                             },
                         )
                         if (onMoveFavorite != null) {
-                            DropdownMenuItem(text = { Text("Move up in favorites") }, onClick = { menuOpen = false; onMoveFavorite(-1) })
-                            DropdownMenuItem(text = { Text("Move down in favorites") }, onClick = { menuOpen = false; onMoveFavorite(1) })
+                            GlassMenuItem(text = { Text("Move up in favorites") }, onClick = { menuOpen = false; onMoveFavorite(-1) })
+                            GlassMenuItem(text = { Text("Move down in favorites") }, onClick = { menuOpen = false; onMoveFavorite(1) })
                         }
-                        DropdownMenuItem(
+                        GlassMenuItem(
                             text = { Text("Rename") },
                             leadingIcon = { Icon(Reicons.Edit, contentDescription = null) },
                             onClick = { menuOpen = false; onRename() },
                         )
-                        DropdownMenuItem(
+                        GlassMenuItem(
                             text = { Text("Tags") },
                             onClick = { menuOpen = false; onTags() },
                         )
-                        DropdownMenuItem(
+                        GlassMenuItem(
                             text = { Text("Color label") },
                             leadingIcon = { Icon(Reicons.Palette, contentDescription = null) },
                             onClick = { menuOpen = false; onLabel() },
                         )
-                        DropdownMenuItem(
+                        GlassMenuItem(
                             text = { Text(if (note.locked) "Unlock" else "Lock with password") },
                             leadingIcon = { Icon(Icons.Filled.Lock, contentDescription = null) },
                             onClick = { menuOpen = false; onLock() },
                         )
-                        DropdownMenuItem(
+                        GlassMenuItem(
                             text = { Text("Move to folder") },
                             leadingIcon = {
                                 Icon(Reicons.FolderOpen, contentDescription = null)
@@ -2661,7 +2744,7 @@ private fun NoteCard(
                                 onFile()
                             },
                         )
-                        DropdownMenuItem(
+                        GlassMenuItem(
                             text = { Text("Index handwriting for search") },
                             leadingIcon = {
                                 Icon(Reicons.Search, contentDescription = null)
@@ -2672,7 +2755,7 @@ private fun NoteCard(
                             },
                         )
                         HorizontalDivider()
-                        DropdownMenuItem(
+                        GlassMenuItem(
                             text = { Text("Export as backup file") },
                             leadingIcon = {
                                 Icon(Reicons.Archive, contentDescription = null)
@@ -2682,7 +2765,7 @@ private fun NoteCard(
                                 onExport()
                             },
                         )
-                        DropdownMenuItem(
+                        GlassMenuItem(
                             text = { Text("Export as PDF") },
                             leadingIcon = {
                                 Icon(Reicons.PictureAsPdf, contentDescription = null)
@@ -2693,7 +2776,7 @@ private fun NoteCard(
                             },
                         )
                         HorizontalDivider()
-                        DropdownMenuItem(
+                        GlassMenuItem(
                             text = { Text("Delete") },
                             leadingIcon = { Icon(Reicons.Delete, contentDescription = null) },
                             onClick = {

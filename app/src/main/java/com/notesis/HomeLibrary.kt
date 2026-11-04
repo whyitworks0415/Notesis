@@ -246,7 +246,10 @@ internal fun LibrarySectionToggle(text: String, count: Int, expanded: Boolean, o
     val turn by animateFloatAsState(if (expanded) 90f else 0f, Ui.Motion.spring(), label = "sectionChevron")
     Row(
         Modifier.fillMaxWidth().heightIn(min = 44.dp).clip(RoundedCornerShape(10.dp))
-            .clickable(onClick = onToggle).padding(top = Ui.Space.s).semantics { heading() },
+            // No press highlight: the chevron turning is the answer to the tap.
+            .clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                indication = null, onClick = onToggle)
+            .padding(top = Ui.Space.s).semantics { heading() },
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(Reicons.ChevronRight, contentDescription = if (expanded) "Fold $text" else "Open $text",
@@ -305,10 +308,12 @@ internal fun FolderTile(
     val primary = if (tint != 0) Color(tint) else MaterialTheme.colorScheme.primary
     val picture = rememberFileBitmap(thumbnail, 480)
     val press by animateFloatAsState(if (selected) 0.95f else 1f, Ui.Motion.spring(), label = "folderSelected")
-    SkinSurface(
-        corner = Ui.Corner.card,
-        modifier = modifier
+    // A plain card, as the notes beside it are: no shadow under it.
+    Box(
+        modifier
             .graphicsLayer { scaleX = press; scaleY = press }
+            .clip(Ui.Shape.card)
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))
             .then(if (selected) Modifier.border(2.5.dp, primary, Ui.Shape.card) else Modifier),
     ) {
         Column(
@@ -359,27 +364,27 @@ internal fun FolderTile(
                         Icon(Reicons.MoreVert, contentDescription = "Folder options for $name",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    DropdownMenu(menu, onDismissRequest = { menu = false }) {
-                        DropdownMenuItem(
+                    GlassMenu(menu, onDismissRequest = { menu = false }) {
+                        GlassMenuItem(
                             text = { Text("Rename folder") },
                             leadingIcon = { Icon(Reicons.Edit, contentDescription = null) },
                             onClick = { menu = false; onRename() },
                         )
-                        DropdownMenuItem(
+                        GlassMenuItem(
                             text = { Text("Folder colour") },
                             leadingIcon = { Icon(Reicons.Palette, contentDescription = null) },
                             onClick = { menu = false; onColour() },
                         )
-                        DropdownMenuItem(
+                        GlassMenuItem(
                             text = { Text("Set thumbnail") },
                             leadingIcon = { Icon(Reicons.Image, contentDescription = null) },
                             onClick = { menu = false; onThumbnail() },
                         )
-                        if (thumbnail != null) DropdownMenuItem(
+                        if (thumbnail != null) GlassMenuItem(
                             text = { Text("Remove thumbnail") },
                             onClick = { menu = false; onClearThumbnail() },
                         )
-                        DropdownMenuItem(
+                        GlassMenuItem(
                             text = { Text("Delete folder") },
                             leadingIcon = { Icon(Reicons.Delete, contentDescription = null) },
                             onClick = { menu = false; onDelete() },
