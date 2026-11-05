@@ -295,9 +295,9 @@ class MainActivity : ComponentActivity() {
             LaunchedEffect(InteractionGovernor.highRefresh, InteractionGovernor.observedPowerSave) {
                 DisplayRate.apply(this@MainActivity)
             }
-            // The app's own brightness, if one is set, on the window it draws in.
+            // The app's own brightness and dimming, if set, on the window it draws in.
             LaunchedEffect(Unit) { AppBrightness.load(this@MainActivity) }
-            LaunchedEffect(AppBrightness.level) { AppBrightness.apply(this@MainActivity) }
+            LaunchedEffect(AppBrightness.level, AppBrightness.screenLevel) { AppBrightness.apply(this@MainActivity) }
             // This tablet could not keep up: asked once whether to run light.
             if (JankWatch.suggest) {
                 AlertDialog(

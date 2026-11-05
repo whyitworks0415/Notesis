@@ -1569,3 +1569,7 @@ Swap sides	칸 서로 바꾸기
 {0}: change note	{0}: 노트 바꾸기
 {0}: split in two	{0}: 둘로 나누기
 {0}: close	{0}: 닫기
+Screen brightness in this app	이 앱에서의 기기 밝기
+Sets the screen itself while Notesis is open. Leaving the app gives the screen back its usual brightness.	Notesis를 쓰는 동안 기기 화면 밝기 자체를 바꿉니다. 앱에서 나가면 원래 밝기로 돌아갑니다.
+The screen as bright as the system has it.	기기에 설정된 밝기 그대로입니다.
+Dim the app	앱 화면 어둡게
