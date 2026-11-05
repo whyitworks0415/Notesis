@@ -75,6 +75,33 @@ internal object AppUpdate {
     fun autoCheck(context: Context): Boolean = prefs(context).getBoolean("autoCheck", true)
     fun setAutoCheck(context: Context, on: Boolean) = prefs(context).edit().putBoolean("autoCheck", on).apply()
 
+    /**
+     * A beta tester's copy also gets the builds released as manual updates,
+     * the ones still being tried; everyone else gets only the automatic
+     * ones, announced as the app opens. Turned on with the developer code.
+     */
+    fun isBeta(context: Context): Boolean = prefs(context).getBoolean("beta", false)
+    fun setBeta(context: Context, on: Boolean) = prefs(context).edit().putBoolean("beta", on).apply()
+
+    /**
+     * Whether [code] is the developer code, however it is spaced or cased.
+     * Only its digest is kept here: it opens nothing but test builds, which
+     * are public anyway, so it needs keeping out of sight rather than safe.
+     */
+    fun isBetaCode(code: String): Boolean {
+        val digest = MessageDigest.getInstance("SHA-256").digest(code.trim().uppercase().toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) } == BETA_CODE_SHA256
+    }
+
+    private const val BETA_CODE_SHA256 = "6ed938ece987a9eec6062196123f1e79094d0a183e3421898622698b5320cbb1"
+
+    /** The newest of [releases] (newest first) this copy takes: any for a beta tester, else the newest automatic one. */
+    fun newestFor(releases: List<AppRelease>, beta: Boolean): AppRelease? = releases.firstOrNull { beta || !it.manual }
+
+    /** The newest build this copy takes, or null when none can be read. Network: call off the main thread. */
+    fun fetchNewest(beta: Boolean): AppRelease? =
+        if (beta) fetchLatest() else newestFor(fetchRecent(), beta = false)
+
     /** A build the user said to skip is not offered again on its own; a manual check still shows it. */
     fun skipped(context: Context): Long = prefs(context).getLong("skippedCode", 0L)
     fun skip(context: Context, code: Long) = prefs(context).edit().putLong("skippedCode", code).apply()
@@ -273,13 +300,17 @@ internal fun LaunchUpdateCheck() {
     LaunchedEffect(Unit) {
         if (AppUpdate.checkedThisLaunch || !AppUpdate.autoCheck(context)) return@LaunchedEffect
         AppUpdate.checkedThisLaunch = true
-        val latest = withContext(Dispatchers.IO) { AppUpdate.fetchLatest() } ?: return@LaunchedEffect
+        val beta = AppUpdate.isBeta(context)
+        val latest = withContext(Dispatchers.IO) { AppUpdate.fetchNewest(beta) } ?: return@LaunchedEffect
         val installed = AppUpdate.installedCode(context)
         if (latest.versionCode <= installed) {
             withContext(Dispatchers.IO) { AppUpdate.clearDownloads(context) }
         } else if (latest.versionCode != AppUpdate.skipped(context)) {
-            // A manual release waits in About · Help, unless an automatic one is due.
-            val offer = withContext(Dispatchers.IO) { AppUpdate.shouldNotify(latest, installed) { AppUpdate.fetchRecent() } }
+            // A manual release waits in About · Help, unless an automatic one is
+            // due; a copy that is not a beta tester's was only shown automatic ones.
+            val offer = !beta || withContext(Dispatchers.IO) {
+                AppUpdate.shouldNotify(latest, installed) { AppUpdate.fetchRecent() }
+            }
             if (offer) found = latest
         }
     }
@@ -386,6 +417,8 @@ internal fun AppVersionSection(onLicenses: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var auto by remember { mutableStateOf(AppUpdate.autoCheck(context)) }
+    var beta by remember { mutableStateOf(AppUpdate.isBeta(context)) }
+    var askingCode by remember { mutableStateOf(false) }
     var checking by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
     var found by remember { mutableStateOf<AppRelease?>(null) }
@@ -393,8 +426,9 @@ internal fun AppVersionSection(onLicenses: () -> Unit) {
     // Looked for as this opens, without a dialog: a manual update is only
     // ever offered here, so here says when there is one.
     var waiting by remember { mutableStateOf<AppRelease?>(null) }
-    LaunchedEffect(Unit) {
-        val latest = withContext(Dispatchers.IO) { AppUpdate.fetchLatest() } ?: return@LaunchedEffect
+    LaunchedEffect(beta) {
+        waiting = null
+        val latest = withContext(Dispatchers.IO) { AppUpdate.fetchNewest(beta) } ?: return@LaunchedEffect
         if (latest.versionCode > AppUpdate.installedCode(context)) waiting = latest
     }
 
@@ -418,7 +452,7 @@ internal fun AppVersionSection(onLicenses: () -> Unit) {
             checking = true
             status = null
             scope.launch {
-                val latest = withContext(Dispatchers.IO) { AppUpdate.fetchLatest() }
+                val latest = withContext(Dispatchers.IO) { AppUpdate.fetchNewest(beta) }
                 checking = false
                 when {
                     latest == null -> status = "Couldn't check for updates. Check your internet connection."
@@ -434,9 +468,47 @@ internal fun AppVersionSection(onLicenses: () -> Unit) {
         Text("Tell me about updates when the app opens", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
         SkinSwitch(checked = auto, onCheckedChange = { auto = it; AppUpdate.setAutoCheck(context, it) })
     }
-    Text(
-        "Some versions are released as manual updates. Those are never announced; they wait here until you update.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.outline,
-    )
+    if (beta) {
+        Text(
+            "Beta tester: test builds released as manual updates are never announced; they wait here until you update.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.outline,
+        )
+        TextButton(onClick = { beta = false; AppUpdate.setBeta(context, false) }) { Text("Stop getting test builds") }
+    } else {
+        Text(
+            "Updates are announced when the app opens. With a developer code this copy also gets the test builds released as manual updates.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.outline,
+        )
+        TextButton(onClick = { askingCode = true }) { Text("Enter developer code") }
+    }
+    if (askingCode) {
+        var code by remember { mutableStateOf("") }
+        var wrong by remember { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { askingCode = false },
+            title = { Text("Developer code") },
+            text = {
+                OutlinedTextField(
+                    value = code,
+                    onValueChange = { code = it; wrong = false },
+                    singleLine = true,
+                    isError = wrong,
+                    label = { Text("Code") },
+                    supportingText = if (wrong) { { Text("That code isn't right") } } else null,
+                )
+            },
+            confirmButton = {
+                TextButton(enabled = code.isNotBlank(), onClick = {
+                    if (AppUpdate.isBetaCode(code)) {
+                        AppUpdate.setBeta(context, true)
+                        beta = true
+                        askingCode = false
+                    } else wrong = true
+                }) { Text("OK") }
+            },
+            dismissButton = { TextButton(onClick = { askingCode = false }) { Text("Cancel") } },
+        )
+    }
 }

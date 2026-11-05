@@ -85,4 +85,18 @@ class AppUpdateTest {
         assertEquals(7L, releases.single().versionCode)
         assertTrue(AppUpdate.mergeReleases(listOf(emptyList(), emptyList())).isEmpty())
     }
+
+    @Test fun `a beta tester takes the newest build, everyone else the newest automatic one`() {
+        val releases = listOf(release(12, manual = true), release(11, manual = true), release(10, manual = false))
+        assertEquals(12L, AppUpdate.newestFor(releases, beta = true)?.versionCode)
+        assertEquals(10L, AppUpdate.newestFor(releases, beta = false)?.versionCode)
+        assertNull(AppUpdate.newestFor(listOf(release(12, manual = true)), beta = false))
+    }
+
+    @Test fun `the developer code is taken however it is spaced or cased`() {
+        assertTrue(AppUpdate.isBetaCode("NOTESIS-BETA"))
+        assertTrue(AppUpdate.isBetaCode("  notesis-beta "))
+        assertFalse(AppUpdate.isBetaCode("notesis"))
+        assertFalse(AppUpdate.isBetaCode(""))
+    }
 }

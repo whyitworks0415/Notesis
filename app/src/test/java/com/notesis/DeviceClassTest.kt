@@ -20,4 +20,10 @@ class DeviceClassTest {
         // Memory not known: not judged slow on that alone.
         assertFalse(DeviceClass.isSlow(lowRam = false, totalMemoryBytes = 0L, model = "SM-X710"))
     }
+
+    @Test fun `a tablet on Android 12 or older runs light, however much memory it has`() {
+        // The Galaxy Tab S5e's 6 GB model, on Android 11.
+        assertTrue(DeviceClass.isSlow(lowRam = false, totalMemoryBytes = 5_600_000_000L, model = "SM-T720", sdk = 30))
+        assertFalse(DeviceClass.isSlow(lowRam = false, totalMemoryBytes = 7_600_000_000L, model = "SM-X710", sdk = 34))
+    }
 }

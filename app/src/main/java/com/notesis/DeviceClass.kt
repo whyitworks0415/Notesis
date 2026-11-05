@@ -9,9 +9,14 @@ import android.os.Build
  * light on by default (see [InteractionGovernor.lightMode]).
  *
  * Asked once, at start, from what the system says about itself: a device
- * that calls itself low on memory, one with under about 5 GB, or a model
+ * that calls itself low on memory, one with under about 5 GB, a model
  * known to need the compatible wet ink, the Galaxy Tab S6 Lite - an
- * eight-core phone chip and a three-core GPU behind a 2000 px screen.
+ * eight-core phone chip and a three-core GPU behind a 2000 px screen - or
+ * one on Android 12 or older. Those cannot draw the liquid glass at all
+ * (its shaders need Android 13), so the full looks only recorded the whole
+ * screen every frame for nothing; and they are the older tablets, like the
+ * Galaxy Tab S5e (Android 11, a 2560 px screen), which came in a 6 GB
+ * model that passed every other test and was dragged down running it all.
  */
 internal object DeviceClass {
     fun isSlow(context: Context): Boolean {
@@ -23,11 +28,16 @@ internal object DeviceClass {
             lowRam = manager?.isLowRamDevice == true,
             totalMemoryBytes = memory,
             model = Build.MODEL ?: "",
+            sdk = Build.VERSION.SDK_INT,
         )
     }
 
-    fun isSlow(lowRam: Boolean, totalMemoryBytes: Long, model: String): Boolean =
-        lowRam || (totalMemoryBytes in 1 until SLOW_BELOW_BYTES) || frontBufferInkUnreliable(model)
+    fun isSlow(lowRam: Boolean, totalMemoryBytes: Long, model: String, sdk: Int = FULL_EFFECTS_SDK): Boolean =
+        lowRam || (totalMemoryBytes in 1 until SLOW_BELOW_BYTES) || frontBufferInkUnreliable(model) ||
+            sdk < FULL_EFFECTS_SDK
+
+    /** Android 13, where the liquid glass's shaders first run. */
+    const val FULL_EFFECTS_SDK = 33
 
     /** 4 GB devices report about 3.6 GB; 6 GB ones about 5.5 GB. */
     private const val SLOW_BELOW_BYTES = 5_000_000_000L
