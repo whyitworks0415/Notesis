@@ -210,6 +210,11 @@ internal fun HomeBackgroundDialog(store: PenStore, onChanged: () -> Unit, onDism
         onDismissRequest = onDismiss,
         title = { Text("Note list background") },
         text = { Column(Modifier.verticalScroll(rememberScrollState())) {
+            // A look first: the whole library's colours at once. A colour or a
+            // photo below takes the ground over from it.
+            Text("Home look", style = MaterialTheme.typography.labelLarge)
+            HomeLookPicker { store.homePhoto = null; store.homeColor = null; onChanged() }
+            Text("Or one colour", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = Ui.Space.m))
             ColorInput(color) { color = it }
             TextButton(onClick = { picker.launch(arrayOf("image/*")) }) { Text("Choose photo") }
             TextButton(onClick = { store.homePhoto = null; store.homeColor = null; onChanged(); onDismiss() }) { Text("Use default background") }

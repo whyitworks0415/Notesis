@@ -200,7 +200,7 @@ internal fun TableEditorDialog(initial: TextBoxContent?, onDismiss: () -> Unit, 
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
     ) {
         androidx.compose.material3.Surface(
-            shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
+            shape = Ui.Shape.sheet,
             color = scheme.surface, tonalElevation = 2.dp, shadowElevation = 12.dp,
             modifier = Modifier.fillMaxWidth(0.92f).widthIn(max = 980.dp),
         ) {
@@ -219,7 +219,7 @@ internal fun TableEditorDialog(initial: TextBoxContent?, onDismiss: () -> Unit, 
                 // The formula bar: where the cell in hand is, and what is in it.
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.width(56.dp).height(40.dp).background(scheme.primary.copy(alpha = 0.12f),
-                        androidx.compose.foundation.shape.RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
+                        Ui.Shape.preview), contentAlignment = Alignment.Center) {
                         Text("${columnName(selCol)}${selRow + 1}", style = MaterialTheme.typography.labelLarge, color = scheme.primary)
                     }
                     Spacer(Modifier.width(8.dp))
@@ -237,7 +237,7 @@ internal fun TableEditorDialog(initial: TextBoxContent?, onDismiss: () -> Unit, 
                 }
                 Box(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())
                     .horizontalScroll(rememberScrollState())
-                    .border(1.dp, scheme.outline, androidx.compose.foundation.shape.RoundedCornerShape(8.dp))) {
+                    .border(1.dp, scheme.outline, Ui.Shape.preview)) {
                     Column {
                         Row {
                             Spacer(Modifier.width(40.dp))

@@ -59,7 +59,8 @@ internal fun GlassMenu(
             LocalLiquidGlassHostBackdrop provides null,
             LocalLiquidGlassBackdrop provides backdrop,
         ) {
-            val shape = RoundedCornerShape(18.dp)
+            // A popup is a panel: the panels' corner, its rows one inset in.
+            val shape = Ui.Shape.card
             Box(Modifier.padding(12.dp)) {
                 Column(
                     modifier
@@ -69,7 +70,7 @@ internal fun GlassMenu(
                         .skinMaterial(shape, panel = true, role = ChromeRole.POPUP)
                         .clip(shape)
                         .verticalScroll(rememberScrollState())
-                        .padding(vertical = 6.dp),
+                        .padding(vertical = GLASS_MENU_INSET),
                     content = content,
                 )
             }
@@ -91,8 +92,8 @@ internal fun GlassMenuItem(
         modifier
             .fillMaxWidth()
             .heightIn(min = 44.dp)
-            .padding(horizontal = 6.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .padding(horizontal = GLASS_MENU_INSET)
+            .clip(RoundedCornerShape(Ui.concentric(Ui.Corner.card, GLASS_MENU_INSET)))
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 12.dp)
             .alpha(if (enabled) 1f else 0.4f),
@@ -124,3 +125,6 @@ private class BelowAnchor(private val gap: Int) : PopupPositionProvider {
         return IntOffset(x, y)
     }
 }
+
+/** How far a [GlassMenu]'s rows sit in from its edge, top and sides alike. */
+private val GLASS_MENU_INSET = 6.dp

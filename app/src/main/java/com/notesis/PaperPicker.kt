@@ -166,9 +166,9 @@ private fun PaperCard(
     page: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
-    val shape = RoundedCornerShape(8.dp)
+    val shape = Ui.Shape.preview
     Column(
-        Modifier.width(PAPER_CARD_WIDTH).clip(RoundedCornerShape(10.dp))
+        Modifier.width(PAPER_CARD_WIDTH).clip(Ui.Shape.chip)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {

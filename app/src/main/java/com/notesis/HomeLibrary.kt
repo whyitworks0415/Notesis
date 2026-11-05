@@ -305,7 +305,7 @@ internal fun LibrarySectionToggle(
 ) {
     val turn by animateFloatAsState(if (expanded) 90f else 0f, Ui.Motion.spring(), label = "sectionChevron")
     Row(
-        modifier.fillMaxWidth().heightIn(min = 44.dp).clip(RoundedCornerShape(10.dp))
+        modifier.fillMaxWidth().heightIn(min = Ui.Size.touchCompact).clip(Ui.Shape.chip)
             // No press highlight: the chevron turning is the answer to the tap.
             .clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
                 indication = null, onClick = onToggle)
@@ -313,7 +313,7 @@ internal fun LibrarySectionToggle(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(Reicons.ChevronRight, contentDescription = if (expanded) "Fold $text" else "Open $text",
-            modifier = Modifier.size(22.dp).graphicsLayer { rotationZ = turn })
+            modifier = Modifier.size(Ui.Icon.regular).graphicsLayer { rotationZ = turn })
         Spacer(Modifier.width(Ui.Space.xs))
         Text(text, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold))
         Spacer(Modifier.width(Ui.Space.s))
@@ -363,6 +363,8 @@ internal fun FolderTile(
     onThumbnail: () -> Unit = {},
     onClearThumbnail: () -> Unit = {},
     onColour: () -> Unit = {},
+    /** The line under the name, where a note has its date: what kind of folder it is. */
+    subtitle: String = "Folder",
 ) {
     var menu by remember(name) { mutableStateOf(false) }
     val primary = if (tint != 0) Color(tint) else MaterialTheme.colorScheme.primary
@@ -397,8 +399,8 @@ internal fun FolderTile(
                         contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                         modifier = Modifier.matchParentSize(),
                     )
-                    Box(Modifier.align(Alignment.BottomStart).padding(8.dp).clip(RoundedCornerShape(8.dp))
-                        .background(primary).padding(horizontal = 8.dp, vertical = 4.dp)) {
+                    Box(Modifier.align(Alignment.BottomStart).padding(Ui.Space.s).clip(Ui.Shape.badge)
+                        .background(primary).padding(horizontal = Ui.Space.s, vertical = Ui.Space.xs)) {
                         Text(countNoun(count, "note"), style = MaterialTheme.typography.labelMedium, color = Color.White)
                     }
                 } else Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -411,14 +413,20 @@ internal fun FolderTile(
                     Spacer(Modifier.height(Ui.Space.xs))
                     Text(countNoun(count, "note"), style = MaterialTheme.typography.labelLarge, color = primary)
                 }
-                if (selectionMode) SelectionMark(selected, Modifier.align(Alignment.TopEnd).padding(8.dp))
+                if (selectionMode) SelectionMark(selected, Modifier.align(Alignment.TopEnd).padding(Ui.Space.s))
             }
             Row(
                 Modifier.fillMaxWidth().padding(start = 4.dp, top = 6.dp, bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(name, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                // Two lines, as a note's name and date are, so a folder and a note
+                // side by side in the grid end at the same height.
+                Column(Modifier.weight(1f)) {
+                    Text(name, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(subtitle, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
                 if (!selectionMode) Box {
                     IconButton(onClick = { menu = true }) {
                         Icon(Reicons.MoreVert, contentDescription = "Folder options for $name",

@@ -887,7 +887,7 @@ private fun TocTreeRow(
     val guide = scheme.outlineVariant
     val depth = page.tocLevel.coerceIn(0, 8)
     Row(
-        Modifier.fillMaxWidth().heightIn(min = 32.dp).clip(RoundedCornerShape(6.dp))
+        Modifier.fillMaxWidth().heightIn(min = 32.dp).clip(Ui.Shape.chip)
             .background(if (selected) scheme.primary.copy(alpha = 0.12f) else Color.Transparent)
             .clickable(onClick = onJump)
             .drawBehind {
@@ -918,7 +918,7 @@ private fun TocTreeRow(
             modifier = Modifier.padding(horizontal = 6.dp))
         Box {
             IconButton(onClick = { menu = true }, modifier = Modifier.size(32.dp)) {
-                Icon(Reicons.MoreVert, contentDescription = "Contents entry options", modifier = Modifier.size(18.dp))
+                Icon(Reicons.MoreVert, contentDescription = "Contents entry options", modifier = Modifier.size(Ui.Icon.small))
             }
             DropdownMenu(menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(text = { Text("Rename") }, onClick = { menu = false; onEdit() })

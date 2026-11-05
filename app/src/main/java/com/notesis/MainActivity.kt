@@ -297,7 +297,7 @@ class MainActivity : ComponentActivity() {
                 DisplayRate.apply(this@MainActivity)
             }
             // The app's own brightness and dimming, if set, on the window it draws in.
-            LaunchedEffect(Unit) { AppBrightness.load(this@MainActivity) }
+            LaunchedEffect(Unit) { AppBrightness.load(this@MainActivity); HomeLooks.load(this@MainActivity) }
             LaunchedEffect(AppBrightness.level, AppBrightness.screenLevel) { AppBrightness.apply(this@MainActivity) }
             // This tablet could not keep up: asked once whether to run light.
             if (JankWatch.suggest) {
@@ -492,6 +492,7 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                 } else if (note == null) {
+                    HomeLookTheme {
                     HomeScreen(
                         store = store,
                         onSkin = {
@@ -513,6 +514,7 @@ class MainActivity : ComponentActivity() {
                             vaultFile = file
                         },
                     )
+                    }
                 } else if (note.kind == NoteKind.MARKDOWN) {
                     key(note.id) {
                         MarkdownNoteScreen(
@@ -1367,7 +1369,7 @@ private fun HomeScreen(
             // by exactly how far the list has gone. A tap on either round button
             // opens its own part again; a second tap folds it back.
             var homeMore by remember { mutableStateOf(false) }
-            val fade = homeColor?.let { Color(it) } ?: MaterialTheme.colorScheme.surface
+            val fade = homeColor?.let { Color(it) } ?: homeLookTop() ?: MaterialTheme.colorScheme.surface
             val capsule = RoundedCornerShape(50)
             val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
             val button = LIBRARY_SEARCH_HEIGHT
@@ -1616,7 +1618,9 @@ private fun HomeScreen(
                     },
                 )
                 // Opaque, so the frost replaces the page rather than adding to it.
-                .background(homeColor?.let { Color(it) } ?: MaterialTheme.colorScheme.surface),
+                .background(homeColor?.let { Color(it) } ?: MaterialTheme.colorScheme.surface)
+                // A look draws its own ground, unless a colour of the user's own replaces it.
+                .then(homeLookGround()?.takeIf { homeColor == null }?.let { Modifier.background(it) } ?: Modifier),
         ) {
         HomeBackground(homePhoto)
         val smartHere = results == null && folder.isBlank() && smartOpen == null && tagFilter == null &&
@@ -1732,6 +1736,7 @@ private fun HomeScreen(
                         name = "✦ " + smart.name,
                         count = remember(notes, smart) { notes.count { smart.matches(it, now, opened) } },
                         tint = SMART_FOLDER_TINT,
+                        subtitle = "Smart folder",
                         selected = false,
                         selectionMode = false,
                         onOpen = { if (!selectionMode) smartOpen = smart },
@@ -2909,7 +2914,8 @@ private fun NoteCard(
                     .fillMaxWidth()
                     .aspectRatio(0.75f)
                     .clip(paper)
-                    .background(if (isDarkTheme()) MaterialTheme.colorScheme.surfaceContainerHigh else Color(0xFFFDFCF8))
+                    .background(HomeLooks.look.colors(isDarkTheme())?.paper
+                        ?: if (isDarkTheme()) MaterialTheme.colorScheme.surfaceContainerHigh else Color(0xFFFDFCF8))
                     .border(Dp.Hairline, MaterialTheme.colorScheme.outlineVariant, paper),
                 contentAlignment = Alignment.Center,
             ) {
@@ -3171,10 +3177,10 @@ private fun FolderDialog(
     fun row(label: String, depth: Int, path: String) {
         val picked = chosen == path
         Row(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+            Modifier.fillMaxWidth().clip(Ui.Shape.chip)
                 .background(if (picked) scheme.primary.copy(alpha = 0.14f) else Color.Transparent)
                 .clickable { chosen = path }
-                .padding(start = Ui.Space.s + 18.dp * depth, end = Ui.Space.s, top = 10.dp, bottom = 10.dp),
+                .padding(start = Ui.Space.s + Ui.Space.l * depth, end = Ui.Space.s, top = Ui.Space.m, bottom = Ui.Space.m),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(if (path.isEmpty()) Reicons.Description else Reicons.Folder, contentDescription = null,
@@ -8453,7 +8459,8 @@ private fun ReferencePanel(
                                 onWritingStarted = { latestActive() }
                                 onRotateNote = { latestRotate(it) }
                                 onRotateNoteEnd = { latestRotateEnd() }
-                                onCaptured = { bitmap -> post { latestCaptured?.invoke(bitmap) } }
+                                // The view's own, not the parameter of the same name.
+                                this.onCaptured = { bitmap -> post { latestCaptured?.invoke(bitmap) } }
                                 onLassoSelected = { popupLassoCount = it }
                                 onCurrentPageChanged = { onPageChange(it) }
                                 // Already open by definition: three fingers down

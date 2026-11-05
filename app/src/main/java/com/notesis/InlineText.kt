@@ -96,8 +96,8 @@ internal fun InlineTextEditor(
             },
         ) {
             Row(
-                Modifier.background(MaterialTheme.colorScheme.surface, RoundedCornerShape(10.dp))
-                    .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(10.dp))
+                Modifier.background(MaterialTheme.colorScheme.surface, Ui.Shape.chip)
+                    .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant, Ui.Shape.chip)
                     .padding(horizontal = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
             ) {

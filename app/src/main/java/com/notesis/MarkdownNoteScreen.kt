@@ -633,7 +633,7 @@ private fun MarkdownReader(
                             modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp))
                     }
                 }
-                is MdBlock.Code -> Surface(color = colors.codeBack, shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) {
+                is MdBlock.Code -> Surface(color = colors.codeBack, shape = Ui.Shape.preview, modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(12.dp)) {
                         if (block.language.isNotBlank()) Text(block.language, style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -643,7 +643,7 @@ private fun MarkdownReader(
                 }
                 is MdBlock.Table -> MarkdownTable(block, ::inline)
                 is MdBlock.Rule -> HorizontalDivider(Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant)
-                is MdBlock.FrontMatter -> Surface(color = colors.codeBack, shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) {
+                is MdBlock.FrontMatter -> Surface(color = colors.codeBack, shape = Ui.Shape.preview, modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(12.dp)) {
                         Text("Properties", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(block.text, fontFamily = FontFamily.Monospace, fontSize = 14.sp)
@@ -666,7 +666,7 @@ private fun MarkdownCallout(callout: MdCallout, inline: (String) -> AnnotatedStr
         Modifier
             .fillMaxWidth()
             .height(IntrinsicSize.Min)
-            .clip(RoundedCornerShape(8.dp))
+            .clip(Ui.Shape.preview)
             .background(tint.copy(alpha = 0.10f)),
     ) {
         Box(Modifier.width(4.dp).fillMaxHeight().background(tint))

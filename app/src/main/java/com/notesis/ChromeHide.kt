@@ -90,7 +90,7 @@ internal fun ChromePullTab(state: ChromeHideState, modifier: Modifier = Modifier
             .graphicsLayer { alpha = state.away.value }
             .padding(top = 6.dp)
             .size(width = 76.dp, height = 26.dp)
-            .skinMaterial(RoundedCornerShape(13.dp))
+            .skinMaterial(Ui.Shape.pill)
             .semantics {
                 role = Role.Button
                 contentDescription = "Show the toolbar"
