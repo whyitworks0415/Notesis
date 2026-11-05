@@ -88,12 +88,14 @@ internal object AppUpdate {
      * Only its digest is kept here: it opens nothing but test builds, which
      * are public anyway, so it needs keeping out of sight rather than safe.
      */
-    fun isBetaCode(code: String): Boolean {
-        val digest = MessageDigest.getInstance("SHA-256").digest(code.trim().uppercase().toByteArray(Charsets.UTF_8))
-        return digest.joinToString("") { "%02x".format(it) } == BETA_CODE_SHA256
-    }
+    fun isBetaCode(code: String): Boolean = betaCodeDigest(code) == BETA_CODE_SHA256
 
-    private const val BETA_CODE_SHA256 = "6ed938ece987a9eec6062196123f1e79094d0a183e3421898622698b5320cbb1"
+    /** [code]'s SHA-256 in hex, spaces at either end and case left out. */
+    fun betaCodeDigest(code: String): String =
+        MessageDigest.getInstance("SHA-256").digest(code.trim().uppercase().toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+
+    private const val BETA_CODE_SHA256 = "4a8288b8f60939f047948a68692aba9b489e65e587341b0ea551b04ecb3de067"
 
     /** The newest of [releases] (newest first) this copy takes: any for a beta tester, else the newest automatic one. */
     fun newestFor(releases: List<AppRelease>, beta: Boolean): AppRelease? = releases.firstOrNull { beta || !it.manual }

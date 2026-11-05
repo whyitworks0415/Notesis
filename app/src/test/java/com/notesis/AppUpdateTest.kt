@@ -94,9 +94,9 @@ class AppUpdateTest {
     }
 
     @Test fun `the developer code is taken however it is spaced or cased`() {
-        assertTrue(AppUpdate.isBetaCode("NOTESIS-BETA"))
-        assertTrue(AppUpdate.isBetaCode("  notesis-beta "))
-        assertFalse(AppUpdate.isBetaCode("notesis"))
+        // The code itself stays out of the repository; only how it is read is checked.
+        assertEquals(AppUpdate.betaCodeDigest("Some Code"), AppUpdate.betaCodeDigest("  SOME code "))
+        assertFalse(AppUpdate.isBetaCode("NOTESIS-BETA"))
         assertFalse(AppUpdate.isBetaCode(""))
     }
 }
