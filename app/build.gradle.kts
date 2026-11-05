@@ -77,6 +77,8 @@ dependencies {
     // the code they name is compiled ahead of time instead of interpreted for
     // the first launches. The Play Store would do this; GitHub releases do not.
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
+    // Automatic backup wakes now and then on its own, off unless switched on.
+    implementation("androidx.work:work-runtime:2.10.0")
     implementation(platform("androidx.compose:compose-bom:2026.06.01"))
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")

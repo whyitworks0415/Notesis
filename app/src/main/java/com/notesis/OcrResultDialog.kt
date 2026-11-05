@@ -25,6 +25,8 @@ internal fun OcrResultDialog(
     onCopy: (String) -> Unit,
     onConvert: (String) -> Unit,
     onClose: () -> Unit,
+    /** The text put on the page as a text box under the writing, which stays. */
+    onPlace: ((String) -> Unit)? = null,
 ) {
     // Which reading each line uses, the first by default.
     val chosen = remember(lines) { mutableStateListOf(*Array(lines.size) { 0 }) }
@@ -81,6 +83,7 @@ internal fun OcrResultDialog(
         },
         dismissButton = {
             Row {
+                if (text.isNotBlank() && onPlace != null) TextButton(onClick = { onPlace(text) }) { Text("Add as text box") }
                 if (text.isNotBlank()) TextButton(onClick = { onConvert(text) }) { Text("Convert to text") }
                 TextButton(onClick = onClose) { Text("Close") }
             }

@@ -26,4 +26,9 @@ class DeviceClassTest {
         assertTrue(DeviceClass.isSlow(lowRam = false, totalMemoryBytes = 5_600_000_000L, model = "SM-T720", sdk = 30))
         assertFalse(DeviceClass.isSlow(lowRam = false, totalMemoryBytes = 7_600_000_000L, model = "SM-X710", sdk = 34))
     }
+
+    @Test fun `without a pen a finger writes; with one it scrolls`() {
+        assertTrue(DeviceClass.defaultOneFinger(hasStylus = false) == FINGER_DRAW)
+        assertTrue(DeviceClass.defaultOneFinger(hasStylus = true) == FINGER_SCROLL)
+    }
 }

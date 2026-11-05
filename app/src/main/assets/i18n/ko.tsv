@@ -411,8 +411,6 @@ Export as PDF	PDF로 내보내기
 Look	스타일
 Folder options for {0}	{0} 폴더 옵션
 Folder name	폴더 이름
-Leave blank for the top level	비워 두면 맨 위에 둡니다
-Existing folders	있는 폴더
 New note · Import	새 노트 · 가져오기
 Backup	백업
 Back up all notes	모든 노트 백업
@@ -1526,3 +1524,35 @@ Dismiss	닫기
 Newest	최신순
 By folder	폴더별
 In the vault	보관함에서
+Automatic backup…	자동 백업…
+Automatic backup	자동 백업
+Every note, backed up on its own as the same file "Back up all notes" makes. Off until you turn it on.	"모든 노트 백업"과 같은 파일로 모든 노트를 알아서 백업합니다. 켜기 전까지는 꺼져 있습니다.
+On this tablet	이 태블릿에
+Kept in Android/data/com.notesis/files/Backups, the last {0}. Removed with the app, so this alone does not keep notes safe from losing the tablet.	Android/data/com.notesis/files/Backups에 최근 {0}개를 보관합니다. 앱을 지우면 함께 지워지므로, 이것만으로는 태블릿을 잃어버렸을 때 노트를 지킬 수 없습니다.
+In a folder (tablet or cloud)	폴더에 (태블릿 또는 클라우드)
+A new file each time, the last {0} kept. Cloud apps that offer folders in the picker, such as OneDrive or Dropbox, work here.	매번 새 파일로 저장하고 최근 {0}개를 남깁니다. 고르는 화면에서 폴더를 보여 주는 클라우드 앱(OneDrive, Dropbox 등)도 쓸 수 있습니다.
+One file in Google Drive	Google 드라이브의 파일 하나
+Pick Drive in the picker and save. That one file is written over each time.	고르는 화면에서 드라이브를 골라 저장하세요. 그 파일 하나에 매번 덮어씁니다.
+Every day	매일
+Every week	매주
+Last backup: {0}	마지막 백업: {0}
+No backup yet	아직 백업 안 함
+Backed up	백업했습니다
+Failed: {0}	실패: {0}
+Backup failed	백업하지 못했습니다
+Backing up…	백업하는 중…
+Back up now	지금 백업
+New smart folder	새 스마트 폴더
+Edit smart folder	스마트 폴더 고치기
+Notes that are…	이런 노트를 모읍니다…
+Written in	쓴 때
+Any time	언제든
+The last 7 days	최근 7일
+The last 30 days	최근 30일
+Kind	종류
+Any	모두
+Handwritten	손글씨
+Favourites only	즐겨찾기만
+Tag	태그
++ New note	+ 새 노트
+Add as text box	텍스트 상자로 추가

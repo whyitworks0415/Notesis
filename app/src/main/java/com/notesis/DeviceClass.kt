@@ -36,6 +36,20 @@ internal object DeviceClass {
         lowRam || (totalMemoryBytes in 1 until SLOW_BELOW_BYTES) || frontBufferInkUnreliable(model) ||
             sdk < FULL_EFFECTS_SDK
 
+    /**
+     * Whether the tablet has a pen: any input device that is a stylus. The
+     * Galaxy Tab S5e has none, so out of the box a finger there writes and
+     * two fingers move the page, rather than a finger only scrolling.
+     */
+    fun hasStylus(context: Context): Boolean = runCatching {
+        android.view.InputDevice.getDeviceIds().any { id ->
+            android.view.InputDevice.getDevice(id)?.supportsSource(android.view.InputDevice.SOURCE_STYLUS) == true
+        }
+    }.getOrDefault(true)
+
+    /** What one finger does out of the box: writes where there is no pen to write with. */
+    fun defaultOneFinger(hasStylus: Boolean): Int = if (hasStylus) FINGER_SCROLL else FINGER_DRAW
+
     /** Android 13, where the liquid glass's shaders first run. */
     const val FULL_EFFECTS_SDK = 33
 

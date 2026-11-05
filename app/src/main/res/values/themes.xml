@@ -4,4 +4,15 @@
         <!-- Paper stays paper: the app has its own dark theme, so a maker's forced dark mode is refused. -->
         <item name="android:forceDarkAllowed">false</item>
     </style>
+    <!-- A note in the home-screen widget: one line, tappable. -->
+    <style name="WidgetNote">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:paddingTop">8dp</item>
+        <item name="android:paddingBottom">8dp</item>
+        <item name="android:ellipsize">end</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:textColor">#FF3A3D45</item>
+        <item name="android:textSize">14sp</item>
+    </style>
 </resources>

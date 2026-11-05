@@ -1197,6 +1197,24 @@ class NoteStore(context: Context) {
         true
     }.getOrDefault(false)
 
+    /**
+     * A handwritten note as Markdown: its title, then each page in turn with
+     * what the app has read off it - recognised handwriting, text boxes and a
+     * PDF page's own text. Pages not yet read come out empty; reading them
+     * (Read handwriting) fills them in.
+     */
+    fun exportInkAsMarkdown(id: String, title: String, out: java.io.OutputStream): Boolean = runCatching {
+        val order = pageOrder(id).entries.sortedBy { it.value }.map { it.key }
+        val pages = File(root, "$id/pages")
+        val text = inkMarkdown(title, order.map { pageId ->
+            listOf(".txt", INK_INDEX, BOX_INDEX).mapNotNull { suffix ->
+                File(pages, pageId + suffix).takeIf { it.isFile }?.readText(Charsets.UTF_8)?.trim()?.takeIf { it.isNotEmpty() }
+            }
+        })
+        out.bufferedWriter(Charsets.UTF_8).use { it.write(text) }
+        true
+    }.getOrDefault(false)
+
     /** Loads and writes use the same queue, so reopening never races an exit save. */
     fun loadMarkdownLater(id: String, done: (Result<String>) -> Unit) {
         saveWorker.execute {

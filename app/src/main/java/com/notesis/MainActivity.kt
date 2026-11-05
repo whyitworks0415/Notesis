@@ -278,6 +278,8 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null) Onboarding.startAsFirstRunIfAsked(applicationContext)
         val store = NoteStore(this)
         noteStore = store
+        // Only when switched on: off, the scheduler is not even started.
+        if (AutoBackup.target(this) != BackupTarget.OFF) runCatching { AutoBackup.schedule(applicationContext) }
         val prefs = PenStore(this)
         ToolbarLayout.load(this)
         AppIconStyle.load(this)
@@ -595,6 +597,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         JankWatch.stop(this)
+        // The widget shows the library as it is now.
+        NotesWidget.refresh(this)
         StudyClock.foreground = false
         StudyClock.save()
         super.onPause()
@@ -605,6 +609,20 @@ class MainActivity : ComponentActivity() {
         MemoryTrim.trim(level)
     }
 
+    private fun acceptWidgetIntent(intent: android.content.Intent?) {
+        val action = intent?.action ?: return
+        if (action != NotesWidget.ACTION_NEW && action != NotesWidget.ACTION_OPEN) return
+        // Taken once: a rotation must not make another new note.
+        intent.action = android.content.Intent.ACTION_MAIN
+        lifecycleScope.launch {
+            val note = withContext(Dispatchers.IO) { widgetNote(android.content.Intent(action).putExtras(intent), noteStore) }
+            if (note != null) {
+                incomingViewerRequest = null
+                incomingImportedNote = note
+            }
+        }
+    }
+
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -612,6 +630,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun acceptDocumentIntent(intent: android.content.Intent?) {
+        acceptWidgetIntent(intent)
         if (intent?.action != android.content.Intent.ACTION_VIEW) return
         val uri = intent.data ?: return
         val request = viewerRequest(this, uri)
@@ -634,6 +653,14 @@ class MainActivity : ComponentActivity() {
 }
 
 private val dateFormat = SimpleDateFormat("MMM d, HH:mm", Locale.ENGLISH)
+
+/** The widget's two buttons: a new note opened at once, or one of the last notes. */
+private fun MainActivity.widgetNote(intent: android.content.Intent?, store: NoteStore): NoteMeta? = when (intent?.action) {
+    NotesWidget.ACTION_NEW -> runCatching { store.create(L10n.tr("Untitled")) }.getOrNull()
+    NotesWidget.ACTION_OPEN -> intent.getStringExtra(NotesWidget.EXTRA_NOTE)
+        ?.let { id -> store.list().firstOrNull { it.id == id && !it.locked } }
+    else -> null
+}
 
 
 /**
@@ -704,6 +731,8 @@ private fun HomeScreen(
     var bulkFolder by remember { mutableStateOf(false) }
     var naming by remember { mutableStateOf(false) }
     var templateRevision by remember { mutableIntStateOf(0) }
+    var autoBackupOpen by remember { mutableStateOf(false) }
+    if (autoBackupOpen) AutoBackupDialog(onDismiss = { autoBackupOpen = false }, onReport = { report = it })
     // A template just added, asked for its name.
     var namingTemplate by remember { mutableStateOf<UserPageTemplate?>(null) }
     val userTemplates = remember(templateRevision) { store.pageTemplates() }
@@ -905,6 +934,8 @@ private fun HomeScreen(
     LaunchedEffect(folder) { onFolder(folder) }
     // Back leaves the folder before it leaves the app.
     BackHandler(enabled = folder.isNotBlank()) { folder = folderParent(folder) }
+    // A smart folder is left before the folder it was opened from.
+    BackHandler(enabled = smartOpen != null) { smartOpen = null }
     // And selecting ends before either.
     BackHandler(enabled = selectionMode) { clearSelection() }
     var filing by remember { mutableStateOf<NoteMeta?>(null) }
@@ -914,13 +945,21 @@ private fun HomeScreen(
     var menuFolder by remember { mutableStateOf<String?>(null) }
     var renamingNote by remember { mutableStateOf<NoteMeta?>(null) }
     val folders = remember(revision) { store.folders() }
+    // Folders that fill themselves; see SmartFolders.kt.
+    var smartFolders by remember { mutableStateOf(SmartFolders.load(context)) }
+    var smartOpen by remember { mutableStateOf<SmartFolder?>(null) }
+    var editingSmart by remember { mutableStateOf<SmartFolder?>(null) }
+    var creatingSmart by remember { mutableStateOf(false) }
     // The folders in the one open, or at the top level; each counts what is in it and below.
     val subfolders = remember(folders, folder) { folderChildren(folders, folder) }
     val folderCounts = remember(notes, subfolders) {
         subfolders.associateWith { path -> notes.count { isInFolder(it.folder, path) } }
     }
     // Favourites first, then the chosen order within each group.
-    val shown = (results ?: if (tagFilter != null) notes.filter { tagFilter in it.tags }
+    val shown = (results ?: smartOpen?.let { smart ->
+        val now = System.currentTimeMillis()
+        notes.filter { smart.matches(it, now) }
+    } ?: if (tagFilter != null) notes.filter { tagFilter in it.tags }
         else notes.filter { it.folder == folder }).sortedWith(
         compareByDescending<NoteMeta> { it.favorite }.thenBy { if (it.favorite) it.favoriteOrder else 0L }.then(
             when (librarySort) {
@@ -1051,7 +1090,11 @@ private fun HomeScreen(
         if (uri == null || target == null) return@rememberLauncherForActivityResult
         scope.launch {
             val ok = withContext(Dispatchers.IO) {
-                context.contentResolver.openOutputStream(uri)?.use { store.exportMarkdown(target, it) } ?: false
+                val meta = store.list().firstOrNull { it.id == target }
+                context.contentResolver.openOutputStream(uri)?.use {
+                    if (meta != null && meta.kind == NoteKind.INK) store.exportInkAsMarkdown(target, meta.title, it)
+                    else store.exportMarkdown(target, it)
+                } ?: false
             }
             report = if (ok) "Markdown file saved" else "Markdown export failed"
         }
@@ -1225,6 +1268,7 @@ private fun HomeScreen(
     val narrowLibrary = LocalConfiguration.current.screenWidthDp < FULL_BAR_MIN_WIDTH_DP
     val librarySide = if (narrowLibrary) Ui.Space.m else Ui.Space.l
     val libraryTitle = when {
+        smartOpen != null -> smartOpen!!.name
         tagFilter != null -> "#$tagFilter"
         // Inside a folder in a folder, the way down to it: School › Maths.
         folder.isNotBlank() -> folder.replace("/", " › ")
@@ -1329,11 +1373,11 @@ private fun HomeScreen(
                     Row(Modifier.fillMaxWidth().height(HOME_BAR_HEIGHT), verticalAlignment = Alignment.CenterVertically) {
                         // Only inside a folder: at the top level there is nowhere
                         // to go back to, and an arrow that does nothing is a lie.
-                        if (folder.isNotBlank() && !selectionMode) {
+                        if ((folder.isNotBlank() || smartOpen != null) && !selectionMode) {
                             Box(Modifier.size(button), contentAlignment = Alignment.Center) {
                                 Box(Modifier.matchParentSize().graphicsLayer { alpha = scrollFold.value }
                                     .skinMaterial(CircleShape, role = ChromeRole.TOOLBAR))
-                                IconButton(onClick = { folder = folderParent(folder) }) {
+                                IconButton(onClick = { if (smartOpen != null) smartOpen = null else folder = folderParent(folder) }) {
                                     Icon(Reicons.ArrowBack, contentDescription = "Back")
                                 }
                             }
@@ -1446,6 +1490,11 @@ private fun HomeScreen(
                                                 onClick = { homeMore = false; Onboarding.tutorialOpen = true },
                                             )
                                         }
+                                        if (folder.isBlank()) GlassMenuItem(
+                                            text = { Text("New smart folder") },
+                                            leadingIcon = { Icon(Reicons.Folder, contentDescription = null) },
+                                            onClick = { homeMore = false; creatingSmart = true },
+                                        )
                                         if (folder.isNotBlank()) {
                                             GlassMenuItem(text = { Text("Rename folder") }, onClick = {
                                                 homeMore = false; renamingFolder = true
@@ -1508,6 +1557,7 @@ private fun HomeScreen(
                     onRestore = { openArchive.launch(arrayOf("*/*")) },
                     onSaveSettings = { saveSettings.launch("Notesis-settings.json") },
                     onLoadSettings = { openSettings.launch(arrayOf("*/*")) },
+                    onAutoBackup = { autoBackupOpen = true },
                 )
                 Spacer(Modifier.height(12.dp))
                 // Everything that makes a note, folded into the one button.
@@ -1556,9 +1606,11 @@ private fun HomeScreen(
                 .background(homeColor?.let { Color(it) } ?: MaterialTheme.colorScheme.surface),
         ) {
         HomeBackground(homePhoto)
-        val emptyHere = shown.isEmpty() &&
-            (results != null || subfolders.isEmpty() || libraryFilter == LIBRARY_NOTES || libraryFilter == LIBRARY_MARKDOWN)
-        val foldersHere = results == null && subfolders.isNotEmpty() && tagFilter == null &&
+        val smartHere = results == null && folder.isBlank() && smartOpen == null && tagFilter == null &&
+            smartFolders.isNotEmpty() && libraryFilter.let { it == LIBRARY_ALL || it == LIBRARY_FOLDERS }
+        val emptyHere = shown.isEmpty() && (results != null || smartOpen != null || (subfolders.isEmpty() && !smartHere) ||
+            libraryFilter == LIBRARY_NOTES || libraryFilter == LIBRARY_MARKDOWN)
+        val foldersHere = results == null && smartOpen == null && (subfolders.isNotEmpty() || smartHere) && tagFilter == null &&
             libraryFilter.let { it == LIBRARY_ALL || it == LIBRARY_FOLDERS }
         val showFolders = foldersHere && !foldersHidden
         val inkShown = if (libraryFilter == LIBRARY_ALL || libraryFilter == LIBRARY_NOTES)
@@ -1631,7 +1683,8 @@ private fun HomeScreen(
             // are a place, not another note.
             if (foldersHere) {
                 item(key = "folders-heading", span = { GridItemSpan(maxLineSpan) }) {
-                    LibrarySectionToggle("Folders", subfolders.size, expanded = !foldersHidden) {
+                    LibrarySectionToggle("Folders", subfolders.size + (if (smartHere) smartFolders.size else 0),
+                        expanded = !foldersHidden) {
                         foldersHidden = !foldersHidden
                         homeStore.foldersHidden = foldersHidden
                     }
@@ -1658,6 +1711,19 @@ private fun HomeScreen(
                         onRename = { menuFolder = name; renamingFolder = true },
                         onDelete = { menuFolder = name; deletingFolder = true },
                         modifier = Modifier.libraryTile(libraryTiles, folderKey(name)),
+                    )
+                }
+                if (smartHere) items(smartFolders, key = { "smart:${it.id}" }) { smart ->
+                    val now = remember(notes) { System.currentTimeMillis() }
+                    FolderTile(
+                        name = "✦ " + smart.name,
+                        count = remember(notes, smart) { notes.count { smart.matches(it, now) } },
+                        tint = SMART_FOLDER_TINT,
+                        selected = false,
+                        selectionMode = false,
+                        onOpen = { if (!selectionMode) smartOpen = smart },
+                        onRename = { editingSmart = smart },
+                        onDelete = { SmartFolders.remove(context, smart.id); smartFolders = SmartFolders.load(context) },
                     )
                 }
             }
@@ -1764,12 +1830,13 @@ private fun HomeScreen(
                     onExportPdf = {
                         exportDialogFor = note
                     },
-                    onExportMarkdown = if (note.kind == NoteKind.MARKDOWN) {
+                    // A Markdown note as it is; a handwritten one as the text read off its pages.
+                    onExportMarkdown = if (note.locked) null else {
                         {
                             markdownExportId = note.id
                             saveMarkdown.launch(safeFileName(note.title) + ".md")
                         }
-                    } else null,
+                    },
                     onFile = { filing = note },
                     onToggleFavorite = {
                         store.setFavorite(note.id, !note.favorite)
@@ -2096,6 +2163,17 @@ private fun HomeScreen(
 
     // The folder a tile's menu was opened on, else the one that is open.
     val folderTarget = menuFolder ?: folder
+    if (creatingSmart || editingSmart != null) SmartFolderDialog(
+        initial = editingSmart,
+        tags = allTags,
+        onDismiss = { creatingSmart = false; editingSmart = null },
+        onSave = { smart ->
+            SmartFolders.put(context, smart)
+            smartFolders = SmartFolders.load(context)
+            if (smartOpen?.id == smart.id) smartOpen = smart
+            creatingSmart = false; editingSmart = null
+        },
+    )
     if (creatingFolder || renamingFolder) {
         val rename = renamingFolder
         FolderNameDialog(
@@ -3231,6 +3309,7 @@ private fun BackupButton(
     onRestore: () -> Unit,
     onSaveSettings: () -> Unit,
     onLoadSettings: () -> Unit,
+    onAutoBackup: () -> Unit = {},
 ) {
     var open by remember { mutableStateOf(false) }
     Box {
@@ -3247,6 +3326,14 @@ private fun BackupButton(
                 onClick = {
                     open = false
                     onBackupAll()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Automatic backup…") },
+                leadingIcon = { Icon(Reicons.Archive, contentDescription = null) },
+                onClick = {
+                    open = false
+                    onAutoBackup()
                 },
             )
             DropdownMenuItem(
@@ -6468,6 +6555,24 @@ private fun NoteScreen(
                     }
                 },
                 onClose = { regionOcrLines = null },
+                // The same text, but as a text box just under the handwriting, which is left as it is.
+                onPlace = { recognized ->
+                    regionOcrLines = null
+                    val place = canvas?.lassoPlacement()
+                    val content = TextBoxContent(recognized.trim(), size = place?.third ?: 32f)
+                    scope.launch {
+                        val result = withContext(Dispatchers.IO) { runCatching {
+                            val bitmap = renderTextBox(content)
+                            try { store.addImage(note.id, bitmap)?.let { Triple(it.first, bitmap.width, bitmap.height) } }
+                            finally { bitmap.recycle() }
+                        }.getOrNull() }
+                        if (result != null && place != null) {
+                            canvas?.putTextBox(result.first, result.second, result.third, content,
+                                at = Triple(place.first, place.second.left, place.second.bottom + place.third * 0.5f))
+                            edits++
+                        }
+                    }
+                },
             )
         }
 
@@ -8496,6 +8601,8 @@ internal const val DROP_BOTTOM = 3
 
 /** How many of the vault's files the library shows, newest first; the rest are in the vault. */
 internal const val HOME_VAULT_FILES = 12
+/** A smart folder's colour in the library, so it reads as unlike the folders notes are filed in. */
+internal const val SMART_FOLDER_TINT = 0xFF8E24AA.toInt()
 /** How many of the vault's files a library search shows. */
 internal const val HOME_VAULT_SEARCH = 30
 

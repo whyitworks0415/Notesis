@@ -53,6 +53,19 @@
             </intent-filter>
         </activity>
 
+        <!-- The home-screen widget: a new note and the notes written in last. -->
+        <receiver
+            android:name=".NotesWidget"
+            android:exported="false"
+            android:label="Notesis">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_notes_info" />
+        </receiver>
+
         <service
             android:name=".RecordingService"
             android:exported="false"

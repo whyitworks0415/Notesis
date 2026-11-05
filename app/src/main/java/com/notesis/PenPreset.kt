@@ -235,6 +235,9 @@ fun InkCanvasView.applyGestures(gestures: CanvasGestures) {
 class PenStore(context: Context) {
 
     private val prefs = context.getSharedPreferences("pens", Context.MODE_PRIVATE)
+    private val appContext = context.applicationContext
+    /** One finger's job until it is chosen: see [DeviceClass.defaultOneFinger]. */
+    private val defaultOneFinger by lazy { DeviceClass.defaultOneFinger(DeviceClass.hasStylus(appContext)) }
 
     var toolbarSize: Int
         get() = prefs.getInt("toolbarSize", 0).coerceIn(0, 3)
@@ -584,7 +587,7 @@ class PenStore(context: Context) {
             holdToDraw = holdToShape(),
             snapToAlign = prefs.getBoolean("snapToAlign", true),
             keepAspect = prefs.getBoolean("keepAspect", true),
-            oneFinger = prefs.getInt("oneFinger", FINGER_SCROLL),
+            oneFinger = prefs.getInt("oneFinger", defaultOneFinger),
             twoFingers = prefs.getInt("twoFingers", TWO_ZOOM_PAN),
             zoomLocked = prefs.getBoolean("zoomLocked", false),
             // Before the choice there was only a switch for zooming; off, the tap did nothing.

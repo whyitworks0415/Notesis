@@ -98,3 +98,16 @@ internal fun markdownPreviewText(preview: MdPreview, body: TextUnit, accent: Col
 
 /** The body size of a note's words on its card, small enough for a page of them to show. */
 internal val MD_CARD_BODY = 9.sp
+
+/**
+ * A handwritten note's text as Markdown: [title] as the heading, then each
+ * page under its number with the pieces read off it, one paragraph each.
+ */
+internal fun inkMarkdown(title: String, pages: List<List<String>>): String {
+    val blocks = mutableListOf("# " + title.ifBlank { "Untitled" })
+    pages.forEachIndexed { i, pieces ->
+        blocks += "## ${i + 1}"
+        if (pieces.isEmpty()) blocks += "_(nothing read on this page yet)_" else blocks += pieces
+    }
+    return blocks.joinToString("\n\n") + "\n"
+}

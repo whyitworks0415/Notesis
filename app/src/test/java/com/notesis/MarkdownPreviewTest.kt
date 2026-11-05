@@ -31,4 +31,10 @@ class MarkdownPreviewTest {
         assertTrue(preview.text.length <= 50)
         assertTrue(preview.text.endsWith("line ${preview.text.lines().size}"))
     }
+
+    @Test
+    fun `a handwritten note comes out as a heading and its pages`() {
+        val md = inkMarkdown("Lecture", listOf(listOf("first line", "a box"), emptyList()))
+        assertEquals("# Lecture\n\n## 1\n\nfirst line\n\na box\n\n## 2\n\n_(nothing read on this page yet)_\n", md)
+    }
 }
