@@ -221,3 +221,95 @@ internal fun SplitNode.shape(): SplitNode = when (this) {
     is SplitNode.Pane -> this
     is SplitNode.Branch -> SplitNode.Branch(sideBySide, children.map { it.shape() })
 }
+
+/** Below this share of what two neighbours hold, a seam let go closes the side it was dragged over. */
+internal const val SPLIT_CLOSE_SHARE = 0.1f
+
+/** The branch at [path], or null when there is none there. */
+private fun SplitNode.branchAt(path: List<Int>): SplitNode.Branch? {
+    var node: SplitNode = this
+    for (i in path) node = (node as? SplitNode.Branch)?.children?.getOrNull(i) ?: return null
+    return node as? SplitNode.Branch
+}
+
+/** The child on [side] (0 before the seam, 1 after it) of the seam between [index] and [index] + 1 at [path]. */
+internal fun SplitNode.seamChild(path: List<Int>, index: Int, side: Int): SplitNode? =
+    branchAt(path)?.children?.getOrNull(index + side)
+
+/**
+ * Which side a seam moved by [fraction] of its branch's length closes, when
+ * let go there: 0 when the child before it is dragged under
+ * [SPLIT_CLOSE_SHARE] of the two's room, 1 for the one after, null when
+ * both are still big enough to keep.
+ */
+internal fun SplitNode.seamCloses(path: List<Int>, index: Int, fraction: Float): Int? {
+    val branch = branchAt(path) ?: return null
+    if (index !in 0 until branch.children.lastIndex) return null
+    val total = branch.weights.sum().takeIf { it > 0f } ?: return null
+    val pair = (branch.weights[index] + branch.weights[index + 1]) / total
+    if (pair <= 0f) return null
+    val first = (branch.weights[index] / total + fraction) / pair
+    return when {
+        first < SPLIT_CLOSE_SHARE -> 0
+        first > 1f - SPLIT_CLOSE_SHARE -> 1
+        else -> null
+    }
+}
+
+/**
+ * The tree without the panes in [ids], their room handed to their
+ * neighbours; a branch left with one child becomes that child. Pane 0 can
+ * go too. Null when nothing is left.
+ */
+internal fun SplitNode.removePanes(ids: Set<Int>): SplitNode? = when (this) {
+    is SplitNode.Pane -> if (id in ids) null else this
+    is SplitNode.Branch -> {
+        val kept = children.mapIndexedNotNull { i, child -> child.removePanes(ids)?.let { it to weights[i] } }
+        when (kept.size) {
+            0 -> null
+            1 -> kept.single().first
+            else -> copy(children = kept.map { it.first }, weights = kept.map { it.second })
+        }
+    }
+}
+
+/** The same tree with pane numbers changed as [map] says; numbers not in it stay. */
+internal fun SplitNode.renumber(map: Map<Int, Int>): SplitNode = when (this) {
+    is SplitNode.Pane -> SplitNode.Pane(map[id] ?: id)
+    is SplitNode.Branch -> copy(children = children.map { it.renumber(map) })
+}
+
+/** The two children either side of a seam traded places, each keeping its share. */
+internal fun SplitNode.swapAt(path: List<Int>, index: Int): SplitNode {
+    if (path.isEmpty()) {
+        val branch = this as? SplitNode.Branch ?: return this
+        if (index !in 0 until branch.children.lastIndex) return this
+        val children = branch.children.toMutableList()
+        val weights = branch.weights.toMutableList()
+        children[index] = branch.children[index + 1].also { children[index + 1] = branch.children[index] }
+        weights[index] = branch.weights[index + 1].also { weights[index + 1] = branch.weights[index] }
+        return branch.copy(children = children, weights = weights)
+    }
+    val branch = this as? SplitNode.Branch ?: return this
+    val head = path.first()
+    if (head !in branch.children.indices) return this
+    val children = branch.children.toMutableList()
+    children[head] = children[head].swapAt(path.drop(1), index)
+    return branch.copy(children = children)
+}
+
+/**
+ * What is left after the panes in [closing] are closed, when pane 0 - the
+ * note the screen was opened on - is among them: [newMain] is the pane
+ * whose note becomes the screen's own, numbered 0 in [tree]. [tree] is
+ * null when that note is all that is left. Null when pane 0 stays.
+ */
+internal data class SplitPromotion(val newMain: Int, val tree: SplitNode?)
+
+internal fun SplitNode.promoteAfterClosing(closing: Set<Int>): SplitPromotion? {
+    if (0 !in closing) return null
+    val left = removePanes(closing) ?: return null
+    val heir = left.paneIds().first()
+    val renumbered = left.renumber(mapOf(heir to 0))
+    return SplitPromotion(heir, renumbered.takeIf { it is SplitNode.Branch })
+}

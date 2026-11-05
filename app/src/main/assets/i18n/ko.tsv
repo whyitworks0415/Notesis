@@ -1121,7 +1121,7 @@ Side by side, left split	좌우, 왼쪽 나눔
 Top and bottom, bottom split	위아래, 아래쪽 나눔
 Top and bottom, top split	위아래, 위쪽 나눔
 Four	넷
-This note stays in the tinted part; every other part opens a note of its own. Drag the handles between the parts to resize them, and use each part's bar to change its note, split it again or close it.	이 노트는 색이 칠해진 칸에 남고, 나머지 칸마다 각자의 노트가 열립니다. 칸 사이 손잡이를 끌어 크기를 바꾸고, 각 칸의 막대로 노트를 바꾸거나, 다시 나누거나, 닫습니다.
+This note starts in the tinted part; every other part opens a note of its own, and each is written on the same way. Drag the line between two parts to resize them, or to an edge to close the part it covers. Tap the handle on the line to swap the parts, change a part's note or split it again.	이 노트는 색칠된 칸에서 시작하고, 다른 칸마다 노트를 하나씩 엽니다. 모든 칸은 똑같이 쓸 수 있습니다. 칸 사이의 선을 끌면 크기가 바뀌고, 끝까지 끌면 덮은 칸이 닫힙니다. 선 가운데의 손잡이를 누르면 칸을 서로 바꾸거나, 칸의 노트를 바꾸거나, 다시 나눌 수 있습니다.
 Not split	나누지 않음
 Resize the parts left and right	좌우 칸 크기 조정
 Resize the parts above and below	위아래 칸 크기 조정
@@ -1562,3 +1562,10 @@ Opened recently	최근에 연 노트
 Only the last few opened	최근에 연 것만
 The {0} opened last	최근에 연 {0}
 More colors and width…	다른 색과 굵기…
+Let go to close	놓으면 닫힘
+Split options	분할 옵션
+Open a note here	여기에 열 노트
+Swap sides	칸 서로 바꾸기
+{0}: change note	{0}: 노트 바꾸기
+{0}: split in two	{0}: 둘로 나누기
+{0}: close	{0}: 닫기

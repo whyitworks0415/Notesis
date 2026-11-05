@@ -4292,9 +4292,19 @@ private fun NoteScreen(
     var docked by remember { mutableStateOf(penStore.docked) }
     // The screen split into parts, a note in each; null while it is not.
     // Pane 0 is this note; the others' notes and pages are kept by pane.
-    var split by remember(note.id) { mutableStateOf<SplitNode?>(null) }
-    val paneNotes = remember(note.id) { mutableStateMapOf<Int, String>() }
-    val panePages = remember(note.id) { mutableStateMapOf<Int, Int>() }
+    // A split this screen inherits: see SplitCarry.
+    val carried = remember(note.id) { SplitCarry.take(note.id) }
+    var split by remember(note.id) { mutableStateOf<SplitNode?>(carried?.tree) }
+    val paneNotes = remember(note.id) { mutableStateMapOf<Int, String>().apply { carried?.notes?.let { putAll(it) } } }
+    val panePages = remember(note.id) { mutableStateMapOf<Int, Int>().apply { carried?.pages?.let { putAll(it) } } }
+    // Each other part's canvas, for the glass to see and the bar's undo to reach.
+    val paneViews = remember(note.id) { mutableStateMapOf<Int, InkCanvasView>() }
+    // The part written in last: the bar's undo and redo are for it. Every part
+    // takes the same tools, so this is the only thing the bar has to pick.
+    var activePane by remember(note.id) { mutableIntStateOf(0) }
+    var paneEdits by remember { mutableIntStateOf(0) }
+    // Which part a note is being picked for, from the line between the parts.
+    var splitPickingFor by remember { mutableStateOf<Int?>(null) }
     var choosingSplit by remember { mutableStateOf(false) }
     // Split, the bar floats over the parts at a narrower size: the whole bar
     // (1/4) shows as 2/4 while the screen is split, and nothing is docked, so
@@ -4386,6 +4396,48 @@ private fun NoteScreen(
         // A part of the split is where another note goes now.
         referenceOpen = false
         split = tree
+    }
+    /**
+     * Closes the parts [ids]. When this note's own part is among them, the
+     * part beside it takes over the screen, with its note, and the rest of
+     * the split stays around it.
+     */
+    fun closeSplitPanes(ids: Set<Int>) {
+        val tree = split ?: return
+        fun forget(id: Int) { paneNotes.remove(id); panePages.remove(id); paneViews.remove(id) }
+        val promotion = tree.promoteAfterClosing(ids)
+        if (promotion == null) {
+            ids.forEach(::forget)
+            split = tree.removePanes(ids) as? SplitNode.Branch
+            if (activePane in ids) activePane = 0
+            return
+        }
+        val heir = paneNotes[promotion.newMain]?.let { id -> referenceNotes.firstOrNull { it.id == id } }
+        if (heir == null || heir.id == note.id) {
+            // The part taking over shows this same note: the screen keeps it.
+            ids.forEach(::forget)
+            forget(promotion.newMain)
+            split = promotion.tree
+            activePane = 0
+            return
+        }
+        val gone = ids + promotion.newMain
+        promotion.tree?.let { left ->
+            SplitCarry.put(heir.id, SplitCarry.Held(left,
+                paneNotes.filterKeys { it !in gone }, panePages.filterKeys { it !in gone }))
+        }
+        onOpenNote(heir)
+    }
+    /** Shows [picked] in part [id]; in this note's own part, it becomes the screen's note. */
+    fun openInPane(id: Int, picked: NoteMeta) {
+        if (id != 0) {
+            paneNotes[id] = picked.id
+            panePages[id] = restoredPage(penStore.lastPage(picked.id), picked.pageCount)
+            return
+        }
+        if (picked.id == note.id) return
+        split?.let { SplitCarry.put(picked.id, SplitCarry.Held(it, paneNotes.toMap(), panePages.toMap())) }
+        onOpenNote(picked)
     }
     var referenceNoteId by remember { mutableStateOf(initialReferenceNoteId) }
     var referencePage by remember { mutableIntStateOf(initialReferencePage) }
@@ -4556,7 +4608,10 @@ private fun NoteScreen(
     // edit counter, every stroke recomposed the whole toolbar on the UI thread
     // at the pen-up, as the next stroke was starting. Derived, the toolbar
     // recomposes only when one of the two actually changes.
-    val canUndoNow by remember { derivedStateOf { edits; canvas?.canUndo() == true } }
+    val canUndoNow by remember { derivedStateOf {
+        edits; paneEdits
+        (paneViews[activePane]?.takeIf { activePane != 0 } ?: canvas)?.canUndo() == true
+    } }
     val canRedoNow by remember { derivedStateOf { edits; canvas?.canRedo() == true } }
     // The way back after a jump is offered for a while, then let go: it used to stay until
     // gone back through, however far the page had been left behind.
@@ -4917,12 +4972,13 @@ private fun NoteScreen(
                     maxWidth = if (pen.maxWidth > 0f) maxOf(pen.maxWidth, it) else 0f))
             },
             onUndo = {
-                canvas?.undo()
-                edits++
+                // Split, the part written in last; its own undo saves it too.
+                val pane = paneViews[activePane]?.takeIf { activePane != 0 }
+                if (pane != null) pane.onUndo?.invoke() else { canvas?.undo(); edits++ }
             },
             onRedo = {
-                canvas?.redo()
-                edits++
+                val pane = paneViews[activePane]?.takeIf { activePane != 0 }
+                if (pane != null) pane.onRedo?.invoke() else { canvas?.redo(); edits++ }
             },
             onZoomLabel = { zoomMenu = true },
             zoomLabel = "${(zoom * 100).roundToInt()}%",
@@ -5062,13 +5118,29 @@ private fun NoteScreen(
         val pageBackdrop: DrawScope.() -> Unit = {
             recordedTurn[0] = noteRotation
             drawRect(desk)
+            // Split, every part's page, each where its part is, so the glass over
+            // any of them shows that part and not this note's page or bare desk.
+            // Read here, in the draw, so a change of parts records again.
+            val parts = split?.layout(SplitRect(0f, 0f, size.width, size.height), splitGap)
             val view = canvas
             if (view != null) {
+                val own = parts?.get(0)
                 // The canvas turns its own page about its middle; the glass sees it the same way.
                 withTransform({
                     rotate(noteRotation)
+                    if (own != null) translate(own.left, own.top)
                 }) {
                     drawIntoCanvas { view.drawBackdrop(it.nativeCanvas) }
+                }
+            }
+            parts?.forEach { (id, r) ->
+                val pane = paneViews[id] ?: return@forEach
+                if (id == 0) return@forEach
+                withTransform({
+                    clipRect(r.left, r.top, r.right, r.bottom)
+                    translate(r.left, r.top)
+                }) {
+                    drawIntoCanvas { pane.drawBackdrop(it.nativeCanvas) }
                 }
             }
         }
@@ -5223,6 +5295,7 @@ private fun NoteScreen(
                     // Only the panel's own scope reads these (see Isolated
                     // below), so the flip recomposes the panel, not the screen.
                     view.onWritingStarted = {
+                        activePane = 0
                         if (showPages) {
                             pagesClosedByPen = true
                             showPages = false
@@ -5420,21 +5493,74 @@ private fun NoteScreen(
                         panePages.remove(id)
                     },
                     pinned = true,
-                    onSplitPane = { sideBySide ->
-                        split?.let { tree ->
-                            val newId = tree.nextPaneId()
-                            val next = tree.splitPane(id, sideBySide, newId)
-                            if (next != tree) {
-                                paneNotes[newId] = freePaneNote(newId)
-                                split = next
-                            }
-                        }
-                    },
+                    ground = desk,
+                    onView = { v -> if (v != null) paneViews[id] = v else paneViews.remove(id) },
+                    onActive = { activePane = id },
+                    onEdited = { paneEdits++ },
                 ) }
             }
-            SplitSeams(splitTree, area, splitGap) { seam, fraction ->
-                split = split?.moveSeam(seam.path, seam.index, fraction)
+            SplitSeams(
+                splitTree, area, splitGap,
+                onMove = { seam, fraction -> split = split?.moveSeam(seam.path, seam.index, fraction) },
+                onClose = { seam, side ->
+                    split?.seamChild(seam.path, seam.index, side)?.let { closeSplitPanes(it.paneIds().toSet()) }
+                },
+            ) { seam, close ->
+                val tree = split ?: SplitNode.Pane(0)
+                DropdownMenuItem(text = { Text("Swap sides") }, onClick = {
+                    close()
+                    split = split?.swapAt(seam.path, seam.index)
+                })
+                for (side in 0..1) {
+                    val child = tree.seamChild(seam.path, seam.index, side) ?: continue
+                    val name = when {
+                        seam.sideBySide && side == 0 -> "Left"
+                        seam.sideBySide -> "Right"
+                        side == 0 -> "Top"
+                        else -> "Bottom"
+                    }
+                    HorizontalDivider()
+                    if (child is SplitNode.Pane) {
+                        DropdownMenuItem(text = { Text("$name: change note") }, onClick = {
+                            close()
+                            splitPickingFor = child.id
+                        })
+                        if (tree.paneIds().size < SPLIT_MAX_PANES) {
+                            DropdownMenuItem(text = { Text("$name: split in two") }, onClick = {
+                                close()
+                                split?.let { now ->
+                                    val newId = now.nextPaneId()
+                                    // Across the line it sits beside: a side-by-side half splits top and bottom.
+                                    val next = now.splitPane(child.id, !seam.sideBySide, newId)
+                                    if (next != now) {
+                                        paneNotes[newId] = freePaneNote(newId)
+                                        split = next
+                                    }
+                                }
+                            })
+                        }
+                    }
+                    DropdownMenuItem(text = { Text("$name: close") }, onClick = {
+                        close()
+                        closeSplitPanes(child.paneIds().toSet())
+                    })
+                }
             }
+        }
+        splitPickingFor?.let { forPane ->
+            SplitNotePicker(
+                // A note open in another part is not offered: two copies of one
+                // note would each save over the other.
+                notes = referenceNotes.filter { candidate ->
+                    paneNotes.none { (other, open) -> other != forPane && open == candidate.id }
+                },
+                current = if (forPane == 0) note.id else paneNotes[forPane],
+                onPick = { picked ->
+                    splitPickingFor = null
+                    openInPane(forPane, picked)
+                },
+                onDismiss = { splitPickingFor = null },
+            )
         }
 
         // Autosave: a burst of strokes writes the note once, in a pause, rather
@@ -7862,6 +7988,14 @@ private fun ReferencePanel(
     pinned: Boolean = false,
     /** For a pane: splits it in two, side by side (true) or one above the other. */
     onSplitPane: ((Boolean) -> Unit)? = null,
+    /** For a pane: the desk its page lies on, the same as the note's own part. */
+    ground: Color = Color.Unspecified,
+    /** Its canvas, once there is one, and null when it goes. */
+    onView: (InkCanvasView?) -> Unit = {},
+    /** Writing began in it. */
+    onActive: () -> Unit = {},
+    /** What is on its pages changed. */
+    onEdited: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val lifecycleOwner = context as? LifecycleOwner
@@ -7874,6 +8008,13 @@ private fun ReferencePanel(
     val latestResize by rememberUpdatedState(onResize)
     val latestResizeEnd by rememberUpdatedState(onResizeEnd)
     val latestClose by rememberUpdatedState(onClose)
+    val latestView by rememberUpdatedState(onView)
+    val latestActive by rememberUpdatedState(onActive)
+    val latestEdited by rememberUpdatedState(onEdited)
+    DisposableEffect(view) {
+        latestView(view)
+        onDispose { latestView(null) }
+    }
     fun closePanel() {
         val ready: () -> Unit = {
             view?.currentPageIndex()?.let(onPageChange)
@@ -7997,13 +8138,10 @@ private fun ReferencePanel(
                 )
             },
     ) {
-    SkinSurface(
-        modifier = Modifier.fillMaxSize()
-            // 유리 표면이 밝은 페이지와 겹쳐도 팝업 외곽을 잃지 않도록 밝은 림과
-            // 테마 윤곽색을 함께 사용합니다.
-            .border(1.5.dp, panelBorder, panelShape),
-        corner = Ui.Corner.card,
-    ) {
+    // A pane of a split is a part of the screen, drawn as the note's own part
+    // is: its page on the desk, edge to edge, with no frame, rim or bar of its
+    // own. A floating panel keeps its card.
+    PaneFrame(pinned = pinned, ground = ground, border = panelBorder, shape = panelShape) {
         Column(Modifier.fillMaxSize()) {
             // The top bar is the panel's handle: drag anywhere on it, its
             // buttons included, and the panel follows. A tap is still a tap.
@@ -8192,7 +8330,8 @@ private fun ReferencePanel(
                                 releasePdf = { PdfHold.release(it) }
                                 // 팝업 안에서는 페이지 폭이 패널 폭보다 작아지는
                                 // 축소를 허용하지 않습니다. 확대와 필기는 그대로입니다.
-                                minimumScaleIsFitWidth = true
+                                // A part of a split zooms and moves as the note's own does.
+                                minimumScaleIsFitWidth = !pinned
                                 // A popup always shares the screen with the note
                                 // under it; see InkCanvasView.softPredictionHead.
                                 softPredictionHead = false
@@ -8200,7 +8339,7 @@ private fun ReferencePanel(
                                 // felt like it was slipping away under it.
                                 viewportPanMultiplier = 1f
                                 // And it cannot be slid off sideways past its edges.
-                                keepPageAcross = true
+                                keepPageAcross = !pinned
                                 pageLoader = { p, epsilon -> store.loadPage(noteId, p, epsilon) }
                                 maskLoader = { p, epsilon -> store.loadMasks(noteId, p, epsilon) }
                                 imageLoader = { imageId ->
@@ -8216,8 +8355,10 @@ private fun ReferencePanel(
                                 open(ready.first, ready.second, initialPage = page)
                                 onStrokesChanged = {
                                     popupEdits++
+                                    latestEdited()
                                     if (sharedDocument != null) latestSharedChanged()
                                 }
+                                onWritingStarted = { latestActive() }
                                 onLassoSelected = { popupLassoCount = it }
                                 onCurrentPageChanged = { onPageChange(it) }
                                 // Already open by definition: three fingers down
@@ -8225,8 +8366,8 @@ private fun ReferencePanel(
                                 // reference panel of its own.
                                 referenceOpen = true
                                 onCloseReference = { closePanel() }
-                                onUndo = { undo(); popupEdits++ }
-                                onRedo = { redo(); popupEdits++ }
+                                onUndo = { undo(); popupEdits++; latestEdited() }
+                                onRedo = { redo(); popupEdits++; latestEdited() }
                                 view = this
                             }
                         },
@@ -8277,11 +8418,6 @@ private fun ReferencePanel(
                         )
                     }
                 }
-            }
-            // A pane's bar along its bottom, where the note's own bar never is.
-            if (pinned) {
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                header()
             }
         }
 
@@ -9257,3 +9393,19 @@ internal val COLOR_TEMPLATES = listOf(
     "Neon" to listOf(0x66FFEB3B, 0x6676FF03, 0x6600E5FF, 0x66FF4081, 0x66FF9100),
     "Ink" to listOf(0xFF000000, 0xFF3A3A3A, 0xFF6B6B6B, 0xFF9E9E9E, 0xFFCFCFCF),
 ).map { (name, colors) -> name to colors.map { it.toInt() } }
+
+/** A floating panel's card, or for a pane of a split, only the desk its page lies on. */
+@Composable
+private fun PaneFrame(pinned: Boolean, ground: Color, border: Brush, shape: Shape, content: @Composable () -> Unit) {
+    if (pinned) {
+        Box(Modifier.fillMaxSize().background(ground)) { content() }
+    } else {
+        SkinSurface(
+            modifier = Modifier.fillMaxSize()
+                // 유리 표면이 밝은 페이지와 겹쳐도 팝업 외곽을 잃지 않도록 밝은 림과
+                // 테마 윤곽색을 함께 사용합니다.
+                .border(1.5.dp, border, shape),
+            corner = Ui.Corner.card,
+        ) { content() }
+    }
+}
