@@ -84,18 +84,19 @@ internal object AppUpdate {
     fun setBeta(context: Context, on: Boolean) = prefs(context).edit().putBoolean("beta", on).apply()
 
     /**
-     * Whether [code] is the developer code, however it is spaced or cased.
+     * Whether [code] is the developer code, letter for letter in its case;
+     * only spaces at either end are let go.
      * Only its digest is kept here: it opens nothing but test builds, which
      * are public anyway, so it needs keeping out of sight rather than safe.
      */
     fun isBetaCode(code: String): Boolean = betaCodeDigest(code) == BETA_CODE_SHA256
 
-    /** [code]'s SHA-256 in hex, spaces at either end and case left out. */
+    /** [code]'s SHA-256 in hex, spaces at either end left out. */
     fun betaCodeDigest(code: String): String =
-        MessageDigest.getInstance("SHA-256").digest(code.trim().uppercase().toByteArray(Charsets.UTF_8))
+        MessageDigest.getInstance("SHA-256").digest(code.trim().toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
 
-    private const val BETA_CODE_SHA256 = "4a8288b8f60939f047948a68692aba9b489e65e587341b0ea551b04ecb3de067"
+    private const val BETA_CODE_SHA256 = "d8f75beea6cccc096f2657a59735bd3007af997a8762eb696f67d7df28572318"
 
     /** The newest of [releases] (newest first) this copy takes: any for a beta tester, else the newest automatic one. */
     fun newestFor(releases: List<AppRelease>, beta: Boolean): AppRelease? = releases.firstOrNull { beta || !it.manual }

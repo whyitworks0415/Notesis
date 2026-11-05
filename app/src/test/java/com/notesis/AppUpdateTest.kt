@@ -93,9 +93,10 @@ class AppUpdateTest {
         assertNull(AppUpdate.newestFor(listOf(release(12, manual = true)), beta = false))
     }
 
-    @Test fun `the developer code is taken however it is spaced or cased`() {
+    @Test fun `the developer code is taken letter for letter, spaces at its ends let go`() {
         // The code itself stays out of the repository; only how it is read is checked.
-        assertEquals(AppUpdate.betaCodeDigest("Some Code"), AppUpdate.betaCodeDigest("  SOME code "))
+        assertEquals(AppUpdate.betaCodeDigest("Some Code"), AppUpdate.betaCodeDigest("  Some Code "))
+        assertFalse(AppUpdate.betaCodeDigest("Some Code") == AppUpdate.betaCodeDigest("SOME CODE"))
         assertFalse(AppUpdate.isBetaCode("NOTESIS-BETA"))
         assertFalse(AppUpdate.isBetaCode(""))
     }
