@@ -137,7 +137,7 @@ fun ProvideSkin(skin: Skin, settings: SkinSettings, content: @Composable () -> U
         values += LocalIndication provides FocusOnlyIndication
     }
     // QWEA0's gravity-lit highlight: the sensor runs only while it is wanted.
-    val tiltLight = skin == Skin.SPOTIGLASS && settings.liquidStyle == LiquidStyle.QWEA && settings.qwea.sensorHighlight
+    val tiltLight = skin == Skin.LIQUID_GLASS && settings.liquidStyle == LiquidStyle.QWEA && settings.qwea.sensorHighlight
     val view = androidx.compose.ui.platform.LocalView.current
     androidx.compose.runtime.DisposableEffect(tiltLight) {
         if (tiltLight) GravityLight.listen(view.context) { view.display?.rotation ?: android.view.Surface.ROTATION_0 }
@@ -250,7 +250,7 @@ fun Skin.tokens(): SkinTokens = when (this) {
         )
     }
 
-    Skin.SPOTIGLASS -> LocalSkinSettings.current.let { look ->
+    Skin.LIQUID_GLASS -> LocalSkinSettings.current.let { look ->
         SkinTokens(
             corner = chromeCorner(),
             fillAlpha = 1f,
@@ -275,7 +275,7 @@ fun Skin.tokens(): SkinTokens = when (this) {
  */
 @Composable
 internal fun chromeCorner(): Dp =
-    LocalSkinSettings.current.let { if (LocalSkin.current == Skin.SPOTIGLASS) it.glassCorner else it.spotiglassCorner }
+    LocalSkinSettings.current.let { if (LocalSkin.current == Skin.LIQUID_GLASS) it.glassCorner else it.liquidGlassCorner }
         .coerceIn(SkinSettings.CORNER_RANGE).dp
 
 /**
@@ -406,15 +406,15 @@ fun SkinSurface(
         )
         return
     }
-    val spotiHost = if (skin == Skin.SPOTIGLASS) rememberLiquidGlassBackdrop() else null
-    val surfaceModifier = if (skin == Skin.SPOTIGLASS) {
+    val glassHost = if (skin == Skin.LIQUID_GLASS) rememberLiquidGlassBackdrop() else null
+    val surfaceModifier = if (skin == Skin.LIQUID_GLASS) {
         // The same round corner the other skins draw, not the continuous
         // curve: a popup or bar beside this panel is a round rectangle in
         // every skin, and Backdrop's lens can take no other outline.
-        modifier.spotiGlassSurface(
+        modifier.liquidGlassSurface(
             shape, LocalSkinSettings.current,
             elevation = if (flush) 0.dp else tokens.shadow, rim = !flush,
-            exportedBackdrop = spotiHost,
+            exportedBackdrop = glassHost,
         ).then(if (flush) Modifier.flushEdge(tokens) else Modifier).chromeVeil(role, shape)
     } else {
         modifier
@@ -423,8 +423,8 @@ fun SkinSurface(
             .chromeVeil(role, shape)
     }
     Box(surfaceModifier) {
-        if (spotiHost != null) {
-            CompositionLocalProvider(LocalSpotiGlassHostBackdrop provides spotiHost) { content() }
+        if (glassHost != null) {
+            CompositionLocalProvider(LocalLiquidGlassHostBackdrop provides glassHost) { content() }
         } else content()
     }
 }
@@ -464,7 +464,7 @@ internal fun Modifier.skinMaterial(
                 fill = if (panel) MaterialTheme.colorScheme.surfaceContainerHigh else null)
             .glassEdge(tokens, shape)
             .chromeVeil(role, shape)
-        Skin.SPOTIGLASS -> liquidGlassPane(shape, panel = panel, shadow = shadow).chromeVeil(role, shape)
+        Skin.LIQUID_GLASS -> liquidGlassPane(shape, panel = panel, shadow = shadow).chromeVeil(role, shape)
     }
 }
 
@@ -499,7 +499,7 @@ internal fun Modifier.skinShadow(shape: Shape, panel: Boolean = false): Modifier
         Skin.MATERIAL -> shadow(if (panel) 6.dp else 3.dp, shape, clip = false)
         Skin.GLASSMORPHISM -> shadow(skin.tokens().shadow, shape, clip = false)
         // Round the glass, never under it; see [glassShadow].
-        Skin.SPOTIGLASS -> glassShadow(lensSafeShape(shape), liquidGlassPaneShadow(panel),
+        Skin.LIQUID_GLASS -> glassShadow(lensSafeShape(shape), liquidGlassPaneShadow(panel),
             dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f)
     }
 }
@@ -771,7 +771,7 @@ private fun SkinSliderBody(
         val travel = (width - 2f * half).coerceAtLeast(1f)
         val raw = ((x - half) / travel).coerceIn(0f, 1f)
         dragFraction = raw
-        latest(spotiSliderValue(raw, valueRange, steps))
+        latest(glassSliderValue(raw, valueRange, steps))
     }
 
     Box(
@@ -865,8 +865,8 @@ fun SkinSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
 
 @Composable
 private fun SkinSwitchBody(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
-    if (LocalSkin.current == Skin.SPOTIGLASS) {
-        SpotiGlassSwitch(checked, onCheckedChange)
+    if (LocalSkin.current == Skin.LIQUID_GLASS) {
+        LiquidGlassSwitch(checked, onCheckedChange)
         return
     }
     val skin = LocalSkin.current

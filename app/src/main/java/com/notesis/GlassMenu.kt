@@ -48,7 +48,7 @@ internal fun GlassMenu(
     if (!expanded) return
     // Inside the library's recorded content the glass may not look at its own
     // recording; popups are given the page capture separately for that.
-    val backdrop = LocalSpotiPopupBackdrop.current ?: LocalLiquidGlassBackdrop.current
+    val backdrop = LocalGlassPopupBackdrop.current ?: LocalLiquidGlassBackdrop.current
     val gap = with(androidx.compose.ui.platform.LocalDensity.current) { 6.dp.roundToPx() }
     Popup(
         popupPositionProvider = remember(gap) { BelowAnchor(gap) },
@@ -56,7 +56,7 @@ internal fun GlassMenu(
         properties = PopupProperties(focusable = true),
     ) {
         CompositionLocalProvider(
-            LocalSpotiGlassHostBackdrop provides null,
+            LocalLiquidGlassHostBackdrop provides null,
             LocalLiquidGlassBackdrop provides backdrop,
         ) {
             val shape = RoundedCornerShape(18.dp)

@@ -47,10 +47,10 @@ import kotlinx.coroutines.flow.first
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-data class SpotiGlassItem(val label: String, val icon: ImageVector? = null, val color: Color? = null)
+data class LiquidGlassItem(val label: String, val icon: ImageVector? = null, val color: Color? = null)
 
-/** What a [SpotiGlassBar] is drawn on. */
-enum class SpotiBarSurface {
+/** What a [LiquidGlassBar] is drawn on. */
+enum class GlassBarSurface {
     /** Its own frosted capsule: a bar standing alone inside a panel. */
     FROST,
     /** Its own capsule of the liquid glass the toolbar is made of. */
@@ -65,7 +65,7 @@ enum class SpotiBarSurface {
 }
 
 /** x = centre, y = width, z = height of a lens body kept inside the bar. */
-internal data class SpotiGlassLensBody(val x: Float, val y: Float, val z: Float)
+internal data class LiquidGlassLensBody(val x: Float, val y: Float, val z: Float)
 
 /**
  * Keeps the travelling lens inside the capsule. It used to grow past the first
@@ -74,10 +74,10 @@ internal data class SpotiGlassLensBody(val x: Float, val y: Float, val z: Float)
  * out. Now the side that meets the end of the bar is pressed flat against it,
  * like liquid against a wall, and gives the lost width back as a little height.
  */
-internal fun spotiGlassLensBody(
+internal fun liquidGlassLensBody(
     centerX: Float, width: Float, height: Float,
     barWidth: Float, edge: Float, minWidth: Float,
-): SpotiGlassLensBody {
+): LiquidGlassLensBody {
     val low = edge
     val high = (barWidth - edge).coerceAtLeast(low)
     var left = centerX - width / 2
@@ -91,20 +91,20 @@ internal fun spotiGlassLensBody(
     }
     val kept = right - left
     val squeeze = if (width > 0f) (1f - kept / width).coerceIn(0f, 1f) else 0f
-    return SpotiGlassLensBody((left + right) / 2, kept, height * (1f + 0.3f * squeeze))
+    return LiquidGlassLensBody((left + right) / 2, kept, height * (1f + 0.3f * squeeze))
 }
 
 /**
  * Where the lens follows a finger that may run past either end of the bar.
- * Inside it is [spotiGlassPosition]; beyond the ends it keeps moving with
- * growing resistance, at most [SPOTIGLASS_RUBBER_CELLS] of a cell, so the lens
+ * Inside it is [liquidGlassPosition]; beyond the ends it keeps moving with
+ * growing resistance, at most [LIQUID_GLASS_RUBBER_CELLS] of a cell, so the lens
  * presses into the end of the bar instead of stopping dead against it.
  */
-internal fun spotiGlassDragPosition(x: Float, width: Float, count: Int, rtl: Boolean): Float {
+internal fun liquidGlassDragPosition(x: Float, width: Float, count: Int, rtl: Boolean): Float {
     if (count <= 1 || width <= 0f) return 0f
     val raw = x / width * count - 0.5f
     val last = (count - 1).toFloat()
-    fun rubber(over: Float) = SPOTIGLASS_RUBBER_CELLS * (1f - 1f / (1f + over / SPOTIGLASS_RUBBER_CELLS))
+    fun rubber(over: Float) = LIQUID_GLASS_RUBBER_CELLS * (1f - 1f / (1f + over / LIQUID_GLASS_RUBBER_CELLS))
     val visual = when {
         raw < 0f -> -rubber(-raw)
         raw > last -> last + rubber(raw - last)
@@ -113,9 +113,9 @@ internal fun spotiGlassDragPosition(x: Float, width: Float, count: Int, rtl: Boo
     return if (rtl) last - visual else visual
 }
 
-internal const val SPOTIGLASS_RUBBER_CELLS = 0.3f
+internal const val LIQUID_GLASS_RUBBER_CELLS = 0.3f
 
-internal fun spotiGlassPosition(x: Float, width: Float, count: Int, rtl: Boolean): Float {
+internal fun liquidGlassPosition(x: Float, width: Float, count: Int, rtl: Boolean): Float {
     if (count <= 1 || width <= 0f) return 0f
     val visual = (x / width * count - 0.5f).coerceIn(0f, (count - 1).toFloat())
     return if (rtl) count - 1 - visual else visual
@@ -123,16 +123,16 @@ internal fun spotiGlassPosition(x: Float, width: Float, count: Int, rtl: Boolean
 
 /** MornyeTabBar port: frosted capsule, flat resting pill, raised travelling
  * lens. The capsule and icon shells share one optical capture.
- * MIT source and licenses: assets/spotiglass/upstream.
+ * MIT source and licenses: assets/liquidGlass/upstream.
  */
 @Composable
-fun SpotiGlassBar(
-    items: List<SpotiGlassItem>, selectedIndex: Int, onSelected: (Int) -> Unit,
+fun LiquidGlassBar(
+    items: List<LiquidGlassItem>, selectedIndex: Int, onSelected: (Int) -> Unit,
     modifier: Modifier = Modifier,
     showLabels: Boolean = true, compact: Boolean = false,
     /** The capsule's own radius; the resting pill inside it is concentric with it. */
     corner: Dp = LocalSkinSettings.current.glassCorner.dp,
-    surface: SpotiBarSurface = SpotiBarSurface.FROST,
+    surface: GlassBarSurface = GlassBarSurface.FROST,
     /**
      * Down the side instead of across: the same capsule, pill and lens on
      * the other axis, one cell per tool from the top. Its length is its own.
@@ -146,7 +146,7 @@ fun SpotiGlassBar(
      * below, and carries no tint of its own over the pill's, which had left
      * it darker than the pill for a moment after the finger lifted.
      */
-    lift: Boolean = surface != SpotiBarSurface.NONE,
+    lift: Boolean = surface != GlassBarSurface.NONE,
     /** Which kind of chrome the capsule is, for its own transparency; null takes none. */
     role: ChromeRole? = null,
 ) {
@@ -155,20 +155,20 @@ fun SpotiGlassBar(
     val scheme = MaterialTheme.colorScheme
     val dark = scheme.surface.luminance() < 0.5f
     val effects = rememberLiquidGlassEffectsAllowed() && !look.highContrast
-    val response = if (effects) look.spotiglassResponse else 0f
-    val lensAllowed = effects && look.spotiglassClarity > 0 && response > 0
+    val response = if (effects) look.liquidGlassResponse else 0f
+    val lensAllowed = effects && look.liquidGlassClarity > 0 && response > 0
     val density = LocalDensity.current
     // Down the side there is no reading direction: the first tool is at the top.
     val rtl = !vertical && LocalLayoutDirection.current == LayoutDirection.Rtl
     val latestSelect by rememberUpdatedState(onSelected)
     val selected = selectedIndex.takeIf { it in items.indices }
     // On a surface it does not own, a lens keeps to the strip's own height.
-    val contained = lift && surface == SpotiBarSurface.NONE
+    val contained = lift && surface == GlassBarSurface.NONE
     // Under a recipe whose slide is switched on, its springs; otherwise this app's.
-    val slide = if (LocalSkin.current == Skin.SPOTIGLASS) look.slideProfile() else null
+    val slide = if (LocalSkin.current == Skin.LIQUID_GLASS) look.slideProfile() else null
     val slideKey = look.liquidStyle to (slide != null)
     val motion = remember(items.size, rtl, lift, slideKey) {
-        SpotiGlassMotion((selected ?: 0).toFloat(), lifts = lift, profile = slide)
+        LiquidGlassMotion((selected ?: 0).toFloat(), lifts = lift, profile = slide)
     }
     var wake by remember { mutableIntStateOf(0) }
     var frameRevision by remember { mutableIntStateOf(0) }
@@ -197,7 +197,7 @@ fun SpotiGlassBar(
     // bar is drawn through one layer that cuts off anything past its edges -
     // the capsule's shadow at its two ends with it. The layer reaches this far
     // past the bar on either side so the shadow is inside it.
-    val room = if (surface == SpotiBarSurface.NONE) 0.dp else SPOTIGLASS_SHADOW_ROOM
+    val room = if (surface == GlassBarSurface.NONE) 0.dp else LIQUID_GLASS_SHADOW_ROOM
     val thickness = Modifier.then(
         if (vertical) Modifier.width(barHeight + 16.dp).height(verticalBarLength(items.size, compact, padding, chromeScale))
         else Modifier.height(barHeight + 16.dp),
@@ -232,7 +232,7 @@ fun SpotiGlassBar(
         }
         fun showPill() = selected != null || motion.dragging
         fun moving(): Boolean { frameRevision; return lensAllowed && motion.running && showPill() }
-        fun lensFrame(): SpotiGlassLensFrame {
+        fun lensFrame(): LiquidGlassLensFrame {
             frameRevision
             val visual = if (rtl) items.lastIndex - motion.position else motion.position
             val extra = (barHeight.value + 9 * response) / cellHeight.value - 1
@@ -241,7 +241,7 @@ fun SpotiGlassBar(
             val sx = 1 + motion.deviation * response
             val sy = if (contained) 1f else 1 - motion.deviation * response
             val body = with(density) {
-                spotiGlassLensBody(
+                liquidGlassLensBody(
                     centerX = (padding + cell * (visual + 0.5f)).toPx(),
                     width = (w * sx).toPx(), height = (h * sy).toPx(),
                     barWidth = barWidthPx, edge = 1.dp.toPx(), minWidth = cell.toPx(),
@@ -249,7 +249,7 @@ fun SpotiGlassBar(
             }
             // Worked out along the bar and across it, then put on the screen's axes.
             val across = with(density) { (8.dp + barHeight / 2).toPx() }
-            return SpotiGlassLensFrame(
+            return LiquidGlassLensFrame(
                 center = if (vertical) Offset(across, body.x) else Offset(body.x, across),
                 size = if (vertical) Size(body.z, body.y) else Size(body.y, body.z),
                 // The lens grows out of the resting pill, so its curve grows
@@ -266,7 +266,7 @@ fun SpotiGlassBar(
             @Composable
             fun IconShell(colored: Boolean, shellModifier: Modifier) {
                 @Composable
-                fun Cell(index: Int, item: SpotiGlassItem, base: Modifier) {
+                fun Cell(index: Int, item: LiquidGlassItem, base: Modifier) {
                     // Under the glass a tool shows its own colour only. The
                     // pen's ink colour no longer spills onto tools that have
                     // none, so the ball itself never looks recoloured.
@@ -299,18 +299,18 @@ fun SpotiGlassBar(
             when (surface) {
                 // A round corner, as the toolbar and the other skins' strip draw
                 // theirs - and the only outline Backdrop's lens can take.
-                SpotiBarSurface.FROST -> Box(capsule.spotiGlassSurface(RoundedCornerShape(corner), look, navigation = true)
+                GlassBarSurface.FROST -> Box(capsule.liquidGlassSurface(RoundedCornerShape(corner), look, navigation = true)
                     .chromeVeil(role, RoundedCornerShape(corner)))
-                SpotiBarSurface.LIQUID -> Box(capsule.liquidGlassPane(RoundedCornerShape(corner))
+                GlassBarSurface.LIQUID -> Box(capsule.liquidGlassPane(RoundedCornerShape(corner))
                     .chromeVeil(role, RoundedCornerShape(corner)))
-                SpotiBarSurface.NONE -> Unit
+                GlassBarSurface.NONE -> Unit
             }
         }
         // The same frosted capsule remains in the source at rest and on press.
         // Refract the capsule and both icon shells in the same optical scene.
         // or swap between two backdrop surfaces during animation.
         // A pill that only slides has no lens to draw: it is the flat pill, moved.
-        val scene = Modifier.spillOver(room, vertical).spotiGlassLens(lensAllowed && lift, active = { moving() }) { _, _ ->
+        val scene = Modifier.spillOver(room, vertical).liquidGlassLens(lensAllowed && lift, active = { moving() }) { _, _ ->
             // The layer starts [room] before the bar; the frame is the bar's.
             lensFrame().let {
                 if (roomPx == 0f) it else it.copy(center = it.center + if (vertical) Offset(0f, roomPx) else Offset(roomPx, 0f))
@@ -341,7 +341,7 @@ fun SpotiGlassBar(
                     var lastPosition = down.position
                     fun along(at: Offset) = if (vertical) at.y else at.x
                     down.consume()
-                    motion.grab(spotiGlassPosition(along(lastPosition) - paddingPx, widthPx, items.size, rtl)); wake++
+                    motion.grab(liquidGlassPosition(along(lastPosition) - paddingPx, widthPx, items.size, rtl)); wake++
                     var released = false
                     try {
                         while (!released) {
@@ -349,12 +349,12 @@ fun SpotiGlassBar(
                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
                             if (change.isConsumed) break
                             lastPosition = change.position
-                            motion.follow(spotiGlassDragPosition(along(lastPosition) - paddingPx, widthPx, items.size, rtl))
+                            motion.follow(liquidGlassDragPosition(along(lastPosition) - paddingPx, widthPx, items.size, rtl))
                             change.consume()
                             released = !change.pressed
                         }
                         if (released) {
-                            val next = spotiGlassPosition(along(lastPosition) - paddingPx, widthPx, items.size, rtl).roundToInt()
+                            val next = liquidGlassPosition(along(lastPosition) - paddingPx, widthPx, items.size, rtl).roundToInt()
                             motion.release(next.toFloat()); wake++
                             latestSelect(next)
                         }
@@ -390,7 +390,7 @@ fun SpotiGlassBar(
 }
 
 /** How far past a bar with a capsule of its own its lens layer reaches, for the capsule's shadow. */
-private val SPOTIGLASS_SHADOW_ROOM = 8.dp
+private val LIQUID_GLASS_SHADOW_ROOM = 8.dp
 
 /**
  * The parent's whole size, and [room] more on either side, placed so the

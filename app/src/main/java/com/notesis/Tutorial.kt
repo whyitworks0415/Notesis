@@ -318,8 +318,8 @@ private val SOFT = Color(0xFF8A8D96)
 @Composable
 private fun ToolBarPicture(selected: Int, ring: Boolean = false) {
     val tools = listOf(
-        SpotiToolbarTool.PEN, SpotiToolbarTool.PENCIL, SpotiToolbarTool.HIGHLIGHTER,
-        SpotiToolbarTool.ERASE, SpotiToolbarTool.LASSO, SpotiToolbarTool.SHAPE, SpotiToolbarTool.TEXT,
+        GlassToolbarTool.PEN, GlassToolbarTool.PENCIL, GlassToolbarTool.HIGHLIGHTER,
+        GlassToolbarTool.ERASE, GlassToolbarTool.LASSO, GlassToolbarTool.SHAPE, GlassToolbarTool.TEXT,
     )
     val colors = listOf(BLUE, INK, Color(0xFFE0B000), SOFT, SOFT, SOFT, SOFT)
     Row(
@@ -353,7 +353,7 @@ private fun PenPanelPicture() {
             Box(
                 Modifier.size(52.dp).background(BLUE.copy(alpha = 0.16f), CircleShape).border(2.dp, BLUE, CircleShape),
                 contentAlignment = Alignment.Center,
-            ) { Icon(SpotiToolbarTool.PEN.icon(), contentDescription = null, tint = BLUE) }
+            ) { Icon(GlassToolbarTool.PEN.icon(), contentDescription = null, tint = BLUE) }
             Text("Tap again", style = MaterialTheme.typography.labelMedium, color = INK)
         }
         // The panel it opens: its three parts, as the real one heads them.

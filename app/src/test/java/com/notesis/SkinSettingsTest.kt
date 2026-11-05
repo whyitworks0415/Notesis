@@ -13,13 +13,13 @@ class SkinSettingsTest {
         assertEquals(1f, now.reflection, 0f)
         assertEquals(14f, now.depth, 0f)
         assertTrue(now.shadows)
-        assertEquals(32f, now.spotiglassCorner, 0f)
-        assertEquals(1f, now.spotiglassResponse, 0f)
+        assertEquals(32f, now.liquidGlassCorner, 0f)
+        assertEquals(1f, now.liquidGlassResponse, 0f)
         assertEquals(RefractionDirection.RAISED, now.refractionDirection)
         // Each pair is what its combined slider sets, so the slider reads back where it stands.
         val again = now.withFrost(now.frost).withTransparency(now.transparency).withDepth(now.depth)
         assertEquals(now.vibrancy, again.vibrancy, 0.001f)
-        assertEquals(now.spotiglassToolbarOpacity, again.spotiglassToolbarOpacity, 0.001f)
+        assertEquals(now.liquidGlassToolbarOpacity, again.liquidGlassToolbarOpacity, 0.001f)
         assertEquals(now.refraction, again.refraction, 0.001f)
         assertTrue(!now.hasOriginalOptics())
         assertTrue(SkinSettings.ORIGINAL.hasOriginalOptics())
@@ -30,7 +30,7 @@ class SkinSettingsTest {
         fun saved(edit: (JSONObject) -> Unit = {}) = JSONObject(SkinSettings.ORIGINAL.copy(accent = 0xFF00AA00.toInt()).toJson())
             .apply { remove("reflection"); remove("opticsVersion"); edit(this) }.toString()
         val untouched = SkinSettings.fromJson(saved())
-        assertEquals(SkinSettings().spotiglassClarity, untouched.spotiglassClarity, 0f)
+        assertEquals(SkinSettings().liquidGlassClarity, untouched.liquidGlassClarity, 0f)
         assertEquals(SkinSettings().reflection, untouched.reflection, 0f)
         assertEquals(SkinSettings().depth, untouched.depth, 0f)
         // Colours are never part of it.
@@ -38,19 +38,19 @@ class SkinSettingsTest {
         // Tuned by hand: kept, with the edge it was seen with.
         val tuned = SkinSettings.fromJson(saved { it.put("blur", 44.0) })
         assertEquals(44f, tuned.blur, 0f)
-        assertEquals(SkinSettings.ORIGINAL.spotiglassClarity, tuned.spotiglassClarity, 0f)
+        assertEquals(SkinSettings.ORIGINAL.liquidGlassClarity, tuned.liquidGlassClarity, 0f)
         assertEquals(SkinSettings.LEGACY_REFLECTION, tuned.reflection, 0f)
         // Saved now, read back as it is, even at the old values.
         val round = SkinSettings.fromJson(SkinSettings.ORIGINAL.toJson())
-        assertEquals(SkinSettings.ORIGINAL.spotiglassClarity, round.spotiglassClarity, 0f)
+        assertEquals(SkinSettings.ORIGINAL.liquidGlassClarity, round.liquidGlassClarity, 0f)
         assertEquals(SkinSettings.ORIGINAL.reflection, round.reflection, 0f)
     }
 
     @Test fun `controls keep the original glass, and the reader's colours`() {
-        val tuned = SkinSettings().copy(spotiglassCorner = 8f, spotiglassClarity = 0.2f, accent = 0xFF123456.toInt(), highContrast = true)
+        val tuned = SkinSettings().copy(liquidGlassCorner = 8f, liquidGlassClarity = 0.2f, accent = 0xFF123456.toInt(), highContrast = true)
         val control = tuned.controlOptics()
-        assertEquals(SkinSettings.ORIGINAL.spotiglassCorner, control.spotiglassCorner, 0f)
-        assertEquals(SkinSettings.ORIGINAL.spotiglassClarity, control.spotiglassClarity, 0f)
+        assertEquals(SkinSettings.ORIGINAL.liquidGlassCorner, control.liquidGlassCorner, 0f)
+        assertEquals(SkinSettings.ORIGINAL.liquidGlassClarity, control.liquidGlassClarity, 0f)
         assertEquals(SkinSettings.ORIGINAL.blur, control.blur, 0f)
         assertEquals(0xFF123456.toInt(), control.accent)
         assertTrue(control.highContrast)
@@ -65,7 +65,7 @@ class SkinSettingsTest {
         val clear = s.withTransparency(0.75f)
         assertEquals(0.75f, clear.transparency, 0f)
         // At the old clarity, the old toolbar opacity, near enough.
-        assertEquals(0.205f, clear.spotiglassToolbarOpacity, 0.01f)
+        assertEquals(0.205f, clear.liquidGlassToolbarOpacity, 0.01f)
         val deep = s.withDepth(12f)
         assertEquals(12f, deep.depth, 0f)
         assertEquals(24f, deep.refraction, 0f)
@@ -188,7 +188,7 @@ class SkinSettingsTest {
         // Controls keep this app's own glass whatever the recipe.
         assertEquals(LiquidStyle.NOTESIS, set.controlOptics().liquidStyle)
         // This app's own glass keeps its own corner and its own motion.
-        assertEquals(fresh.spotiglassCorner, fresh.glassCorner, 0f)
+        assertEquals(fresh.liquidGlassCorner, fresh.glassCorner, 0f)
         assertEquals(null, fresh.projectMotion)
     }
 

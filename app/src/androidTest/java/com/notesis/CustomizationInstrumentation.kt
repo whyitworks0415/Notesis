@@ -52,27 +52,27 @@ class CustomizationInstrumentation : Instrumentation() {
     }
 
     @androidx.annotation.RequiresApi(33)
-    private fun checkSpotiGlassShader() {
-        check(spotiGlassPath(androidx.compose.ui.geometry.Size.Zero, 12f).isEmpty)
-        check(spotiGlassPath(androidx.compose.ui.geometry.Size(-1f, 20f), 12f).isEmpty)
+    private fun checkLiquidGlassShader() {
+        check(liquidGlassPath(androidx.compose.ui.geometry.Size.Zero, 12f).isEmpty)
+        check(liquidGlassPath(androidx.compose.ui.geometry.Size(-1f, 20f), 12f).isEmpty)
         val source = Bitmap.createBitmap(400, 160, Bitmap.Config.ARGB_8888)
         for (y in 0 until source.height) for (x in 0 until source.width) {
             source.setPixel(x, y, Color.rgb((x * 7) % 256, (y * 9) % 256, (x + y) % 256))
         }
-        val optical = SpotiGlassShader(targetContext) // Compiles the full port on Android Skia.
+        val optical = LiquidGlassShader(targetContext) // Compiles the full port on Android Skia.
         optical.shader.setInputShader("u_texture_input", android.graphics.BitmapShader(
             source, android.graphics.Shader.TileMode.CLAMP, android.graphics.Shader.TileMode.CLAMP))
         val size = androidx.compose.ui.geometry.Size(400f, 160f)
-        val frame = SpotiGlassLensFrame(
+        val frame = LiquidGlassLensFrame(
             center = androidx.compose.ui.geometry.Offset(200f, 80f),
             size = androidx.compose.ui.geometry.Size(100f, 52f), radius = 26f,
             fill = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.08f),
         )
-        fun render(value: SpotiGlassLensFrame): Bitmap {
+        fun render(value: LiquidGlassLensFrame): Bitmap {
             optical.update(size, value, 1f)
             val reader = android.media.ImageReader.newInstance(400, 160, android.graphics.PixelFormat.RGBA_8888,
                 2, android.hardware.HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or android.hardware.HardwareBuffer.USAGE_GPU_COLOR_OUTPUT)
-            val node = android.graphics.RenderNode("SpotiGlass shader test")
+            val node = android.graphics.RenderNode("Liquid glass shader test")
             node.setPosition(0, 0, 400, 160)
             // Exercise the exact cached effect used in Compose, not a freshly
             // created test-only effect that hides stale-uniform regressions.
@@ -130,7 +130,7 @@ class CustomizationInstrumentation : Instrumentation() {
         check(Color.alpha(transparent.getPixel(10, 10)) == 0)
         val solidThumb = render(frame.copy(fill = androidx.compose.ui.graphics.Color.White, progress = 0f, presence = 0f))
         check(solidThumb.getPixel(200, 80) == Color.WHITE) { "Rest thumb lost tint coverage" }
-        File(targetContext.cacheDir, "spotiglass-shader-test.png").outputStream().use {
+        File(targetContext.cacheDir, "liquidglass-shader-test.png").outputStream().use {
             stretched.compress(Bitmap.CompressFormat.PNG, 100, it)
         }
         // The same AGSL program must also be accepted by the live GPU effect.
@@ -187,20 +187,20 @@ class CustomizationInstrumentation : Instrumentation() {
             check(reloaded.favoriteWidths(EditMode.PEN) == listOf(0.25f, 1.5f, 3f))
             check(reloaded.colorTemplates().single().second == listOf(Color.BLUE, Color.RED))
             check(reloaded.toolbarSize == 2 && reloaded.homeColor == Color.BLUE)
-            pens.skin = Skin.SPOTIGLASS
-            val glassLook = SkinSettings(spotiglassClarity = 0.43f, spotiglassToolbarOpacity = 0.62f, spotiglassResponse = 0.25f,
+            pens.skin = Skin.LIQUID_GLASS
+            val glassLook = SkinSettings(liquidGlassClarity = 0.43f, liquidGlassToolbarOpacity = 0.62f, liquidGlassResponse = 0.25f,
                 corner = 32f, themeMode = AppThemeMode.DARK)
             SkinSettingsStore(isolated).save(glassLook)
-            check(PenStore(isolated).skin == Skin.SPOTIGLASS)
+            check(PenStore(isolated).skin == Skin.LIQUID_GLASS)
             check(SkinSettingsStore(isolated).load() == glassLook)
-            check(SkinSettings.fromJson("{}").spotiglassClarity == SkinSettings().spotiglassClarity)
-            check(SkinSettings.fromJson("{}").spotiglassToolbarOpacity == SkinSettings().spotiglassToolbarOpacity)
-            check(SkinSettings.fromJson("{\"spotiglassToolbarOpacity\":2}").spotiglassToolbarOpacity == 1f)
-            check(SkinSettings.fromJson("{\"spotiglassToolbarOpacity\":-1}").spotiglassToolbarOpacity == 0f)
+            check(SkinSettings.fromJson("{}").liquidGlassClarity == SkinSettings().liquidGlassClarity)
+            check(SkinSettings.fromJson("{}").liquidGlassToolbarOpacity == SkinSettings().liquidGlassToolbarOpacity)
+            check(SkinSettings.fromJson("{\"spotiglassToolbarOpacity\":2}").liquidGlassToolbarOpacity == 1f)
+            check(SkinSettings.fromJson("{\"spotiglassToolbarOpacity\":-1}").liquidGlassToolbarOpacity == 0f)
             check(SkinSettings.fromJson("{\"spotiglassClarity\":2,\"spotiglassResponse\":-1}")
-                .let { it.spotiglassClarity == 1f && it.spotiglassResponse == 0f })
+                .let { it.liquidGlassClarity == 1f && it.liquidGlassResponse == 0f })
             progress("glass shader")
-            if (android.os.Build.VERSION.SDK_INT >= 33) checkSpotiGlassShader()
+            if (android.os.Build.VERSION.SDK_INT >= 33) checkLiquidGlassShader()
             progress("settings UI")
             checkToolSettingsUi()
             progress("attached ink rendering")
@@ -268,7 +268,7 @@ class CustomizationInstrumentation : Instrumentation() {
             store.delete(note.id)
             bitmap.recycle()
             changedBitmap.recycle()
-            output.putString("stream", "PASS Spotiglass GPU shader compilation/refraction/deformation, preferences, text rendering, insertion/edit/undo/redo, autosave/reload, intermittent pen contact, stationary pen starts, pen antialiasing, PDF export/preview and stroke overlap\n")
+            output.putString("stream", "PASS Liquid glass GPU shader compilation/refraction/deformation, preferences, text rendering, insertion/edit/undo/redo, autosave/reload, intermittent pen contact, stationary pen starts, pen antialiasing, PDF export/preview and stroke overlap\n")
             finish(Activity.RESULT_OK, output)
         } catch (error: Throwable) {
             output.putString("stream", error.stackTraceToString())

@@ -79,7 +79,7 @@ S6 Lite, SM-P61x/P62x). Kotlin, Jetpack Compose for the chrome, a custom
 | Area | Files |
 |---|---|
 | Library (home) | `MainActivity.kt` (`HomeScreen`), `HomeLibrary.kt` |
-| Note screen, toolbar | `MainActivity.kt` (`NoteScreen`, `Toolbar`), `SpotiGlassToolbar.kt`, `ToolbarCustomize.kt` |
+| Note screen, toolbar | `MainActivity.kt` (`NoteScreen`, `Toolbar`), `LiquidGlassToolbar.kt`, `ToolbarCustomize.kt` |
 | Canvas and ink | `InkCanvasView.kt`, `CompatWetInkView.kt` (S6 Lite wet ink), `PencilBrushes.kt` |
 | Storage | `Document.kt` (`NoteStore`, pages, save/load, whiteboard `board.bin`) |
 | Text boxes, tables | `TextBox.kt`, `MarkdownSpans.kt`, `TableBox.kt`, `InlineText.kt` |

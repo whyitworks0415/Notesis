@@ -64,8 +64,8 @@ private fun SegmentedControlBody(
     useLiquidGlass: Boolean,
 ) {
     require(segments.size in 2..4) { "LiquidSegmentedControl supports 2 to 4 segments." }
-    if (useLiquidGlass && LocalSkin.current == Skin.SPOTIGLASS) {
-        SpotiGlassBar(segments.map { SpotiGlassItem(it) }, selectedIndex, onSelected, modifier)
+    if (useLiquidGlass && LocalSkin.current == Skin.LIQUID_GLASS) {
+        LiquidGlassBar(segments.map { LiquidGlassItem(it) }, selectedIndex, onSelected, modifier)
         return
     }
     val selected = selectedIndex.coerceIn(segments.indices)

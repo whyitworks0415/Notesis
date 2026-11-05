@@ -45,10 +45,10 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 // The surface behind a nested bar, without that bar or its moving lens.
-internal val LocalSpotiGlassHostBackdrop = compositionLocalOf<LayerBackdrop?> { null }
+internal val LocalLiquidGlassHostBackdrop = compositionLocalOf<LayerBackdrop?> { null }
 
 /** Ported continuous outline; the path and the upstream shader share a curve. */
-internal fun spotiGlassPath(size: Size, radius: Float): Path {
+internal fun liquidGlassPath(size: Size, radius: Float): Path {
     if (size.width <= 0f || size.height <= 0f) return Path()
     val w = size.width; val h = size.height
     val r = radius.coerceIn(0f, minOf(w, h) / 2)
@@ -78,7 +78,7 @@ internal fun spotiGlassPath(size: Size, radius: Float): Path {
     }
 }
 
-/** A plain round rectangle as a path, the outline [SpotiGlassLensFrame.continuous] = false draws. */
+/** A plain round rectangle as a path, the outline [LiquidGlassLensFrame.continuous] = false draws. */
 internal fun roundRectPath(size: Size, radius: Float): Path {
     if (size.width <= 0f || size.height <= 0f) return Path()
     val r = radius.coerceIn(0f, minOf(size.width, size.height) / 2)
@@ -88,12 +88,12 @@ internal fun roundRectPath(size: Size, radius: Float): Path {
     }
 }
 
-internal class SpotiGlassShape(internal val radius: Dp) : Shape {
+internal class LiquidGlassShape(internal val radius: Dp) : Shape {
     override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline =
-        Outline.Generic(spotiGlassPath(size, with(density) { radius.toPx() }))
+        Outline.Generic(liquidGlassPath(size, with(density) { radius.toPx() }))
 }
 
-internal data class SpotiGlassLensFrame(
+internal data class LiquidGlassLensFrame(
     val center: Offset,
     val size: Size,
     val radius: Float,
@@ -117,16 +117,16 @@ internal data class SpotiGlassLensFrame(
 
 /** Uniform packing follows packLiquidGlassUniforms, with pixel-space sampling. */
 @RequiresApi(33)
-internal class SpotiGlassShader(context: Context) {
-    val shader = RuntimeShader(context.assets.open("spotiglass/liquid_glass.agsl").bufferedReader().use { it.readText() })
+internal class LiquidGlassShader(context: Context) {
+    val shader = RuntimeShader(context.assets.open("liquidglass/liquid_glass.agsl").bufferedReader().use { it.readText() })
     // Android RenderEffect snapshots the RuntimeShader's uniforms. Reusing an
     // effect after mutating the shader silently keeps the previous optics.
     lateinit var nativeEffect: RenderEffect; private set
     lateinit var effect: androidx.compose.ui.graphics.RenderEffect; private set
-    private var previousFrame: SpotiGlassLensFrame? = null
+    private var previousFrame: LiquidGlassLensFrame? = null
     private var previousResolution = Size.Zero
     private var previousDensity = 0f
-    fun update(resolution: Size, frame: SpotiGlassLensFrame, density: Float) {
+    fun update(resolution: Size, frame: LiquidGlassLensFrame, density: Float) {
         if (frame == previousFrame && resolution == previousResolution && density == previousDensity) return
         val p = frame.progress.coerceIn(0f, 1f)
         val presence = frame.presence.coerceIn(0f, 1f)
@@ -166,13 +166,13 @@ internal class SpotiGlassShader(context: Context) {
 }
 
 @Composable
-internal fun Modifier.spotiGlassLens(enabled: Boolean, active: () -> Boolean = { true },
-    frame: (Size, Float) -> SpotiGlassLensFrame): Modifier {
+internal fun Modifier.liquidGlassLens(enabled: Boolean, active: () -> Boolean = { true },
+    frame: (Size, Float) -> LiquidGlassLensFrame): Modifier {
     if (Build.VERSION.SDK_INT < 33) return this
     val context = LocalContext.current
     // A settled bar draws no capture/effect, but retains its compiled program
     // for the next gesture. Reduced effects never initialize this lazy value.
-    val compiled = remember(context) { lazy { SpotiGlassShader(context) } }
+    val compiled = remember(context) { lazy { LiquidGlassShader(context) } }
     if (!enabled) return this
     val capture = rememberGraphicsLayer()
     return drawWithContent {
@@ -187,7 +187,7 @@ internal fun Modifier.spotiGlassLens(enabled: Boolean, active: () -> Boolean = {
 
 /** MornyeGlassSurface + MornyeGlassRim from SpotiFLAC, with its tint/blur rules. */
 @Composable
-internal fun Modifier.spotiGlassSurface(
+internal fun Modifier.liquidGlassSurface(
     shape: Shape,
     settings: SkinSettings,
     navigation: Boolean = false,
@@ -198,7 +198,7 @@ internal fun Modifier.spotiGlassSurface(
     val scheme = MaterialTheme.colorScheme
     val dark = scheme.surface.luminance() < 0.5f
     val backdrop = LocalLiquidGlassBackdrop.current
-    val clarity = settings.spotiglassClarity.coerceIn(0f, 1f)
+    val clarity = settings.liquidGlassClarity.coerceIn(0f, 1f)
     val lensAllowed = rememberLiquidGlassEffectsAllowed() && !settings.highContrast && backdrop != null
     // Another recipe draws the whole pane its own way, rim and shadow included.
     if (lensAllowed && settings.liquidStyle != LiquidStyle.NOTESIS) {

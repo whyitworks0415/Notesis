@@ -21,7 +21,7 @@ import androidx.compose.ui.unit.dp
  * gap, wherever it appears.
  *
  * The chrome's own outer corner is the one the user chooses
- * ([SkinSettings.spotiglassCorner], the same in every skin; see
+ * ([SkinSettings.liquidGlassCorner], the same in every skin; see
  * [chromeCorner]); these are for the places that hard-coded a number instead.
  */
 object Ui {

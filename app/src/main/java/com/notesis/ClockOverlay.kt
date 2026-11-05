@@ -161,7 +161,7 @@ private fun BoxWithConstraintsScope.ClockPill(kind: PillKind) {
                 shape = shape,
                 surfaceColor = if (alert) scheme.primaryContainer else scheme.surface,
                 surfaceOpacity = if (alert) 0.92f else 0.72f,
-                useSpotiStyle = false,
+                useGlassStyle = false,
             )
             .clip(shape)
             .pointerInput(Unit) {

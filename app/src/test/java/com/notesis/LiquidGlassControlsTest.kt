@@ -3,9 +3,9 @@ package com.notesis
 import org.junit.Assert.*
 import org.junit.Test
 
-class SpotiGlassControlsTest {
+class LiquidGlassControlsTest {
     @Test fun `holding keeps a stationary thumb fully raised until release`() {
-        val motion = SpotiGlassMotion(0.4f, control = true)
+        val motion = LiquidGlassMotion(0.4f, control = true)
         motion.grab(0.4f)
         repeat(180) { motion.tick((it + 1) / 60.0, 1 / 60.0, 180f) }
         assertTrue(motion.running)
@@ -21,7 +21,7 @@ class SpotiGlassControlsTest {
     }
 
     @Test fun `drag is one to one and interrupted settling can be grabbed again`() {
-        val motion = SpotiGlassMotion(0f, control = true)
+        val motion = LiquidGlassMotion(0f, control = true)
         motion.grab(0.2f)
         motion.tick(1 / 60.0, 1 / 60.0, 22f)
         assertEquals(0.2f, motion.position, 0f)
@@ -41,7 +41,7 @@ class SpotiGlassControlsTest {
     }
 
     @Test fun `external transitions stay liquid until travel settles then restore white`() {
-        val motion = SpotiGlassMotion(0f, control = true)
+        val motion = LiquidGlassMotion(0f, control = true)
         motion.select(1f)
         repeat(12) { motion.tick((it + 1) / 60.0, 1 / 60.0, 22f) }
         assertTrue(motion.progress > 0.9f)
@@ -53,10 +53,10 @@ class SpotiGlassControlsTest {
     }
 
     @Test fun `slider respects discrete steps range and endpoints`() {
-        assertEquals(20f, spotiSliderValue(-1f, 20f..40f, 3), 0f)
-        assertEquals(25f, spotiSliderValue(0.31f, 20f..40f, 3), 0f)
-        assertEquals(40f, spotiSliderValue(2f, 20f..40f, 3), 0f)
-        assertEquals(26.2f, spotiSliderValue(0.31f, 20f..40f, 0), 0.001f)
-        assertEquals(5f, spotiSliderValue(0.5f, 5f..5f, 0), 0f)
+        assertEquals(20f, glassSliderValue(-1f, 20f..40f, 3), 0f)
+        assertEquals(25f, glassSliderValue(0.31f, 20f..40f, 3), 0f)
+        assertEquals(40f, glassSliderValue(2f, 20f..40f, 3), 0f)
+        assertEquals(26.2f, glassSliderValue(0.31f, 20f..40f, 0), 0.001f)
+        assertEquals(5f, glassSliderValue(0.5f, 5f..5f, 0), 0f)
     }
 }

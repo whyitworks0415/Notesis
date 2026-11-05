@@ -15,7 +15,7 @@ import androidx.compose.ui.unit.Density
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.LayerBackdrop
 
-internal val LocalSpotiPopupBackdrop = compositionLocalOf<Backdrop?> { null }
+internal val LocalGlassPopupBackdrop = compositionLocalOf<Backdrop?> { null }
 
 /**
  * Set while the popup a pane sits in is growing or folding away: read in the
@@ -50,7 +50,7 @@ internal fun DrawScope.drawBackdropAligned(layer: GraphicsLayer, sourceOrigin: O
  * preserve it. Only the page is sampled, so the menu cannot capture itself.
  * The scale a popup is drawn at while it grows is undone as well, so the page
  * seen through it stays put rather than shrinking and sliding with it. */
-internal class SpotiPopupBackdrop(
+internal class GlassPopupBackdrop(
     private val source: LayerBackdrop,
     private val sourceOrigin: () -> Offset,
 ) : Backdrop {

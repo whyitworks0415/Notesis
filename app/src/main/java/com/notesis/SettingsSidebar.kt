@@ -372,8 +372,8 @@ internal fun NoteSettingsSidebar(
     onClose: () -> Unit,
     widthDp: Float,
     onWidthChange: (Float) -> Unit,
-    quickActions: List<SpotiToolbarAction>,
-    webActions: List<SpotiToolbarAction>,
+    quickActions: List<GlassToolbarAction>,
+    webActions: List<GlassToolbarAction>,
     /** Opens an address in the browser panel: one of the sites added in Web & AI. */
     onOpenSite: (String) -> Unit = {},
     penSettings: @Composable () -> Unit,
@@ -417,7 +417,7 @@ internal fun NoteSettingsSidebar(
                     SettingsPage.NOTE_VIEW -> noteView()
                     SettingsPage.WEB -> {
                         SettingsNote("The page opens in a panel beside the note, so you can keep writing.")
-                        SpotiMenuGrid(webActions, columns = 2)
+                        GlassMenuGrid(webActions, columns = 2)
                         AddedSitesEditor(onOpen = onOpenSite)
                     }
                     SettingsPage.SAVE_RESET -> SettingsSaveAndReset(onResetToolbar)
@@ -437,7 +437,7 @@ internal fun NoteSettingsSidebar(
 }
 
 @Composable
-private fun SettingsRoot(quickActions: List<SpotiToolbarAction>, onOpen: (SettingsPage) -> Unit) {
+private fun SettingsRoot(quickActions: List<GlassToolbarAction>, onOpen: (SettingsPage) -> Unit) {
     // Named in both languages, so it can be found whichever one is showing.
     SettingsSectionHeader("Language · 언어")
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -452,7 +452,7 @@ private fun SettingsRoot(quickActions: List<SpotiToolbarAction>, onOpen: (Settin
     if (quickActions.isNotEmpty()) {
         SettingsSectionHeader("Quick actions")
         BoxWithConstraints(Modifier.fillMaxWidth()) {
-            SpotiMenuGrid(quickActions, columns = if (maxWidth >= 420.dp) 3 else 2)
+            GlassMenuGrid(quickActions, columns = if (maxWidth >= 420.dp) 3 else 2)
         }
     }
     SettingsSectionHeader("Sections")

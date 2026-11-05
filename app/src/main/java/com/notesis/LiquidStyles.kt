@@ -414,7 +414,7 @@ data class QweaGlass(
 /** The corner Liquid glass's chrome takes under the recipe in use. */
 val SkinSettings.glassCorner: Float
     get() = when (liquidStyle) {
-        LiquidStyle.NOTESIS -> spotiglassCorner
+        LiquidStyle.NOTESIS -> liquidGlassCorner
         LiquidStyle.IOS -> ios.corner
         LiquidStyle.KYANT -> kyant.corner
         LiquidStyle.QWEA -> qwea.corner
@@ -437,12 +437,12 @@ val LocalLiquidStyleChange = staticCompositionLocalOf<(LiquidStyle) -> Unit> { {
  * Six in all - Material, Glassmorphism and Liquid glass's four.
  */
 data class Look(val skin: Skin, val style: LiquidStyle = LiquidStyle.NOTESIS) {
-    val label: String get() = if (skin == Skin.SPOTIGLASS) style.label else skin.label
-    val blurb: String get() = if (skin == Skin.SPOTIGLASS) style.blurb else skin.blurb
+    val label: String get() = if (skin == Skin.LIQUID_GLASS) style.label else skin.label
+    val blurb: String get() = if (skin == Skin.LIQUID_GLASS) style.blurb else skin.blurb
 
     companion object {
         val all: List<Look> = Skin.entries.flatMap { skin ->
-            if (skin == Skin.SPOTIGLASS) LiquidStyle.entries.map { Look(skin, it) } else listOf(Look(skin))
+            if (skin == Skin.LIQUID_GLASS) LiquidStyle.entries.map { Look(skin, it) } else listOf(Look(skin))
         }
     }
 }

@@ -76,7 +76,7 @@ internal fun Instrumentation.checkToolSettingsUi() {
     try {
         runOnMainSync {
             activity.setContent {
-                ProvideSkin(Skin.SPOTIGLASS, SkinSettings()) {
+                ProvideSkin(Skin.LIQUID_GLASS, SkinSettings()) {
                     MaterialTheme {
                         var value by remember { mutableFloatStateOf(0.25f) }
                         Column(Modifier.padding(top = 64.dp).width(320.dp).verticalScroll(rememberScrollState())) {
@@ -103,7 +103,7 @@ internal fun Instrumentation.checkToolSettingsUi() {
             }
             runOnMainSync {
                 activity.setContent {
-                    ProvideSkin(Skin.SPOTIGLASS, SkinSettings()) {
+                    ProvideSkin(Skin.LIQUID_GLASS, SkinSettings()) {
                         MaterialTheme {
                             var enabled by remember { mutableStateOf(true) }
                             var partial by remember { mutableStateOf(false) }

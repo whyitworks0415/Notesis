@@ -39,7 +39,7 @@ import kotlinx.coroutines.flow.first
 
 // Rest/lifted geometry from liquid_glass_easy 4.3.2 slider/switch layouts
 // (MIT, Ahmed Gamil). Capture and Compose input are the Android adapter.
-internal fun spotiSliderValue(fraction: Float, range: ClosedFloatingPointRange<Float>, steps: Int): Float {
+internal fun glassSliderValue(fraction: Float, range: ClosedFloatingPointRange<Float>, steps: Int): Float {
     val bounded = fraction.coerceIn(0f, 1f)
     val snapped = if (steps > 0) (bounded * (steps + 1)).roundToInt().toFloat() / (steps + 1) else bounded
     return range.start + (range.endInclusive - range.start) * snapped
@@ -49,8 +49,8 @@ internal fun spotiSliderValue(fraction: Float, range: ClosedFloatingPointRange<F
 private fun rememberControlMotion(target: Float, held: Boolean, travel: Float): ControlFrame {
     val look = LocalSkinSettings.current
     val allowed = rememberLiquidGlassEffectsAllowed() && !look.highContrast &&
-        look.spotiglassClarity > 0f && look.spotiglassResponse > 0f && Build.VERSION.SDK_INT >= 33
-    val motion = remember { SpotiGlassMotion(target, control = true) }
+        look.liquidGlassClarity > 0f && look.liquidGlassResponse > 0f && Build.VERSION.SDK_INT >= 33
+    val motion = remember { LiquidGlassMotion(target, control = true) }
     var wake by remember { mutableIntStateOf(0) }
     var revision by remember { mutableIntStateOf(0) }
     LaunchedEffect(target, held, allowed) {
@@ -102,14 +102,14 @@ private fun ControlScene(
 ) {
     val look = LocalSkinSettings.current
     val scheme = MaterialTheme.colorScheme
-    val response = look.spotiglassResponse
+    val response = look.liquidGlassResponse
     val moving = motion.running && Build.VERSION.SDK_INT >= 33
     val white = Color.White.copy(alpha = if (enabled) 1f else 0.5f)
     val flip = rtl && !vertical
-    val scene = modifier.spotiGlassLens(moving) { size, density ->
+    val scene = modifier.liquidGlassLens(moving) { size, density ->
         val along = if (vertical) size.height else size.width
         val across = if (vertical) size.width else size.height
-        val start = (if (slider) SPOTI_SLIDER_START.value else 31f) * density
+        val start = (if (slider) GLASS_SLIDER_START.value else 31f) * density
         val travel = (along - start * 2).coerceAtLeast(0f)
         val visual = if (flip) 1 - motion.position else motion.position
         // Lengths along and across the travel. The lens is a wide capsule
@@ -119,12 +119,12 @@ private fun ControlScene(
         val sAlong = 1 + motion.deviation * response
         val sAcross = 1 - motion.deviation * response
         val c = start + travel * visual
-        SpotiGlassLensFrame(
+        LiquidGlassLensFrame(
             center = if (vertical) Offset(across / 2, c) else Offset(c, across / 2),
             size = if (vertical) Size(h * sAcross, w * sAlong) else Size(w * sAlong, h * sAcross),
-            radius = h / 2 * (look.spotiglassCorner / 32).coerceIn(0f, 1.5f),
+            radius = h / 2 * (look.liquidGlassCorner / 32).coerceIn(0f, 1.5f),
             scale = if (vertical) Offset(sAcross, sAlong) else Offset(sAlong, sAcross),
-            progress = motion.progress * look.spotiglassClarity,
+            progress = motion.progress * look.liquidGlassClarity,
             presence = motion.presence, fill = white,
             distortion = 0.12f * (look.refraction / 24),
             band = (if (slider) 18f else 13f) * (look.depth / 12),
@@ -136,13 +136,13 @@ private fun ControlScene(
         val along = if (vertical) size.height else size.width
         val across = if (vertical) size.width else size.height
         val inset = (if (slider) 10f else 10.5f).dp.toPx()
-        val start = (if (slider) SPOTI_SLIDER_START.value else 31f).dp.toPx()
+        val start = (if (slider) GLASS_SLIDER_START.value else 31f).dp.toPx()
         val travel = (along - 2 * start).coerceAtLeast(0f)
         val fraction = motion.position.coerceIn(0f, 1f)
         val visual = if (flip) 1 - fraction else fraction
         val c = start + travel * visual
         val center = if (vertical) Offset(across / 2, c) else Offset(c, across / 2)
-        val trackH = (if (slider) SPOTI_SLIDER_TRACK.value else 28f).dp.toPx()
+        val trackH = (if (slider) GLASS_SLIDER_TRACK.value else 28f).dp.toPx()
         val trackW = (along - inset * 2).coerceAtLeast(0f)
         val trackOffset = if (vertical) Offset((across - trackH) / 2, inset) else Offset(inset, (across - trackH) / 2)
         fun bar(length: Float) = if (vertical) Size(trackH, length) else Size(length, trackH)
@@ -164,7 +164,7 @@ private fun ControlScene(
         }
         if (!moving) {
             val thumb = if (vertical) Size(24.dp.toPx(), 37.dp.toPx()) else Size(37.dp.toPx(), 24.dp.toPx())
-            val outline = spotiGlassPath(thumb, 12.dp.toPx() * (look.spotiglassCorner / 32).coerceIn(0f, 1.5f)).apply {
+            val outline = liquidGlassPath(thumb, 12.dp.toPx() * (look.liquidGlassCorner / 32).coerceIn(0f, 1.5f)).apply {
                 translate(center - Offset(thumb.width / 2, thumb.height / 2))
             }
             drawPath(outline, white)
@@ -180,7 +180,7 @@ private fun ControlScene(
 }
 
 @Composable
-internal fun SpotiGlassSlider(
+internal fun LiquidGlassValueSlider(
     value: Float, onValueChange: (Float) -> Unit, modifier: Modifier,
     valueRange: ClosedFloatingPointRange<Float>, steps: Int, enabled: Boolean,
     label: String, valueFormatter: (Float) -> String, onValueChangeFinished: (() -> Unit)?,
@@ -194,7 +194,7 @@ internal fun SpotiGlassSlider(
     var width by remember { mutableIntStateOf(0) }
     var held by remember { mutableStateOf(false) }
     val density = androidx.compose.ui.platform.LocalDensity.current
-    val inset = with(density) { SPOTI_SLIDER_START.toPx() }
+    val inset = with(density) { GLASS_SLIDER_START.toPx() }
     val travel = (width - 2 * inset).coerceAtLeast(1f)
     // Held, the lens follows the finger itself; the stepped value it lands on
     // is only what is reported. Let go, it settles onto that value's stop.
@@ -204,7 +204,7 @@ internal fun SpotiGlassSlider(
     fun report(f: Float) {
         val raw = f.coerceIn(0f, 1f)
         if (held) dragFraction = raw
-        change(spotiSliderValue(raw, valueRange, steps))
+        change(glassSliderValue(raw, valueRange, steps))
     }
     ControlScene(modifier.fillMaxWidth().height(48.dp).onSizeChanged { width = it.width }
         .semantics(mergeDescendants = true) {
@@ -257,7 +257,7 @@ internal fun SpotiGlassSlider(
 }
 
 @Composable
-internal fun SpotiGlassSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+internal fun LiquidGlassSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     var dragging by remember { mutableStateOf(false) }
@@ -284,14 +284,14 @@ internal fun SpotiGlassSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Un
 }
 
 /** Where the slider's lens centre stops short of each end; the travel is what lies between. */
-internal val SPOTI_SLIDER_START = 29.dp
+internal val GLASS_SLIDER_START = 29.dp
 /** The slider track's thickness, across the travel. */
-private val SPOTI_SLIDER_TRACK = 6.dp
+private val GLASS_SLIDER_TRACK = 6.dp
 /** The resting lens is solid white, so its label keeps a fixed dark ink in every theme. */
-private val SPOTI_THUMB_INK = Color(0xFF1C1B1F)
+private val GLASS_THUMB_INK = Color(0xFF1C1B1F)
 
 /**
- * The page scrubber's rail in the glass bar skin: [SpotiGlassSlider] stood on
+ * The page scrubber's rail in the glass bar skin: [LiquidGlassValueSlider] stood on
  * end. The track, the white lens at rest, the glass lens and its stretch while
  * held all come from the same scene, so the vertical control is the horizontal
  * one turned through a quarter rather than a lookalike. The caller keeps the
@@ -299,7 +299,7 @@ private val SPOTI_THUMB_INK = Color(0xFF1C1B1F)
  * the page number rides in the lens.
  */
 @Composable
-internal fun SpotiGlassPageRail(
+internal fun LiquidGlassPageRail(
     target: Float,
     held: Boolean,
     label: String,
@@ -307,7 +307,7 @@ internal fun SpotiGlassPageRail(
 ) {
     val density = androidx.compose.ui.platform.LocalDensity.current
     var height by remember { mutableIntStateOf(0) }
-    val start = with(density) { SPOTI_SLIDER_START.toPx() }
+    val start = with(density) { GLASS_SLIDER_START.toPx() }
     val travel = (height - 2 * start).coerceAtLeast(1f)
     val motion = rememberControlMotion(target.coerceIn(0f, 1f), held, travel / density.density)
     val lensHeight = with(density) { 37.dp.toPx() }
@@ -332,7 +332,7 @@ internal fun SpotiGlassPageRail(
                     // The lens is 24dp across: four digits only fit a size down.
                     if (label.length >= 4) it.copy(fontSize = 9.sp) else it
                 },
-                color = lerp(SPOTI_THUMB_INK, MaterialTheme.colorScheme.onSurface, motion.progress),
+                color = lerp(GLASS_THUMB_INK, MaterialTheme.colorScheme.onSurface, motion.progress),
                 maxLines = 1,
                 softWrap = false,
             )

@@ -112,13 +112,13 @@ internal enum class PenRowItem(val label: String) {
  * copy and the bar only changes when that copy is committed.
  */
 internal data class ToolbarConfig(
-    val stages: List<List<SpotiToolbarTool>> = DEFAULT_STAGES,
+    val stages: List<List<GlassToolbarTool>> = DEFAULT_STAGES,
     val topRow: List<TopRowItem> = DEFAULT_TOP_ROW,
     val penRow: List<PenRowItem> = DEFAULT_PEN_ROW,
 ) {
-    fun tools(level: Int): List<SpotiToolbarTool> = stages.getOrElse(level) { emptyList() }
+    fun tools(level: Int): List<GlassToolbarTool> = stages.getOrElse(level) { emptyList() }
 
-    fun withTools(level: Int, tools: List<SpotiToolbarTool>): ToolbarConfig =
+    fun withTools(level: Int, tools: List<GlassToolbarTool>): ToolbarConfig =
         copy(stages = List(STAGES) { if (it == level) tools else tools(it) })
 
     /**
@@ -157,15 +157,15 @@ internal data class ToolbarConfig(
 
         /** A fresh install's tools along the bar: masking tape after capture, AI last. */
         private val DEFAULT_TOOLS = listOf(
-            SpotiToolbarTool.READ, SpotiToolbarTool.PEN, SpotiToolbarTool.PENCIL, SpotiToolbarTool.HIGHLIGHTER,
-            SpotiToolbarTool.ERASE, SpotiToolbarTool.SHAPE, SpotiToolbarTool.TEXT, SpotiToolbarTool.LASSO,
-            SpotiToolbarTool.CAPTURE, SpotiToolbarTool.MASK, SpotiToolbarTool.AI,
+            GlassToolbarTool.READ, GlassToolbarTool.PEN, GlassToolbarTool.PENCIL, GlassToolbarTool.HIGHLIGHTER,
+            GlassToolbarTool.ERASE, GlassToolbarTool.SHAPE, GlassToolbarTool.TEXT, GlassToolbarTool.LASSO,
+            GlassToolbarTool.CAPTURE, GlassToolbarTool.MASK, GlassToolbarTool.AI,
         )
 
-        val DEFAULT_STAGES: List<List<SpotiToolbarTool>> = listOf(
+        val DEFAULT_STAGES: List<List<GlassToolbarTool>> = listOf(
             DEFAULT_TOOLS,
             DEFAULT_TOOLS,
-            listOf(SpotiToolbarTool.READ, SpotiToolbarTool.PEN, SpotiToolbarTool.HIGHLIGHTER, SpotiToolbarTool.MASK),
+            listOf(GlassToolbarTool.READ, GlassToolbarTool.PEN, GlassToolbarTool.HIGHLIGHTER, GlassToolbarTool.MASK),
             emptyList(),
         )
         /** The way back and the note's name, then undo, redo, recordings and search at the far end. */
@@ -192,10 +192,10 @@ internal data class ToolbarConfig(
             ).normalized()
         }
 
-        fun parseTools(raw: String): List<SpotiToolbarTool> = names(raw)
+        fun parseTools(raw: String): List<GlassToolbarTool> = names(raw)
 
         /** The one list the bar used to keep served both the full and the one-row size. */
-        fun fromLegacy(tools: List<SpotiToolbarTool>): ToolbarConfig = ToolbarConfig(
+        fun fromLegacy(tools: List<GlassToolbarTool>): ToolbarConfig = ToolbarConfig(
             stages = List(STAGES) { level -> if (level <= 1) tools else DEFAULT_STAGES[level] },
         ).normalized()
 
@@ -214,7 +214,7 @@ internal object ToolbarLayout {
         private set
 
     /** The full bar's tools. */
-    val tools: List<SpotiToolbarTool> get() = config.tools(0)
+    val tools: List<GlassToolbarTool> get() = config.tools(0)
 
     private fun prefs(context: Context) = context.getSharedPreferences("pens", Context.MODE_PRIVATE)
 
@@ -231,13 +231,13 @@ internal object ToolbarLayout {
             prefs.edit().putBoolean(PENCIL_RETURNED, true).apply()
             return
         }
-        var tools = ToolbarConfig.parseTools(saved).ifEmpty { SpotiToolbarTool.entries.toList() }
+        var tools = ToolbarConfig.parseTools(saved).ifEmpty { GlassToolbarTool.entries.toList() }
         // 0.35.1 took the pencil off the bar, so a bar arranged since then has
         // no place for it. Put it back beside the pen once; after that, taking
         // it off again in the editor is the person's own choice and sticks.
-        if (!prefs.getBoolean(PENCIL_RETURNED, false) && SpotiToolbarTool.PENCIL !in tools) {
-            val at = tools.indexOf(SpotiToolbarTool.PEN)
-            tools = tools.toMutableList().apply { add(if (at >= 0) at + 1 else size, SpotiToolbarTool.PENCIL) }
+        if (!prefs.getBoolean(PENCIL_RETURNED, false) && GlassToolbarTool.PENCIL !in tools) {
+            val at = tools.indexOf(GlassToolbarTool.PEN)
+            tools = tools.toMutableList().apply { add(if (at >= 0) at + 1 else size, GlassToolbarTool.PENCIL) }
         }
         prefs.edit().putBoolean(PENCIL_RETURNED, true).apply()
         set(context, ToolbarConfig.fromLegacy(tools))
@@ -399,7 +399,7 @@ internal fun ToolbarCustomizeScreen(
             })
             ToolbarPreviewStage(PreviewBackground.PAGE, null, Modifier.fillMaxWidth().height(112.dp)) {
                 CompositionLocalProvider(LocalToolbarConfig provides draft) {
-                    Box(Modifier.padding(8.dp).previewFit(spotiToolbarWidth(stage, tools = draft.tools(stage).size))) { preview(stage) }
+                    Box(Modifier.padding(8.dp).previewFit(glassToolbarWidth(stage, tools = draft.tools(stage).size))) { preview(stage) }
                 }
             }
             if (stage == 0) {
@@ -468,7 +468,7 @@ internal fun ToolbarCustomizeScreen(
                     val withModes = shown.filter { it.mode != null }
                     ReorderList(
                         shown = shown,
-                        hidden = SpotiToolbarTool.entries.filter { it !in shown },
+                        hidden = GlassToolbarTool.entries.filter { it !in shown },
                         idOf = { it.name },
                         label = { it.label },
                         icon = { it.icon() },

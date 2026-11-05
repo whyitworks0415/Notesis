@@ -83,7 +83,7 @@ class ChromeMotionTest {
     }
 
     @Test fun `the lens travel spring is just under critical damping`() {
-        assertEquals(0.938f, SPOTIGLASS_TRAVEL_DAMPING_RATIO, 0.001f)
+        assertEquals(0.938f, LIQUID_GLASS_TRAVEL_DAMPING_RATIO, 0.001f)
     }
 
     /**
@@ -92,10 +92,10 @@ class ChromeMotionTest {
      * lens's own integration, or the two skins would move at different speeds.
      */
     @Test fun `the highlight's spring moves with the lens`() {
-        val motion = SpotiGlassMotion(0f)
+        val motion = LiquidGlassMotion(0f)
         motion.select(3f)
-        val k = SPOTIGLASS_TRAVEL_STIFFNESS
-        val zeta = SPOTIGLASS_TRAVEL_DAMPING_RATIO.toDouble()
+        val k = LIQUID_GLASS_TRAVEL_STIFFNESS
+        val zeta = LIQUID_GLASS_TRAVEL_DAMPING_RATIO.toDouble()
         val omega = sqrt(k)
         val damped = omega * sqrt(1 - zeta * zeta)
         fun spring(t: Double): Double {

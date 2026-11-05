@@ -140,7 +140,7 @@ internal fun ToolbarPreviewStage(
     // The bar is drawn shrunk to fit the stage, so its glass reads the stage
     // by screen position and undoes that scale, as a popup's glass does.
     val stageOrigin = remember { mutableStateOf(Offset.Zero) }
-    val aligned = remember(liquid) { SpotiPopupBackdrop(liquid) { stageOrigin.value } }
+    val aligned = remember(liquid) { GlassPopupBackdrop(liquid) { stageOrigin.value } }
     Box(modifier.clip(Ui.Shape.card)) {
         // The background goes inside the recording; the bar is outside it,
         // or the glass would be looking at itself.
@@ -155,8 +155,8 @@ internal fun ToolbarPreviewStage(
         CompositionLocalProvider(
             LocalBackdrop provides backdrop,
             LocalLiquidGlassBackdrop provides aligned,
-            LocalSpotiGlassHostBackdrop provides null,
-            LocalSpotiPopupBackdrop provides null,
+            LocalLiquidGlassHostBackdrop provides null,
+            LocalGlassPopupBackdrop provides null,
         ) {
             Box(
                 Modifier.matchParentSize().then(
@@ -298,22 +298,22 @@ private fun InteractiveToolbarPreview(sizeLevel: Int, onSizeLevel: (Int) -> Unit
     ) {
         // Down the side the bar is as long as its tools, so it is shrunk to the stage both ways.
         val vertical = ToolbarOrientation.vertical && sizeLevel > 0
-        Box(if (vertical) Modifier.weight(1f, fill = false).fitInside() else Modifier.previewFit(spotiToolbarWidth(sizeLevel, LocalChromeScale.current, currentToolbarConfig().tools(sizeLevel).size))) {
-            SpotiGlassToolbar(
+        Box(if (vertical) Modifier.weight(1f, fill = false).fitInside() else Modifier.previewFit(glassToolbarWidth(sizeLevel, LocalChromeScale.current, currentToolbarConfig().tools(sizeLevel).size))) {
+            LiquidGlassToolbar(
                 sizeLevel = sizeLevel, onSizeLevel = onSizeLevel, mode = mode,
                 toolColors = toolColors,
-                targetWidth = spotiToolbarWidth(sizeLevel, LocalChromeScale.current, currentToolbarConfig().tools(sizeLevel).size), docked = false, modifier = Modifier, onDrag = {},
+                targetWidth = glassToolbarWidth(sizeLevel, LocalChromeScale.current, currentToolbarConfig().tools(sizeLevel).size), docked = false, modifier = Modifier, onDrag = {},
                 onTool = { tool -> tool.mode?.let { mode = it } },
                 functions = listOf(
                     listOf(
-                        SpotiToolbarAction("Picture", AppIcons.picture) {},
-                        SpotiToolbarAction("Layers", AppIcons.layers) {},
-                        SpotiToolbarAction("Text", AppIcons.text) {},
+                        GlassToolbarAction("Picture", AppIcons.picture) {},
+                        GlassToolbarAction("Layers", AppIcons.layers) {},
+                        GlassToolbarAction("Text", AppIcons.text) {},
                     ),
-                    listOf(SpotiToolbarAction("Settings", AppIcons.settings) {}),
+                    listOf(GlassToolbarAction("Settings", AppIcons.settings) {}),
                 ),
                 notes = emptyList(),
-                ai = listOf(SpotiToolbarAction("Gemini", AppIcons.ai) {}, SpotiToolbarAction("Claude", AppIcons.ai) {}),
+                ai = listOf(GlassToolbarAction("Gemini", AppIcons.ai) {}, GlassToolbarAction("Claude", AppIcons.ai) {}),
                 topRow = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         AppIconButton(onClick = {}, icon = AppIcons.back, contentDescription = "Back")
@@ -652,7 +652,7 @@ private fun PanelsGroup(skin: Skin, settings: SkinSettings, onChange: (SkinSetti
         SkinSettings.POPUP_DIM_RANGE, step = 0.01f, default = defaults.popupDim,
         note = "How much the page darkens behind a tool or pen panel.",
     ) { onChange(settings.copy(popupDim = it)) }
-    val ownRecipe = skin == Skin.SPOTIGLASS && settings.liquidStyle != LiquidStyle.NOTESIS
+    val ownRecipe = skin == Skin.LIQUID_GLASS && settings.liquidStyle != LiquidStyle.NOTESIS
     if (ownRecipe) {
         SettingsNote("${settings.liquidStyle.label} sets its corner, blur, surface, rim and motion in Glass, " +
             "with the numbers its project uses.")
@@ -660,16 +660,16 @@ private fun PanelsGroup(skin: Skin, settings: SkinSettings, onChange: (SkinSetti
     }
     // One corner for every style: the toolbar, its menus and the panels take
     // the same curve whichever style is on (see [chromeCorner]).
-    AppearanceSlider("Corner radius", "%.0f dp".format(settings.spotiglassCorner), settings.spotiglassCorner,
-        SkinSettings.CORNER_RANGE, step = 1f, default = defaults.spotiglassCorner,
+    AppearanceSlider("Corner radius", "%.0f dp".format(settings.liquidGlassCorner), settings.liquidGlassCorner,
+        SkinSettings.CORNER_RANGE, step = 1f, default = defaults.liquidGlassCorner,
         note = "Shared by Material, Glassmorphism and Liquid glass. Liquid glass's other recipes keep their own.",
-    ) { onChange(settings.copy(spotiglassCorner = it)) }
+    ) { onChange(settings.copy(liquidGlassCorner = it)) }
     AppearanceSlider("Frost", "%.0f%%".format(settings.frost * 100), settings.frost, 0f..1f,
         step = 0.01f, default = defaults.frost,
         note = "How much the page behind is blurred, and how much colour comes through the blur.",
         disabledReason = if (skin == Skin.MATERIAL) "Material panels are solid" else null,
     ) { onChange(settings.withFrost(it)) }
-    if (skin == Skin.SPOTIGLASS) {
+    if (skin == Skin.LIQUID_GLASS) {
         AppearanceSlider("Transparency", "%.0f%%".format(settings.transparency * 100), settings.transparency, 0f..1f,
             step = 0.01f, default = defaults.transparency,
             note = "0% is solid, 100% clear glass - the panels and the toolbar together. " +
@@ -686,7 +686,7 @@ private fun PanelsGroup(skin: Skin, settings: SkinSettings, onChange: (SkinSetti
 private fun GlassGroup(skin: Skin, settings: SkinSettings, onChange: (SkinSettings) -> Unit, onSkin: (Skin) -> Unit) {
     if (!skin.isRefractive) {
         SettingsNote("Glass optics belong to the Liquid glass style; ${skin.displayName} has none.")
-        OutlinedButton(onClick = { onSkin(Skin.SPOTIGLASS) }, modifier = Modifier.heightIn(min = 48.dp)) {
+        OutlinedButton(onClick = { onSkin(Skin.LIQUID_GLASS) }, modifier = Modifier.heightIn(min = 48.dp)) {
             Text("Use Liquid glass")
         }
         return
@@ -712,12 +712,12 @@ private fun GlassGroup(skin: Skin, settings: SkinSettings, onChange: (SkinSettin
         useLiquidGlass = false,
     )
     SettingsNote("Raised is a lens standing above the page, pressed in a lens sunk into it.")
-    if (skin == Skin.SPOTIGLASS) {
+    if (skin == Skin.LIQUID_GLASS) {
         SettingsSectionHeader("Touch")
-        AppearanceSlider("Interaction strength", "%.0f%%".format(settings.spotiglassResponse * 100),
-            settings.spotiglassResponse, 0f..1f, step = 0.01f, default = defaults.spotiglassResponse,
+        AppearanceSlider("Interaction strength", "%.0f%%".format(settings.liquidGlassResponse * 100),
+            settings.liquidGlassResponse, 0f..1f, step = 0.01f, default = defaults.liquidGlassResponse,
             note = "How far the lens stretches and lifts on press and slide.",
-        ) { onChange(settings.copy(spotiglassResponse = it)) }
+        ) { onChange(settings.copy(liquidGlassResponse = it)) }
     }
     SettingsNote("Sliders, switches and segmented controls keep their own glass, whatever is set here.")
 }

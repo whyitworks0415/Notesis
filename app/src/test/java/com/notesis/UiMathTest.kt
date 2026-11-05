@@ -85,17 +85,17 @@ class UiMathTest {
     }
 
     @Test fun `the retired lens skin loads as liquid glass`() {
-        assertEquals(Skin.SPOTIGLASS, Skin.fromName("LIQUID_GLASS"))
-        assertEquals(Skin.SPOTIGLASS, Skin.fromName("SPOTIGLASS"))
+        assertEquals(Skin.LIQUID_GLASS, Skin.fromName("LIQUID_GLASS"))
+        assertEquals(Skin.LIQUID_GLASS, Skin.fromName("SPOTIGLASS"))
         assertEquals(Skin.GLASSMORPHISM, Skin.fromName("GLASSMORPHISM"))
         assertEquals(Skin.MATERIAL, Skin.fromName("MATERIAL"))
         assertEquals(Skin.MATERIAL, Skin.fromName(""))
         assertEquals(Skin.MATERIAL, Skin.fromName(null))
         assertEquals(Skin.MATERIAL, Skin.fromName("liquid_glass"))
         assertEquals(listOf("Material", "Glassmorphism", "Liquid glass"), Skin.entries.map { it.label })
-        assertEquals(listOf(Skin.SPOTIGLASS), Skin.entries.filter { it.isRefractive })
-        assertEquals(listOf(Skin.SPOTIGLASS), Skin.entries.filter { it.animatesChrome })
-        assertEquals(listOf(Skin.GLASSMORPHISM, Skin.SPOTIGLASS), Skin.entries.filter { it.animatesPopups })
+        assertEquals(listOf(Skin.LIQUID_GLASS), Skin.entries.filter { it.isRefractive })
+        assertEquals(listOf(Skin.LIQUID_GLASS), Skin.entries.filter { it.animatesChrome })
+        assertEquals(listOf(Skin.GLASSMORPHISM, Skin.LIQUID_GLASS), Skin.entries.filter { it.animatesPopups })
     }
 
     @Test fun `a popup grows from the point it was opened from`() {

@@ -86,14 +86,14 @@ internal val OPEN_SOURCE_COMPONENTS = listOf(
         "Ahmed Gamil",
         "MIT",
         "https://github.com/AhmeedGamil/liquid_glass_easy",
-        listOf("spotiglass/upstream/liquid_glass_easy.LICENSE"),
+        listOf("liquidglass/upstream/liquid_glass_easy.LICENSE"),
     ),
     OpenSourceComponent(
         "SpotiFLAC-Mobile (glass bar design ported)",
         "zarzet",
         "MIT",
         "https://github.com/spotiflacapp/SpotiFLAC-Mobile",
-        listOf("spotiglass/upstream/SpotiFLAC.LICENSE"),
+        listOf("liquidglass/upstream/SpotiFLAC.LICENSE"),
     ),
     OpenSourceComponent(
         "AnimateIcons 0.12.1 icons (ported to Kotlin) · Lucide",

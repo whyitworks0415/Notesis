@@ -284,15 +284,15 @@ internal fun LibrarySectionToggle(
 @Composable
 internal fun LibraryFilterBar(selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifier) {
     val items = listOf(
-        SpotiGlassItem("All", Reicons.Category),
-        SpotiGlassItem("Folders", Reicons.Folder),
-        SpotiGlassItem("Notes", Reicons.Edit),
-        SpotiGlassItem("Markdown", Reicons.Description),
+        LiquidGlassItem("All", Reicons.Category),
+        LiquidGlassItem("Folders", Reicons.Folder),
+        LiquidGlassItem("Notes", Reicons.Edit),
+        LiquidGlassItem("Markdown", Reicons.Description),
     )
-    SpotiGlassBar(
+    LiquidGlassBar(
         items, selectedIndex = selected.coerceIn(0, items.lastIndex), onSelected = onSelect,
         modifier = modifier.widthIn(max = 420.dp).fillMaxWidth(0.9f),
-        showLabels = true, surface = SpotiBarSurface.LIQUID,
+        showLabels = true, surface = GlassBarSurface.LIQUID,
     )
 }
 

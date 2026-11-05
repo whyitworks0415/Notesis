@@ -69,13 +69,13 @@ fun LiquidGlassButton(
     val pressed by interaction.collectIsPressedAsState()
     val effectsAllowed = rememberLiquidGlassEffectsAllowed() && !LocalSkinSettings.current.highContrast
     val look = LocalSkinSettings.current
-    val spoti = LocalSkin.current == Skin.SPOTIGLASS
-    val response = if (spoti) look.spotiglassResponse else 1f
+    val liquidSkin = LocalSkin.current == Skin.LIQUID_GLASS
+    val response = if (liquidSkin) look.liquidGlassResponse else 1f
     // The round corner every glass surface takes now, the outline Backdrop can use.
-    val shape = if (spoti) RoundedCornerShape(look.glassCorner.coerceIn(SkinSettings.CORNER_RANGE).dp) else CircleShape
+    val shape = if (liquidSkin) RoundedCornerShape(look.glassCorner.coerceIn(SkinSettings.CORNER_RANGE).dp) else CircleShape
     var expanded by remember { mutableStateOf(false) }
     // A recipe with its own press switched on answers it its way.
-    val recipe = if (spoti) look.pressRecipe() else null
+    val recipe = if (liquidSkin) look.pressRecipe() else null
     var buttonSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
     val density = androidx.compose.ui.platform.LocalDensity.current.density
     val down = pressed && enabled && effectsAllowed

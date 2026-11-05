@@ -9,7 +9,7 @@ import org.junit.Test
 class ToolbarConfigTest {
     @Test fun `defaults hold every tool at the two larger sizes`() {
         val config = ToolbarConfig()
-        assertEquals(SpotiToolbarTool.entries.size, config.tools(0).size)
+        assertEquals(GlassToolbarTool.entries.size, config.tools(0).size)
         assertEquals(config.tools(0), config.tools(1))
         assertEquals(listOf(EditMode.READ, EditMode.PEN, EditMode.HIGHLIGHTER, EditMode.MASK),
             config.tools(2).map { it.mode })
@@ -18,7 +18,7 @@ class ToolbarConfigTest {
 
     @Test fun `encode and decode round trip`() {
         val config = ToolbarConfig()
-            .withTools(1, listOf(SpotiToolbarTool.PEN, SpotiToolbarTool.ERASE))
+            .withTools(1, listOf(GlassToolbarTool.PEN, GlassToolbarTool.ERASE))
             .copy(topRow = listOf(TopRowItem.TITLE, TopRowItem.UNDO), penRow = listOf(PenRowItem.WIDTH))
         assertEquals(config, ToolbarConfig.decode(config.encode()))
     }
@@ -34,12 +34,12 @@ class ToolbarConfigTest {
 
     @Test fun `essentials survive normalizing`() {
         val config = ToolbarConfig(
-            stages = listOf(emptyList(), listOf(SpotiToolbarTool.PEN, SpotiToolbarTool.PEN),
-                emptyList(), listOf(SpotiToolbarTool.PEN)),
+            stages = listOf(emptyList(), listOf(GlassToolbarTool.PEN, GlassToolbarTool.PEN),
+                emptyList(), listOf(GlassToolbarTool.PEN)),
             topRow = listOf(TopRowItem.BACK),
         ).normalized()
         assertTrue(config.tools(0).isNotEmpty())
-        assertEquals(listOf(SpotiToolbarTool.PEN), config.tools(1))
+        assertEquals(listOf(GlassToolbarTool.PEN), config.tools(1))
         assertTrue(config.tools(2).isNotEmpty())
         assertTrue(config.tools(3).isEmpty())
         assertTrue(TopRowItem.TITLE in config.topRow)
@@ -48,13 +48,13 @@ class ToolbarConfigTest {
     @Test fun `legacy list fills the two full sizes`() {
         val legacy = ToolbarConfig.parseTools("PEN,LASSO,BOGUS")
         val config = ToolbarConfig.fromLegacy(legacy)
-        assertEquals(listOf(SpotiToolbarTool.PEN, SpotiToolbarTool.LASSO), config.tools(0))
+        assertEquals(listOf(GlassToolbarTool.PEN, GlassToolbarTool.LASSO), config.tools(0))
         assertEquals(config.tools(0), config.tools(1))
         assertEquals(ToolbarConfig.DEFAULT_STAGES[2], config.tools(2))
     }
 
     @Test fun `shortcuts follow the size in use and skip tools without a mode`() {
-        val config = ToolbarConfig().withTools(2, listOf(SpotiToolbarTool.AI, SpotiToolbarTool.ERASE))
+        val config = ToolbarConfig().withTools(2, listOf(GlassToolbarTool.AI, GlassToolbarTool.ERASE))
         assertEquals(listOf(EditMode.ERASE), config.shortcutModes(2))
         assertEquals(config.tools(0).mapNotNull { it.mode }, config.shortcutModes(3))
     }
@@ -90,7 +90,7 @@ class ToolbarConfigTest {
             fresh.topRow)
         assertEquals(listOf(PenRowItem.WIDTH, PenRowItem.PALETTE, PenRowItem.PAGE_LABEL), fresh.penRow)
         // Every tool is on the full bar, the masking tape just before AI.
-        assertEquals(SpotiToolbarTool.entries.toSet(), fresh.tools(0).toSet())
-        assertEquals(listOf(SpotiToolbarTool.CAPTURE, SpotiToolbarTool.MASK, SpotiToolbarTool.AI), fresh.tools(0).takeLast(3))
+        assertEquals(GlassToolbarTool.entries.toSet(), fresh.tools(0).toSet())
+        assertEquals(listOf(GlassToolbarTool.CAPTURE, GlassToolbarTool.MASK, GlassToolbarTool.AI), fresh.tools(0).takeLast(3))
     }
 }

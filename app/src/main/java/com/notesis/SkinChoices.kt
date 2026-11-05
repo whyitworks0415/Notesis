@@ -47,7 +47,7 @@ internal fun SkinChoiceList(current: Skin, onSkin: (Skin) -> Unit, modifier: Mod
     val now = Look(current, LocalSkinSettings.current.liquidStyle)
     Column(modifier, verticalArrangement = Arrangement.spacedBy(Ui.Space.xs)) {
         for (look in Look.all) {
-            val chosen = look.skin == now.skin && (look.skin != Skin.SPOTIGLASS || look.style == now.style)
+            val chosen = look.skin == now.skin && (look.skin != Skin.LIQUID_GLASS || look.style == now.style)
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -76,7 +76,7 @@ internal fun SkinChoiceList(current: Skin, onSkin: (Skin) -> Unit, modifier: Mod
 private fun rememberLookPick(onSkin: (Skin) -> Unit): (Look) -> Unit {
     val setStyle = LocalLiquidStyleChange.current
     return { look ->
-        if (look.skin == Skin.SPOTIGLASS) setStyle(look.style)
+        if (look.skin == Skin.LIQUID_GLASS) setStyle(look.style)
         onSkin(look.skin)
     }
 }
@@ -91,7 +91,7 @@ internal fun SkinChoiceTiles(current: Skin, onSkin: (Skin) -> Unit, modifier: Mo
     val now = Look(current, LocalSkinSettings.current.liquidStyle)
     Row(modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
         for (look in Look.all) {
-            val chosen = look.skin == now.skin && (look.skin != Skin.SPOTIGLASS || look.style == now.style)
+            val chosen = look.skin == now.skin && (look.skin != Skin.LIQUID_GLASS || look.style == now.style)
             val shape = choiceShape()
             Column(
                 Modifier
@@ -169,7 +169,7 @@ internal fun SkinPreview(skin: Skin, modifier: Modifier, style: LiquidStyle = Li
                 drawRoundRect(Color.White.copy(alpha = 0.55f), bar.topLeft, bar.size, radius)
                 drawRoundRect(Color.White.copy(alpha = 0.9f), bar.topLeft, bar.size, radius, style = Stroke(1.dp.toPx()))
             }
-            Skin.SPOTIGLASS -> when (style) {
+            Skin.LIQUID_GLASS -> when (style) {
                 // The iOS material: a pale frosted body, a bright hairline on top, a faint shade under it.
                 LiquidStyle.IOS -> {
                     drawRoundRect(Color(0xFFF8F8F8).copy(alpha = 0.72f), bar.topLeft, bar.size, radius)

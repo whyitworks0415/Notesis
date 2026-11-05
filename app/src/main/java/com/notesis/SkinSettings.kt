@@ -48,18 +48,18 @@ data class SkinSettings(
     val accent: Int = DEFAULT_ACCENT,
     /**
      * Glassmorphism's own corner, from before every skin shared one. No
-     * longer read - the chrome takes [spotiglassCorner] in every skin - but
+     * longer read - the chrome takes [liquidGlassCorner] in every skin - but
      * kept so older settings and backups still parse as they were.
      */
     val corner: Float = 26f,
-    /** Spotiglass의 투명도. 0은 불투명, 1은 가장 맑은 유리입니다. */
-    val spotiglassClarity: Float = 1f,
+    /** LiquidGlass의 투명도. 0은 불투명, 1은 가장 맑은 유리입니다. */
+    val liquidGlassClarity: Float = 1f,
     /** 도구바 배경의 불투명도. 렌즈 굴절과 아이콘에는 적용하지 않습니다. Follows the clarity (see [withTransparency]). */
-    val spotiglassToolbarOpacity: Float = 0f,
+    val liquidGlassToolbarOpacity: Float = 0f,
     /** 누름/슬라이드에 따른 렌즈의 늘어남과 들림 강도입니다. */
-    val spotiglassResponse: Float = 1f,
+    val liquidGlassResponse: Float = 1f,
     /** The corner of every skin's chrome; the name is from when only Liquid glass had one. */
-    val spotiglassCorner: Float = 32f,
+    val liquidGlassCorner: Float = 32f,
     /**
      * How strongly the glass catches the light along its edge - the bright
      * rim and the sheen down from the top. 0 is a plain edge.
@@ -118,10 +118,11 @@ data class SkinSettings(
         .put("content", content)
         .put("accent", accent)
         .put("corner", corner.toDouble())
-        .put("spotiglassClarity", spotiglassClarity.toDouble())
-        .put("spotiglassToolbarOpacity", spotiglassToolbarOpacity.toDouble())
-        .put("spotiglassResponse", spotiglassResponse.toDouble())
-        .put("spotiglassCorner", spotiglassCorner.toDouble())
+        // The keys keep the names they were first saved under, so saved looks still load.
+        .put("spotiglassClarity", liquidGlassClarity.toDouble())
+        .put("spotiglassToolbarOpacity", liquidGlassToolbarOpacity.toDouble())
+        .put("spotiglassResponse", liquidGlassResponse.toDouble())
+        .put("spotiglassCorner", liquidGlassCorner.toDouble())
         .put("reflection", reflection.toDouble())
         .put("opticsVersion", OPTICS_VERSION)
         .put("highContrast", highContrast)
@@ -178,8 +179,8 @@ data class SkinSettings(
         val o = ORIGINAL
         fun same(a: Float, b: Float) = kotlin.math.abs(a - b) < 0.001f
         return same(blur, o.blur) && same(vibrancy, o.vibrancy) && same(depth, o.depth) &&
-            same(refraction, o.refraction) && same(spotiglassClarity, o.spotiglassClarity) &&
-            same(spotiglassToolbarOpacity, o.spotiglassToolbarOpacity)
+            same(refraction, o.refraction) && same(liquidGlassClarity, o.liquidGlassClarity) &&
+            same(liquidGlassToolbarOpacity, o.liquidGlassToolbarOpacity)
     }
 
     /**
@@ -200,10 +201,10 @@ data class SkinSettings(
     }
 
     /** How clear the glass is, 0 to 1: the panels' clarity and the bar's own opacity, set as one. */
-    val transparency: Float get() = spotiglassClarity
+    val transparency: Float get() = liquidGlassClarity
     fun withTransparency(t: Float): SkinSettings {
         val x = t.coerceIn(0f, 1f)
-        return copy(spotiglassClarity = x, spotiglassToolbarOpacity = 0.8f * (1f - x))
+        return copy(liquidGlassClarity = x, liquidGlassToolbarOpacity = 0.8f * (1f - x))
     }
 
     /** The lens's depth in dp: how far in the bending reaches, and how far it bends with it. */
@@ -240,14 +241,14 @@ data class SkinSettings(
                 content = json.optInt("content", d.content),
                 accent = json.optInt("accent", d.accent),
                 corner = json.optDouble("corner", d.corner.toDouble()).toFloat(),
-                spotiglassClarity = json.optDouble("spotiglassClarity", d.spotiglassClarity.toDouble())
-                    .toFloat().takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: d.spotiglassClarity,
-                spotiglassToolbarOpacity = json.optDouble("spotiglassToolbarOpacity", d.spotiglassToolbarOpacity.toDouble())
-                    .toFloat().takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: d.spotiglassToolbarOpacity,
-                spotiglassResponse = json.optDouble("spotiglassResponse", d.spotiglassResponse.toDouble())
-                    .toFloat().takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: d.spotiglassResponse,
-                spotiglassCorner = json.optDouble("spotiglassCorner", d.spotiglassCorner.toDouble())
-                    .toFloat().takeIf { it.isFinite() }?.coerceIn(CORNER_RANGE) ?: d.spotiglassCorner,
+                liquidGlassClarity = json.optDouble("spotiglassClarity", d.liquidGlassClarity.toDouble())
+                    .toFloat().takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: d.liquidGlassClarity,
+                liquidGlassToolbarOpacity = json.optDouble("spotiglassToolbarOpacity", d.liquidGlassToolbarOpacity.toDouble())
+                    .toFloat().takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: d.liquidGlassToolbarOpacity,
+                liquidGlassResponse = json.optDouble("spotiglassResponse", d.liquidGlassResponse.toDouble())
+                    .toFloat().takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: d.liquidGlassResponse,
+                liquidGlassCorner = json.optDouble("spotiglassCorner", d.liquidGlassCorner.toDouble())
+                    .toFloat().takeIf { it.isFinite() }?.coerceIn(CORNER_RANGE) ?: d.liquidGlassCorner,
                 reflection = json.optDouble("reflection", LEGACY_REFLECTION.toDouble())
                     .toFloat().takeIf { it.isFinite() }?.coerceIn(REFLECTION_RANGE) ?: LEGACY_REFLECTION,
                 highContrast = json.optBoolean("highContrast", d.highContrast),
@@ -274,7 +275,7 @@ data class SkinSettings(
             val version = json.optInt("opticsVersion", 1)
             if (version < OPTICS_VERSION && read.hasOriginalOptics()) {
                 return read.copy(blur = d.blur, vibrancy = d.vibrancy, depth = d.depth, refraction = d.refraction,
-                    spotiglassClarity = d.spotiglassClarity, spotiglassToolbarOpacity = d.spotiglassToolbarOpacity,
+                    liquidGlassClarity = d.liquidGlassClarity, liquidGlassToolbarOpacity = d.liquidGlassToolbarOpacity,
                     reflection = d.reflection)
             }
             // Version 2's lens, never moved, takes version 3's deeper one.
@@ -303,8 +304,8 @@ data class SkinSettings(
             blur = 20f, vibrancy = 0.42f,
             depth = LiquidGlassTokens.refractionDepth.value, refraction = LiquidGlassTokens.refractionAmount.value,
             refractionDirection = RefractionDirection.RAISED, dispersion = LiquidGlassTokens.dispersion,
-            spotiglassClarity = 0.75f, spotiglassToolbarOpacity = 0.205f, spotiglassResponse = 1f,
-            spotiglassCorner = 32f, reflection = LEGACY_REFLECTION,
+            liquidGlassClarity = 0.75f, liquidGlassToolbarOpacity = 0.205f, liquidGlassResponse = 1f,
+            liquidGlassCorner = 32f, reflection = LEGACY_REFLECTION,
         )
 
         /** What each control may be set to, so the screen and the shader agree. */

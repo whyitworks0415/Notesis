@@ -6,42 +6,42 @@ import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 
-class SpotiGlassToolbarTest {
+class LiquidGlassToolbarTest {
     @Test fun `narrow full toolbar shows every tool without scrolling and preserves touch areas`() {
-        val tools = spotiToolbarTools(0)
+        val tools = glassToolbarTools(0)
         for (width in listOf(110f, 176f, 264f, 400f, 532f, 820f)) {
-            val rows = spotiToolRows(tools, width)
+            val rows = glassToolRows(tools, width)
             assertEquals(tools, rows.flatten())
             assertTrue(rows.all { it.isNotEmpty() })
             assertTrue(rows.all { it.size * 44 + 12 <= width })
         }
-        assertTrue(spotiToolRows(emptyList(), 300f).isEmpty())
+        assertTrue(glassToolRows(emptyList(), 300f).isEmpty())
     }
 
     @Test fun `quick mode has exactly the four sketched tools`() {
         assertEquals(listOf(EditMode.READ, EditMode.PEN, EditMode.HIGHLIGHTER, EditMode.MASK),
-            spotiToolbarTools(2).map { it.mode })
+            glassToolbarTools(2).map { it.mode })
     }
 
     @Test fun `single row preserves capture lasso text and AI while minimal mode has no tool row`() {
-        val tools = spotiToolbarTools(1)
-        assertTrue(tools.contains(SpotiToolbarTool.CAPTURE))
-        assertTrue(tools.contains(SpotiToolbarTool.LASSO))
-        assertTrue(tools.contains(SpotiToolbarTool.TEXT))
-        assertTrue(tools.contains(SpotiToolbarTool.AI))
+        val tools = glassToolbarTools(1)
+        assertTrue(tools.contains(GlassToolbarTool.CAPTURE))
+        assertTrue(tools.contains(GlassToolbarTool.LASSO))
+        assertTrue(tools.contains(GlassToolbarTool.TEXT))
+        assertTrue(tools.contains(GlassToolbarTool.AI))
         assertEquals(tools.size, tools.distinct().size)
-        assertEquals(spotiToolbarTools(0), tools)
-        assertTrue(spotiToolbarTools(3).isEmpty())
+        assertEquals(glassToolbarTools(0), tools)
+        assertTrue(glassToolbarTools(3).isEmpty())
     }
 
     @Test fun `each mode reserves less space while leaving a reachable minimum button`() {
-        val widths = (0..3).map { spotiToolbarWidth(it).value }
+        val widths = (0..3).map { glassToolbarWidth(it).value }
         assertTrue(widths.zipWithNext().all { (a, b) -> a > b })
         assertTrue(widths.last() >= 44f + 24f)
     }
 
     @Test fun `menus stay on screen when the minimal handle is dragged to a corner`() {
-        val position = SpotiToolbarPopupPosition(false, 8)
+        val position = GlassToolbarPopupPosition(false, 8)
         val window = IntSize(800, 600)
         val menu = IntSize(340, 400)
         for (anchor in listOf(IntRect(0, 0, 44, 44), IntRect(756, 556, 800, 600))) {
@@ -54,46 +54,46 @@ class SpotiGlassToolbarTest {
     }
 
     @Test fun `size menu follows the size trigger and mirrors for RTL`() {
-        val position = SpotiToolbarPopupPosition(true, 8)
+        val position = GlassToolbarPopupPosition(true, 8)
         val anchor = IntRect(100, 40, 700, 120)
         assertEquals(100, position.calculatePosition(anchor, IntSize(800, 600), LayoutDirection.Ltr, IntSize(340, 180)).x)
         assertEquals(360, position.calculatePosition(anchor, IntSize(800, 600), LayoutDirection.Rtl, IntSize(340, 180)).x)
     }
 
     @Test fun `a bar that would fold onto a second row is the one that turns down the side`() {
-        val tools = SpotiToolbarTool.entries.take(8)
+        val tools = GlassToolbarTool.entries.take(8)
         val dp = { v: Float -> androidx.compose.ui.unit.Dp(v) }
         // Room for the 2/4 bar: one row, stays across.
-        assertFalse(spotiBarWraps(tools, dp(900f), dp(632f), 1f))
+        assertFalse(glassBarWraps(tools, dp(900f), dp(632f), 1f))
         // Too narrow for it: two rows, turns.
-        assertTrue(spotiBarWraps(tools, dp(300f), dp(632f), 1f))
+        assertTrue(glassBarWraps(tools, dp(300f), dp(632f), 1f))
     }
 
     @Test fun `the 3-4 bar is two rows by design and stays across where it fits`() {
-        val tools = SpotiToolbarTool.entries.take(8)
+        val tools = GlassToolbarTool.entries.take(8)
         val dp = { v: Float -> androidx.compose.ui.unit.Dp(v) }
-        assertTrue(spotiToolRows(tools, 204f).size > 1)
-        assertFalse(spotiBarWraps(tools, dp(900f), dp(304f), 1f))
+        assertTrue(glassToolRows(tools, 204f).size > 1)
+        assertFalse(glassBarWraps(tools, dp(900f), dp(304f), 1f))
         // Only a window narrower than the bar itself folds it further.
-        assertTrue(spotiBarWraps(tools, dp(150f), dp(304f), 1f))
+        assertTrue(glassBarWraps(tools, dp(150f), dp(304f), 1f))
     }
 
     @Test fun `the smaller bars hold their tools on one row at every chrome scale`() {
         for (scale in listOf(0.7f, 0.8f, 0.9f, 1f, 1.2f)) for (level in 1..2) for (count in 1..11) {
-            val tools = SpotiToolbarTool.entries.take(count)
-            val width = spotiToolbarWidth(level, scale, count)
-            val rows = spotiToolRows(tools, spotiToolWidth(width, scale), 44f * scale, 12f * scale)
+            val tools = GlassToolbarTool.entries.take(count)
+            val width = glassToolbarWidth(level, scale, count)
+            val rows = glassToolRows(tools, glassToolWidth(width, scale), 44f * scale, 12f * scale)
             assertEquals("level $level, $count tools at $scale", 1, rows.size)
         }
     }
 
     @Test fun `a widened bar folds only where its own width would have`() {
-        val tools = SpotiToolbarTool.entries.take(8)
+        val tools = GlassToolbarTool.entries.take(8)
         val dp = { v: Float -> androidx.compose.ui.unit.Dp(v) }
-        val wide = spotiToolbarWidth(2, 1f, tools.size)
-        assertTrue(wide > spotiToolbarWidth(2, 1f))
-        assertFalse(spotiBarWraps(tools, dp(320f), wide, 1f, base = spotiToolbarWidth(2, 1f)))
-        assertTrue(spotiBarWraps(tools, dp(150f), wide, 1f, base = spotiToolbarWidth(2, 1f)))
+        val wide = glassToolbarWidth(2, 1f, tools.size)
+        assertTrue(wide > glassToolbarWidth(2, 1f))
+        assertFalse(glassBarWraps(tools, dp(320f), wide, 1f, base = glassToolbarWidth(2, 1f)))
+        assertTrue(glassBarWraps(tools, dp(150f), wide, 1f, base = glassToolbarWidth(2, 1f)))
     }
 
     @Test fun `dragging the Functions button steps sizes from where it came down`() {

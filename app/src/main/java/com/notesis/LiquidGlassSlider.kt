@@ -67,8 +67,8 @@ fun LiquidGlassSlider(
     useLiquidGlass: Boolean = true,
     onValueChangeFinished: (() -> Unit)? = null,
 ) {
-    if (LocalSkin.current == Skin.SPOTIGLASS && useLiquidGlass) {
-        SpotiGlassSlider(value, onValueChange, modifier, valueRange, steps, enabled,
+    if (LocalSkin.current == Skin.LIQUID_GLASS && useLiquidGlass) {
+        LiquidGlassValueSlider(value, onValueChange, modifier, valueRange, steps, enabled,
             label, valueFormatter, onValueChangeFinished)
         return
     }
@@ -81,10 +81,10 @@ fun LiquidGlassSlider(
     val scheme = MaterialTheme.colorScheme
     val effectsAllowed = rememberLiquidGlassEffectsAllowed() && !LocalSkinSettings.current.highContrast
     val look = LocalSkinSettings.current
-    val spoti = LocalSkin.current == Skin.SPOTIGLASS
-    val response = if (spoti) look.spotiglassResponse else 1f
+    val liquidSkin = LocalSkin.current == Skin.LIQUID_GLASS
+    val response = if (liquidSkin) look.liquidGlassResponse else 1f
     // The round corner every glass surface takes now, the outline Backdrop can use.
-    val thumbShape = if (spoti) RoundedCornerShape(look.spotiglassCorner.coerceIn(0f, 48f).dp) else CircleShape
+    val thumbShape = if (liquidSkin) RoundedCornerShape(look.liquidGlassCorner.coerceIn(0f, 48f).dp) else CircleShape
     // 손잡이가 페이지가 아니라 바로 아래 트랙을 굴절시키도록 트랙 전용 레이어를 둡니다.
     val trackBackdrop = rememberLiquidGlassBackdrop()
     var trackWidth by remember { mutableIntStateOf(0) }
@@ -126,7 +126,7 @@ fun LiquidGlassSlider(
         if (!enabled) return
         val next = ((pointerX - thumbRadiusPx) / travel).coerceIn(0f, 1f)
         dragFraction = next
-        latestChange(spotiSliderValue(next, valueRange, steps))
+        latestChange(glassSliderValue(next, valueRange, steps))
     }
 
     Box(

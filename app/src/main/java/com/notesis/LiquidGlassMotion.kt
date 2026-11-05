@@ -7,8 +7,8 @@ import kotlin.math.sqrt
 
 // Kotlin port of liquid_glass_easy 4.3.2's animated nav-bar ticker,
 // liquidGlassSpringStep and LiquidGlassLensMotion. Copyright (c) 2025 Ahmed
-// Gamil, MIT. Full license and source provenance: assets/spotiglass/upstream.
-internal class SpotiGlassMotion(
+// Gamil, MIT. Full license and source provenance: assets/liquidGlass/upstream.
+internal class LiquidGlassMotion(
     initial: Float, private val control: Boolean = false,
     /**
      * Whether the selection lifts into a lens while it travels. Without, it
@@ -93,9 +93,9 @@ internal class SpotiGlassMotion(
             else travel.x += (followTarget - travel.x) * (1 - exp(-step / 0.05))
             landed = false
         } else {
-            val (k, c) = profile?.travel ?: (SPOTIGLASS_TRAVEL_STIFFNESS to SPOTIGLASS_TRAVEL_DAMPING)
+            val (k, c) = profile?.travel ?: (LIQUID_GLASS_TRAVEL_STIFFNESS to LIQUID_GLASS_TRAVEL_DAMPING)
             travel.step(target, step, k, c)
-            landed = travel.settle(target, SPOTIGLASS_TRAVEL_SETTLE, 0.05)
+            landed = travel.settle(target, LIQUID_GLASS_TRAVEL_SETTLE, 0.05)
             val span = target - from
             val fraction = if (abs(span) < 1e-6) 1.0 else (travel.x - from) / span
             if (landed || (!control && fraction >= 0.92)) lifted = false
@@ -134,20 +134,20 @@ internal class SpotiGlassMotion(
 /**
  * The spring the lens travels from one tool to the next on: per unit mass, so
  * it is the same spring as a Compose spring of this stiffness and of
- * [SPOTIGLASS_TRAVEL_DAMPING_RATIO]. The still skins' highlight slides on it
+ * [LIQUID_GLASS_TRAVEL_DAMPING_RATIO]. The still skins' highlight slides on it
  * too, so a tap moves the selection at one speed whichever skin is on.
  * Tuned to settle in [Ui.Motion.MS], as the rest of the chrome: ω = 4 / (ζ t)
  * at ζ 0.938 and t 180 ms.
  */
-internal const val SPOTIGLASS_TRAVEL_STIFFNESS = 561.3
-internal const val SPOTIGLASS_TRAVEL_DAMPING = 44.44
+internal const val LIQUID_GLASS_TRAVEL_STIFFNESS = 561.3
+internal const val LIQUID_GLASS_TRAVEL_DAMPING = 44.44
 
-/** [SPOTIGLASS_TRAVEL_DAMPING] as a damping ratio: c / (2 sqrt(k m)), m = 1. Just under critical. */
-internal val SPOTIGLASS_TRAVEL_DAMPING_RATIO: Float =
-    (SPOTIGLASS_TRAVEL_DAMPING / (2.0 * sqrt(SPOTIGLASS_TRAVEL_STIFFNESS))).toFloat()
+/** [LIQUID_GLASS_TRAVEL_DAMPING] as a damping ratio: c / (2 sqrt(k m)), m = 1. Just under critical. */
+internal val LIQUID_GLASS_TRAVEL_DAMPING_RATIO: Float =
+    (LIQUID_GLASS_TRAVEL_DAMPING / (2.0 * sqrt(LIQUID_GLASS_TRAVEL_STIFFNESS))).toFloat()
 
 /** Where the lens counts as landed, in cells; the highlight settles at the same distance. */
-internal const val SPOTIGLASS_TRAVEL_SETTLE = 0.003
+internal const val LIQUID_GLASS_TRAVEL_SETTLE = 0.003
 
 /** Same 300ms derivative window, without Pair/list allocation on every frame. */
 internal class MotionSampleWindow {

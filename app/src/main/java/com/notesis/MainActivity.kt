@@ -478,7 +478,7 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                 } else if (note == null) {
-                    NoteListScreen(
+                    HomeScreen(
                         store = store,
                         onSkin = {
                             skin = it
@@ -649,7 +649,7 @@ private fun android.content.Context.recordCrashes() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun NoteListScreen(
+private fun HomeScreen(
     store: NoteStore,
     onSkin: (Skin) -> Unit,
     onSettings: () -> Unit,
@@ -1246,7 +1246,7 @@ private fun NoteListScreen(
         LocalBackdrop provides backdrop,
         LocalLiquidGlassBackdrop provides if (currentSkin.isRefractive) liquidBackdrop else null,
         // The menus opened from inside the list look at the page through this.
-        LocalSpotiPopupBackdrop provides if (currentSkin.isRefractive) liquidBackdrop else null,
+        LocalGlassPopupBackdrop provides if (currentSkin.isRefractive) liquidBackdrop else null,
     ) {
     // The clock floats over the library too, on the same glass as its bars.
     Box(Modifier.fillMaxSize()) {
@@ -4706,14 +4706,14 @@ private fun NoteScreen(
     // starts past the button instead, and is no wider than the room left.
     val backReserve = 12.dp + barButtonSize() + Ui.Space.s
     val chromeScale = LocalChromeScale.current
-    val wantedBarWidth = spotiToolbarWidth(shownToolbarSize, chromeScale, ToolbarLayout.config.tools(shownToolbarSize).size)
+    val wantedBarWidth = glassToolbarWidth(shownToolbarSize, chromeScale, ToolbarLayout.config.tools(shownToolbarSize).size)
     val crowdsAcross = shownToolbarSize > 0 && (maxBarWidth - wantedBarWidth) / 2 < backReserve
     val acrossRoom = if (crowdsAcross) (maxBarWidth - backReserve - 12.dp).coerceAtLeast(120.dp) else maxBarWidth
     // Too narrow for the bar's rows, a bar across would fold onto one more:
     // it runs down the side instead until the window is wide again.
     val barWraps = shownToolbarSize > 0 && !ToolbarOrientation.vertical &&
-        spotiBarWraps(ToolbarLayout.config.tools(shownToolbarSize), acrossRoom, wantedBarWidth, chromeScale,
-            base = spotiToolbarWidth(shownToolbarSize, chromeScale))
+        glassBarWraps(ToolbarLayout.config.tools(shownToolbarSize), acrossRoom, wantedBarWidth, chromeScale,
+            base = glassToolbarWidth(shownToolbarSize, chromeScale))
     // The smaller bars may run down the side (see ToolbarOrientation); the whole bar never does.
     val barVertical = (ToolbarOrientation.vertical || barWraps) && shownToolbarSize > 0
     val barRight = barVertical && ToolbarOrientation.right
@@ -4737,7 +4737,7 @@ private fun NoteScreen(
     // Centred, the button moves half as far as the bar grows; from a fixed start, as far.
     val barCentred = (barDocked || barOffset == null) && !barCrowdsBack
     val barLiveResize = BarLiveResize(
-        widthOf = { level -> minOf(barRoom, spotiToolbarWidth(level, chromeScale, ToolbarLayout.config.tools(level).size)) },
+        widthOf = { level -> minOf(barRoom, glassToolbarWidth(level, chromeScale, ToolbarLayout.config.tools(level).size)) },
         follow = if (barCentred) 0.5f else 1f,
         onWidth = { liveBarWidth = it },
     )
@@ -5104,8 +5104,8 @@ private fun NoteScreen(
             toolPens = settings,
             autoVertical = barWraps && previewLevel == null,
             toolbarTargetWidth = if (previewLevel != null)
-                    spotiToolbarWidth(previewLevel, LocalChromeScale.current, ToolbarLayout.config.tools(previewLevel).size)
-                else minOf(barRoom, spotiToolbarWidth(shownToolbarSize, LocalChromeScale.current, ToolbarLayout.config.tools(shownToolbarSize).size)),
+                    glassToolbarWidth(previewLevel, LocalChromeScale.current, ToolbarLayout.config.tools(previewLevel).size)
+                else minOf(barRoom, glassToolbarWidth(shownToolbarSize, LocalChromeScale.current, ToolbarLayout.config.tools(shownToolbarSize).size)),
             mode = mode,
             shapeKind = shapeKind,
             straightLine = straightLine,
@@ -5221,12 +5221,12 @@ private fun NoteScreen(
     } else null
     var drawingPage by remember { mutableStateOf(false) }
     var pageLayerOrigin by remember { mutableStateOf(Offset.Zero) }
-    val popupBackdrop = remember(liquidBackdrop) { liquidBackdrop?.let { SpotiPopupBackdrop(it) { pageLayerOrigin } } }
+    val popupBackdrop = remember(liquidBackdrop) { liquidBackdrop?.let { GlassPopupBackdrop(it) { pageLayerOrigin } } }
     var movingPage by remember { mutableStateOf(false) }
     CompositionLocalProvider(
         LocalBackdrop provides backdrop,
         LocalLiquidGlassBackdrop provides if (skin.isRefractive) popupBackdrop else null,
-        LocalSpotiPopupBackdrop provides if (skin == Skin.SPOTIGLASS) popupBackdrop else null,
+        LocalGlassPopupBackdrop provides if (skin == Skin.LIQUID_GLASS) popupBackdrop else null,
     ) {
     Row(Modifier.fillMaxSize().drawWithContent {
         drawContent()
@@ -5882,7 +5882,7 @@ private fun NoteScreen(
                     // Intrinsic text must not resize the whole bar when the pen
                     // type or a value such as 9.9/10 changes. Down the side, the
                     // bar is as wide as its tools and takes no width from this.
-                    .then(if (barVertical) Modifier else Modifier.spotiToolbarAnimatedWidth(floatingBarWidth))
+                    .then(if (barVertical) Modifier else Modifier.glassToolbarAnimatedWidth(floatingBarWidth))
                     // Placed and clamped together: the folded handle can be
                     // dragged anywhere, and unfolding measures the wide bar and
                     // pulls it back inside rather than letting it hang off.
@@ -5963,28 +5963,28 @@ private fun NoteScreen(
                 widthDp = settingsWidth,
                 onWidthChange = { settingsWidth = it; penStore.settingsSidebarWidth = it },
                 quickActions = listOf(
-                    SpotiToolbarAction(if (docked) "Undock bar" else "Dock bar",
+                    GlassToolbarAction(if (docked) "Undock bar" else "Dock bar",
                         if (docked) AppIcons.undock else AppIcons.dock, selected = docked) {
                         docked = !docked
                         penStore.docked = docked
                     },
-                    SpotiToolbarAction("Rotate · ${noteRotation.roundToInt()}°", AppIcons.rotate) {
+                    GlassToolbarAction("Rotate · ${noteRotation.roundToInt()}°", AppIcons.rotate) {
                         noteRotation = (((noteRotation / 90f).roundToInt() + 1) * 90 % 360).toFloat()
                         penStore.noteRotation = noteRotation.roundToInt()
                     },
-                    SpotiToolbarAction("Zoom · ${(zoom * 100).roundToInt()}%", AppIcons.zoom) { zoomMenu = true },
-                    SpotiToolbarAction("Pages & search", AppIcons.search, selected = showPages) { showPages = !showPages },
-                    SpotiToolbarAction("Pen in hand", AppIcons.penSettings) {
+                    GlassToolbarAction("Zoom · ${(zoom * 100).roundToInt()}%", AppIcons.zoom) { zoomMenu = true },
+                    GlassToolbarAction("Pages & search", AppIcons.search, selected = showPages) { showPages = !showPages },
+                    GlassToolbarAction("Pen in hand", AppIcons.penSettings) {
                         if (mode !in PenStore.DEFAULTS) mode = EditMode.PEN
                         editingPen = true
                     },
-                    SpotiToolbarAction("Back to notes", AppIcons.back) {
+                    GlassToolbarAction("Back to notes", AppIcons.back) {
                         settingsNav = null
                         onBack()
                     },
                 ),
-                webActions = listOf(SpotiToolbarAction("Search the web", AppIcons.web) { webUrl = SEARCH_HOME }) +
-                    aiSites().map { (name, url) -> SpotiToolbarAction(name, AppIcons.ai) { webUrl = url } },
+                webActions = listOf(GlassToolbarAction("Search the web", AppIcons.web) { webUrl = SEARCH_HOME }) +
+                    aiSites().map { (name, url) -> GlassToolbarAction(name, AppIcons.ai) { webUrl = url } },
                 onOpenSite = { webUrl = it },
                 penSettings = {
                     GlobalPenSettings(
@@ -7455,9 +7455,9 @@ private fun NoteScreen(
                         .padding(start = Ui.Space.s)
                     // Past the way back, when centred it would lie over it.
                     shownToolbarSize > 0 && barCrowdsBack -> Modifier.align(Alignment.TopStart).padding(start = backReserve)
-                        .spotiToolbarAnimatedWidth(floatingBarWidth)
+                        .glassToolbarAnimatedWidth(floatingBarWidth)
                         .windowInsetsPadding(ChromeInsets.only(WindowInsetsSides.Top))
-                    shownToolbarSize > 0 -> Modifier.align(Alignment.TopCenter).spotiToolbarAnimatedWidth(floatingBarWidth)
+                    shownToolbarSize > 0 -> Modifier.align(Alignment.TopCenter).glassToolbarAnimatedWidth(floatingBarWidth)
                         .windowInsetsPadding(ChromeInsets.only(WindowInsetsSides.Top))
                     else -> Modifier.align(Alignment.TopCenter).fillMaxWidth()
                 }),
@@ -8607,10 +8607,10 @@ private fun PageScrubber(
     val scheme = MaterialTheme.colorScheme
     val liquid = LocalSkin.current.isRefractive
     // Liquid glass draws the horizontal slider stood on end, whose lens
-    // centre stops [SPOTI_SLIDER_START] short of each end. The page mapping
+    // centre stops [GLASS_SLIDER_START] short of each end. The page mapping
     // uses the same reach so the finger and the lens stay on one line.
-    val spoti = LocalSkin.current == Skin.SPOTIGLASS
-    val thumbHeight = if (spoti) SPOTI_SLIDER_START * 2 else 52.dp
+    val liquidSkin = LocalSkin.current == Skin.LIQUID_GLASS
+    val thumbHeight = if (liquidSkin) GLASS_SLIDER_START * 2 else 52.dp
     val thumbHeightPx = with(density) { thumbHeight.toPx() }
     var trackHeight by remember { mutableIntStateOf(0) }
     var dragging by remember { mutableStateOf(false) }
@@ -8673,8 +8673,8 @@ private fun PageScrubber(
             },
         contentAlignment = Alignment.TopCenter,
     ) {
-        if (spoti) {
-            SpotiGlassPageRail(
+        if (liquidSkin) {
+            LiquidGlassPageRail(
                 target = if (dragging && dragFraction >= 0f) dragFraction else fraction,
                 held = dragging || pressed,
                 label = "${page + 1}",
@@ -8759,7 +8759,7 @@ private fun PageScrubber(
         }
         // Liquid glass drew its own lens with the rail above: solid at rest,
         // glass only while held, exactly as the horizontal slider does.
-        if (!spoti) {
+        if (!liquidSkin) {
             SkinSurface(modifier = thumbPlace, corner = 100.dp) { pageLabel() }
         }
     }
@@ -10260,7 +10260,7 @@ private fun Toolbar(
             }
         }
     }
-    SpotiGlassToolbar(sizeLevel, onSizeLevel, mode,
+    LiquidGlassToolbar(sizeLevel, onSizeLevel, mode,
             // A preview of the bar is not where the tour should point.
             coachTargets = if (preview) null else NoteCoachTargets,
             // A preview of the tools shows them across, as they are arranged.
@@ -10287,34 +10287,34 @@ private fun Toolbar(
             functions = listOf(
                 // No reason under a greyed one: both buttons keep one height.
                 listOf(
-                    SpotiToolbarAction("Undo", AppIcons.undo, enabled = canUndo, onClick = onUndo),
-                    SpotiToolbarAction("Redo", AppIcons.redo, enabled = canRedo, onClick = onRedo),
+                    GlassToolbarAction("Undo", AppIcons.undo, enabled = canUndo, onClick = onUndo),
+                    GlassToolbarAction("Redo", AppIcons.redo, enabled = canRedo, onClick = onRedo),
                 ),
                 listOf(
-                    SpotiToolbarAction("Picture", AppIcons.picture, onClick = onPickImage),
+                    GlassToolbarAction("Picture", AppIcons.picture, onClick = onPickImage),
                     // The calculator, the clock, the calendar and the to-do list, one panel.
-                    SpotiToolbarAction("Tools", AppIcons.tools, onClick = { Planner.show(Planner.lastPanel) }),
-                    SpotiToolbarAction("Layers", AppIcons.layers, onClick = onLayers),
-                    SpotiToolbarAction("Microphone", AppIcons.mic, selected = recording, onClick = onVoice),
-                    SpotiToolbarAction("Capture", AppIcons.capture, selected = mode == EditMode.CAPTURE,
+                    GlassToolbarAction("Tools", AppIcons.tools, onClick = { Planner.show(Planner.lastPanel) }),
+                    GlassToolbarAction("Layers", AppIcons.layers, onClick = onLayers),
+                    GlassToolbarAction("Microphone", AppIcons.mic, selected = recording, onClick = onVoice),
+                    GlassToolbarAction("Capture", AppIcons.capture, selected = mode == EditMode.CAPTURE,
                         onClick = { onMode(EditMode.CAPTURE) }),
-                    SpotiToolbarAction("Text", AppIcons.text, selected = mode == EditMode.TEXT, onClick = onText),
+                    GlassToolbarAction("Text", AppIcons.text, selected = mode == EditMode.TEXT, onClick = onText),
                 ),
                 listOf(
                     // The pages, contents, tape and other notes, with one search over them;
                     // a new page and a new note are added there.
-                    SpotiToolbarAction("Pages & notes", AppIcons.search, onClick = onTogglePages),
-                    SpotiToolbarAction("Split notes", AppIcons.split, selected = split, onClick = onSplit),
+                    GlassToolbarAction("Pages & notes", AppIcons.search, onClick = onTogglePages),
+                    GlassToolbarAction("Split notes", AppIcons.split, selected = split, onClick = onSplit),
                 ),
                 listOf(
-                    SpotiToolbarAction(if (pinned) "Unpin bar" else "Pin to top", if (pinned) AppIcons.undock else AppIcons.dock,
+                    GlassToolbarAction(if (pinned) "Unpin bar" else "Pin to top", if (pinned) AppIcons.undock else AppIcons.dock,
                         selected = pinned, onClick = onTogglePin),
-                    SpotiToolbarAction("Tutorial", AppIcons.tutorial, onClick = { Onboarding.tutorialOpen = true }),
-                    SpotiToolbarAction("Settings", AppIcons.settings, onClick = { onSettings(SettingsPage.ROOT) }),
+                    GlassToolbarAction("Tutorial", AppIcons.tutorial, onClick = { Onboarding.tutorialOpen = true }),
+                    GlassToolbarAction("Settings", AppIcons.settings, onClick = { onSettings(SettingsPage.ROOT) }),
                 ),
             ),
-            notes = otherNotes.map { other -> SpotiToolbarAction(other.title, AppIcons.note) { onOpenNote(other) } },
-            ai = aiSites().map { (name, url) -> SpotiToolbarAction(name, AppIcons.ai) { onWeb(url) } },
+            notes = otherNotes.map { other -> GlassToolbarAction(other.title, AppIcons.note) { onOpenNote(other) } },
+            ai = aiSites().map { (name, url) -> GlassToolbarAction(name, AppIcons.ai) { onWeb(url) } },
             topRow = topRow,
             penOptions = { _ ->
               // What the editor put in this row, in its order. The slider takes

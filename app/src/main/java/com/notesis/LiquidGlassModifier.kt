@@ -81,7 +81,7 @@ fun Modifier.captureLiquidGlassBackdrop(
     source: (DrawScope.() -> Unit)? = null,
 ): Modifier {
     if (paused == null && source == null) return layerBackdrop(backdrop)
-    // The page's screen origin is supplied by SpotiPopupBackdrop. Avoid a
+    // The page's screen origin is supplied by GlassPopupBackdrop. Avoid a
     // second page recording and full-screen texture upload during input.
     return this.drawWithContent {
         drawContent()
@@ -122,26 +122,26 @@ fun Modifier.liquidGlass(
     surfaceColor: Color = Color(settings.tint),
     shadowElevation: Dp = LiquidGlassTokens.fallbackShadow,
     drawBorder: Boolean = true,
-    useSpotiStyle: Boolean = true,
+    useGlassStyle: Boolean = true,
     surfaceOpacity: Float? = null,
     /** A pane with text on it rather than a bar or a button; the other recipes in [LiquidStyle] tell them apart. */
     panel: Boolean = false,
 ): Modifier {
     val skin = LocalSkin.current
-    val spoti = useSpotiStyle && skin == Skin.SPOTIGLASS
-    if (spoti) {
+    val liquidSkin = useGlassStyle && skin == Skin.LIQUID_GLASS
+    if (liquidSkin) {
         val circle = shape == androidx.compose.foundation.shape.CircleShape
         val square = shape == RoundedCornerShape(0.dp)
         // A round corner, as the toolbar and every popup draw theirs: one
         // shape family across the skins, and an outline Backdrop can take.
-        val spotiShape = if (circle || square) shape else RoundedCornerShape(settings.glassCorner.dp)
+        val liquidShape = if (circle || square) shape else RoundedCornerShape(settings.glassCorner.dp)
         // No lens over a resting surface. The lens is a shader over the
         // element's whole drawing, so it ran every icon, line of text and
         // control on a panel through refraction and resampling, and they came
         // out soft and stair-stepped at their edges. The blur and the rim are
         // what make the glass; the bar and the controls still bend the light
         // while they move, where nothing small has to be read.
-        return this.spotiGlassSurface(spotiShape, settings, elevation = shadowElevation, rim = drawBorder)
+        return this.liquidGlassSurface(liquidShape, settings, elevation = shadowElevation, rim = drawBorder)
     }
     val amount = intensity.coerceIn(0f, 1f)
     // Every layer of the pane - shadow, glass, edge - takes the same outline,
@@ -175,7 +175,7 @@ fun Modifier.liquidGlass(
 
     val shadows = settings.shadows
     if (enabled && amount > 0.001f && effectsAllowed && backdrop != null &&
-        skin == Skin.SPOTIGLASS && settings.liquidStyle != LiquidStyle.NOTESIS) {
+        skin == Skin.LIQUID_GLASS && settings.liquidStyle != LiquidStyle.NOTESIS) {
         return styledLiquidGlass(settings.liquidStyle, settings, glassShape, backdrop, panel, dark,
             shadows = shadows && shadowElevation > 0.dp, rim = drawBorder, amount = amount, light = glassLight(settings))
     }
@@ -425,7 +425,7 @@ internal fun Modifier.glassPressGlow(interaction: androidx.compose.foundation.in
 @Composable
 internal fun Modifier.liquidGlassPane(shape: Shape, panel: Boolean = false, shadow: Boolean = true): Modifier {
     val look = LocalSkinSettings.current
-    val opacity = look.spotiglassToolbarOpacity.coerceIn(0f, 1f).let {
+    val opacity = look.liquidGlassToolbarOpacity.coerceIn(0f, 1f).let {
         if (panel) maxOf(it, LIQUID_PANEL_MIN_OPACITY) else it
     }
     return liquidGlass(
@@ -434,7 +434,7 @@ internal fun Modifier.liquidGlassPane(shape: Shape, panel: Boolean = false, shad
         surfaceColor = MaterialTheme.colorScheme.surface.copy(alpha = opacity),
         // A zero elevation adds no shadow layer at all.
         shadowElevation = if (shadow) liquidPaneElevation(panel) else 0.dp,
-        useSpotiStyle = false,
+        useGlassStyle = false,
         surfaceOpacity = opacity,
         panel = panel,
     )
@@ -464,13 +464,13 @@ private const val LIQUID_PANEL_MIN_OPACITY = 0.45f
  * UnsupportedOperationException ("Only RoundedRectangularShape or
  * CornerBasedShape is supported in lens effects") on the first draw of any
  * other shape - which crashed the note screen and the appearance settings the
- * moment the toolbar's liquid glass, drawn on a [SpotiGlassShape], appeared.
+ * moment the toolbar's liquid glass, drawn on a [LiquidGlassShape], appeared.
  * The glass skin's continuous corner becomes a round corner of the same
  * radius; any other unknown outline is kept, and drawn without the lens.
  */
 internal fun lensSafeShape(shape: Shape): Shape = when (shape) {
     is CornerBasedShape -> shape
-    is SpotiGlassShape -> RoundedCornerShape(shape.radius)
+    is LiquidGlassShape -> RoundedCornerShape(shape.radius)
     else -> shape
 }
 
