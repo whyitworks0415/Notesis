@@ -707,6 +707,12 @@ private fun HomeScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    // Blank is the top level. Searching reaches across every folder, because
+    // the point of searching is not knowing where a thing is.
+    var folder by remember { mutableStateOf(initialFolder) }
+    // A note made here goes into the folder that is open, not the top level.
+    fun filedHere(note: NoteMeta): NoteMeta =
+        if (folder.isBlank()) note else { store.setFolder(note.id, folder); note.copy(folder = folder) }
     // Re-read from disk whenever something changed it, rather than keeping a
     // second copy of the truth in memory and having to hold the two in sync.
     var revision by remember { mutableIntStateOf(0) }
@@ -852,7 +858,7 @@ private fun HomeScreen(
                     val text = context.contentResolver.openInputStream(uri)?.use {
                         it.readBytes().toString(Charsets.UTF_8)
                     } ?: error("Can't read the file")
-                    store.createMarkdown(title.ifBlank { "Markdown note" }, text)
+                    filedHere(store.createMarkdown(title.ifBlank { "Markdown note" }, text))
                 }.getOrNull()
             }
             if (imported == null) report = "Couldn't import the Markdown file"
@@ -927,9 +933,6 @@ private fun HomeScreen(
         // A locked note can be found by name, but what is written in it stays behind the lock.
         pageHits = found.filter { it.second.isNotEmpty() && !it.first.locked }.associate { it.first.id to it.second }
     }
-    // Blank is the top level. Searching reaches across every folder, because
-    // the point of searching is not knowing where a thing is.
-    var folder by remember { mutableStateOf(initialFolder) }
     // Kept by the caller too, so closing a note comes back to this folder.
     LaunchedEffect(folder) { onFolder(folder) }
     // Back leaves the folder before it leaves the app.
@@ -1176,7 +1179,7 @@ private fun HomeScreen(
             busy = "Making a note from images"
             scope.launch {
                 val created = withContext(Dispatchers.IO) {
-                    store.createFromImages("Image note", ordered.map { uri -> { context.contentResolver.openInputStream(uri) } })
+                    store.createFromImages("Image note", ordered.map { uri -> { context.contentResolver.openInputStream(uri) } })?.let { filedHere(it) }
                 }
                 busy = null
                 revision++
@@ -1198,7 +1201,7 @@ private fun HomeScreen(
                     busy = null
                     if (page == null) { report = "Couldn't read the web page"; return@launch }
                     val created = withContext(Dispatchers.IO) {
-                        store.createMarkdown(page.title.take(80), "# ${page.title}\n\nSource: $address\n\n${page.text}")
+                        filedHere(store.createMarkdown(page.title.take(80), "# ${page.title}\n\nSource: $address\n\n${page.text}"))
                     }
                     revision++
                     onOpen(created)
@@ -1221,7 +1224,7 @@ private fun HomeScreen(
                 uris.mapNotNull { uri ->
                     runCatching {
                         context.contentResolver.openInputStream(uri)?.use { input ->
-                            store.createFromPdf(displayName(context, uri), input)
+                            store.createFromPdf(displayName(context, uri), input)?.let { filedHere(it) }
                         }
                     }.getOrNull()
                 }
@@ -2299,9 +2302,9 @@ private fun HomeScreen(
             onConfirm = { title, kind, background, templateId ->
                 naming = false
                 onOpen(if (kind == NoteKind.MARKDOWN) {
-                    store.createMarkdown(title.ifBlank { "Untitled" }, "# ${title.ifBlank { "Untitled" }}\n\n")
+                    filedHere(store.createMarkdown(title.ifBlank { "Untitled" }, "# ${title.ifBlank { "Untitled" }}\n\n"))
                 } else {
-                    store.create(title.ifBlank { "Untitled" }, background, templateId)
+                    filedHere(store.create(title.ifBlank { "Untitled" }, background, templateId))
                 })
             },
         )
