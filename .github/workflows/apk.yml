@@ -132,11 +132,15 @@ jobs:
           NOTES="docs/releases/${{ steps.name.outputs.version }}.md"
           grep -qi 'update: *manual' "$NOTES" || printf '\n<!-- update: manual -->\n' >> "$NOTES"
 
+      # A copy kept with the run for a few days. The release below carries the
+      # APK for good, so a full artifact store must not stop the release.
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: Notesis-${{ steps.name.outputs.version }}-${{ steps.name.outputs.code }}
           path: Notesis-*.apk
           if-no-files-found: error
+          retention-days: 3
 
       - name: Publish a release to install from
         uses: softprops/action-gh-release@v2
