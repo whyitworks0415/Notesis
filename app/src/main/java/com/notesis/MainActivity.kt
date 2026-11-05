@@ -1267,6 +1267,15 @@ private fun HomeScreen(
     val liquidBackdrop = if (currentSkin.isRefractive && BACKDROP_DRAWABLE && !InteractionGovernor.observedPowerSave) {
         rememberLiquidGlassBackdrop()
     } else null
+    // The library's ground alone - colour, look or photo, with nothing on it -
+    // recorded apart, for the cards to be glass over: a card sampling the
+    // library's own recording would sample itself.
+    val groundLayer = rememberLiquidGlassBackdrop()
+    val groundBackdrop = groundLayer.takeIf { liquidBackdrop != null }
+    // Menus open in windows of their own; seen through them, the library has to
+    // be put back where it is on screen, or they show some other part of it.
+    var homeLayerOrigin by remember { mutableStateOf(Offset.Zero) }
+    val homePopupBackdrop = remember(liquidBackdrop) { liquidBackdrop?.let { GlassPopupBackdrop(it) { homeLayerOrigin } } }
     val searchFocus = remember { androidx.compose.ui.focus.FocusRequester() }
     // Opened again by hand while the list is scrolled; each round button its own.
     var iconsOpen by remember { mutableStateOf(false) }
@@ -1346,7 +1355,7 @@ private fun HomeScreen(
         LocalBackdrop provides backdrop,
         LocalLiquidGlassBackdrop provides if (currentSkin.isRefractive) liquidBackdrop else null,
         // The menus opened from inside the list look at the page through this.
-        LocalGlassPopupBackdrop provides if (currentSkin.isRefractive) liquidBackdrop else null,
+        LocalGlassPopupBackdrop provides if (currentSkin.isRefractive) homePopupBackdrop else null,
     ) {
     // The clock floats over the library too, on the same glass as its bars.
     Box(Modifier.fillMaxSize()) {
@@ -1476,9 +1485,13 @@ private fun HomeScreen(
                                         .clip(CircleShape)
                                         .combinedClickable(
                                             onClick = {
+                                                // Scrolled, the first tap opens the buttons folded
+                                                // into it and the next opens the menu: toggling the
+                                                // buttons alone left the menu out of reach but for
+                                                // a long press. Scrolling folds them again.
                                                 when {
-                                                    selectionMode || !scrolledPast -> homeMore = true
-                                                    else -> iconsOpen = !iconsOpen
+                                                    selectionMode || !scrolledPast || iconsOpen -> homeMore = true
+                                                    else -> iconsOpen = true
                                                 }
                                             },
                                             onLongClick = { homeMore = true },
@@ -1606,30 +1619,38 @@ private fun HomeScreen(
         },
     ) { padding ->
         // Nothing inside the recording may sample it; see NoBackdrop.
+        // Nothing inside the recording may sample it; see NoBackdrop. The cards
+        // sample the ground's own recording instead, which holds nothing of theirs.
         CompositionLocalProvider(
             LocalBackdrop provides NoBackdrop,
-            LocalLiquidGlassBackdrop provides null,
+            LocalLiquidGlassBackdrop provides groundBackdrop,
         ) {
         Box(
             Modifier
                 .fillMaxSize()
                 .graphicsLayer()
                 .recordBackdrop(backdrop)
+                .onGloballyPositioned { homeLayerOrigin = it.positionOnScreen() }
                 .then(
                     if (liquidBackdrop != null) {
                         Modifier.captureLiquidGlassBackdrop(liquidBackdrop)
                     } else {
                         Modifier
                     },
-                )
+                ),
+        ) {
+        val ground = homeLookColors()?.takeIf { homeColor == null }
+        Box(
+            Modifier
+                .matchParentSize()
+                .then(if (groundBackdrop != null) Modifier.captureLiquidGlassBackdrop(groundBackdrop) else Modifier)
                 // Opaque, so the frost replaces the page rather than adding to it.
                 .background(homeColor?.let { Color(it) } ?: MaterialTheme.colorScheme.surface)
                 // A look draws its own ground, unless a colour of the user's own replaces it.
-                .then(homeLookColors()?.takeIf { homeColor == null }?.let { look ->
-                    Modifier.drawBehind { look.drawGround(this) }
-                } ?: Modifier),
+                .then(ground?.let { look -> Modifier.drawBehind { look.drawGround(this) } } ?: Modifier),
         ) {
-        HomeBackground(homePhoto)
+            HomeBackground(homePhoto)
+        }
         val smartHere = results == null && folder.isBlank() && smartOpen == null && tagFilter == null &&
             smartFolders.isNotEmpty() && libraryFilter.let { it == LIBRARY_ALL || it == LIBRARY_FOLDERS }
         val emptyHere = shown.isEmpty() && (results != null || smartOpen != null || (subfolders.isEmpty() && !smartHere) ||
@@ -2878,9 +2899,12 @@ private fun NoteCard(
     val cardShape = Ui.Shape.card
     // A selected card sits back a little inside its ring, as Photos marks a pick.
     val sink by androidx.compose.animation.core.animateFloatAsState(if (selected) 0.95f else 1f, Ui.Motion.spring(), label = "cardSelected")
+    // Glass over the library's ground under the glass skin; see HomeScreen's groundBackdrop.
+    val glass = skin.isRefractive && LocalLiquidGlassBackdrop.current != null
     Card(
         modifier = Modifier
             .graphicsLayer { scaleX = sink; scaleY = sink }
+            .then(if (glass) Modifier.liquidGlass(shape = cardShape, panel = true, shadowElevation = 0.dp) else Modifier)
             .then(if (selected) Modifier.border(2.5.dp, MaterialTheme.colorScheme.primary, cardShape) else Modifier),
         onClick = onOpen,
         shape = cardShape,
@@ -2897,6 +2921,8 @@ private fun NoteCard(
             else CardDefaults.cardElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
         colors = if (skin == Skin.MATERIAL) {
             CardDefaults.cardColors()
+        } else if (glass) {
+            CardDefaults.cardColors(containerColor = Color.Transparent)
         } else if (skin.isRefractive) {
             // Cards are themselves inside the backdrop recording and must not
             // sample that recording recursively. Asking for a liquid lens here
@@ -9511,6 +9537,14 @@ internal val COLOR_TEMPLATES = listOf(
     "Pastel" to listOf(0xFF6D6875, 0xFFE5989B, 0xFF9AC1D9, 0xFFA8D5BA, 0xFFF6D186),
     "Neon" to listOf(0x66FFEB3B, 0x6676FF03, 0x6600E5FF, 0x66FF4081, 0x66FF9100),
     "Ink" to listOf(0xFF000000, 0xFF3A3A3A, 0xFF6B6B6B, 0xFF9E9E9E, 0xFFCFCFCF),
+    "Study" to listOf(0xFF000000, 0xFFD32F2F, 0xFF1565C0, 0xFF2E7D32, 0xFF6A1B9A, 0xFFEF6C00),
+    "Highlight" to listOf(0x66FFF176, 0x66A5D6A7, 0x6690CAF9, 0x66F48FB1, 0x66CE93D8, 0x66FFCC80),
+    "Earth" to listOf(0xFF5D4037, 0xFF8D6E63, 0xFFA1887F, 0xFF827717, 0xFFBF360C, 0xFF3E2723),
+    "Ocean" to listOf(0xFF01579B, 0xFF0277BD, 0xFF0097A7, 0xFF00838F, 0xFF26A69A, 0xFF4DD0E1),
+    "Forest" to listOf(0xFF1B5E20, 0xFF2E7D32, 0xFF558B2F, 0xFF33691E, 0xFF827717, 0xFF4E342E),
+    "Sunset" to listOf(0xFFE65100, 0xFFF57C00, 0xFFEF5350, 0xFFD81B60, 0xFF8E24AA, 0xFF5E35B1),
+    "Muted" to listOf(0xFF546E7A, 0xFF78909C, 0xFF8D8A85, 0xFFA1887F, 0xFF7986CB, 0xFF80A39D),
+    "Vintage" to listOf(0xFF6B4226, 0xFFA0522D, 0xFFB8860B, 0xFF556B2F, 0xFF2F4F4F, 0xFF8B0000),
 ).map { (name, colors) -> name to colors.map { it.toInt() } }
 
 /** A floating panel's card, or for a pane of a split, only the desk its page lies on. */

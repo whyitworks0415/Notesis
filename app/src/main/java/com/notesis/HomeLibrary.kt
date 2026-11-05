@@ -371,11 +371,14 @@ internal fun FolderTile(
     val picture = rememberFileBitmap(thumbnail, 480)
     val press by animateFloatAsState(if (selected) 0.95f else 1f, Ui.Motion.spring(), label = "folderSelected")
     // A plain card, as the notes beside it are: no shadow under it.
+    // Glass over the library's ground under the glass skin, as the note cards are.
+    val glass = LocalSkin.current.isRefractive && LocalLiquidGlassBackdrop.current != null
     Box(
         modifier
             .graphicsLayer { scaleX = press; scaleY = press }
+            .then(if (glass) Modifier.liquidGlass(shape = Ui.Shape.card, panel = true, shadowElevation = 0.dp)
+                else Modifier.background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f), Ui.Shape.card))
             .clip(Ui.Shape.card)
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))
             .then(if (selected) Modifier.border(2.5.dp, primary, Ui.Shape.card) else Modifier),
     ) {
         Column(

@@ -7,6 +7,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -100,21 +105,33 @@ internal fun ToolbarSizeButton(size: Int, onSize: (Int) -> Unit) {
     }
 }
 
+/**
+ * Picks any colour: a square of saturation and brightness over a strip of
+ * hues, both always open, a #RRGGBB field, a row of common colours and the
+ * user's own saved ones. A grey has no hue of its own, so moving the hue on
+ * one brings colour into it rather than doing nothing.
+ */
 @Composable
 internal fun ColorInput(color: Int, onColor: (Int) -> Unit) {
+    val context = LocalContext.current
+    val store = remember { PenStore(context) }
+    var saved by remember { mutableStateOf(store.myColors) }
     var value by remember(color) { mutableStateOf("%06X".format(color and 0xFFFFFF)) }
-    var expanded by remember { mutableStateOf(false) }
     val hsv = remember(color) { FloatArray(3).also { android.graphics.Color.colorToHSV(color, it) } }
-    TextButton(onClick = { expanded = !expanded }) { Text("Pick a custom color") }
-    if (expanded) {
-        SaturationValueField(hsv[0], hsv[1], hsv[2]) { saturation, brightness ->
-            onColor(android.graphics.Color.HSVToColor(floatArrayOf(hsv[0], saturation, brightness)))
-        }
-        Spacer(Modifier.height(Ui.Space.s))
-        GradientStrip((0..6).map { Color.hsv(it * 60f % 360f, 1f, 1f) }, hsv[0] / 360f) {
-            onColor(android.graphics.Color.HSVToColor(floatArrayOf(it * 360f, hsv[1], hsv[2])))
-        }
+    // The hue last chosen, kept for a grey, which has none to read back.
+    var hue by remember { mutableFloatStateOf(hsv[0]) }
+    LaunchedEffect(color) { if (hsv[1] > GREY_SATURATION) hue = hsv[0] }
+    SaturationValueField(hue, hsv[1], hsv[2]) { saturation, brightness ->
+        onColor(android.graphics.Color.HSVToColor(floatArrayOf(hue, saturation, brightness)))
     }
+    Spacer(Modifier.height(Ui.Space.s))
+    GradientStrip((0..6).map { Color.hsv(it * 60f % 360f, 1f, 1f) }, hue / 360f) {
+        hue = it * 360f
+        val saturation = if (hsv[1] > GREY_SATURATION) hsv[1] else 0.7f
+        val brightness = if (hsv[1] > GREY_SATURATION) hsv[2] else maxOf(hsv[2], 0.6f)
+        onColor(android.graphics.Color.HSVToColor(floatArrayOf(hue, saturation, brightness)))
+    }
+    Spacer(Modifier.height(Ui.Space.s))
     OutlinedTextField(
         value = value,
         onValueChange = { value = it; parseColor(it)?.let(onColor) },
@@ -133,7 +150,33 @@ internal fun ColorInput(color: Int, onColor: (Int) -> Unit) {
             }
         }
     }
+    // The user's own colours: kept on this tablet, there in every picker.
+    Text("My colours", style = MaterialTheme.typography.labelMedium)
+    Row(Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+        saved.forEach { mine ->
+            Box(
+                Modifier.padding(end = Ui.Space.s).size(30.dp).clip(Ui.Shape.pill).background(Color(mine))
+                    .border(if (mine == color) 2.5.dp else 1.dp,
+                        if (mine == color) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, Ui.Shape.pill)
+                    .combinedClickable(
+                        onClick = { onColor(mine) },
+                        onLongClick = { saved = saved - mine; store.myColors = saved },
+                    )
+                    .semantics { contentDescription = "My colour #%06X".format(mine and 0xFFFFFF) },
+            )
+        }
+        TextButton(enabled = color !in saved, onClick = {
+            saved = (saved + color).takeLast(MY_COLORS_MAX)
+            store.myColors = saved
+        }) { Text("+ Save this colour") }
+    }
+    if (saved.isNotEmpty()) Text("Hold a saved colour to remove it.", style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.outline)
 }
+
+/** Below this saturation a colour reads as grey, with no hue worth keeping. */
+private const val GREY_SATURATION = 0.03f
+internal const val MY_COLORS_MAX = 16
 
 @Composable
 internal fun TemplateEditor(onDismiss: () -> Unit, onSave: (String, List<Int>) -> Unit) {
@@ -147,7 +190,7 @@ internal fun TemplateEditor(onDismiss: () -> Unit, onSave: (String, List<Int>) -
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 OutlinedTextField(name, { name = it }, label = { Text("Template name") }, singleLine = true)
                 ColorInput(color) { color = it }
-                TextButton(enabled = colors.size < 12 && color !in colors,
+                androidx.compose.material3.FilledTonalButton(enabled = colors.size < 12 && color !in colors,
                     onClick = { colors = colors + color }) { Text("+ Add this color (${colors.size}/12)") }
                 Row(Modifier.horizontalScroll(rememberScrollState())) {
                     colors.forEach { saved ->
@@ -160,8 +203,9 @@ internal fun TemplateEditor(onDismiss: () -> Unit, onSave: (String, List<Int>) -
                 Text("Tap an added color to remove it.", style = MaterialTheme.typography.bodySmall)
             }
         },
-        confirmButton = { TextButton(enabled = name.isNotBlank() && colors.isNotEmpty(),
-            onClick = { onSave(name.trim(), colors) }) { Text("Save") } },
+        // A name is welcome but not required: a template with none is called "My colours".
+        confirmButton = { TextButton(enabled = colors.isNotEmpty(),
+            onClick = { onSave(name.trim().ifBlank { L10n.tr("My colours") }, colors) }) { Text("Save") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }

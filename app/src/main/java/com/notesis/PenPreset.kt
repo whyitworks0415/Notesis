@@ -409,6 +409,11 @@ class PenStore(context: Context) {
         prefs.edit().putString("savedPens:$mode", array.toString()).apply()
     }
 
+    /** Colours of the user's own, saved from any colour picker. */
+    var myColors: List<Int>
+        get() = prefs.getString("myColors", null)?.split(',')?.mapNotNull { it.toIntOrNull() }.orEmpty()
+        set(value) = prefs.edit().putString("myColors", value.distinct().takeLast(MY_COLORS_MAX).joinToString(",")).apply()
+
     fun colorTemplates(): List<Pair<String, List<Int>>> = runCatching {
         val array = JSONArray(prefs.getString("colorTemplates", "[]"))
         (0 until array.length()).map { index ->
