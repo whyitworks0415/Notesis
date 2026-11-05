@@ -1,6 +1,7 @@
 package com.notesis
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** The library's search, from a field in the middle to a round button at the right. */
@@ -32,6 +33,15 @@ class SearchMorphTest {
     @Test
     fun `a fold out of range is held to the ends`() {
         assertEquals(searchMorphSpan(1000, 720, 42, 1f), searchMorphSpan(1000, 720, 42, 3f))
-        assertEquals(searchMorphSpan(1000, 720, 42, 0f), searchMorphSpan(1000, 720, 42, -1f))
+        assertEquals(searchMorphSpan(1000, 720, 42, -GLASS_STRETCH_MAX), searchMorphSpan(1000, 720, 42, -1f))
+    }
+
+    @Test
+    fun `springing open it runs a little wider, never past the row`() {
+        val (_, stretched) = searchMorphSpan(1000, 720, 42, -0.1f)
+        assertTrue(stretched > 720)
+        assertTrue(searchMorphSpan(800, 720, 42, -GLASS_STRETCH_MAX).second <= 800)
+        assertEquals(1f, glassSquash(0.3f))
+        assertTrue(glassSquash(-0.1f) < 1f)
     }
 }

@@ -1314,10 +1314,14 @@ private fun HomeScreen(
         }
     }
     val selecting = rememberUpdatedState(selectionMode)
+    // Opened by hand, the glass runs a little past where it settles and comes
+    // back, as a drop does: a spring that overshoots, where the fold on
+    // scrolling stays a plain ease.
+    val stretchSpec = Ui.Motion.spring<Float>(dampingRatio = HOME_GLASS_STRETCH_DAMPING)
     val iconsUnfold = androidx.compose.animation.core.animateFloatAsState(
-        if (iconsOpen) 1f else 0f, unfoldSpec, label = "homeIcons")
+        if (iconsOpen) 1f else 0f, stretchSpec, label = "homeIcons")
     val searchUnfold = androidx.compose.animation.core.animateFloatAsState(
-        if (searchOpen || searchFocused) 1f else 0f, unfoldSpec, label = "homeSearch")
+        if (searchOpen || searchFocused) 1f else 0f, stretchSpec, label = "homeSearch")
     val iconsFold = remember(scrollFold) {
         { if (selecting.value) 0f else scrollFold.value * (1f - iconsUnfold.value) }
     }
@@ -1390,8 +1394,7 @@ private fun HomeScreen(
                         // to go back to, and an arrow that does nothing is a lie.
                         if ((folder.isNotBlank() || smartOpen != null) && !selectionMode) {
                             Box(Modifier.size(button), contentAlignment = Alignment.Center) {
-                                Box(Modifier.matchParentSize().graphicsLayer { alpha = scrollFold.value }
-                                    .skinMaterial(CircleShape, role = ChromeRole.TOOLBAR))
+                                Box(Modifier.matchParentSize().skinMaterial(CircleShape, role = ChromeRole.TOOLBAR))
                                 IconButton(onClick = { if (smartOpen != null) smartOpen = null else folder = folderParent(folder) }) {
                                     Icon(Reicons.ArrowBack, contentDescription = "Back")
                                 }
@@ -1406,8 +1409,10 @@ private fun HomeScreen(
                             },
                         )
                         Box(Modifier.height(button)) {
-                            // The bar's glass, gathering round the buttons as they fold.
-                            Box(Modifier.matchParentSize().graphicsLayer { alpha = iconsFold() }
+                            // The bar's glass, always under the buttons, gathering round
+                            // them as they fold and spreading as they open: past its
+                            // width it thins a little, as a drop pulled long does.
+                            Box(Modifier.matchParentSize().graphicsLayer { scaleY = glassSquash(iconsFold()) }
                                 .skinMaterial(capsule, role = ChromeRole.TOOLBAR))
                             Row(Modifier.height(button), verticalAlignment = Alignment.CenterVertically) {
                                 Row(
@@ -2444,6 +2449,8 @@ private const val AI_CAPTURE_MAX_PX = 2048f
 private val NOTE_CARD_INSET = 8.dp
 /** Narrower than this, the whole bar (1/4) is shown as the one-row bar (2/4). */
 private const val FULL_BAR_MIN_WIDTH_DP = 600
+/** How far the home bar's glass overshoots when opened by hand: below 1, a little past and back. */
+private const val HOME_GLASS_STRETCH_DAMPING = 0.6f
 private const val LIBRARY_SORT_TITLE = 1
 private const val LIBRARY_SORT_PAGES = 2
 private const val MAX_HITS_PER_NOTE = 5

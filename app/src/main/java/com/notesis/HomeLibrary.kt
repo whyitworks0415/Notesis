@@ -532,7 +532,6 @@ internal fun LibrarySearchMorph(
 ) {
     val height = LIBRARY_SEARCH_HEIGHT
     val capsule = RoundedCornerShape(50)
-    val fill = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.85f)
     BoxWithConstraints(modifier.fillMaxWidth().height(height)) {
         val full = if (maxWidth < 720.dp) maxWidth else 720.dp
         Box(
@@ -543,8 +542,9 @@ internal fun LibrarySearchMorph(
                 layout(constraints.maxWidth, side) { placeable.place(x, 0) }
             },
         ) {
-            Box(Modifier.matchParentSize().graphicsLayer { alpha = 1f - fold() }.background(fill, capsule))
-            Box(Modifier.matchParentSize().graphicsLayer { alpha = fold() }
+            // Glass open or folded, the same stuff as the buttons beside it, and
+            // thinning a little where it runs past its width as it opens.
+            Box(Modifier.matchParentSize().graphicsLayer { scaleY = glassSquash(fold()) }
                 .skinMaterial(capsule, role = ChromeRole.TOOLBAR))
             Box(Modifier.matchParentSize().clip(capsule)) {
                 Row(
@@ -599,9 +599,10 @@ internal fun LibrarySearchMorph(
  * every step between on the way, so it slides as it narrows.
  */
 internal fun searchMorphSpan(row: Int, full: Int, side: Int, fold: Float): Pair<Int, Int> {
-    val f = fold.coerceIn(0f, 1f)
+    // Below 0 it is opening past its width, the spring's overshoot; it stays inside the row.
+    val f = fold.coerceIn(-GLASS_STRETCH_MAX, 1f)
     val open = full.coerceAtMost(row)
-    val w = (open + (side - open) * f).roundToInt()
+    val w = (open + (side - open) * f).roundToInt().coerceAtMost(row)
     val centred = (row - w) / 2f
     val right = (row - w).toFloat()
     return (centred + (right - centred) * f).roundToInt() to w
@@ -614,6 +615,13 @@ internal fun searchMorphSpan(row: Int, full: Int, side: Int, fold: Float): Pair<
  */
 internal fun Modifier.foldTowardsEnd(fold: () -> Float): Modifier = clipToBounds().layout { measurable, constraints ->
     val placeable = measurable.measure(constraints.copy(minWidth = 0, maxWidth = Constraints.Infinity))
-    val w = constraints.constrainWidth((placeable.width * (1f - fold().coerceIn(0f, 1f))).roundToInt())
+    // Below 0 the row is opening past its width: the extra is room for the glass to stretch into.
+    val w = constraints.constrainWidth((placeable.width * (1f - fold().coerceIn(-GLASS_STRETCH_MAX, 1f))).roundToInt())
     layout(w, placeable.height) { placeable.place(w - placeable.width, 0) }
 }
+
+/** The most the home bar's glass stretches past its width while it springs open. */
+internal const val GLASS_STRETCH_MAX = 0.15f
+
+/** How tall the glass is while [fold] runs below 0: stretched long, it thins, up to a tenth. */
+internal fun glassSquash(fold: Float): Float = 1f - ((-fold).coerceIn(0f, GLASS_STRETCH_MAX) * 0.66f)
