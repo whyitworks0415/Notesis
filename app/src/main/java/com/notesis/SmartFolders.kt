@@ -23,45 +23,62 @@ import androidx.compose.ui.unit.dp
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
+import kotlin.math.roundToInt
 
 /**
  * A folder that fills itself: every note that carries [tag], was written in
- * the last [days] days, is a favourite, or is of one [kind] - each only when
- * set, all of those set at once. Nothing is moved into it; it is a way of
- * looking at the library.
+ * the last [hours] hours, is a favourite, is of one [kind], or is among the
+ * last [recentlyOpened] notes opened - each only when set, all of those set
+ * at once. Nothing is moved into it; it is a way of looking at the library.
  */
 internal data class SmartFolder(
     val id: String,
     val name: String,
     val tag: String? = null,
     /** 0 for any age. */
-    val days: Int = 0,
+    val hours: Int = 0,
     val favoritesOnly: Boolean = false,
     val kind: NoteKind? = null,
+    /** 0 for no such rule; otherwise 1 to [RecentlyOpened.KEEP]. */
+    val recentlyOpened: Int = 0,
 ) {
-    fun matches(note: NoteMeta, now: Long): Boolean =
+    /** [opened] is the notes' ids, the one opened last first. */
+    fun matches(note: NoteMeta, now: Long, opened: List<String> = emptyList()): Boolean =
         (tag == null || tag in note.tags) &&
-            (days <= 0 || now - note.modified <= days * DAY_MS) &&
+            (hours <= 0 || now - note.modified <= hours * HOUR_MS) &&
             (!favoritesOnly || note.favorite) &&
-            (kind == null || note.kind == kind)
+            (kind == null || note.kind == kind) &&
+            (recentlyOpened <= 0 || note.id in opened.take(recentlyOpened))
 
-    fun toJson(): JSONObject = JSONObject().put("id", id).put("name", name).put("days", days)
-        .put("favorites", favoritesOnly).apply {
+    fun toJson(): JSONObject = JSONObject().put("id", id).put("name", name).put("hours", hours)
+        .put("favorites", favoritesOnly).put("opened", recentlyOpened).apply {
             tag?.let { put("tag", it) }
             kind?.let { put("kind", it.name) }
         }
 
     companion object {
-        private const val DAY_MS = 24L * 60 * 60 * 1000
+        private const val HOUR_MS = 60L * 60 * 1000
+
+        /** The ages a smart folder can be set to, an hour to a month. */
+        val AGE_STOPS = intArrayOf(1, 2, 3, 6, 12, 24, 48, 72, 96, 120, 144, 168, 240, 336, 504, 720)
+
+        /** The stop nearest [hours] from above, as an index into [AGE_STOPS]. */
+        fun ageStop(hours: Int): Int = AGE_STOPS.indexOfFirst { it >= hours }.let { if (it < 0) AGE_STOPS.size - 1 else it }
+
+        /** "3 hours", "7 days": hours up to a day, days after. */
+        fun ageLabel(hours: Int): String =
+            if (hours < 24) countNoun(hours, "hour") else countNoun(hours / 24, "day")
 
         fun fromJson(json: JSONObject): SmartFolder? = runCatching {
             SmartFolder(
                 id = json.getString("id"),
                 name = json.getString("name"),
                 tag = json.optString("tag").takeIf { it.isNotBlank() },
-                days = json.optInt("days"),
+                // Folders made in 0.90.0 kept whole days.
+                hours = if (json.has("hours")) json.optInt("hours") else json.optInt("days") * 24,
                 favoritesOnly = json.optBoolean("favorites"),
                 kind = json.optString("kind").takeIf { it.isNotBlank() }?.let { runCatching { NoteKind.valueOf(it) }.getOrNull() },
+                recentlyOpened = json.optInt("opened").coerceIn(0, RecentlyOpened.KEEP),
             )
         }.getOrNull()
     }
@@ -89,6 +106,23 @@ internal object SmartFolders {
     fun remove(context: Context, id: String) = save(context, load(context).filterNot { it.id == id })
 }
 
+/** [list] with [id] moved to the front, as the note opened last, and no longer than [keep]. */
+internal fun withOpened(list: List<String>, id: String, keep: Int = RecentlyOpened.KEEP): List<String> =
+    (listOf(id) + list.filterNot { it == id }).take(keep)
+
+/** The notes opened last, newest first, for a smart folder of them. Kept on this tablet only. */
+internal object RecentlyOpened {
+    const val KEEP = 20
+    private fun prefs(context: Context) = context.getSharedPreferences("pens", Context.MODE_PRIVATE)
+
+    fun load(context: Context): List<String> =
+        prefs(context).getString("recentlyOpened", "").orEmpty().split(',').filter { it.isNotBlank() }
+
+    fun note(context: Context, id: String) {
+        prefs(context).edit().putString("recentlyOpened", withOpened(load(context), id).joinToString(",")).apply()
+    }
+}
+
 /** Makes or changes a smart folder: its name and what puts a note in it. */
 @Composable
 internal fun SmartFolderDialog(
@@ -99,7 +133,8 @@ internal fun SmartFolderDialog(
 ) {
     var name by remember { mutableStateOf(initial?.name ?: "") }
     var tag by remember { mutableStateOf(initial?.tag) }
-    var days by remember { mutableStateOf(initial?.days ?: 0) }
+    var hours by remember { mutableStateOf(initial?.hours ?: 0) }
+    var opened by remember { mutableStateOf(initial?.recentlyOpened ?: 0) }
     var favorites by remember { mutableStateOf(initial?.favoritesOnly ?: false) }
     var kind by remember { mutableStateOf(initial?.kind) }
     AlertDialog(
@@ -112,10 +147,36 @@ internal fun SmartFolderDialog(
                 Text("Notes that are…", style = MaterialTheme.typography.labelLarge)
                 Text("Written in", style = MaterialTheme.typography.labelMedium)
                 Row {
-                    listOf(0 to "Any time", 7 to "The last 7 days", 30 to "The last 30 days").forEach { (value, label) ->
-                        SettingsChoiceChip(selected = days == value, onClick = { days = value }, label = label,
-                            modifier = Modifier.padding(end = Ui.Space.s))
-                    }
+                    SettingsChoiceChip(selected = hours == 0, onClick = { hours = 0 }, label = "Any time",
+                        modifier = Modifier.padding(end = Ui.Space.s))
+                    SettingsChoiceChip(selected = hours > 0, onClick = { if (hours == 0) hours = 24 * 7 },
+                        label = "Within a time")
+                }
+                if (hours > 0) {
+                    Text("Written in the last ${SmartFolder.ageLabel(hours)}", style = MaterialTheme.typography.bodyMedium)
+                    // Stops rather than a straight scale, so an hour and a month are both easy to land on.
+                    SkinSlider(
+                        value = SmartFolder.ageStop(hours).toFloat(),
+                        onValueChange = { hours = SmartFolder.AGE_STOPS[it.roundToInt().coerceIn(0, SmartFolder.AGE_STOPS.size - 1)] },
+                        valueRange = 0f..(SmartFolder.AGE_STOPS.size - 1).toFloat(),
+                        step = 1f,
+                    )
+                }
+                Text("Opened recently", style = MaterialTheme.typography.labelMedium)
+                Row {
+                    SettingsChoiceChip(selected = opened == 0, onClick = { opened = 0 }, label = "Any",
+                        modifier = Modifier.padding(end = Ui.Space.s))
+                    SettingsChoiceChip(selected = opened > 0, onClick = { if (opened == 0) opened = 5 },
+                        label = "Only the last few opened")
+                }
+                if (opened > 0) {
+                    Text("The ${countNoun(opened, "note")} opened last", style = MaterialTheme.typography.bodyMedium)
+                    SkinSlider(
+                        value = opened.toFloat(),
+                        onValueChange = { opened = it.roundToInt().coerceIn(1, RecentlyOpened.KEEP) },
+                        valueRange = 1f..RecentlyOpened.KEEP.toFloat(),
+                        step = 1f,
+                    )
                 }
                 Text("Kind", style = MaterialTheme.typography.labelMedium)
                 Row {
@@ -140,7 +201,7 @@ internal fun SmartFolderDialog(
         },
         confirmButton = {
             TextButton(enabled = name.isNotBlank(), onClick = {
-                onSave(SmartFolder(initial?.id ?: UUID.randomUUID().toString(), name.trim(), tag, days, favorites, kind))
+                onSave(SmartFolder(initial?.id ?: UUID.randomUUID().toString(), name.trim(), tag, hours, favorites, kind, opened))
             }) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },

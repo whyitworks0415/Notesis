@@ -717,6 +717,11 @@ private fun HomeScreen(
     // second copy of the truth in memory and having to hold the two in sync.
     var revision by remember { mutableIntStateOf(0) }
     val notes = remember(revision) { store.list() }
+    // The notes opened last, newest first, leaving out any since deleted; for smart folders.
+    val opened = remember(notes) {
+        val ids = notes.mapTo(HashSet()) { it.id }
+        RecentlyOpened.load(context).filter { it in ids }
+    }
     var pendingDelete by remember { mutableStateOf<NoteMeta?>(null) }
     val selectedIds = remember { mutableStateListOf<String>() }
     var selectionMode by remember { mutableStateOf(false) }
@@ -961,7 +966,7 @@ private fun HomeScreen(
     // Favourites first, then the chosen order within each group.
     val shown = (results ?: smartOpen?.let { smart ->
         val now = System.currentTimeMillis()
-        notes.filter { smart.matches(it, now) }
+        notes.filter { smart.matches(it, now, opened) }
     } ?: if (tagFilter != null) notes.filter { tagFilter in it.tags }
         else notes.filter { it.folder == folder }).sortedWith(
         compareByDescending<NoteMeta> { it.favorite }.thenBy { if (it.favorite) it.favoriteOrder else 0L }.then(
@@ -971,7 +976,11 @@ private fun HomeScreen(
                 else -> compareByDescending { it.modified }
             },
         ),
-    )
+    ).let { list ->
+        // A smart folder of notes opened lately lists them in the order they were opened.
+        val smart = smartOpen
+        if (results == null && smart != null && smart.recentlyOpened > 0) list.sortedBy { opened.indexOf(it.id) } else list
+    }
 
     // The user picks where it goes, so a backup survives the app being removed.
     val saveArchive = rememberLauncherForActivityResult(
@@ -1720,7 +1729,7 @@ private fun HomeScreen(
                     val now = remember(notes) { System.currentTimeMillis() }
                     FolderTile(
                         name = "✦ " + smart.name,
-                        count = remember(notes, smart) { notes.count { smart.matches(it, now) } },
+                        count = remember(notes, smart) { notes.count { smart.matches(it, now, opened) } },
                         tint = SMART_FOLDER_TINT,
                         selected = false,
                         selectionMode = false,
@@ -4043,6 +4052,8 @@ private fun NoteScreen(
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
+    // Remembered for a smart folder of the notes opened lately.
+    LaunchedEffect(note.id) { RecentlyOpened.note(context, note.id) }
     val lifecycleOwner = context as? LifecycleOwner
     val scope = rememberCoroutineScope()
     var showVoice by remember { mutableStateOf(false) }
