@@ -55,7 +55,7 @@ internal fun AutoBackupDialog(onDismiss: () -> Unit, onReport: (String) -> Unit)
         text = {
             Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
-                Text("Every note, backed up on its own as the same file \\"Back up all notes\\" makes. Off until you turn it on.",
+                Text("Every note, backed up on its own as the same file \"Back up all notes\" makes. Off until you turn it on.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
                 SettingsChoiceChip(selected = target == BackupTarget.OFF, onClick = { target = BackupTarget.OFF }, label = "Off")
                 SettingsChoiceChip(selected = target == BackupTarget.DEVICE, onClick = { target = BackupTarget.DEVICE },

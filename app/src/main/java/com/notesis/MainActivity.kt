@@ -732,7 +732,6 @@ private fun HomeScreen(
     var naming by remember { mutableStateOf(false) }
     var templateRevision by remember { mutableIntStateOf(0) }
     var autoBackupOpen by remember { mutableStateOf(false) }
-    if (autoBackupOpen) AutoBackupDialog(onDismiss = { autoBackupOpen = false }, onReport = { report = it })
     // A template just added, asked for its name.
     var namingTemplate by remember { mutableStateOf<UserPageTemplate?>(null) }
     val userTemplates = remember(templateRevision) { store.pageTemplates() }
@@ -744,6 +743,7 @@ private fun HomeScreen(
     var markdownExportId by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf<String?>(null) }
     var report by remember { mutableStateOf<String?>(null) }
+    if (autoBackupOpen) AutoBackupDialog(onDismiss = { autoBackupOpen = false }, onReport = { report = it })
     var importFailed by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<NoteMeta>?>(null) }
@@ -934,6 +934,7 @@ private fun HomeScreen(
     LaunchedEffect(folder) { onFolder(folder) }
     // Back leaves the folder before it leaves the app.
     BackHandler(enabled = folder.isNotBlank()) { folder = folderParent(folder) }
+    var smartOpen by remember { mutableStateOf<SmartFolder?>(null) }
     // A smart folder is left before the folder it was opened from.
     BackHandler(enabled = smartOpen != null) { smartOpen = null }
     // And selecting ends before either.
@@ -947,7 +948,6 @@ private fun HomeScreen(
     val folders = remember(revision) { store.folders() }
     // Folders that fill themselves; see SmartFolders.kt.
     var smartFolders by remember { mutableStateOf(SmartFolders.load(context)) }
-    var smartOpen by remember { mutableStateOf<SmartFolder?>(null) }
     var editingSmart by remember { mutableStateOf<SmartFolder?>(null) }
     var creatingSmart by remember { mutableStateOf(false) }
     // The folders in the one open, or at the top level; each counts what is in it and below.
