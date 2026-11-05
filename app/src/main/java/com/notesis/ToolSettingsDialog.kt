@@ -1257,10 +1257,20 @@ private fun WidthSection(
             SkinSlider(value = shown, onValueChange = onWidth, valueRange = range, step = WIDTH_SLIDER_STEP)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = { onWidth((shown - WIDTH_STEP).coerceIn(range)) }) { Text("−") }
-                // In millimetres on an A4 page as well, a size people know; not
-                // for the eraser, whose size is on the screen, not the page.
-                Text(if (mode == EditMode.ERASE) widthLabel(shown) else "${widthLabel(shown)} · ${millimetreLabel(shown)}",
-                    style = MaterialTheme.typography.bodyMedium)
+                // Typed as well as slid, for a width known to the hundredth. The box
+                // follows the slider and the buttons; what it holds is applied as
+                // soon as it reads as a width in range.
+                var typed by remember { mutableStateOf(widthLabel(shown)) }
+                LaunchedEffect(shown) { if (parseWidth(typed, range) != shown) typed = widthLabel(shown) }
+                OutlinedTextField(
+                    value = typed,
+                    onValueChange = { text -> typed = text; parseWidth(text, range)?.let(onWidth) },
+                    singleLine = true,
+                    isError = parseWidth(typed, range) == null,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    textStyle = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.width(88.dp),
+                )
                 TextButton(onClick = { onWidth((shown + WIDTH_STEP).coerceIn(range)) }) { Text("+") }
                 val starred = favorites.any { kotlin.math.abs(it - shown) < 0.005f }
                 TextButton(onClick = {
@@ -1269,6 +1279,10 @@ private fun WidthSection(
                     store.saveFavoriteWidths(mode, favorites)
                 }) { Text(if (starred) "★" else "☆") }
             }
+            // In millimetres on an A4 page as well, a size people know; not
+            // for the eraser, whose size is on the screen, not the page.
+            if (mode != EditMode.ERASE) Text("${widthLabel(shown)} · ${millimetreLabel(shown)}",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
             if (favorites.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState())) {
                 favorites.forEach { favorite ->
                     SettingsChoiceChip(

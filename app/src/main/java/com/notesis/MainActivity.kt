@@ -6380,6 +6380,18 @@ private fun NoteScreen(
             onHoldToShape = { setGestures(gestures.copy(holdToDraw = it)) },
             cornerRadius = shapeCorner,
             onCornerRadius = { shapeCorner = it; penStore.shapeCornerRadius = it },
+            color = (settings[EditMode.SHAPE] ?: PenStore.DEFAULTS.getValue(EditMode.SHAPE)).colorArgb,
+            onColor = { rgb ->
+                val shapePen = settings[EditMode.SHAPE] ?: PenStore.DEFAULTS.getValue(EditMode.SHAPE)
+                // The picked hue at the alpha the shape pen already had.
+                settings = settings + (EditMode.SHAPE to shapePen.copy(
+                    colorArgb = (rgb and 0xFFFFFF) or (shapePen.colorArgb and 0xFF000000.toInt())))
+            },
+            onPenSettings = {
+                choosingShape = false
+                mode = EditMode.SHAPE
+                editingPen = true
+            },
             onPick = { picked ->
                 choosingShape = false
                 shapeKind = picked

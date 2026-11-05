@@ -3,6 +3,13 @@ package com.notesis
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -58,9 +65,17 @@ internal fun ShapePickerDialog(
     onHoldToShape: (Boolean) -> Unit,
     cornerRadius: Float,
     onCornerRadius: (Float) -> Unit,
+    /** The shape tool's own colour; shapes keep theirs apart from the pen's. */
+    color: Int,
+    onColor: (Int) -> Unit,
+    /** The shape tool's full settings: any colour, its width. */
+    onPenSettings: () -> Unit,
     onPick: (ShapeKind) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val context = LocalContext.current
+    // The same quick colours the pen row offers, so a colour picked there is here too.
+    val swatches = remember { PenStore(context).quickColors }
     val panel = rememberToolPanelState()
     ToolPanel(
         title = "Shapes",
@@ -82,6 +97,24 @@ internal fun ShapePickerDialog(
                     repeat(SHAPES_PER_ROW - row.size) { Spacer(Modifier.weight(1f)) }
                 }
             }
+        }
+        PanelSectionHeader("Color")
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+            swatches.forEach { rgb ->
+                val chosen = rgb and 0xFFFFFF == color and 0xFFFFFF
+                Box(
+                    Modifier
+                        .padding(end = Ui.Space.s)
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .background(Color(rgb or 0xFF000000.toInt()))
+                        .border(if (chosen) 3.dp else 1.dp,
+                            if (chosen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                        .clickable(role = Role.Button) { onColor(rgb) }
+                        .semantics { contentDescription = "Quick color #%06X".format(rgb and 0xFFFFFF); selected = chosen },
+                )
+            }
+            TextButton(onClick = { panel.close(onPenSettings) }) { Text("More colors and width…") }
         }
         PanelSectionHeader("Pen")
         PanelSwitchRow(
