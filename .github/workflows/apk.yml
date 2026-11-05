@@ -15,9 +15,11 @@ on:
         # manual: it is installed only from About · Help, with nothing said.
         # A release can also be marked manual in its notes file, with the
         # line `<!-- update: manual -->`, which is how a push releases one.
-        description: "How the app offers this release"
+        # check: builds and runs the tests only - nothing is signed or
+        # released - so a change can be tried without spending a version.
+        description: "How the app offers this release (check: build and test only)"
         type: choice
-        options: ["automatic", "manual"]
+        options: ["automatic", "manual", "check"]
         default: "automatic"
 
 permissions:
@@ -61,11 +63,12 @@ jobs:
 
       - name: Unit tests
         # Reported, not gating: a failing JVM test shows up red here without
-        # holding back the APK the tablet is waiting for.
-        continue-on-error: true
+        # holding back the APK the tablet is waiting for. A check run fails on it.
+        continue-on-error: ${{ github.event.inputs.update != 'check' }}
         run: ./gradlew testReleaseUnitTest -Dorg.gradle.java.home="$JAVA_HOME" --no-daemon
 
       - name: Name the build
+        if: ${{ github.event.inputs.update != 'check' }}
         id: name
         run: |
           VERSION=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
@@ -76,6 +79,7 @@ jobs:
           cp app/build/outputs/apk/release/app-release-unsigned.apk unsigned.apk
 
       - name: Sign the APK with the release key
+        if: ${{ github.event.inputs.update != 'check' }}
         env:
           KEYSTORE_BASE64: ${{ secrets.NOTESIS_KEYSTORE_BASE64 }}
           # The same text in further pieces, for when a long paste gets cut short.
@@ -135,6 +139,7 @@ jobs:
       # A copy kept with the run for a few days. The release below carries the
       # APK for good, so a full artifact store must not stop the release.
       - uses: actions/upload-artifact@v4
+        if: ${{ github.event.inputs.update != 'check' }}
         continue-on-error: true
         with:
           name: Notesis-${{ steps.name.outputs.version }}-${{ steps.name.outputs.code }}
@@ -143,6 +148,7 @@ jobs:
           retention-days: 3
 
       - name: Publish a release to install from
+        if: ${{ github.event.inputs.update != 'check' }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.name.outputs.tag }}
@@ -159,7 +165,7 @@ jobs:
       # but releases, so the source can be private: a private repository's
       # releases and downloads are closed to an app that is not signed in.
       - name: Publish the same release where the app looks for updates
-        if: ${{ env.RELEASES_TOKEN != '' }}
+        if: ${{ env.RELEASES_TOKEN != '' && github.event.inputs.update != 'check' }}
         uses: softprops/action-gh-release@v2
         with:
           repository: whyitworks0415/Notesis-releases
