@@ -293,6 +293,10 @@ internal fun PageSidebar(
     onNewNote: () -> Unit = {},
     onAttach: (Int) -> Unit = {},
     onAttachmentsHidden: (Int, Boolean) -> Unit = { _, _ -> },
+    /** Split, the parts whose pages the panel can show, by part and note name; [source] is the one shown. */
+    sources: List<Pair<Int, String>> = emptyList(),
+    source: Int = 0,
+    onSource: (Int) -> Unit = {},
 ) {
     val doc = document ?: return
     val pages = doc.pages
@@ -450,6 +454,18 @@ internal fun PageSidebar(
             }
             SkinSurface(modifier = Modifier.width(shown.dp).fillMaxHeight(), role = ChromeRole.SIDEBAR) {
                 Column {
+                    // Split, which note's pages, contents and tape the panel is about.
+                    if (sources.size > 1) {
+                        Text("Show the pages of", style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.outline,
+                            modifier = Modifier.padding(start = 12.dp, top = 10.dp))
+                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp)) {
+                            sources.forEach { (part, title) ->
+                                SettingsChoiceChip(selected = part == source, onClick = { onSource(part) },
+                                    label = title.ifBlank { "Untitled" }, modifier = Modifier.padding(end = 6.dp))
+                            }
+                        }
+                    }
                     LiquidSegmentedControl(
                         segments = PAGE_PANEL_TABS,
                         selectedIndex = tab,

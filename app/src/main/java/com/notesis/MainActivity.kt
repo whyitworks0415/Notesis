@@ -254,6 +254,7 @@ class MainActivity : ComponentActivity() {
     // A dialog or the keyboard taking focus can bring the bars back.
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
+        WindowFocus.focused = hasFocus
         if (hasFocus) hideSystemBars()
     }
 
@@ -292,7 +293,7 @@ class MainActivity : ComponentActivity() {
             var look by remember { mutableStateOf(lookStore.load()) }
             var settingsOpen by remember { mutableStateOf(false) }
             // The fastest refresh rate the panel has, unless turned off or saving power.
-            LaunchedEffect(InteractionGovernor.highRefresh, InteractionGovernor.observedPowerSave) {
+            LaunchedEffect(InteractionGovernor.highRefresh, InteractionGovernor.observedPowerSave, WindowFocus.focused) {
                 DisplayRate.apply(this@MainActivity)
             }
             // The app's own brightness and dimming, if set, on the window it draws in.
@@ -4303,6 +4304,10 @@ private fun NoteScreen(
     // takes the same tools, so this is the only thing the bar has to pick.
     var activePane by remember(note.id) { mutableIntStateOf(0) }
     var paneEdits by remember { mutableIntStateOf(0) }
+    // Each other part's turn; this note's own is noteRotation.
+    val paneRotations = remember(note.id) { mutableStateMapOf<Int, Float>() }
+    // Which part the page panel shows: this note's, or another part's.
+    var sidebarPane by remember(note.id) { mutableIntStateOf(0) }
     // Which part a note is being picked for, from the line between the parts.
     var splitPickingFor by remember { mutableStateOf<Int?>(null) }
     var choosingSplit by remember { mutableStateOf(false) }
@@ -4314,7 +4319,8 @@ private fun NoteScreen(
     // bar is laid out 800 dp wide and shrunk to fit, which on a 360 dp phone
     // drew every button and word at under half size.
     val narrowWindow = LocalConfiguration.current.screenWidthDp < FULL_BAR_MIN_WIDTH_DP
-    val shownToolbarSize = if ((split != null || narrowWindow) && toolbarSize == 0) 1 else toolbarSize
+    // Split, the whole bar (1/4) still floats across the top, over the parts.
+    val shownToolbarSize = if (narrowWindow && toolbarSize == 0) 1 else toolbarSize
     val barDocked = docked && split == null
     // The docked side bar's width, so what else lives on that edge can stand clear of it.
     var sideBarWidth by remember { mutableIntStateOf(0) }
@@ -4438,6 +4444,20 @@ private fun NoteScreen(
         if (picked.id == note.id) return
         split?.let { SplitCarry.put(picked.id, SplitCarry.Held(it, paneNotes.toMap(), panePages.toMap())) }
         onOpenNote(picked)
+    }
+    /** The part written in last, if it is another part still on the screen; null for this note's own. */
+    fun otherActivePart(): Int? = activePane.takeIf { it != 0 && split?.paneIds()?.contains(it) == true }
+    /** The turn of the part written in last. */
+    fun activeRotation(): Float = otherActivePart()?.let { paneRotations[it] ?: 0f } ?: noteRotation
+    /** The bar's rotate button: the next quarter turn, for the part written in last. */
+    fun turnActivePart() {
+        val other = otherActivePart()
+        if (other != null) {
+            paneRotations[other] = ((((paneRotations[other] ?: 0f) / 90f).roundToInt() + 1) * 90 % 360).toFloat()
+        } else {
+            noteRotation = (((noteRotation / 90f).roundToInt() + 1) * 90 % 360).toFloat()
+            penStore.noteRotation = noteRotation.roundToInt()
+        }
     }
     var referenceNoteId by remember { mutableStateOf(initialReferenceNoteId) }
     var referencePage by remember { mutableIntStateOf(initialReferencePage) }
@@ -4854,6 +4874,9 @@ private fun NoteScreen(
     val sharedScreen = LocalConfiguration.current.let {
         (context as? ComponentActivity)?.isInMultiWindowMode == true
     }
+    // Split, the parts share one PDF budget rather than each holding a whole one.
+    val partCount = split?.paneIds()?.size ?: 1
+    LaunchedEffect(opened, partCount) { opened?.second?.shareBudget(partCount) }
 
     // Opening a note decodes every stroke it holds and parses the PDF header.
     // On the main thread that is a visible freeze, and it grows with the note.
@@ -4992,11 +5015,10 @@ private fun NoteScreen(
             },
             recording = recorder != null,
             onVoice = { showVoice = true },
-            noteRotation = noteRotation.roundToInt(),
+            noteRotation = activeRotation().roundToInt(),
             onRotate = {
                 // The button turns to the next quarter, from wherever three fingers left it.
-                noteRotation = (((noteRotation / 90f).roundToInt() + 1) * 90 % 360).toFloat()
-                penStore.noteRotation = noteRotation.roundToInt()
+                turnActivePart()
             },
             onTogglePages = { showPages = !showPages },
             sizeLevel = previewLevel ?: shownToolbarSize,
@@ -5127,8 +5149,14 @@ private fun NoteScreen(
                 val own = parts?.get(0)
                 // The canvas turns its own page about its middle; the glass sees it the same way.
                 withTransform({
-                    rotate(noteRotation)
-                    if (own != null) translate(own.left, own.top)
+                    if (own != null) {
+                        // Each part turns about its own middle, as its canvas does.
+                        clipRect(own.left, own.top, own.right, own.bottom)
+                        translate(own.left, own.top)
+                        rotate(noteRotation, Offset(own.width / 2f, own.height / 2f))
+                    } else {
+                        rotate(noteRotation)
+                    }
                 }) {
                     drawIntoCanvas { view.drawBackdrop(it.nativeCanvas) }
                 }
@@ -5139,6 +5167,7 @@ private fun NoteScreen(
                 withTransform({
                     clipRect(r.left, r.top, r.right, r.bottom)
                     translate(r.left, r.top)
+                    rotate(paneRotations[id] ?: 0f, Offset(r.width / 2f, r.height / 2f))
                 }) {
                     drawIntoCanvas { pane.drawBackdrop(it.nativeCanvas) }
                 }
@@ -5161,7 +5190,9 @@ private fun NoteScreen(
                             // and through the short settle after: the panes keep the
                             // last recording until the screen is idle again.
                             paused = { !turnStale() &&
-                                (drawingPage || movingPage || InteractionGovernor.observed != Interaction.IDLE) },
+                                (drawingPage || movingPage || InteractionGovernor.observed != Interaction.IDLE ||
+                                    // Another app's window in use over or beside this one: hold the last frost.
+                                    (sharedScreen && !WindowFocus.focused)) },
                             source = pageBackdrop,
                         )
                     } else {
@@ -5494,6 +5525,15 @@ private fun NoteScreen(
                     },
                     pinned = true,
                     ground = desk,
+                    pdfShare = partCount,
+                    rotation = paneRotations[id] ?: 0f,
+                    onRotate = { delta -> paneRotations[id] = (((paneRotations[id] ?: 0f) + delta) % 360f + 360f) % 360f },
+                    onRotateEnd = {
+                        val now = paneRotations[id] ?: 0f
+                        val quarter = (now / 90f).roundToInt() * 90f
+                        if (abs(now - quarter) <= ROTATION_SNAP_DEGREES) paneRotations[id] = quarter % 360f
+                    },
+                    onCaptured = { bitmap -> captured = bitmap },
                     onView = { v -> if (v != null) paneViews[id] = v else paneViews.remove(id) },
                     onActive = { activePane = id },
                     onEdited = { paneEdits++ },
@@ -5507,43 +5547,65 @@ private fun NoteScreen(
                 },
             ) { seam, close ->
                 val tree = split ?: SplitNode.Pane(0)
-                DropdownMenuItem(text = { Text("Swap sides") }, onClick = {
-                    close()
-                    split = split?.swapAt(seam.path, seam.index)
-                })
+                fun titleOf(id: Int): String =
+                    if (id == 0) note.title else referenceNotes.firstOrNull { it.id == paneNotes[id] }?.title ?: ""
+                GlassMenuItem(
+                    text = { Text("Swap sides") },
+                    leadingIcon = { Icon(SwapPartsIcon, contentDescription = null) },
+                    onClick = {
+                        close()
+                        split = split?.swapAt(seam.path, seam.index)
+                    },
+                )
                 for (side in 0..1) {
                     val child = tree.seamChild(seam.path, seam.index, side) ?: continue
-                    val name = when {
+                    val sideName = when {
                         seam.sideBySide && side == 0 -> "Left"
                         seam.sideBySide -> "Right"
                         side == 0 -> "Top"
                         else -> "Bottom"
                     }
-                    HorizontalDivider()
+                    HorizontalDivider(Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+                    // The note's name first, the choices for it under it.
+                    SplitSideHeading(sideName,
+                        if (child is SplitNode.Pane) titleOf(child.id) else countNoun(child.paneIds().size, "part"))
                     if (child is SplitNode.Pane) {
-                        DropdownMenuItem(text = { Text("$name: change note") }, onClick = {
-                            close()
-                            splitPickingFor = child.id
-                        })
-                        if (tree.paneIds().size < SPLIT_MAX_PANES) {
-                            DropdownMenuItem(text = { Text("$name: split in two") }, onClick = {
+                        GlassMenuItem(
+                            text = { Text("Change note") },
+                            leadingIcon = { Icon(AppIcons.note, contentDescription = null) },
+                            onClick = {
                                 close()
-                                split?.let { now ->
-                                    val newId = now.nextPaneId()
-                                    // Across the line it sits beside: a side-by-side half splits top and bottom.
-                                    val next = now.splitPane(child.id, !seam.sideBySide, newId)
-                                    if (next != now) {
-                                        paneNotes[newId] = freePaneNote(newId)
-                                        split = next
+                                splitPickingFor = child.id
+                            },
+                        )
+                        if (tree.paneIds().size < SPLIT_MAX_PANES) {
+                            GlassMenuItem(
+                                text = { Text("Split in two") },
+                                leadingIcon = { Icon(AppIcons.split, contentDescription = null) },
+                                onClick = {
+                                    close()
+                                    split?.let { now ->
+                                        val newId = now.nextPaneId()
+                                        // Across the line it sits beside: a side-by-side half splits top and bottom.
+                                        val next = now.splitPane(child.id, !seam.sideBySide, newId)
+                                        if (next != now) {
+                                            paneNotes[newId] = freePaneNote(newId)
+                                            split = next
+                                        }
                                     }
-                                }
-                            })
+                                },
+                            )
                         }
                     }
-                    DropdownMenuItem(text = { Text("$name: close") }, onClick = {
-                        close()
-                        closeSplitPanes(child.paneIds().toSet())
-                    })
+                    GlassMenuItem(
+                        text = { Text("Close") },
+                        leadingIcon = { Icon(AppIcons.close, contentDescription = null) },
+                        onClick = {
+                            close()
+                            closeSplitPanes(child.paneIds().toSet())
+                        },
+                    )
                 }
             }
         }
@@ -5862,9 +5924,8 @@ private fun NoteScreen(
                         docked = !docked
                         penStore.docked = docked
                     },
-                    GlassToolbarAction("Rotate · ${noteRotation.roundToInt()}°", AppIcons.rotate) {
-                        noteRotation = (((noteRotation / 90f).roundToInt() + 1) * 90 % 360).toFloat()
-                        penStore.noteRotation = noteRotation.roundToInt()
+                    GlassToolbarAction("Rotate · ${activeRotation().roundToInt()}°", AppIcons.rotate) {
+                        turnActivePart()
                     },
                     GlassToolbarAction("Zoom · ${(zoom * 100).roundToInt()}%", AppIcons.zoom) { zoomMenu = true },
                     GlassToolbarAction("Pages & search", AppIcons.search, selected = showPages) { showPages = !showPages },
@@ -7062,113 +7123,127 @@ private fun NoteScreen(
             exit = if (pagesClosedByPen) ExitTransition.None else slideOutHorizontally(Ui.Motion.tween()) { it },
             modifier = Modifier.align(Alignment.CenterEnd).padding(end = webOverlap),
         ) {
+            // Split, the panel can be about any part's note (see sources below).
+            val sidePane = sidebarPane.takeIf { it == 0 || paneViews.containsKey(it) } ?: 0
+            val sideCanvas = if (sidePane != 0) paneViews[sidePane] else canvas
+            fun sideEdited() { if (sidePane != 0) sideCanvas?.onStrokesChanged?.invoke() else edits++ }
+            val sideSources = split?.paneIds()?.mapNotNull { id ->
+                when {
+                    id == 0 -> 0 to note.title
+                    paneViews.containsKey(id) -> id to (referenceNotes.firstOrNull { it.id == paneNotes[id] }?.title ?: "")
+                    else -> null
+                }
+            }.orEmpty()
             PageSidebar(
-                pdfOutline = pdfOutline,
-                document = canvas?.document,
-                currentPage = currentPage,
-                edits = edits,
+                pdfOutline = if (sidePane == 0) pdfOutline else emptyList(),
+                document = sideCanvas?.document,
+                currentPage = if (sidePane == 0) currentPage else sideCanvas?.currentPageIndex() ?: 0,
+                edits = edits + paneEdits,
                 study = study,
                 studyRevision = studyRevision,
-                onRenameMask = { index, maskIndex -> renamingMask = index to maskIndex },
-                onAnswerMask = { index, maskIndex, right ->
-                    canvas?.document?.pages?.getOrNull(index)?.masks?.getOrNull(maskIndex)?.let { mask ->
-                        study.answer(MaskStudy.keyOf(canvas!!.document.pages[index].id, mask.stroke), right)
+                // Naming, studying, sending and attaching are this note's; another part's panel shows and reveals.
+                onRenameMask = { index, maskIndex -> if (sidePane == 0) renamingMask = index to maskIndex },
+                onAnswerMask = answer@{ index, maskIndex, right ->
+                    if (sidePane != 0) return@answer
+                    sideCanvas?.document?.pages?.getOrNull(index)?.masks?.getOrNull(maskIndex)?.let { mask ->
+                        study.answer(MaskStudy.keyOf(sideCanvas!!.document.pages[index].id, mask.stroke), right)
                         studyRevision++
                     }
                 },
-                onStudy = { index, wrongOnly ->
-                    val page = canvas?.document?.pages?.getOrNull(index)
+                onStudy = study@{ index, wrongOnly ->
+                    if (sidePane != 0) return@study
+                    val page = sideCanvas?.document?.pages?.getOrNull(index)
                     val queue = if (page == null) emptyList() else page.masks.indices.filter { maskIndex ->
                         !wrongOnly || study.record(MaskStudy.keyOf(page.id, page.masks[maskIndex].stroke)).last ==
                             MaskRecord.RESULT_WRONG
                     }
                     if (queue.isNotEmpty()) {
-                        canvas?.setMasksRevealed(index, false)
-                        canvas?.scrollToPage(index)
+                        sideCanvas?.setMasksRevealed(index, false)
+                        sideCanvas?.scrollToPage(index)
                         session = StudySession(index, queue)
                         showPages = false
-                        edits++
+                        sideEdited()
                     }
                 },
                 userTemplates = remember(edits) { store.pageTemplates() },
                 // Remembered, so the way back returns to where the panel was opened from.
-                onJump = { canvas?.jumpToPage(it) },
+                onJump = { sideCanvas?.jumpToPage(it) },
                 onReveal = { index, revealed ->
-                    canvas?.setMasksRevealed(index, revealed)
-                    edits++
+                    sideCanvas?.setMasksRevealed(index, revealed)
+                    sideEdited()
                 },
                 onClearMasks = {
-                    canvas?.clearMasks(it)
-                    edits++
+                    sideCanvas?.clearMasks(it)
+                    sideEdited()
                 },
                 onRevealMask = { index, maskIndex, revealed ->
-                    canvas?.setMaskRevealed(index, maskIndex, revealed)
-                    edits++
+                    sideCanvas?.setMaskRevealed(index, maskIndex, revealed)
+                    sideEdited()
                 },
                 onDeleteMask = { index, maskIndex ->
-                    canvas?.deleteMask(index, maskIndex)
-                    edits++
+                    sideCanvas?.deleteMask(index, maskIndex)
+                    sideEdited()
                 },
-                onAdd = { addingPage = true },
+                onAdd = { if (sidePane == 0) addingPage = true else sideCanvas?.let { it.addPage(it.currentPageIndex()); sideEdited() } },
                 onDelete = {
-                    canvas?.deletePage(it)
-                    edits++
+                    sideCanvas?.deletePage(it)
+                    sideEdited()
                 },
                 onMove = { index, delta ->
-                    canvas?.movePage(index, delta)
-                    edits++
+                    sideCanvas?.movePage(index, delta)
+                    sideEdited()
                 },
                 onDuplicate = {
-                    canvas?.duplicatePage(it)
-                    edits++
+                    sideCanvas?.duplicatePage(it)
+                    sideEdited()
                 },
                 onBackground = { index, background ->
-                    canvas?.setBackground(index, background)
-                    edits++
+                    sideCanvas?.setBackground(index, background)
+                    sideEdited()
                 },
                 onTemplate = { index, templateId ->
-                    canvas?.setPageTemplate(index, templateId)
-                    edits++
+                    sideCanvas?.setPageTemplate(index, templateId)
+                    sideEdited()
                 },
                 onSetToc = { index, title ->
-                    canvas?.setPageToc(index, title)
-                    edits++
+                    sideCanvas?.setPageToc(index, title)
+                    sideEdited()
                 },
                 onHighlightToc = { index, highlighted ->
-                    canvas?.setPageTocHighlighted(index, highlighted)
-                    edits++
+                    sideCanvas?.setPageTocHighlighted(index, highlighted)
+                    sideEdited()
                 },
                 onTocLevel = { index, level ->
-                    canvas?.setPageTocLevel(index, level)
-                    edits++
+                    sideCanvas?.setPageTocLevel(index, level)
+                    sideEdited()
                 },
                 onBookmark = { index, marked ->
-                    canvas?.setPageBookmarked(index, marked)
-                    edits++
+                    sideCanvas?.setPageBookmarked(index, marked)
+                    sideEdited()
                 },
                 onRotate = { index, clockwise ->
-                    canvas?.rotatePage(index, clockwise)
-                    edits++
+                    sideCanvas?.rotatePage(index, clockwise)
+                    sideEdited()
                 },
                 onBackgroundAll = { background, templateId ->
-                    canvas?.setBackgroundAll(background, templateId)
-                    edits++
+                    sideCanvas?.setBackgroundAll(background, templateId)
+                    sideEdited()
                 },
-                onDeletePages = { canvas?.deletePages(it); edits++ },
-                onPageSize = { index, w, h, all -> canvas?.setPageSize(index, w, h, all); edits++ },
+                onDeletePages = { sideCanvas?.deletePages(it); sideEdited() },
+                onPageSize = { index, w, h, all -> sideCanvas?.setPageSize(index, w, h, all); sideEdited() },
                 onDuplicatePages = { indices ->
                     // Last first, so each copy lands right after its own page.
-                    indices.sortedDescending().forEach { canvas?.duplicatePage(it) }
-                    edits++
+                    indices.sortedDescending().forEach { sideCanvas?.duplicatePage(it) }
+                    sideEdited()
                 },
                 onExportPages = { indices ->
-                    exportingPages = canvas?.snapshotPages(indices)
-                    exportingLook = canvas?.layers?.translucentLook()
+                    exportingPages = sideCanvas?.snapshotPages(indices)
+                    exportingLook = sideCanvas?.layers?.translucentLook()
                     if (exportingPages != null) savePagesPdf.launch(safeFileName(note.title) + "-pages.pdf")
                 },
-                onSendPages = { indices, move -> sendingPages = indices to move },
-                pageThumbnail = { index, widthPx, onReady -> canvas?.requestPageThumbnail(index, widthPx, renderPdf = true, onReady) },
-                stalePageThumbnail = { index -> canvas?.stalePageThumbnail(index) },
+                onSendPages = { indices, move -> if (sidePane == 0) sendingPages = indices to move },
+                pageThumbnail = { index, widthPx, onReady -> sideCanvas?.requestPageThumbnail(index, widthPx, renderPdf = true, onReady) },
+                stalePageThumbnail = { index -> sideCanvas?.stalePageThumbnail(index) },
                 widthDp = pageSidebarWidth,
                 onWidthChange = { pageSidebarWidth = it; penStore.pageSidebarWidth = it },
                 onClose = { showPages = false },
@@ -7229,15 +7304,18 @@ private fun NoteScreen(
                         onOpenNote(created)
                     }
                 },
-                onAttach = { attachingPage = it },
+                onAttach = { if (sidePane == 0) attachingPage = it },
+                sources = sideSources,
+                source = sidePane,
+                onSource = { sidebarPane = it },
                 onAttachmentsHidden = { index, hidden ->
-                    canvas?.setPageAttachmentsHidden(index, hidden)
-                    edits++
+                    sideCanvas?.setPageAttachmentsHidden(index, hidden)
+                    sideEdited()
                 },
                 search = noteSearch,
-                searchView = canvas,
+                searchView = sideCanvas,
                 onSearchHit = { hit ->
-                    val view = canvas
+                    val view = sideCanvas
                     val pages = view?.document?.pages
                     if (view != null && pages != null) {
                         // By id: the page may have moved since the search ran.
@@ -7996,6 +8074,14 @@ private fun ReferencePanel(
     onActive: () -> Unit = {},
     /** What is on its pages changed. */
     onEdited: () -> Unit = {},
+    /** For a pane: how many views share the PDF budget, the parts of the split. */
+    pdfShare: Int = 2,
+    /** For a pane: its turn, and three fingers turning it by so much, then letting go. */
+    rotation: Float = 0f,
+    onRotate: (Float) -> Unit = {},
+    onRotateEnd: () -> Unit = {},
+    /** For a pane: a region dragged out with the capture tool, rendered. */
+    onCaptured: ((Bitmap) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = context as? LifecycleOwner
@@ -8011,6 +8097,9 @@ private fun ReferencePanel(
     val latestView by rememberUpdatedState(onView)
     val latestActive by rememberUpdatedState(onActive)
     val latestEdited by rememberUpdatedState(onEdited)
+    val latestRotate by rememberUpdatedState(onRotate)
+    val latestRotateEnd by rememberUpdatedState(onRotateEnd)
+    val latestCaptured by rememberUpdatedState(onCaptured)
     DisposableEffect(view) {
         latestView(view)
         onDispose { latestView(null) }
@@ -8027,7 +8116,8 @@ private fun ReferencePanel(
         if (sharedDocument != null) onSharedOpen()
         onDispose { if (sharedDocument != null) latestSharedChanged() }
     }
-    val imageCache = remember { object : LruCache<String, Bitmap>(16 * 1024 * 1024) {
+    // A pane holds half what a floating panel does: up to four of them share the screen.
+    val imageCache = remember { object : LruCache<String, Bitmap>((if (pinned) 8 else 16) * 1024 * 1024) {
         override fun sizeOf(key: String, value: Bitmap) = value.byteCount
     } }
     var popupEdits by remember { mutableIntStateOf(0) }
@@ -8051,7 +8141,7 @@ private fun ReferencePanel(
                 val document = sharedDocument ?: store.load(noteId)
                 // A second view of a PDF beside the note: half the budget, so the
                 // two together do not hold twice what one may.
-                pendingPdf = PdfHold.take(store.pdfFile(noteId), PdfSource.cacheBytesFor(context, share = 2))
+                pendingPdf = PdfHold.take(store.pdfFile(noteId), PdfSource.cacheBytesFor(context, share = if (pinned) 1 else 2))
                 document to pendingPdf
             }
             pendingPdf = null
@@ -8088,6 +8178,8 @@ private fun ReferencePanel(
         if (fit) v.fitWidth()
         v.scrollToPage(page)
     }
+    // A pane's PDF takes its share of one budget with the other parts; see PdfSource.shareBudget.
+    LaunchedEffect(opened, pdfShare) { if (pinned) opened?.second?.shareBudget(pdfShare) }
     LaunchedEffect(mode, view) {
         if (mode != EditMode.LASSO) {
             view?.clearLassoSelection()
@@ -8359,6 +8451,9 @@ private fun ReferencePanel(
                                     if (sharedDocument != null) latestSharedChanged()
                                 }
                                 onWritingStarted = { latestActive() }
+                                onRotateNote = { latestRotate(it) }
+                                onRotateNoteEnd = { latestRotateEnd() }
+                                onCaptured = { bitmap -> post { latestCaptured?.invoke(bitmap) } }
                                 onLassoSelected = { popupLassoCount = it }
                                 onCurrentPageChanged = { onPageChange(it) }
                                 // Already open by definition: three fingers down
@@ -8373,6 +8468,9 @@ private fun ReferencePanel(
                         },
                         update = { v ->
                             v.tool = tool
+                            v.viewRotation = rotation
+                            // A part of a split captures as the note's own part does; a floating panel does not.
+                            v.captureMode = pinned && onCaptured != null && mode == EditMode.CAPTURE
                             v.readMode = mode == EditMode.READ
                             v.maskMode = mode == EditMode.MASK
                             v.lassoMode = mode == EditMode.LASSO

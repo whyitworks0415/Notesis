@@ -135,7 +135,7 @@ object L10n {
         "item" to "항목 #개", "image" to "이미지 #개", "picture" to "사진 #장", "PDF" to "PDF #개", "word" to "#단어",
         "stroke" to "획 #개", "layer" to "레이어 #개", "file" to "파일 #개", "folder" to "폴더 #개",
         "minute" to "#분", "second" to "#초", "hour" to "#시간", "day" to "#일", "time" to "#번",
-        "match" to "#건", "matche" to "#건", "result" to "결과 #개", "card" to "카드 #장", "tab" to "탭 #개",
+        "part" to "#칸", "match" to "#건", "matche" to "#건", "result" to "결과 #개", "card" to "카드 #장", "tab" to "탭 #개",
     )
 
     /** [en] as a pattern: each place, in the order it comes, is a group; the Korean line names them {0}, {1}... */

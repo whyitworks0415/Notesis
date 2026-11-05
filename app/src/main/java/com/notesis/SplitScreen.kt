@@ -9,13 +9,13 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -135,7 +135,7 @@ internal fun SplitSeams(
     onMove: (SplitSeam, Float) -> Unit,
     /** The seam was let go close to an edge: close side 0 (before it) or 1 (after it). */
     onClose: (SplitSeam, Int) -> Unit,
-    menu: @Composable (SplitSeam, close: () -> Unit) -> Unit,
+    menu: @Composable ColumnScope.(SplitSeam, close: () -> Unit) -> Unit,
 ) {
     val density = LocalDensity.current
     val scheme = MaterialTheme.colorScheme
@@ -221,7 +221,8 @@ internal fun SplitSeams(
                             .background(if (dragged != null) held else handle),
                     )
                 }
-                DropdownMenu(menuOpen, onDismissRequest = { menuOpen = false }) {
+                // The toolbar's own material, glass under that skin, rather than a flat white list.
+                GlassMenu(menuOpen, onDismissRequest = { menuOpen = false }) {
                     menu(seam) { menuOpen = false }
                 }
             }
@@ -285,4 +286,34 @@ internal object SplitCarry {
 
     /** The split held for [noteId], once; anything held for another note is dropped. */
     fun take(noteId: String): Held? = held?.takeIf { it.first == noteId }?.second.also { held = null }
+}
+
+/** Two arrows passing each other: the parts trading places. */
+internal val SwapPartsIcon: androidx.compose.ui.graphics.vector.ImageVector by lazy {
+    androidx.compose.ui.graphics.vector.ImageVector.Builder(
+        name = "SwapParts", defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f,
+    ).apply {
+        val ink = androidx.compose.ui.graphics.SolidColor(Color.Black)
+        fun line(path: String) = addPath(
+            pathData = androidx.compose.ui.graphics.vector.PathParser().parsePathString(path).toNodes(),
+            fill = null, stroke = ink, strokeLineWidth = 1.75f,
+            strokeLineCap = androidx.compose.ui.graphics.StrokeCap.Round,
+            strokeLineJoin = androidx.compose.ui.graphics.StrokeJoin.Round,
+        )
+        line("M4 8H19M15 4L19 8L15 12")
+        line("M20 16H5M9 12L5 16L9 20")
+    }.build()
+}
+
+/**
+ * One side's heading in the split menu: which side, small, and the note in
+ * it, so what the choices below act on is read before them.
+ */
+@Composable
+internal fun SplitSideHeading(side: String, title: String) {
+    Column(Modifier.fillMaxWidth().padding(start = 18.dp, end = 18.dp, top = 10.dp, bottom = 2.dp)) {
+        Text(side, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+        Text(title.ifBlank { "Untitled" }, style = MaterialTheme.typography.titleSmall, maxLines = 1,
+            overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+    }
 }

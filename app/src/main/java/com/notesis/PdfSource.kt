@@ -347,6 +347,18 @@ class PdfSource private constructor(
         if (severe) cache.evictAll() else cache.trimToSize(cache.maxSize() / 2)
     }
 
+    /**
+     * Shares the sharp-page and tile budget with [share] - 1 other views of
+     * notes on the screen, the parts of a split; 1 gives this view all of it
+     * back. The previews keep their own floor either way.
+     */
+    fun shareBudget(share: Int) {
+        if (closed) return
+        val parts = share.coerceAtLeast(1)
+        cache.resize(((detailBytes / 2) / parts).coerceAtLeast(1))
+        tileCache.resize(((detailBytes - detailBytes / 2) / parts).coerceAtLeast(1))
+    }
+
     /** Page size in world units, or null if the page is out of range. */
     private fun loadLinks(file: File) {
         val cache = File(file.parentFile, LINKS_CACHE)

@@ -3,6 +3,8 @@ package com.notesis
 import android.app.Activity
 import android.os.Build
 import android.view.Display
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 
 /**
  * Asks the display for its fastest refresh rate while the app is in front.
@@ -20,7 +22,12 @@ internal object DisplayRate {
     fun apply(activity: Activity) {
         val window = activity.window ?: return
         val display = displayOf(activity) ?: return
-        val wanted = if (InteractionGovernor.highRefresh && !InteractionGovernor.powerSave) fastestMode(display) else 0
+        // Sharing the screen with another app and not the one in use - another
+        // app's pop-up over it, say - it asks for nothing: the window in use
+        // decides, and a fast mode held for a window nobody is touching only
+        // made the one being used stutter.
+        val idleBeside = activity.isInMultiWindowMode && !WindowFocus.focused
+        val wanted = if (InteractionGovernor.highRefresh && !InteractionGovernor.powerSave && !idleBeside) fastestMode(display) else 0
         val attributes = window.attributes
         if (attributes.preferredDisplayModeId == wanted) return
         attributes.preferredDisplayModeId = wanted
@@ -39,4 +46,9 @@ internal object DisplayRate {
     private fun displayOf(activity: Activity): Display? =
         if (Build.VERSION.SDK_INT >= 30) runCatching { activity.display }.getOrNull()
         else activity.windowManager.defaultDisplay
+}
+
+/** Whether the app's window has input focus: false while another app's window, a pop-up say, is the one in use. */
+internal object WindowFocus {
+    var focused by androidx.compose.runtime.mutableStateOf(true)
 }
