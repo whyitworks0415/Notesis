@@ -24,6 +24,11 @@ private val PREVIEW_KINDS = setOf(
     MdKind.LINK, MdKind.WIKILINK, MdKind.TAG, MdKind.QUOTE, MdKind.CODE_BLOCK, MdKind.DONE_TEXT,
 )
 
+/** How much of a Markdown note its card reads, cut at a line. */
+internal fun markdownCardCut(source: String, maxChars: Int = 1200): String =
+    if (source.length <= maxChars) source
+    else source.substring(0, source.lastIndexOf('\n', maxChars).takeIf { it > 0 } ?: maxChars)
+
 /** [source] read as it shows, up to about [maxChars] of it, cut at a line. */
 internal fun markdownPreview(source: String, maxChars: Int = 900): MdPreview {
     val cut = if (source.length <= maxChars) source

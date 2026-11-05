@@ -69,6 +69,35 @@ class SearchIndex(context: Context) : SQLiteOpenHelper(context, "search.db", nul
         }
     }
 
+    /**
+     * Brings one file's row in line with [file], kept under its own name: a
+     * Markdown note's text, which a search used to read whole from disk for
+     * every note on every search. A missing file takes its row away.
+     */
+    @Synchronized
+    fun syncFile(note: String, file: File) {
+        val db = writableDatabase
+        if (!file.isFile) {
+            db.delete("pages", "note = ? AND file = ?", arrayOf(note, file.name))
+            return
+        }
+        val known = db.rawQuery("SELECT mtime FROM pages WHERE note = ? AND file = ?", arrayOf(note, file.name))
+            .use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else null }
+        if (known == file.lastModified()) return
+        val body = runCatching { file.readText() }.getOrNull() ?: return
+        db.insertWithOnConflict(
+            "pages",
+            null,
+            ContentValues().apply {
+                put("note", note)
+                put("file", file.name)
+                put("mtime", file.lastModified())
+                put("body", body)
+            },
+            SQLiteDatabase.CONFLICT_REPLACE,
+        )
+    }
+
     /** Page files containing [needle], grouped by note, each with a short excerpt around it. */
     @Synchronized
     fun find(needle: String): Map<String, List<Pair<String, String>>> {

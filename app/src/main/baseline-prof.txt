@@ -1,22 +1,6 @@
-HSPLcom/notesis/InkCanvasView;->**(**)**
-HSPLcom/notesis/InkCanvasView$DryLayer;->**(**)**
-HSPLcom/notesis/CompatWetInkView;->**(**)**
-HSPLcom/notesis/AdaptiveStrokeStabilizer;->**(**)**
-HSPLcom/notesis/AdaptivePressureStabilizer;->**(**)**
-HSPLcom/notesis/InkPredictionPolicy;->**(**)**
-HSPLcom/notesis/StrokeBuilder;->**(**)**
-HSPLcom/notesis/InkTileCache;->**(**)**
-HSPLcom/notesis/LatencyStats;->**(**)**
-HSPLcom/notesis/InteractionGovernor;->**(**)**
-HSPLcom/notesis/InteractionTracker;->**(**)**
-Lcom/notesis/InkCanvasView;
-Lcom/notesis/InkCanvasView$DryLayer;
-Lcom/notesis/CompatWetInkView;
-Lcom/notesis/AdaptiveStrokeStabilizer;
-Lcom/notesis/AdaptivePressureStabilizer;
-Lcom/notesis/InkPredictionPolicy;
-Lcom/notesis/StrokeBuilder;
-Lcom/notesis/InkTileCache;
-Lcom/notesis/LatencyStats;
-Lcom/notesis/InteractionGovernor;
-Lcom/notesis/InteractionTracker;
+# Notesis's own code, compiled ahead of time on install (see build.gradle.kts,
+# profileinstaller). Written by hand rather than recorded, since no device is
+# on hand to record one: the app is the library, the note canvas and the ink
+# path, and almost all of it runs in the first minutes of use.
+HSPLcom/notesis/**->**(**)**
+Lcom/notesis/**;

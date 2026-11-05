@@ -881,9 +881,37 @@ class NoteStore(context: Context) {
     fun list(): List<NoteMeta> {
         purgeTrashOnce()
         return root.listFiles { f -> f.isDirectory && !File(f, TRASHED).isFile }
-            ?.mapNotNull { readMeta(it) }
+            ?.mapNotNull { cachedMeta(it) }
             ?.sortedByDescending { it.modified }
             ?: emptyList()
+    }
+
+    /**
+     * What each note's files said when last read, and the stamp they had. The
+     * library reads the list again after every change, and parsing every
+     * note's meta.json each time grew with the library; a note whose files
+     * have not changed since - most of them, most of the time - costs a few
+     * file stats instead of a read and a parse.
+     */
+    private val metaCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, NoteMeta>>()
+
+    /** Changes when anything [readMeta] reads in [dir] is written, added or taken away. */
+    private fun metaStamp(dir: File): Long {
+        var stamp = dir.lastModified()
+        for (name in META_FILES) {
+            val file = File(dir, name)
+            stamp = stamp * 31 + file.lastModified()
+            stamp = stamp * 31 + file.length()
+        }
+        return stamp
+    }
+
+    private fun cachedMeta(dir: File): NoteMeta? {
+        val stamp = metaStamp(dir)
+        metaCache[dir.name]?.let { (seen, meta) -> if (seen == stamp) return meta }
+        val meta = readMeta(dir)
+        if (meta == null) metaCache.remove(dir.name) else metaCache[dir.name] = stamp to meta
+        return meta
     }
 
     // ---- trash and favourites ------------------------------------------------
@@ -901,7 +929,7 @@ class NoteStore(context: Context) {
 
     fun trashed(): List<NoteMeta> =
         root.listFiles { f -> f.isDirectory && File(f, TRASHED).isFile }
-            ?.mapNotNull { readMeta(it) }
+            ?.mapNotNull { cachedMeta(it) }
             ?.sortedByDescending { it.trashedAt }
             ?: emptyList()
 
@@ -1087,6 +1115,7 @@ class NoteStore(context: Context) {
         val dir = File(root, id).apply { mkdirs() }
         try {
             atomicText(File(dir, "note.md"), text)
+            writeMarkdownPreview(dir, text)
             atomicText(File(dir, "meta.json"), JSONObject()
                 .put("title", title).put("kind", NoteKind.MARKDOWN.name)
                 .put("modified", System.currentTimeMillis()).put("folder", folder)
@@ -1099,6 +1128,25 @@ class NoteStore(context: Context) {
     }
 
     fun loadMarkdown(id: String): String = File(root, "$id/note.md").readText(Charsets.UTF_8)
+
+    /**
+     * The opening of a Markdown note, for its card: kept beside the note
+     * when it is saved, so the library reads a page's worth rather than the
+     * whole note for every card. A note saved before there was one is read
+     * from the note itself, and its preview written then.
+     */
+    fun markdownCardText(id: String): String? = runCatching {
+        val dir = File(root, id)
+        val preview = File(dir, MD_PREVIEW)
+        if (preview.isFile) return@runCatching preview.readText(Charsets.UTF_8)
+        val text = loadMarkdown(id)
+        writeMarkdownPreview(dir, text)
+        markdownCardCut(text)
+    }.getOrNull()
+
+    private fun writeMarkdownPreview(dir: File, text: String) {
+        runCatching { atomicText(File(dir, MD_PREVIEW), markdownCardCut(text)) }
+    }
 
     fun exportMarkdown(id: String, out: java.io.OutputStream): Boolean = runCatching {
         out.bufferedWriter(Charsets.UTF_8).use { it.write(loadMarkdown(id)) }
@@ -1125,6 +1173,7 @@ class NoteStore(context: Context) {
         val meta = JSONObject(metaFile.readText())
         check(meta.optString("kind") == NoteKind.MARKDOWN.name)
         atomicText(File(root, "$id/note.md"), text)
+        writeMarkdownPreview(File(root, id), text)
         meta.put("title", title).put("modified", System.currentTimeMillis())
         atomicText(metaFile, meta.toString())
     }
@@ -1353,15 +1402,18 @@ class NoteStore(context: Context) {
         if (needle.isEmpty()) return list().map { it to emptyList() }
         val notes = list()
         for (meta in notes) {
-            if (meta.kind == NoteKind.MARKDOWN) continue
+            if (meta.kind == NoteKind.MARKDOWN) {
+                // Its text in the index too, read again only once it has changed.
+                runCatching { searchIndex.syncFile(meta.id, File(root, "${meta.id}/note.md")) }
+                continue
+            }
             ensureTextIndex(meta.id)
             runCatching { searchIndex.sync(meta.id, File(root, "${meta.id}/pages")) }
         }
         val found = runCatching { searchIndex.find(needle) }.getOrDefault(emptyMap())
         return notes.mapNotNull { meta ->
             if (meta.kind == NoteKind.MARKDOWN) {
-                val match = meta.title.contains(needle, true) ||
-                    runCatching { loadMarkdown(meta.id).contains(needle, true) }.getOrDefault(false)
+                val match = meta.title.contains(needle, true) || found[meta.id].orEmpty().isNotEmpty()
                 return@mapNotNull if (match) meta to emptyList() else null
             }
             val files = found[meta.id].orEmpty()
@@ -2560,6 +2612,10 @@ class NoteStore(context: Context) {
         const val HEADER_BYTES = 12L
         const val COUNT_OFFSET = 8L
         const val CUSTOM_THUMB = "thumb.png"
+        /** A Markdown note's opening, for its card; see [markdownCardText]. */
+        const val MD_PREVIEW = "preview.md"
+        /** Every file a note's library entry is read from, for [metaStamp]. */
+        private val META_FILES by lazy { listOf("meta.json", CUSTOM_THUMB, AUTO_THUMB, TRASHED, FAVORITE, TAGS, LABEL, LOCKED) }
         const val AUTO_THUMB = "auto.png"
         const val THUMB_WIDTH = 480
         const val MAX_IMAGE_PX = 2048

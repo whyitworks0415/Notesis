@@ -207,6 +207,8 @@ internal object Measurements {
                 appendLine(view.latency.render(view.strokeCount()))
             }
             appendLine(WorkStats.render())
+            appendLine(MemoryTrim.report())
+            appendLine("Light mode: ${if (InteractionGovernor.lightMode) "on" else "off"} · slower device: ${if (InteractionGovernor.slowDevice) "yes" else "no"}")
             appendLine("memory ${(runtime.totalMemory() - runtime.freeMemory()) / mib} of ${runtime.maxMemory() / mib} MB" +
                 " · zoom $zoomPercent%")
         }.trimEnd()

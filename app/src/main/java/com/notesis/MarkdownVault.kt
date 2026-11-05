@@ -65,8 +65,15 @@ internal class MarkdownVault(private val context: Context, val tree: Uri) {
             for ((id, name) in folders) walk(id, "$prefix$name/", depth + 1)
         }
         walk(rootId, "", 0)
-        return found.sortedBy { it.path.lowercase(Locale.ROOT) }
+        return found.sortedBy { it.path.lowercase(Locale.ROOT) }.also { listed[tree.toString()] = it }
     }
+
+    /**
+     * What [files] found last time in this process, or null: walking a folder
+     * through the system's document picker is slow, so the library shows
+     * this at once and walks again behind it.
+     */
+    fun lastListed(): List<VaultFile>? = listed[tree.toString()]
 
     fun read(uri: Uri): String =
         resolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) } ?: error("Can't read the file")
@@ -90,6 +97,7 @@ internal class MarkdownVault(private val context: Context, val tree: Uri) {
     }.getOrNull()
 
     companion object {
+        private val listed = java.util.concurrent.ConcurrentHashMap<String, List<VaultFile>>()
         private const val MAX_FILES = 5000
         private const val MAX_DEPTH = 12
         private const val PREFS = "vaults"

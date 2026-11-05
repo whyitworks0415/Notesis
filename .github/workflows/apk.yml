@@ -67,6 +67,22 @@ jobs:
         continue-on-error: ${{ github.event.inputs.update != 'check' }}
         run: ./gradlew testReleaseUnitTest -Dorg.gradle.java.home="$JAVA_HOME" --no-daemon
 
+      # A check run also draws the library's pieces under Robolectric and keeps
+      # the pictures, since there is no device here to look at them on.
+      - name: Screenshots
+        if: ${{ github.event.inputs.update == 'check' }}
+        continue-on-error: true
+        run: ./gradlew testDebugUnitTest --tests 'com.notesis.LibraryScreenshotTest' -Dorg.gradle.java.home="$JAVA_HOME" --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ github.event.inputs.update == 'check' }}
+        continue-on-error: true
+        with:
+          name: screenshots-${{ github.sha }}
+          path: app/build/outputs/roborazzi/
+          if-no-files-found: warn
+          retention-days: 3
+
       - name: Name the build
         if: ${{ github.event.inputs.update != 'check' }}
         id: name

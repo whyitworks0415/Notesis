@@ -318,6 +318,14 @@ val LocalBackdrop = compositionLocalOf { Backdrop(null) }
  */
 val NoBackdrop = Backdrop(null)
 
+/**
+ * Whether anything can be drawn through a recorded backdrop here: blur and
+ * the glass's lens both need Android 12's render effects. Below it a
+ * recording is only the screen drawn a second time every frame, for nothing,
+ * so it is not made, whatever the look or the light mode say.
+ */
+internal val BACKDROP_DRAWABLE: Boolean = android.os.Build.VERSION.SDK_INT >= 31
+
 @Composable
 fun rememberBackdrop(active: Boolean): Backdrop {
     // Always the one layer, handed out only while active. Remembered only

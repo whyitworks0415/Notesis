@@ -20,5 +20,9 @@ class ImageSamplingTest {
         assertEquals(128L * 1024 * 1024, pdfCacheCeilingFor(2 * gb))
         assertEquals(256L * 1024 * 1024, pdfCacheCeilingFor(4 * gb))
         assertEquals(384L * 1024 * 1024, pdfCacheCeilingFor(8 * gb))
+        // An older tablet under 7GB is held lower, but keeps three screens' worth.
+        assertEquals(192L * 1024 * 1024, pdfCacheCeilingFor(6 * gb, 2560L * 1600, sdk = 30))
+        assertEquals(256L * 1024 * 1024, pdfCacheCeilingFor(6 * gb, 6000L * 4000, sdk = 30))
+        assertEquals(256L * 1024 * 1024, pdfCacheCeilingFor(6 * gb, 2560L * 1600, sdk = 34))
     }
 }

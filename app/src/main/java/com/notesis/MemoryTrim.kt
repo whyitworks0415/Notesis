@@ -31,8 +31,31 @@ internal object MemoryTrim {
     fun trim(level: Int): Boolean {
         val severe = isSevere(level) ?: return false
         val targets = synchronized(held) { held.toList() }
+        val before = heldBytes()
         for (target in targets) runCatching { target.trimMemory(severe) }
+        lastTrim = TrimRecord(System.currentTimeMillis(), level, severe, before, heldBytes())
         return true
+    }
+
+    /** The last time Android asked for memory back: when, how hard, and what was held before and after. */
+    data class TrimRecord(val at: Long, val level: Int, val severe: Boolean, val before: Long, val after: Long)
+
+    @Volatile var lastTrim: TrimRecord? = null
+        private set
+
+    /** The app's Java objects and its native memory (bitmaps live there), in bytes. */
+    private fun heldBytes(): Long {
+        val runtime = Runtime.getRuntime()
+        return runtime.totalMemory() - runtime.freeMemory() + android.os.Debug.getNativeHeapAllocatedSize()
+    }
+
+    /** A line for the diagnostics report: how much the last trim gave back. */
+    fun report(): String {
+        val trim = lastTrim ?: return "Memory given back: Android has not asked yet"
+        val mib = 1024L * 1024L
+        val ago = (System.currentTimeMillis() - trim.at) / 1000
+        return "Memory given back: ${(trim.before - trim.after) / mib} MB of ${trim.before / mib} MB held " +
+            "(level ${trim.level}${if (trim.severe) ", hidden" else ""}, ${ago}s ago)"
     }
 
     @Suppress("DEPRECATION")

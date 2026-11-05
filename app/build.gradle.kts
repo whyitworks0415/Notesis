@@ -43,6 +43,18 @@ android {
     buildFeatures { compose = true }
 
     kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
+
+    testOptions {
+        unitTests {
+            // The screenshot tests (src/testDebug) draw real Compose screens
+            // under Robolectric, which needs the app's resources and themes.
+            isIncludeAndroidResources = true
+            all {
+                it.systemProperty("roborazzi.test.record", "true")
+                it.systemProperty("robolectric.pixelCopyRenderMode", "hardware")
+            }
+        }
+    }
 }
 
 dependencies {
@@ -60,6 +72,11 @@ dependencies {
     implementation("com.google.mlkit:digital-ink-recognition:18.1.0")
     implementation("androidx.ink:ink-storage:1.0.0")
     implementation("androidx.activity:activity-compose:1.13.0")
+    // Installs the baseline profiles - the app's own (src/main/baseline-prof.txt)
+    // and those the Compose libraries ship - on a sideloaded install too, so
+    // the code they name is compiled ahead of time instead of interpreted for
+    // the first launches. The Play Store would do this; GitHub releases do not.
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     implementation(platform("androidx.compose:compose-bom:2026.06.01"))
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
@@ -77,6 +94,14 @@ dependencies {
     // tool and has no business in a release APK.
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
+    // Screenshots of the library's pieces without a device: Robolectric draws
+    // the Compose screens on the JVM and Roborazzi saves them as pictures,
+    // which the check build keeps (see .github/workflows/apk.yml).
+    testImplementation("org.robolectric:robolectric:4.17")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi:1.77.0")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.77.0")
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
     // The real org.json for JVM tests: android.jar only has stubs that throw,
     // and the layer list is saved as JSON.
     testImplementation("org.json:json:20231013")

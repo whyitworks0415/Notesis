@@ -1127,7 +1127,8 @@ class PdfSource private constructor(
             val heap = (manager?.largeMemoryClass ?: 128).toLong() * MB / 2
             val info = android.app.ActivityManager.MemoryInfo()
             val total = runCatching { manager?.getMemoryInfo(info); info.totalMem }.getOrDefault(0L)
-            val ceiling = pdfCacheCeilingFor(total)
+            val screen = context.resources.displayMetrics.let { it.widthPixels.toLong() * it.heightPixels }
+            val ceiling = pdfCacheCeilingFor(total, screen, android.os.Build.VERSION.SDK_INT)
             val bytes = maxOf(heap, total / 32).coerceIn(MIN_CACHE_BYTES.toLong(), ceiling)
             return (bytes / share.coerceAtLeast(1)).coerceAtLeast(MIN_CACHE_BYTES.toLong()).toInt()
         }
@@ -1162,16 +1163,25 @@ class PdfSource private constructor(
     }
 }
 
-/** One PDF's cache ceiling: under 3GB of RAM 128MB, under 7GB 256MB as before, more RAM up to 384MB. */
-internal fun pdfCacheCeilingFor(totalMem: Long): Long {
+/**
+ * One PDF's cache ceiling: under 3GB of RAM 128MB, under 7GB 256MB, more RAM
+ * up to 384MB. An Android 12 or older tablet under 7GB - an older one, whose
+ * system leaves an app less room - is held to 192MB, but never below three
+ * screens of [screenPixels] at four bytes a pixel, so what is on screen and
+ * either side of it stays sharp however large the screen.
+ */
+internal fun pdfCacheCeilingFor(totalMem: Long, screenPixels: Long = 0L, sdk: Int = 33): Long {
     val mb = 1024L * 1024L
     val gb = 1024L * mb
-    return when {
+    val byMemory = when {
         totalMem <= 0L -> 256L * mb
         totalMem < 3L * gb -> 128L * mb
         totalMem < 7L * gb -> 256L * mb
         else -> 384L * mb
     }
+    if (sdk >= 33 || totalMem <= 0L || totalMem >= 7L * gb) return byMemory
+    val threeScreens = screenPixels * 4L * 3L
+    return minOf(byMemory, maxOf(192L * mb, threeScreens))
 }
 
 /**
