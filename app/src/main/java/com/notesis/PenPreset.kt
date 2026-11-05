@@ -115,15 +115,8 @@ const val EDGE_PAGES = 6
 /** A one-finger double tap's own choice besides the edge actions: zoom in, or back to the page width. */
 const val DOUBLE_TAP_ZOOM = 7
 const val PEN_BUTTON_ERASE = 0
-const val PEN_BUTTON_LASER = 1
+/** 1 and 3 were once kept for other pen-button uses; anything but the lasso is read as the eraser. */
 const val PEN_BUTTON_LASSO = 2
-/**
- * A laser pointer while the button is held: a mark that follows the pen over
- * the screen and fades, never written into the note, its undo or its text.
- * Its own value, not [PEN_BUTTON_LASER]'s: that one was taken out and is
- * still read as the eraser, so settings saved back then keep erasing.
- */
-const val PEN_BUTTON_POINTER = 3
 
 /** Out of the box two taps on the right edge put the bar and the panels away; one and three do nothing. */
 val DEFAULT_EDGE_TAPS = listOf(EDGE_NOTHING, EDGE_HIDE_CHROME, EDGE_NOTHING)
@@ -176,8 +169,6 @@ data class CanvasGestures(
      * and turning the note. Off, three fingers are simply ignored.
      */
     val threeFingerGestures: Boolean = true,
-    /** The pen-button pointer leaves a fading trail; off, it is a dot that follows the pen. */
-    val laserTrail: Boolean = true,
 )
 
 const val PRESSURE_RESPONSE_DEFAULT = 10
@@ -233,7 +224,6 @@ fun InkCanvasView.applyGestures(gestures: CanvasGestures) {
     lassoRect = gestures.lassoRect
     subframeMode = gestures.subframe
     threeFingerGestures = gestures.threeFingerGestures
-    laserTrail = gestures.laserTrail
 }
 
 /**
@@ -569,7 +559,7 @@ class PenStore(context: Context) {
             longPressMenu = prefs.getBoolean("longPressMenu", true),
             linkOverlay = prefs.getBoolean("linkOverlay", true),
             eraserReturns = prefs.getBoolean("eraserReturns", false),
-            // The laser pointer was taken out: a button set to it erases, as it did before.
+            // Any other value saved by an older version erases, as the button did then.
             penButton = prefs.getInt("penButton", PEN_BUTTON_ERASE).takeIf { it == PEN_BUTTON_LASSO } ?: PEN_BUTTON_ERASE,
             pressureEraser = prefs.getBoolean("pressureEraser", false),
             pressureResponse = prefs.getInt("pressureResponse", PRESSURE_RESPONSE_DEFAULT).coerceIn(0, 100),
@@ -577,7 +567,6 @@ class PenStore(context: Context) {
             lassoRect = prefs.getBoolean("lassoRect", false),
             subframe = prefs.getInt("subframe", SUBFRAME_OFF).coerceIn(SUBFRAME_OFF, SUBFRAME_GHOST),
             threeFingerGestures = prefs.getBoolean("threeFingerGestures", true),
-            laserTrail = prefs.getBoolean("laserTrail", true),
         )
         set(value) = prefs.edit()
             .putBoolean("eraseInk", value.eraseInk)
@@ -616,7 +605,7 @@ class PenStore(context: Context) {
             .putBoolean("lassoRect", value.lassoRect)
             .putInt("subframe", value.subframe)
             .putBoolean("threeFingerGestures", value.threeFingerGestures)
-            .putBoolean("laserTrail", value.laserTrail)
+            .remove("laserTrail")
             .apply()
 
     /** See [InkCanvasView.compatWetInk]; on by default where the front buffer is known to fail. */

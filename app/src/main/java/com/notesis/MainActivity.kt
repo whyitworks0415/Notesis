@@ -4743,8 +4743,6 @@ private fun NoteScreen(
     )
     var showLatency by remember { mutableStateOf(false) }
     var confirmClearAll by remember { mutableStateOf(false) }
-    var ruler by remember { mutableStateOf<RulerKind?>(null) }
-    var rulerAngle by remember { mutableStateOf(false) }
     var showPages by remember { mutableStateOf(false) }
     // The bar and the rest of the chrome over the note, put away upwards by
     // taps on the page's right edge (see EDGE_HIDE_CHROME).
@@ -4893,38 +4891,6 @@ private fun NoteScreen(
                 edits++
             }
         }
-    }
-    if (rulerAngle) {
-        var text by remember { mutableStateOf("") }
-        var inches by remember { mutableStateOf(canvas?.rulerInches == true) }
-        AlertDialog(
-            onDismissRequest = { rulerAngle = false },
-            title = { Text("Ruler settings") },
-            text = {
-                Column {
-                    OutlinedTextField(
-                        value = text,
-                        onValueChange = { text = it.filter { c -> c.isDigit() || c == '.' || c == '-' }.take(6) },
-                        label = { Text("Angle (°)") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        SettingsChoiceChip(selected = !inches, onClick = { inches = false }, label = "mm",
-                            modifier = Modifier.padding(end = 8.dp))
-                        SettingsChoiceChip(selected = inches, onClick = { inches = true }, label = "inch")
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    text.toFloatOrNull()?.let { canvas?.setRulerDegrees(it) }
-                    canvas?.rulerInches = inches
-                    rulerAngle = false
-                }) { Text("Apply") }
-            },
-            dismissButton = { TextButton(onClick = { rulerAngle = false }) { Text("Cancel") } },
-        )
     }
     if (goToPage) canvas?.let { view ->
         GoToPageDialog(view.document.pages.size, onGo = { view.jumpToPage(it) }, onDismiss = { goToPage = false })
@@ -5519,8 +5485,6 @@ private fun NoteScreen(
                             PageAttachment.Kind.COMMENT -> openComment = pageIndex to at
                         }
                     }
-                    view.rulerKind = ruler
-                    view.onRulerClosed = { ruler = null }
                     view.autoShapeRecognitionEnabled = autoShapes
                     view.axisSnapEnabled = axisSnap
                     view.dottedPattern = dottedPattern
@@ -10390,12 +10354,6 @@ private fun Toolbar(
                 if (!stretches && PenRowItem.PAGE_LABEL !in config.penRow) Spacer(Modifier.weight(1f))
               }
             })
-}
-
-internal fun rulerLabel(kind: RulerKind): String = when (kind) {
-    RulerKind.RULER -> "Ruler"
-    RulerKind.TRIANGLE -> "Set square"
-    RulerKind.PROTRACTOR -> "Protractor"
 }
 
 

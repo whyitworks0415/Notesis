@@ -772,12 +772,12 @@ internal fun Tool.isDabbed(): Boolean =
 
 /**
  * What the pen just did in reading (gesture) mode, in screen pixels: the
- * path a drag took, and a ring where a tap with the button landed - and the
- * laser pointer, drawn the same way. A fixed ring of samples that age out
+ * path a drag took, and a ring where a tap with the button landed. A fixed
+ * ring of samples that age out
  * after [LIFE_MS], so the trail follows the pen and fades behind it without
  * ever touching the page or its history.
  */
-private class LaserView(context: Context) : View(context) {
+private class GestureTrailView(context: Context) : View(context) {
     private val xs = FloatArray(CAPACITY)
     private val ys = FloatArray(CAPACITY)
     private val times = LongArray(CAPACITY)
@@ -1214,9 +1214,6 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** What holding the pen's barrel button while writing does: one of PEN_BUTTON_*. */
     var penButton: Int = PEN_BUTTON_ERASE
-
-    /** Whether the pen-button pointer leaves a trail or is only a dot; see [PEN_BUTTON_POINTER]. */
-    var laserTrail: Boolean = true
 
     /** The eraser grows with pressure: a light touch takes a fraction of [eraserWidth], a firm one all of it. */
     var pressureEraser: Boolean = false
@@ -1809,8 +1806,7 @@ class InkCanvasView @JvmOverloads constructor(
     var subframeMode: Int
         get() = subframe.mode
         set(value) { subframe.mode = value }
-    // The laser pointer is gone; its view draws the ring a button tap leaves in reading mode.
-    private val laser = LaserView(context).apply { tint(GESTURE_TRAIL_COLOR) }
+    private val gestureTrailView = GestureTrailView(context).apply { tint(GESTURE_TRAIL_COLOR) }
     private var gestureTrail = false
     private var gestureButton = false
     private var gestureTrailMoved = false
@@ -1823,9 +1819,6 @@ class InkCanvasView @JvmOverloads constructor(
      */
     private fun startGestureTrail(event: MotionEvent, button: Boolean) {
         val i = event.actionIndex
-        // The same view draws the pen-button pointer, in its own colour and style.
-        laser.tint(GESTURE_TRAIL_COLOR)
-        laser.trail = true
         gestureTrail = true
         gestureButton = button
         gestureTrailMoved = false
@@ -1841,10 +1834,9 @@ class InkCanvasView @JvmOverloads constructor(
     private fun finishGestureTrail(event: MotionEvent) {
         if (!gestureTrail) return
         gestureTrail = false
-        if (gestureButton && !gestureTrailMoved) laser.tapAt(gestureDownX, gestureDownY, event.eventTime)
-        laser.lift()
+        if (gestureButton && !gestureTrailMoved) gestureTrailView.tapAt(gestureDownX, gestureDownY, event.eventTime)
+        gestureTrailView.lift()
     }
-    private val ruler = RulerView(context).apply { visibility = GONE }
     private val eyedropper = EyedropperView(context)
 
     /** The next touch picks a colour off the screen instead of drawing; [onPicked] gets it. */
@@ -1852,30 +1844,6 @@ class InkCanvasView @JvmOverloads constructor(
         eyedropper.onPicked = onPicked
     }
 
-    /** The straightedge laid on the screen, or null for none. */
-    var rulerKind: RulerKind? = null
-        set(value) {
-            field = value
-            if (value != null) ruler.kind = value
-            ruler.visibility = if (value == null) GONE else VISIBLE
-        }
-
-    var rulerInches: Boolean
-        get() = ruler.inches
-        set(value) { ruler.inches = value }
-
-    /** The ruler asked to go away: pinched shut or dragged off the screen. */
-    var onRulerClosed: (() -> Unit)?
-        get() = ruler.onClosed
-        set(value) { ruler.onClosed = value }
-
-    fun setRulerDegrees(degrees: Float) = ruler.setDegrees(degrees)
-
-    /** The edge the pen is drawing along, and the line so far in page units. */
-    private var rulerEdge: RulerEdge? = null
-    private val rulerPoints = ArrayList<FloatArray>()
-    private val rulerScratch = FloatArray(2)
-    private var laserPointer: Int? = null
     private val dry = DryLayer(context)
     /** Android chooses its own horizon, so an overlong result is clipped locally. */
     private val predictor: MotionEventPredictor
@@ -2146,7 +2114,7 @@ class InkCanvasView @JvmOverloads constructor(
                 }
                 if (beginHeldShape()) {
                     performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
-                    laser.tapAt(holdX, holdY, SystemClock.uptimeMillis())
+                    gestureTrailView.tapAt(holdX, holdY, SystemClock.uptimeMillis())
                     return
                 }
             }
@@ -2513,8 +2481,7 @@ class InkCanvasView @JvmOverloads constructor(
         addView(compatWet, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(predictionHead, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(subframe, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-        addView(laser, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-        addView(ruler, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        addView(gestureTrailView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(eyedropper, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         wet.textureBitmapStore = PencilTextureStore
         compatWet.inkEnabled = compatWetInk
@@ -3964,7 +3931,6 @@ class InkCanvasView @JvmOverloads constructor(
         growEndlessPages()
         onViewportChanged?.invoke()
         if (hasLassoSelection()) onLassoScreenMoved?.invoke()
-        ruler.pxPerMm = currentScale() * Page.A4_WIDTH / A4_MM_WIDTH
         updateCurrentPage()
         if (!pdfPriorityInitialized && pdf != null) {
             pdfPriorityInitialized = true
@@ -4089,8 +4055,7 @@ class InkCanvasView @JvmOverloads constructor(
                 event.actionMasked == MotionEvent.ACTION_POINTER_DOWN)) {
             endFingerGestureForPen()
         }
-        if (!stylus && activeStylusPointer == null && laserPointer == null) {
-            if (ruler.onFinger(event)) return true
+        if (!stylus && activeStylusPointer == null) {
             // A finger set to write takes the pen's path, until a second finger says otherwise.
             if (oneFinger == FINGER_DRAW && event.actionMasked == MotionEvent.ACTION_DOWN) {
                 fingerDrawing = true
@@ -4158,33 +4123,6 @@ class InkCanvasView @JvmOverloads constructor(
             }
         }
         if (event.actionMasked != MotionEvent.ACTION_HOVER_EXIT) trackLinkHover(event.x, event.y, leaving = false)
-        return true
-    }
-
-    private fun onLaser(event: MotionEvent): Boolean {
-        when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
-                if (laserPointer != null) return true
-                laserPointer = event.getPointerId(event.actionIndex)
-                laser.add(event.getX(event.actionIndex), event.getY(event.actionIndex), event.eventTime, true,
-                    startsStroke = true)
-            }
-            MotionEvent.ACTION_MOVE -> {
-                val index = event.findPointerIndex(laserPointer ?: return true)
-                if (index < 0) return true
-                for (h in 0 until event.historySize) {
-                    laser.add(event.getHistoricalX(index, h), event.getHistoricalY(index, h),
-                        event.getHistoricalEventTime(h), true)
-                }
-                laser.add(event.getX(index), event.getY(index), event.eventTime, true)
-            }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
-                if (event.actionMasked != MotionEvent.ACTION_CANCEL &&
-                    event.getPointerId(event.actionIndex) != laserPointer) return true
-                laserPointer = null
-                laser.lift()
-            }
-        }
         return true
     }
 
@@ -4285,7 +4223,6 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun onStylusEvent(event: MotionEvent): Boolean {
-        if (laserPointer != null) return onLaser(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 if (activeStylusPointer != null) return true
@@ -4306,17 +4243,6 @@ class InkCanvasView @JvmOverloads constructor(
                 if (!compatWetInk) requestUnbufferedDispatch(event)
                 // A tab on a page's edge opens what is kept there, in any tool.
                 if (openAttachmentAt(event.getX(event.actionIndex), event.getY(event.actionIndex))) return true
-                // The barrel button held, set to point: a laser over the screen,
-                // anywhere, page or not. Nothing about it reaches the note -
-                // not its strokes, its undo or its handwriting index - and
-                // when the pen lifts, the tool in hand is the one it was.
-                if (!readMode && penButton == PEN_BUTTON_POINTER && (samsungSideButton ||
-                        (event.getToolType(event.actionIndex) != MotionEvent.TOOL_TYPE_ERASER && event.isEraserGesture()))
-                ) {
-                    laser.tint(LASER_POINTER_COLOR)
-                    laser.trail = laserTrail
-                    return onLaser(event)
-                }
                 val pageIndex = pageUnder(event, event.actionIndex)
                 // Off the pages: the whiteboard takes ink and the eraser, when it is on.
                 val onBoard = pageIndex < 0
@@ -4398,25 +4324,11 @@ class InkCanvasView @JvmOverloads constructor(
                 if (!onBoard && !eraserGesture && tool != Tool.ERASER &&
                     toggleCheckboxAt(event.getX(event.actionIndex), event.getY(event.actionIndex), index)
                 ) return true
-                // Ink - pen, shape, ruler line, polygon - on a locked or hidden
+                // Ink - pen, shape, polygon - on a locked or hidden
                 // layer is refused before any of it is drawn. Tape is not on a
                 // layer, and the eraser only ever skips what it may not touch.
                 if (!readMode && !eraserGesture && tool != Tool.ERASER && !maskMode && refuseLockedTarget()) {
                     return true
-                }
-                if (rulerKind != null && !readMode && !eraserGesture && tool != Tool.ERASER) {
-                    val edge = ruler.edgeAt(event.x, event.y)
-                    if (edge != null) {
-                        onDrawingChanged?.invoke(true)
-                        onWritingStarted?.invoke()
-                        rulerEdge = edge
-                        shapePage = index
-                        drawingShape = true
-                        rulerPoints.clear()
-                        addRulerPoint(event.x, event.y)
-                        dry.invalidate()
-                        return true
-                    }
                 }
                 val shape = shapeKind
                 if (shape == ShapeKind.POLYGON && !readMode && !eraserGesture && tool != Tool.ERASER) {
@@ -4609,14 +4521,6 @@ class InkCanvasView @JvmOverloads constructor(
                 }
                 if (vertexInputs != null) {
                     dragVertex(event, index)
-                    return true
-                }
-                if (drawingShape && rulerEdge != null) {
-                    for (h in 0 until event.historySize) {
-                        addRulerPoint(event.getHistoricalX(index, h), event.getHistoricalY(index, h))
-                    }
-                    addRulerPoint(event.getX(index), event.getY(index))
-                    dry.postInvalidateOnAnimation()
                     return true
                 }
                 if (drawingShape) {
@@ -4907,7 +4811,7 @@ class InkCanvasView @JvmOverloads constructor(
             MotionEvent.ACTION_CANCEL -> {
                 if (gestureTrail) {
                     gestureTrail = false
-                    laser.lift()
+                    gestureTrailView.lift()
                 }
                 if (readingWithButton) {
                     readButtonGesture.reset()
@@ -5926,7 +5830,7 @@ class InkCanvasView @JvmOverloads constructor(
     /** Whether a pen down off the pages writes on the whiteboard: ink or the eraser, nothing else. */
     private fun boardTakes(event: MotionEvent): Boolean {
         if (!whiteboard || readMode || lassoMode || imageMode || captureMode || maskMode) return false
-        if (shapeKind != null || rulerKind != null) return false
+        if (shapeKind != null) return false
         val eraserGesture = event.isEraserGesture() || samsungSideButton
         return eraserGesture || tool == Tool.ERASER || tool.isFreehandPen() || tool == Tool.HIGHLIGHTER
     }
@@ -6783,36 +6687,19 @@ class InkCanvasView @JvmOverloads constructor(
      * a drawn rectangle is ink like any other and erases, saves and zooms the
      * same way. Nothing new has to know what a shape is.
      */
-    /**
-     * Lays screen (x, y) against the ruler edge in hand and keeps it in page
-     * units. A straight edge needs only its two ends; an arc keeps its path.
-     */
-    private fun addRulerPoint(x: Float, y: Float) {
-        val edge = rulerEdge ?: return
-        ruler.project(edge, x, y, strokeWidth * currentScale() / 2f + RULER_GAP_PX, rulerScratch)
-        val point = FloatArray(2)
-        pageLocalInto(rulerScratch[0], rulerScratch[1], shapePage, point)
-        if (!edge.isArc && rulerPoints.size >= 2) rulerPoints[1] = point else rulerPoints += point
-    }
-
     private fun finishShape() {
         val kind = shapeKind
         val page = document.pages.getOrNull(shapePage)
         drawingShape = false
-        val ruled = rulerEdge != null
-        rulerEdge = null
-        if ((kind == null && !ruled) || page == null) {
-            rulerPoints.clear()
+        if (kind == null || page == null) {
             dry.invalidate()
             return
         }
-        if (!ruled && kind == ShapeKind.CHECKBOX) {
-            rulerPoints.clear()
+        if (kind == ShapeKind.CHECKBOX) {
             placeCheckbox(page, shapeStart, shapeEnd)
             return
         }
-        val points = if (ruled) rulerPoints.toList() else shapePoints(kind!!, shapeStart, shapeEnd)
-        rulerPoints.clear()
+        val points = shapePoints(kind, shapeStart, shapeEnd)
         if (points.size < 2) {
             dry.invalidate()
             return
@@ -10289,11 +10176,11 @@ class InkCanvasView @JvmOverloads constructor(
 
         private fun drawShapePreview(canvas: Canvas) {
             val kind = shapeKind
-            if (kind == null && rulerEdge == null) return
-            val points = if (rulerEdge != null) rulerPoints else shapePoints(kind!!, shapeStart, shapeEnd)
+            if (kind == null) return
+            val points = shapePoints(kind, shapeStart, shapeEnd)
             if (points.size < 2) return
             // Squared up: a red guide round the box says the sides are now equal.
-            if (kind != null && rulerEdge == null) squaredShapeEnd(kind, shapeStart, shapeEnd)?.let { end ->
+            squaredShapeEnd(kind, shapeStart, shapeEnd)?.let { end ->
                 overlay.color = 0xFFE53935.toInt()
                 overlay.strokeWidth = 1.5f / currentScale()
                 overlay.pathEffect = lassoDashes(currentScale())
@@ -10545,7 +10432,6 @@ class InkCanvasView @JvmOverloads constructor(
         const val FLING_FRICTION = 3.2f
         const val DETAIL_THRESHOLD_PX = 2048
         const val SHADOW = 4f
-        const val RULER_GAP_PX = 1.5f
         const val SNAP_ALIGN_PX = 10f
         const val PULL_FOR_PAGE_PX = 90f
         const val VERTEX_HANDLE_PX = 9f
@@ -10554,7 +10440,6 @@ class InkCanvasView @JvmOverloads constructor(
         const val DOUBLE_TAP_ZOOM_FACTOR = 2f
         const val STRIKE_HEIGHT = 0.08f
         // Page units are A4 at 150dpi, so a real millimetre of page is this many of them.
-        const val A4_MM_WIDTH = 210f
         const val IMAGE_INSERT_FRACTION = 0.5f
         const val IMAGE_HANDLE_PX = 22f
         const val IMAGE_MIN_SIZE = 32f
@@ -10605,8 +10490,6 @@ class InkCanvasView @JvmOverloads constructor(
         /** Wider than this, a page picture is a close look (the page peek), kept in full colour. */
         private const val LARGE_THUMBNAIL_PX = 640
         const val GESTURE_TRAIL_COLOR = 0xFF3B7DDD.toInt()
-        /** The pen-button pointer's red, as laser pointers are. */
-        const val LASER_POINTER_COLOR = 0xFFFF3B30.toInt()
         const val MEASURED_LATENCY_REFRESH_MS = 500L
         /** How far outside a checkbox, in screen pixels, a tap still ticks it. */
         const val CHECKBOX_TOUCH_SLOP_PX = 14f

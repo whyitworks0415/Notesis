@@ -25,7 +25,6 @@ Checking…	확인하는 중…
 Check for updates	업데이트 확인
 Open-source licenses	오픈소스 라이선스
 Tell me about updates when the app opens	앱을 열 때 업데이트 알려 주기
-Some versions are released as manual updates. Those are never announced; they wait here until you update.	일부 버전은 수동 업데이트로 나옵니다. 수동 업데이트는 따로 알리지 않고, 직접 업데이트할 때까지 여기에서 기다립니다.
 Screen	화면
 Reduced to fit in memory	메모리에 맞게 줄였습니다
 Capped at {0} px per side	한 변 최대 {0}px로 제한됨
@@ -280,7 +279,6 @@ Reading the web page	웹 페이지를 읽는 중
 Couldn't read the web page	웹 페이지를 읽지 못했습니다
 Create	만들기
 Imported {0}	{0} 가져왔습니다
-All notes	모든 노트
 Notes	노트
 Select	선택
 Sort	정렬
@@ -504,14 +502,11 @@ Dot	점
 Cornell	코넬
 Infinite down	아래로 무한
 Infinite all ways	모든 방향으로 무한
-Custom templates	내 템플릿
 + Add image template	+ 이미지 템플릿 추가
 Couldn't export	내보내지 못했습니다
 Couldn't start recording	녹음을 시작하지 못했습니다
 The attached note is gone	첨부한 노트가 없어졌습니다
 Top bar mode width	위쪽 막대 모드 너비
-Ruler settings	자 설정
-Angle (°)	각도 (°)
 Apply	적용
 Couldn't read that image	그 이미지를 읽지 못했습니다
 Couldn't find the linked note	링크된 노트를 찾지 못했습니다
@@ -585,7 +580,6 @@ Paste text	텍스트 붙여넣기
 Paste image	이미지 붙여넣기
 Couldn't paste the image	이미지를 붙여넣지 못했습니다
 Nothing to paste	붙여넣을 것이 없습니다
-Attach to this page…	이 페이지에 첨부…
 Untitled note	제목 없는 노트
 Resize the web panel	웹 패널 크기 조정
 Make wider	넓게
@@ -701,7 +695,6 @@ Select pages up to here	여기까지 페이지 선택
 Bookmarked	책갈피함
 Remove bookmark	책갈피 지우기
 Bookmark	책갈피
-Attach…	첨부…
 Show comments and practice pages	메모와 연습 페이지 보이기
 Hide comments and practice pages	메모와 연습 페이지 숨기기
 Set contents entry	목차 항목 정하기
@@ -734,9 +727,6 @@ Split notes	노트 나눠 보기
 Unpin bar	상단 고정 풀기
 Pin to top	상단 고정
 Straight line	직선
-Ruler	자
-Set square	삼각자
-Protractor	각도기
 No other notes	다른 노트가 없습니다
 Show tools	도구 보이기
 Basic	기본
@@ -1438,15 +1428,9 @@ Tap one to use it; hold it to remove it	눌러서 쓰고, 길게 눌러서 지�
 Recognized text	인식한 글자
 Other readings	다른 인식 결과
 Picking one replaces that line; it starts the text again from the readings chosen	하나를 고르면 그 줄이 바뀝니다. 고른 결과로 글자를 다시 만듭니다
-Laser pointer	레이저 포인터
-Points (laser)	가리키기(레이저)
-Laser pointer leaves a trail	레이저 포인터가 자국을 남김
-Held, the pen button points instead of writing: red over the screen, fading behind the pen. Nothing is added to the note.	펜 버튼을 누른 채 쓰면 쓰지 않고 가리킵니다. 화면 위에 빨갛게 나타나고 펜 뒤로 사라지며, 노트에는 아무것도 더해지지 않습니다.
 Copied to page {0}	{0}쪽에 복사함
 Draw it with the rest of the screen	화면의 나머지와 함께 그리기
 Off: the stroke being written goes on a layer of its own, which skips redrawing the page. On: it is drawn with the rest of the screen, which can look steadier on some tablets but slows with a web panel or a second note open. Try both and keep the one that feels smoother.	끄면 쓰고 있는 획을 따로 된 층에 그려 페이지를 다시 그리지 않습니다. 켜면 화면의 나머지와 함께 그립니다. 어떤 태블릿에서는 이쪽이 더 고르게 보이지만, 웹 패널이나 두 번째 노트를 열어 두면 느려집니다. 둘 다 써 보고 더 부드러운 쪽을 고르세요.
-Show folders	폴더 보이기
-Hide folders	폴더 숨기기
 Brightness	밝기
 App brightness	앱 밝기
 Only while Notesis is in front; the tablet's own setting is left as it is.	Notesis가 화면에 있을 때만 적용됩니다. 태블릿의 밝기 설정은 그대로입니다.
@@ -1459,20 +1443,6 @@ Paper	용지
 Where	위치
 After this page	이 페이지 다음
 At the end	맨 끝
-Read a selection with Claude	선택 영역을 Claude로 읽기
-When you read a lasso selection, the selected ink is sent as a picture to Claude with your own Anthropic API key, which reads messy and slanted writing far better. Needs the internet and is billed to your key. Search stays on the tablet.	올가미로 고른 손글씨를 읽을 때, 고른 잉크를 그림으로 만들어 내 Anthropic API 키로 Claude에 보냅니다. 흘려 쓰거나 기울어진 글씨를 훨씬 잘 읽습니다. 인터넷이 필요하고 요금은 내 키로 청구됩니다. 필기 검색은 태블릿 안에서 그대로 합니다.
-Model	모델
-Opus 5.5 reads best; Sonnet and Haiku are quicker and cost less.	Opus 5.5가 가장 잘 읽고, Sonnet과 Haiku는 더 빠르고 저렴합니다.
-An API key is saved on this tablet.	이 태블릿에 API 키가 저장되어 있습니다.
-Remove key	키 지우기
-Anthropic API key	Anthropic API 키
-Save key	키 저장
-Kept on this tablet only, never in backups or the settings file.	이 태블릿에만 저장되고, 백업이나 설정 파일에는 들어가지 않습니다.
-Read on the tablet instead: 	대신 태블릿에서 읽었습니다: 
-No API key set	API 키가 없습니다
-Nothing to read	읽을 것이 없습니다
-The model declined to read this	모델이 이 내용을 읽지 않았습니다
-AI reading failed	AI로 읽지 못했습니다
 Whiteboard	화이트보드
 Write on the desk around the pages	페이지 바깥 바탕에 쓰기
 The space beside the pages becomes a whiteboard for the pen and the eraser. What is written there stays with the note and is left out of PDFs.	페이지 옆 공간이 펜과 지우개를 쓸 수 있는 화이트보드가 됩니다. 거기에 쓴 것은 노트에 남고, PDF에는 들어가지 않습니다.
@@ -1525,7 +1495,6 @@ Column left	왼쪽에 열
 Column right	오른쪽에 열
 Delete row	행 삭제
 Delete column	열 삭제
-Open the Markdown vault	마크다운 보관함 열기
 Settings and more	설정과 더 보기
 Show the library's buttons	목록 버튼 보이기
 New folder in {0}	{0} 안에 새 폴더

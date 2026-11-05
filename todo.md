@@ -277,21 +277,23 @@
 
 ## 12. 자·삼각자·각도기
 
-- [x] RULE-01 화면에 자를 놓고 사용하기.
-- [x] RULE-02 미터법 단위 지원하기.
-- [x] RULE-03 인치 등 야드파운드법 단위 지원하기.
-- [x] RULE-04 ISO A4의 실제 mm 기준으로 눈금 다루기.
-- [x] RULE-05 한 손가락으로 자를 옮기기.
-- [x] RULE-06 두 손가락으로 자를 회전하기.
-- [x] RULE-07 나침반 부분을 한 손가락으로 누르면 가까운 45도 배수에 맞추기.
-- [x] RULE-08 두 손가락으로 누르면 반시계 방향으로 90도 회전하기.
-- [x] RULE-09 자 도구 아이콘을 다시 눌러 닫기.
-- [x] RULE-10 두 손가락 핀치로 자를 닫기.
-- [x] RULE-11 자를 화면 밖으로 끌어 닫기.
-- [x] RULE-12 자의 각도를 직접 설정하기.
-- [x] RULE-13 자 눈금에 맞추는 스냅 동작.
-- [x] RULE-14 삼각자 도구.
-- [x] RULE-15 각도기 도구.
+> Notesis는 0.90.0에서 자·삼각자·각도기를 코드까지 없앴다. 아래는 Notewise 비교용으로만 남긴다.
+
+- [ ] RULE-01 화면에 자를 놓고 사용하기. _(Notesis에서 제거됨, 0.90.0)_
+- [ ] RULE-02 미터법 단위 지원하기. _(Notesis에서 제거됨, 0.90.0)_
+- [ ] RULE-03 인치 등 야드파운드법 단위 지원하기. _(Notesis에서 제거됨, 0.90.0)_
+- [ ] RULE-04 ISO A4의 실제 mm 기준으로 눈금 다루기. _(Notesis에서 제거됨, 0.90.0)_
+- [ ] RULE-05 한 손가락으로 자를 옮기기. _(Notesis에서 제거됨, 0.90.0)_
+- [ ] RULE-06 두 손가락으로 자를 회전하기. _(Notesis에서 제거됨, 0.90.0)_
+- [ ] RULE-07 나침반 부분을 한 손가락으로 누르면 가까운 45도 배수에 맞추기. _(Notesis에서 제거됨, 0.90.0)_
+- [ ] RULE-08 두 손가락으로 누르면 반시계 방향으로 90도 회전하기. _(Notesis에서 제거됨, 0.90.0)_
+- [ ] RULE-09 자 도구 아이콘을 다시 눌러 닫기. _(Notesis에서 제거됨, 0.90.0)_
+- [ ] RULE-10 두 손가락 핀치로 자를 닫기. _(Notesis에서 제거됨, 0.90.0)_
+- [ ] RULE-11 자를 화면 밖으로 끌어 닫기. _(Notesis에서 제거됨, 0.90.0)_
+- [ ] RULE-12 자의 각도를 직접 설정하기. _(Notesis에서 제거됨, 0.90.0)_
+- [ ] RULE-13 자 눈금에 맞추는 스냅 동작. _(Notesis에서 제거됨, 0.90.0)_
+- [ ] RULE-14 삼각자 도구. _(Notesis에서 제거됨, 0.90.0)_
+- [ ] RULE-15 각도기 도구. _(Notesis에서 제거됨, 0.90.0)_
 
 근거: [자 조작 안내][ruler], [2.19 눈금 스냅][release219], [각도 입력·삼각자·각도기 변경 기록][history].
 
@@ -376,7 +378,7 @@
 - [x] AUX-01 Tape 도구로 내용 가리기.
 - [x] AUX-02 테이프를 눌러 가린 내용 보기.
 - [x] AUX-03 가리기와 보여주기를 이용해 암기·복습하기.
-- [x] AUX-04 Laser 도구로 설명할 부분을 가리키기.
+- [ ] AUX-04 Laser 도구로 설명할 부분을 가리키기. _(Notesis에서 제거됨, 0.90.0)_
 - [x] AUX-05 레이저 포인터의 점 스타일 사용하기.
 - [x] AUX-06 스타일러스 단축 동작으로 현재 도구와 레이저를 전환하기.
 - [x] AUX-07 Zoom Box에서 확대된 부분에 정밀하게 필기하기.
@@ -966,7 +968,7 @@ Notewise의 Liquid Glass 출시 기록은 iOS에 관한 것이다. 이것만으�
 | 텍스트 상자 | 저장 모델에 text·size·color, 편집 가능한 메타데이터 | 부분 서식, 글꼴 선택, 배경·모서리·여백, Google Fonts | [TextBox.kt](app/src/main/java/com/notesis/TextBox.kt) |
 | 이미지 | 이미지 배치·문서 저장 경로 | 자유형 자르기·테두리·스티커·배경 제거·동영상은 별도 확인 | [MainActivity.kt](app/src/main/java/com/notesis/MainActivity.kt), [Document.kt](app/src/main/java/com/notesis/Document.kt) |
 | 스티키 노트·표 | 별도 컨테이너 패리티는 아직 판정하지 않음 | 내부 손글씨·이미지·텍스트의 결합과 함께 이동하는 전체 흐름 | 캔버스·문서 모델 확장 검토 |
-| 가리기·설명 | 학습 마스크와 레이저 관련 구현 | Notewise Tape·Laser의 표시·취소·저장 동작 비교 | [MaskStudy.kt](app/src/main/java/com/notesis/MaskStudy.kt), [InkCanvasView.kt](app/src/main/java/com/notesis/InkCanvasView.kt) |
+| 가리기·설명 | 학습 마스크 구현(레이저는 0.90.0에서 제거) | Notewise Tape·Laser의 표시·취소·저장 동작 비교 | [MaskStudy.kt](app/src/main/java/com/notesis/MaskStudy.kt), [InkCanvasView.kt](app/src/main/java/com/notesis/InkCanvasView.kt) |
 | 페이지·배경 | 페이지 추가·복제·배치·사용자 배경 | 전체 페이지 회전, 다른 노트로 이동·복사, 페이지 작업 실행 취소 | [Document.kt](app/src/main/java/com/notesis/Document.kt), [DocumentLayoutPolicy.kt](app/src/main/java/com/notesis/DocumentLayoutPolicy.kt) |
 | 페이지 단위 | A4 기본값은 150dpi 기준 1,240×1,754 | Notewise의 300dpi 단위와 화면·내보내기 크기를 비교; 같은 px로 무조건 변경하지 않기 | [Document.kt](app/src/main/java/com/notesis/Document.kt) |
 | PDF | PDF 표시·텍스트 선택·내부/웹 링크 관련 구현 | 선택 서식·번역 메뉴·스캔 OCR·내보낸 주석의 표현 확인 | [PdfSource.kt](app/src/main/java/com/notesis/PdfSource.kt), [PdfLinks.kt](app/src/main/java/com/notesis/PdfLinks.kt) |
@@ -1005,7 +1007,7 @@ Notewise의 Liquid Glass 출시 기록은 iOS에 관한 것이다. 이것만으�
 - [ ] CHECK-18 동영상 형식·코덱·URL 지원, 재생 버튼·음량·반복·전체 화면.
 - [ ] CHECK-19 사용자 스티커 추가·팩 가져오기, 최근 사용 항목 수와 저장 위치.
 - [ ] CHECK-20 Tape 전체 공개·개별 공개 옵션, 암기 채점 기능 유무.
-- [ ] CHECK-21 Laser 색·잔상·지속 시간, 저장·내보내기에 포함되는지.
+- [ ] CHECK-21 Laser 색·잔상·지속 시간, 저장·내보내기에 포함되는지. _(Notesis에서 제거됨, 0.90.0)_
 - [ ] CHECK-22 Zoom Box 자동 전진·다음 줄·필기 영역·다시 열 때 상태 유지.
 - [ ] CHECK-23 최대 확대율·최소 확대율의 최신값, 두 페이지의 홀수 마지막 장·표지 처리.
 - [ ] CHECK-24 무한 캔버스·사용자 레이어의 실제 제공 여부. 공개 요청 글만으로 완료 판정하지 않기.
