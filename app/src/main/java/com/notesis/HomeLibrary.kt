@@ -25,7 +25,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -125,6 +124,13 @@ internal fun Modifier.dragToSelect(
     edgeTop: () -> Float,
     edgeBottom: () -> Float,
     onEdge: (Float) -> Unit,
+    /**
+     * Held on a note that is already selected, the drag carries the selected
+     * notes instead of selecting: let go over a folder's tile and they are
+     * moved into it. [onCarry] follows the finger (null when it is over).
+     */
+    onDropOnFolder: ((Set<String>, String) -> Unit)? = null,
+    onCarry: (Offset?) -> Unit = {},
 ): Modifier {
     // The gesture outlives a recomposition; it reads the latest of each.
     val order by rememberUpdatedState(order)
@@ -134,6 +140,8 @@ internal fun Modifier.dragToSelect(
     val edgeTop by rememberUpdatedState(edgeTop)
     val edgeBottom by rememberUpdatedState(edgeBottom)
     val onEdge by rememberUpdatedState(onEdge)
+    val onDropOnFolder by rememberUpdatedState(onDropOnFolder)
+    val onCarry by rememberUpdatedState(onCarry)
     return onGloballyPositioned { tiles.origin = it.positionInRoot() }.pointerInput(tiles) {
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
@@ -156,6 +164,39 @@ internal fun Modifier.dragToSelect(
         val anchor = keys.indexOf(startKey)
         if (anchor < 0) return@awaitEachGesture
         val base = selection()
+        val drop = onDropOnFolder
+        if (drop != null && startKey in base && !isFolderKey(startKey)) {
+            // Carrying what is selected: the grid scrolls at the edges as when selecting.
+            var at = down.position
+            onCarry(at)
+            try {
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    val change = event.changes.firstOrNull { it.id == down.id }
+                    event.changes.forEach { it.consume() }
+                    if (change == null) return@awaitEachGesture
+                    if (!change.pressed) break
+                    at = change.position
+                    onCarry(at)
+                    val top = edgeTop() + EDGE_ZONE.toPx()
+                    val bottom = edgeBottom() - EDGE_ZONE.toPx()
+                    val fastest = EDGE_SPEED.toPx()
+                    onEdge(when {
+                        at.y < top -> -fastest * ((top - at.y) / EDGE_ZONE.toPx()).coerceIn(0f, 1f)
+                        at.y > bottom -> fastest * ((at.y - bottom) / EDGE_ZONE.toPx()).coerceIn(0f, 1f)
+                        else -> 0f
+                    })
+                }
+                val target = tiles.keyAt(at)
+                if (target != null && isFolderKey(target)) {
+                    drop(base.filterNot(::isFolderKey).toSet(), folderOfKey(target))
+                }
+            } finally {
+                onEdge(0f)
+                onCarry(null)
+            }
+            return@awaitEachGesture
+        }
         val adding = startKey !in base
         var last = down.position
         fun pick(at: Offset) {

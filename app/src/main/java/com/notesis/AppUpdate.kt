@@ -102,12 +102,16 @@ internal object AppUpdate {
     fun newestFor(releases: List<AppRelease>, beta: Boolean): AppRelease? = releases.firstOrNull { beta || !it.manual }
 
     /** The newest build this copy takes, or null when none can be read. Network: call off the main thread. */
-    fun fetchNewest(beta: Boolean): AppRelease? =
-        if (beta) fetchLatest() else newestFor(fetchRecent(), beta = false)
+    fun fetchNewest(beta: Boolean): AppRelease? = newestFor(fetchRecent(), beta)
 
     /** A build the user said to skip is not offered again on its own; a manual check still shows it. */
     fun skipped(context: Context): Long = prefs(context).getLong("skippedCode", 0L)
     fun skip(context: Context, code: Long) = prefs(context).edit().putLong("skippedCode", code).apply()
+
+    /** Whether the connection in use is one that is paid for by the byte, such as mobile data. */
+    fun metered(context: Context): Boolean = runCatching {
+        context.getSystemService(android.net.ConnectivityManager::class.java)?.isActiveNetworkMetered ?: true
+    }.getOrDefault(true)
 
     fun installedCode(context: Context): Long =
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0).longVersionCode }.getOrDefault(0L)
@@ -197,7 +201,7 @@ internal object AppUpdate {
     }.getOrNull()
 
     private fun parseRelease(release: JSONObject): AppRelease? {
-        if (release.optBoolean("draft") || release.optBoolean("prerelease")) return null
+        if (release.optBoolean("draft")) return null
         val (name, code) = parseTag(release.optString("tag_name")) ?: return null
         val assets = release.optJSONArray("assets") ?: return null
         val apk = (0 until assets.length()).map { assets.getJSONObject(it) }
@@ -209,7 +213,8 @@ internal object AppUpdate {
             apkSize = apk.optLong("size"),
             sha256 = apk.optString("digest").takeIf { it.startsWith("sha256:") }?.removePrefix("sha256:")?.lowercase(),
             notes = plainNotes(release.optString("body")),
-            manual = isManual(release.optString("body")),
+            // A pre-release on GitHub is a test build as well as one marked in its notes.
+            manual = release.optBoolean("prerelease") || isManual(release.optString("body")),
         )
     }
 
@@ -300,6 +305,7 @@ internal object AppUpdate {
 internal fun LaunchUpdateCheck() {
     val context = LocalContext.current
     var found by remember { mutableStateOf<AppRelease?>(null) }
+    var ready by remember { mutableStateOf<File?>(null) }
     LaunchedEffect(Unit) {
         if (AppUpdate.checkedThisLaunch || !AppUpdate.autoCheck(context)) return@LaunchedEffect
         AppUpdate.checkedThisLaunch = true
@@ -314,11 +320,20 @@ internal fun LaunchUpdateCheck() {
             val offer = !beta || withContext(Dispatchers.IO) {
                 AppUpdate.shouldNotify(latest, installed) { AppUpdate.fetchRecent() }
             }
-            if (offer) found = latest
+            if (offer) {
+                // Fetched before it is offered, on an unmetered connection, so
+                // Update goes straight to the installer.
+                if (!AppUpdate.metered(context)) {
+                    ready = withContext(Dispatchers.IO) {
+                        runCatching { AppUpdate.download(context, latest) {} }.getOrNull()
+                    }
+                }
+                found = latest
+            }
         }
     }
     found?.let { release ->
-        UpdateDialog(release, onDismiss = { found = null }, onSkip = {
+        UpdateDialog(release, ready = ready, onDismiss = { found = null }, onSkip = {
             AppUpdate.skip(context, release.versionCode)
             found = null
         })
@@ -327,11 +342,17 @@ internal fun LaunchUpdateCheck() {
 
 /** What the release brings, then the download and the hand-off to the installer. */
 @Composable
-internal fun UpdateDialog(release: AppRelease, onDismiss: () -> Unit, onSkip: (() -> Unit)? = null) {
+internal fun UpdateDialog(
+    release: AppRelease,
+    onDismiss: () -> Unit,
+    onSkip: (() -> Unit)? = null,
+    /** The APK, when it was fetched before the dialog opened. */
+    ready: File? = null,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var progress by remember { mutableStateOf<Float?>(null) }
-    var downloaded by remember { mutableStateOf<File?>(null) }
+    var progress by remember { mutableStateOf<Float?>(if (ready != null) 1f else null) }
+    var downloaded by remember { mutableStateOf(ready) }
     var failure by remember { mutableStateOf<String?>(null) }
     var needsPermission by remember { mutableStateOf(false) }
     val downloading = progress != null && downloaded == null && failure == null

@@ -103,7 +103,6 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material.icons.outlined.BookmarkBorder
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LocalContentColor
@@ -776,6 +775,7 @@ private fun HomeScreen(
     var notesHidden by remember { mutableStateOf(homeStore.notesSectionHidden) }
     var markdownHidden by remember { mutableStateOf(homeStore.markdownSectionHidden) }
     var vaultHidden by remember { mutableStateOf(homeStore.vaultSectionHidden) }
+    var vaultByFolder by remember { mutableStateOf(homeStore.vaultByFolder) }
     // The vault opened last, and its files newest first, read while its section is open.
     val homeVault = remember(vaultTree) { vaultTree?.let { MarkdownVault(context, it) } }
     val vaultFiles by produceState<List<VaultFile>?>(
@@ -1029,6 +1029,20 @@ private fun HomeScreen(
         }
     }
 
+    // The first page of a PDF, as a page template.
+    val addPdfTemplate = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val added = withContext(Dispatchers.IO) {
+                runCatching { context.contentResolver.openFileDescriptor(uri, "r") }.getOrNull()?.use { pdf ->
+                    store.addPdfPageTemplate(displayName(context, uri).substringBeforeLast('.'), pdf)
+                }
+            }
+            if (added == null) report = "Couldn't add the PDF page"
+            else { templateRevision++; namingTemplate = added }
+        }
+    }
+
     val saveMarkdown = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/markdown"),
     ) { uri: Uri? ->
@@ -1203,6 +1217,8 @@ private fun HomeScreen(
     val gridState = rememberLazyGridState()
     val libraryTiles = remember { LibraryTiles() }
     var edgeSpeed by remember { mutableFloatStateOf(0f) }
+    // Where the finger carrying selected notes is, in the grid's coordinates; null when nothing is carried.
+    var carrying by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
     var gridHeight by remember { mutableIntStateOf(0) }
     val haptics = LocalHapticFeedback.current
     val density = LocalDensity.current
@@ -1210,7 +1226,8 @@ private fun HomeScreen(
     val librarySide = if (narrowLibrary) Ui.Space.m else Ui.Space.l
     val libraryTitle = when {
         tagFilter != null -> "#$tagFilter"
-        folder.isNotBlank() -> folderLeaf(folder)
+        // Inside a folder in a folder, the way down to it: School › Maths.
+        folder.isNotBlank() -> folder.replace("/", " › ")
         else -> "Notes"
     }
     // The header is either open or folded, never left half way: past half
@@ -1581,6 +1598,14 @@ private fun HomeScreen(
                 edgeTop = { with(density) { padding.calculateTopPadding().toPx() } },
                 edgeBottom = { gridHeight.toFloat() },
                 onEdge = { edgeSpeed = it },
+                onDropOnFolder = { ids, path ->
+                    ids.forEach { store.setFolder(it, path) }
+                    selectedIds.removeAll(ids)
+                    if (selectedIds.isEmpty() && selectedFolders.isEmpty()) clearSelection()
+                    revision++
+                    report = "Moved to ${folderLeaf(path)}"
+                },
+                onCarry = { carrying = it },
             ).onSizeChanged { gridHeight = it.height },
         ) {
             // The stretch the header folds over; see scrollFold.
@@ -1638,6 +1663,19 @@ private fun HomeScreen(
             }
             // Where in each note the text was found; opening one goes
             // straight to that page.
+            // The vault's files found by name or folder, beside the notes found.
+            val vaultFound = if (results == null || homeVault == null) emptyList()
+                else (vaultFiles ?: homeVault.lastListed()).orEmpty().filter {
+                    it.name.contains(query.trim(), ignoreCase = true) || it.path.contains(query.trim(), ignoreCase = true)
+                }.take(HOME_VAULT_SEARCH)
+            if (vaultFound.isNotEmpty()) {
+                item(key = "vault-found-heading", span = { GridItemSpan(maxLineSpan) }) { LibrarySection("In the vault") }
+                vaultFound.forEach { file ->
+                    item(key = "vault-found:${file.uri}", span = { GridItemSpan((maxLineSpan / 2).coerceAtLeast(1)) }) {
+                        VaultFileRow(file, onOpen = { homeVault?.let { onOpenVaultFile(it.tree, file) } })
+                    }
+                }
+            }
             if (results != null && pageHits.isNotEmpty()) {
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     LibrarySection("Matches in pages")
@@ -1809,7 +1847,37 @@ private fun HomeScreen(
                             }
                         }
                         if (!vaultHidden) {
-                            vaultFiles.orEmpty().take(HOME_VAULT_FILES).forEach { file ->
+                            if (homeVault != null) item(key = "vault-view", span = { GridItemSpan(maxLineSpan) }) {
+                                Row(Modifier.padding(start = Ui.Space.m)) {
+                                    SettingsChoiceChip(selected = !vaultByFolder, label = "Newest",
+                                        onClick = { vaultByFolder = false; homeStore.vaultByFolder = false },
+                                        modifier = Modifier.padding(end = Ui.Space.s))
+                                    SettingsChoiceChip(selected = vaultByFolder, label = "By folder",
+                                        onClick = { vaultByFolder = true; homeStore.vaultByFolder = true })
+                                }
+                            }
+                            if (vaultByFolder) {
+                                // Every file, under the folder it is in, as the vault has them.
+                                vaultFiles.orEmpty().groupBy { it.path.substringBeforeLast('/', "") }.toSortedMap()
+                                    .forEach { (dir, files) ->
+                                        item(key = "vault-dir:$dir", span = { GridItemSpan(maxLineSpan) }) {
+                                            Row(Modifier.padding(start = Ui.Space.m, top = Ui.Space.s),
+                                                verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(Reicons.Folder, contentDescription = null, modifier = Modifier.size(18.dp),
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                Spacer(Modifier.width(Ui.Space.xs))
+                                                Text(if (dir.isEmpty()) homeVault?.label ?: "Vault" else dir.replace("/", " › "),
+                                                    style = MaterialTheme.typography.labelLarge,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                        }
+                                        files.sortedBy { it.name.lowercase() }.forEach { file ->
+                                            item(key = "vault:${file.uri}", span = { GridItemSpan((maxLineSpan / 2).coerceAtLeast(1)) }) {
+                                                VaultFileRow(file, onOpen = { homeVault?.let { onOpenVaultFile(it.tree, file) } })
+                                            }
+                                        }
+                                    }
+                            } else vaultFiles.orEmpty().take(HOME_VAULT_FILES).forEach { file ->
                                 item(key = "vault:${file.uri}", span = { GridItemSpan((maxLineSpan / 2).coerceAtLeast(1)) }) {
                                     VaultFileRow(file, onOpen = { homeVault?.let { onOpenVaultFile(it.tree, file) } })
                                 }
@@ -1831,6 +1899,17 @@ private fun HomeScreen(
             }
         }
 
+        // What is being carried to a folder, under the finger.
+        carrying?.let { at ->
+            Box(
+                Modifier.offset { androidx.compose.ui.unit.IntOffset(at.x.roundToInt() + 24, at.y.roundToInt() - 24) }
+                    .clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.primary)
+                    .padding(horizontal = Ui.Space.m, vertical = Ui.Space.xs),
+            ) {
+                Text(countNoun(selectedIds.size, "note"), color = MaterialTheme.colorScheme.onPrimary,
+                    style = MaterialTheme.typography.labelLarge)
+            }
+        }
         // Floating bars take the skin's own corner, the toolbar's, so every
         // bar over the page or the list is the same shape.
         if (selectionMode) SkinSurface(
@@ -1978,7 +2057,11 @@ private fun HomeScreen(
         }
         fun finish(keepNotes: Boolean) {
             selectedIds.forEach(store::moveToTrash)
-            selectedFolders.forEach { store.deleteFolder(it, keepNotes = keepNotes) }
+            selectedFolders.forEach {
+                store.deleteFolder(it, keepNotes = keepNotes)
+                homeStore.forgetFolderLooks(context, folders, it)
+            }
+            folderLooks++
             selectedFolders.firstOrNull { isInFolder(folder, it) }?.let { folder = folderParent(it) }
             clearSelection(); bulkDelete = false; revision++
         }
@@ -2022,8 +2105,10 @@ private fun HomeScreen(
             onConfirm = { name ->
                 // A new folder goes in the one open; a renamed one stays where it is.
                 val path = folderChild(if (rename) folderParent(folderTarget) else folder, name)
+                val before = folders
                 val ok = if (rename) store.renameFolder(folderTarget, path) else store.createFolder(path)
                 if (ok) {
+                    if (rename) { homeStore.moveFolderLooks(context, before, folderTarget, path); folderLooks++ }
                     if (rename) folder = movedFolderPath(folder, folderTarget, path)
                     revision++
                 } else report = "That folder name can't be used"
@@ -2034,6 +2119,8 @@ private fun HomeScreen(
     if (deletingFolder) {
         val count = remember(folderTarget, revision) { store.list().count { isInFolder(it.folder, folderTarget) } }
         fun deleted() {
+            homeStore.forgetFolderLooks(context, folders, folderTarget)
+            folderLooks++
             if (isInFolder(folder, folderTarget)) folder = folderParent(folderTarget)
             revision++
             deletingFolder = false
@@ -2126,7 +2213,10 @@ private fun HomeScreen(
             userTemplates = userTemplates,
             templateFile = store::templateFile,
             onRenameTemplate = { id, name -> store.renamePageTemplate(id, name).also { if (it) templateRevision++ } },
+            onDeleteTemplate = { id -> store.deletePageTemplate(id).also { if (it) templateRevision++ } },
+            onMoveTemplate = { id, delta -> store.movePageTemplate(id, delta).also { if (it) templateRevision++ } },
             onAddTemplate = { addPageTemplate.launch("image/*") },
+            onAddPdfTemplate = { addPdfTemplate.launch(arrayOf("application/pdf")) },
             onDismiss = { naming = false },
             onConfirm = { title, kind, background, templateId ->
                 naming = false
@@ -2981,36 +3071,50 @@ private fun FolderDialog(
     onDismiss: () -> Unit,
     onPick: (String) -> Unit,
 ) {
-    var name by remember { mutableStateOf(current) }
+    // The folders as the tree they are, each under the one it is in; a new
+    // folder named below goes inside the one picked.
+    var chosen by remember { mutableStateOf(current) }
+    var newName by remember { mutableStateOf("") }
+    val scheme = MaterialTheme.colorScheme
+    @Composable
+    fun row(label: String, depth: Int, path: String) {
+        val picked = chosen == path
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                .background(if (picked) scheme.primary.copy(alpha = 0.14f) else Color.Transparent)
+                .clickable { chosen = path }
+                .padding(start = Ui.Space.s + 18.dp * depth, end = Ui.Space.s, top = 10.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(if (path.isEmpty()) Reicons.Description else Reicons.Folder, contentDescription = null,
+                tint = if (picked) scheme.primary else scheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(Ui.Space.s))
+            Text(label, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                color = if (picked) scheme.primary else scheme.onSurface)
+        }
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Move to folder") },
         text = {
-            Column {
+            Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
+                row(L10n.tr("Top level"), 0, "")
+                folders.sorted().forEach { path -> row(folderLeaf(path), path.count { it == '/' } + 1, path) }
+                Spacer(Modifier.height(Ui.Space.m))
                 OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
+                    value = newName,
+                    onValueChange = { newName = it.replace("/", "") },
                     singleLine = true,
-                    label = { Text("Folder name") },
-                    placeholder = { Text("Leave blank for the top level") },
+                    label = { Text("New folder inside the one picked") },
+                    placeholder = { Text("Leave blank to move into the one picked") },
                 )
-                if (folders.isNotEmpty()) {
-                    Spacer(Modifier.height(Ui.Space.m))
-                    Text(
-                        "Existing folders",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.outline,
-                    )
-                    Spacer(Modifier.height(Ui.Space.xs))
-                    Row(Modifier.horizontalScroll(rememberScrollState())) {
-                        for (option in folders) {
-                            TextButton(onClick = { name = option }) { Text(option) }
-                        }
-                    }
-                }
             }
         },
-        confirmButton = { TextButton(onClick = { onPick(name.trim()) }) { Text("Move") } },
+        confirmButton = {
+            TextButton(onClick = {
+                onPick(if (newName.isBlank()) chosen else folderChild(chosen, newName.trim()))
+            }) { Text("Move") }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
@@ -3720,6 +3824,9 @@ private fun NameDialog(
     onConfirm: (String, NoteKind, PageBackground, String?) -> Unit,
     templateFile: (String) -> java.io.File,
     onRenameTemplate: (String, String) -> Boolean,
+    onDeleteTemplate: (String) -> Boolean,
+    onMoveTemplate: (String, Int) -> Boolean,
+    onAddPdfTemplate: () -> Unit,
 ) {
     var title by remember { mutableStateOf("") }
     var kind by remember { mutableStateOf(NoteKind.INK) }
@@ -3759,8 +3866,13 @@ private fun NameDialog(
                         onPlain = { background = it; templateId = null },
                         onTemplate = { templateId = it; background = PageBackground.CUSTOM },
                         onRenameTemplate = onRenameTemplate,
+                        onDeleteTemplate = { id -> onDeleteTemplate(id).also { if (it && templateId == id) { templateId = null; background = PageBackground.BLANK } } },
+                        onMoveTemplate = onMoveTemplate,
                     )
-                    TextButton(onClick = onAddTemplate) { Text("+ Add image template") }
+                    Row {
+                        TextButton(onClick = onAddTemplate) { Text("+ Add image template") }
+                        TextButton(onClick = onAddPdfTemplate) { Text("Add a PDF page as a template") }
+                    }
                 }
             }
         },
@@ -4569,6 +4681,9 @@ private fun NoteScreen(
         onDismiss = { addingPage = false },
         templateFile = store::templateFile,
         onRenameTemplate = store::renamePageTemplate,
+        onDeleteTemplate = store::deletePageTemplate,
+        onMoveTemplate = store::movePageTemplate,
+        noteId = note.id,
         onAdd = { spec ->
         addingPage = false
         canvas?.let { view ->
@@ -8381,6 +8496,8 @@ internal const val DROP_BOTTOM = 3
 
 /** How many of the vault's files the library shows, newest first; the rest are in the vault. */
 internal const val HOME_VAULT_FILES = 12
+/** How many of the vault's files a library search shows. */
+internal const val HOME_VAULT_SEARCH = 30
 
 /** One of the vault's Markdown files in the library: its mark, name, where it is and when it changed. */
 @Composable

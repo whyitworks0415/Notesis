@@ -84,6 +84,10 @@ internal fun AddPageDialog(
     onAdd: (NewPageSpec) -> Unit,
     templateFile: (String) -> java.io.File,
     onRenameTemplate: (String, String) -> Boolean,
+    onDeleteTemplate: (String) -> Boolean = { false },
+    onMoveTemplate: (String, Int) -> Boolean = { _, _ -> false },
+    /** The note the page goes in: its paper, once chosen, is what it offers next time. */
+    noteId: String = "",
 ) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("pens", Context.MODE_PRIVATE) }
@@ -95,7 +99,7 @@ internal fun AddPageDialog(
     var customW by remember { mutableStateOf(prefs.getString("addPageCustomW", "2480")!!) }
     var customH by remember { mutableStateOf(prefs.getString("addPageCustomH", "3508")!!) }
     var paper by remember {
-        val saved = prefs.getString("addPagePaper", "SAME")!!
+        val saved = prefs.getString("addPagePaper:$noteId", null) ?: prefs.getString("addPagePaper", "SAME")!!
         mutableStateOf<NewPagePaper>(when {
             saved == "SAME" -> NewPagePaper.Same
             saved.startsWith("T:") -> saved.removePrefix("T:").let { id ->
@@ -152,6 +156,8 @@ internal fun AddPageDialog(
                     onPlain = { paper = NewPagePaper.Plain(it) },
                     onTemplate = { paper = NewPagePaper.Template(it) },
                     onRenameTemplate = onRenameTemplate,
+                    onDeleteTemplate = onDeleteTemplate,
+                    onMoveTemplate = onMoveTemplate,
                     same = true,
                     sameSelected = paper == NewPagePaper.Same,
                     onSame = { paper = NewPagePaper.Same },
@@ -170,11 +176,9 @@ internal fun AddPageDialog(
                     .putBoolean("addPageLandscape", landscape)
                     .putString("addPageCustomW", customW)
                     .putString("addPageCustomH", customH)
-                    .putString("addPagePaper", when (val p = paper) {
-                        NewPagePaper.Same -> "SAME"
-                        is NewPagePaper.Plain -> p.background.name
-                        is NewPagePaper.Template -> "T:${p.id}"
-                    })
+                    .putString("addPagePaper", paperKey(paper))
+                    // Each note remembers its own, so a planner keeps its planner pages.
+                    .putString("addPagePaper:$noteId", paperKey(paper))
                     .putBoolean("addPageAtEnd", atEnd)
                     .apply()
                 val dims = newPageDimensions(size, landscape,
@@ -184,4 +188,10 @@ internal fun AddPageDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+private fun paperKey(paper: NewPagePaper): String = when (paper) {
+    NewPagePaper.Same -> "SAME"
+    is NewPagePaper.Plain -> paper.background.name
+    is NewPagePaper.Template -> "T:${paper.id}"
 }

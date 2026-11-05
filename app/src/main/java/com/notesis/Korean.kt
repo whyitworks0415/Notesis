@@ -244,3 +244,32 @@ internal object KToast {
     fun makeText(context: Context, resId: Int, duration: Int): android.widget.Toast =
         android.widget.Toast.makeText(context, resId, duration)
 }
+
+/*
+ * Material's Icon, with what it says to a screen reader in the language
+ * chosen, as [Text] does for what is shown. Declared in this package so every
+ * screen's Icon resolves here first.
+ */
+@Composable
+fun Icon(
+    imageVector: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String?,
+    modifier: Modifier = Modifier,
+    tint: Color = androidx.compose.material3.LocalContentColor.current,
+) = androidx.compose.material3.Icon(imageVector, contentDescription?.let(L10n::tr), modifier, tint)
+
+@Composable
+fun Icon(
+    painter: androidx.compose.ui.graphics.painter.Painter,
+    contentDescription: String?,
+    modifier: Modifier = Modifier,
+    tint: Color = androidx.compose.material3.LocalContentColor.current,
+) = androidx.compose.material3.Icon(painter, contentDescription?.let(L10n::tr), modifier, tint)
+
+@Composable
+fun Icon(
+    bitmap: androidx.compose.ui.graphics.ImageBitmap,
+    contentDescription: String?,
+    modifier: Modifier = Modifier,
+    tint: Color = androidx.compose.material3.LocalContentColor.current,
+) = androidx.compose.material3.Icon(bitmap, contentDescription?.let(L10n::tr), modifier, tint)

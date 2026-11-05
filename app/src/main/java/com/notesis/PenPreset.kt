@@ -306,6 +306,11 @@ class PenStore(context: Context) {
         get() = prefs.getBoolean("libraryMarkdownHidden", false)
         set(value) = prefs.edit().putBoolean("libraryMarkdownHidden", value).apply()
 
+    /** The vault's files in the library under their folders rather than newest first. */
+    var vaultByFolder: Boolean
+        get() = prefs.getBoolean("libraryVaultByFolder", false)
+        set(value) = prefs.edit().putBoolean("libraryVaultByFolder", value).apply()
+
     /** The vault's part of the library's Markdown section, folded away. */
     var vaultSectionHidden: Boolean
         get() = prefs.getBoolean("libraryVaultHidden", false)
@@ -332,6 +337,38 @@ class PenStore(context: Context) {
 
     fun clearFolderThumbnail(context: android.content.Context, name: String) {
         folderThumbFile(context, name).delete()
+    }
+
+    /**
+     * A folder renamed or moved takes its colour and picture with it, and so
+     * does every folder inside it ([paths] are all the folders there were).
+     */
+    fun moveFolderLooks(context: android.content.Context, paths: Collection<String>, from: String, to: String) {
+        val edit = prefs.edit()
+        for (path in paths.filter { isInFolder(it, from) }) {
+            val moved = movedFolderPath(path, from, to)
+            if (moved == path) continue
+            val color = prefs.getInt("folderColor:$path", 0)
+            edit.remove("folderColor:$path")
+            if (color != 0) edit.putInt("folderColor:$moved", color)
+            val thumb = folderThumbFile(context, path)
+            if (thumb.isFile) {
+                val target = folderThumbFile(context, moved)
+                target.parentFile?.mkdirs()
+                if (!thumb.renameTo(target)) runCatching { thumb.copyTo(target, overwrite = true); thumb.delete() }
+            }
+        }
+        edit.apply()
+    }
+
+    /** A folder deleted takes its colour and picture away, and those of the folders inside it. */
+    fun forgetFolderLooks(context: android.content.Context, paths: Collection<String>, folder: String) {
+        val edit = prefs.edit()
+        for (path in paths.filter { isInFolder(it, folder) }) {
+            edit.remove("folderColor:$path")
+            folderThumbFile(context, path).delete()
+        }
+        edit.apply()
     }
 
     private fun folderThumbFile(context: android.content.Context, name: String) =

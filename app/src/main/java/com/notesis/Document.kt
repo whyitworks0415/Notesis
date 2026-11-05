@@ -823,6 +823,50 @@ class NoteStore(context: Context) {
 
     fun templateFile(id: String): File = File(root, "templates/$id.png")
 
+    private fun writeTemplates(entries: List<UserPageTemplate>) = atomicText(File(root, "templates.json"),
+        JSONArray(entries.map { JSONObject().put("id", it.id).put("name", it.name) }).toString())
+
+    /** Takes the page template [id] away; pages already using it keep their picture of it. */
+    fun deletePageTemplate(id: String): Boolean = runCatching {
+        writeTemplates(pageTemplates().filterNot { it.id == id })
+        templateFile(id).delete()
+        true
+    }.getOrDefault(false)
+
+    /** Moves the page template [id] [delta] places along the list the pickers show. */
+    fun movePageTemplate(id: String, delta: Int): Boolean = runCatching {
+        val list = pageTemplates().toMutableList()
+        val at = list.indexOfFirst { it.id == id }
+        val to = (at + delta).coerceIn(0, list.lastIndex)
+        if (at < 0 || to == at) return@runCatching false
+        list.add(to, list.removeAt(at))
+        writeTemplates(list)
+        true
+    }.getOrDefault(false)
+
+    /**
+     * A page template from the first page of a PDF, drawn at the template
+     * size on white - a printed worksheet or planner page, say.
+     */
+    fun addPdfPageTemplate(name: String, pdf: android.os.ParcelFileDescriptor): UserPageTemplate? = runCatching {
+        val renderer = android.graphics.pdf.PdfRenderer(pdf)
+        try {
+            check(renderer.pageCount > 0) { "The PDF has no pages" }
+            val page = renderer.openPage(0)
+            try {
+                val scale = MAX_TEMPLATE_PX.toFloat() / maxOf(page.width, page.height)
+                val bitmap = Bitmap.createBitmap((page.width * scale).toInt().coerceAtLeast(1),
+                    (page.height * scale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+                try {
+                    bitmap.eraseColor(android.graphics.Color.WHITE)
+                    page.render(bitmap, null, null, android.graphics.pdf.PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    val bytes = java.io.ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                    addPageTemplate(name, bytes.toByteArray().inputStream())
+                } finally { bitmap.recycle() }
+            } finally { page.close() }
+        } finally { renderer.close() }
+    }.getOrNull()
+
     /** Gives the page template [id] a new [name]; a blank name is refused. */
     fun renamePageTemplate(id: String, name: String): Boolean = runCatching {
         val clean = name.trim()

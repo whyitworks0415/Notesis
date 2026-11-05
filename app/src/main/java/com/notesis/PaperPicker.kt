@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
@@ -70,9 +69,13 @@ internal fun PaperPicker(
     same: Boolean = false,
     sameSelected: Boolean = false,
     onSame: () -> Unit = {},
+    onDeleteTemplate: (String) -> Boolean = { false },
+    onMoveTemplate: (String, Int) -> Boolean = { _, _ -> false },
 ) {
-    // Names changed here show at once; the store has them for next time.
+    // Changes made here show at once; the store has them for next time.
     val renamed = remember { mutableStateMapOf<String, String>() }
+    var shown by remember(userTemplates) { mutableStateOf(userTemplates) }
+    var acting by remember { mutableStateOf<UserPageTemplate?>(null) }
     var renaming by remember { mutableStateOf<UserPageTemplate?>(null) }
     FlowRow(horizontalArrangement = Arrangement.spacedBy(Ui.Space.s),
         verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
@@ -85,21 +88,46 @@ internal fun PaperPicker(
                 Canvas(Modifier.fillMaxSize()) { drawPaper(background) }
             }
         }
-        userTemplates.forEach { template ->
+        shown.forEach { template ->
             val name = renamed[template.id] ?: template.name
             PaperCard(name, selectedTemplate == template.id, { onTemplate(template.id) },
-                onLongClick = { renaming = template.copy(name = name) }) {
+                onLongClick = { acting = template.copy(name = name) }) {
                 val picture = rememberFileBitmap(templateFile(template.id), 160)
                 if (picture != null) Image(picture.asImageBitmap(), contentDescription = null,
                     contentScale = ContentScale.Crop, alignment = Alignment.TopCenter, modifier = Modifier.fillMaxSize())
             }
         }
     }
-    if (userTemplates.isNotEmpty()) Text(
-        "Hold a template to rename it",
+    if (shown.isNotEmpty()) Text(
+        "Hold a template to rename, move or delete it",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.outline,
     )
+    acting?.let { target ->
+        val at = shown.indexOfFirst { it.id == target.id }
+        AlertDialog(
+            onDismissRequest = { acting = null },
+            title = { Text(target.name) },
+            text = {
+                Column {
+                    TextButton(onClick = { acting = null; renaming = target }) { Text("Rename") }
+                    TextButton(enabled = at > 0, onClick = {
+                        if (onMoveTemplate(target.id, -1)) shown = shown.toMutableList().apply { add(at - 1, removeAt(at)) }
+                        acting = null
+                    }) { Text("Move earlier") }
+                    TextButton(enabled = at in 0 until shown.lastIndex, onClick = {
+                        if (onMoveTemplate(target.id, 1)) shown = shown.toMutableList().apply { add(at + 1, removeAt(at)) }
+                        acting = null
+                    }) { Text("Move later") }
+                    TextButton(onClick = {
+                        if (onDeleteTemplate(target.id)) shown = shown.filterNot { it.id == target.id }
+                        acting = null
+                    }) { Text("Delete") }
+                }
+            },
+            confirmButton = { TextButton(onClick = { acting = null }) { Text("Close") } },
+        )
+    }
     renaming?.let { target ->
         TemplateNameDialog(
             title = "Rename template",
