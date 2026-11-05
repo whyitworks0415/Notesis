@@ -33,12 +33,22 @@ S6 Lite, SM-P61x/P62x). Kotlin, Jetpack Compose for the chrome, a custom
    short list of what to try on the tablet.
 3. CI is `.github/workflows/apk.yml`. It runs on a push to `main` or
    `claude/**`, or by hand (workflow_dispatch, input `update`:
-   `automatic`/`manual`). **Every successful run publishes a release** named
-   after `versionName`, so do not run it twice for the same version, and bump
-   the version before a build meant to ship. An agent working on another
+   `automatic`/`manual`/`check`). **Every successful `automatic` or `manual`
+   run publishes a release** named after `versionName`, so do not run one
+   twice for the same version, and bump the version before a build meant to
+   ship. `check` builds, runs the unit tests (failing on one) and the
+   screenshot tests, and publishes nothing: use it to try a change. An agent working on another
    branch prefix (for example `codex/**`) either adds that prefix to the
    workflow or asks for a manual run.
 4. Push to `main` only after the build on the work branch passed.
+5. Who gets a release: a `manual` release (or a GitHub pre-release) reaches
+   only copies with the developer code entered in About · Help (beta
+   testers); everyone else is offered `automatic` releases only. The code
+   itself is never written in the repository - only its SHA-256, in
+   `AppUpdate.kt`.
+6. The account's Actions artifact storage has filled before. Artifacts are
+   kept 3 days and a failed upload does not stop the release; the release
+   carries the APK.
 
 ## Secrets and signing
 
@@ -69,6 +79,9 @@ S6 Lite, SM-P61x/P62x). Kotlin, Jetpack Compose for the chrome, a custom
   `skinMaterial`, liquid glass via `LocalLiquidGlassBackdrop`). Glass cannot
   sample a backdrop it is itself inside of (`NoBackdrop`); floating chrome is
   placed outside the recorded content.
+- Removed features stay removed: no ruler/set square/protractor, laser
+  pointer, Claude handwriting reading or agent runtime. Do not bring their
+  code or strings back.
 - Large files: `MainActivity.kt` (screens) and `InkCanvasView.kt` (canvas).
   Search before adding; most features already have a home.
 - Commit messages: a short summary line, then what and why. No model names
@@ -86,4 +99,8 @@ S6 Lite, SM-P61x/P62x). Kotlin, Jetpack Compose for the chrome, a custom
 | Handwriting recognition | `InkIndexer.kt` (ML Kit), `OcrResultDialog.kt` |
 | Markdown notes, vault | `MarkdownNoteScreen.kt`, `MarkdownText.kt`, `MarkdownVault*.kt` |
 | Settings | `SettingsSidebar.kt`, `ToolSettingsDialog.kt`, `PenPreset.kt` (`PenStore`) |
-| Diagnostics | `Diagnostics.kt`, `LatencyStats.kt` |
+| Diagnostics | `Diagnostics.kt`, `LatencyStats.kt`, `JankWatch.kt` (dropped frames → light mode), `MemoryTrim.kt` |
+| Page panel, Internet panel | `PageSidebar.kt`, `WebPanel.kt` |
+| Folders, smart folders, templates | `FolderPaths.kt` (paths `School/Maths`), `SmartFolders.kt`, `PaperPicker.kt` |
+| Backup, widget, updates | `AutoBackup.kt` (off by default), `NotesWidget.kt`, `AppUpdate.kt` (beta code) |
+| Liquid glass | `LiquidGlass*.kt`, `GlassPopupBackdrop.kt`; saved keys still say `spotiglass…` |
