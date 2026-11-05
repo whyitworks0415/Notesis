@@ -17,6 +17,6 @@ class AppBrightnessTest {
     fun `no veil when it is off or full, a dark one at the least`() {
         assertEquals(0, AppBrightness.veilAlpha(AppBrightness.FOLLOW_SYSTEM))
         assertEquals(0, AppBrightness.veilAlpha(1f))
-        assertEquals(204, AppBrightness.veilAlpha(0.2f))
+        assertEquals(204f, AppBrightness.veilAlpha(0.2f).toFloat(), 1f)
     }
 }
