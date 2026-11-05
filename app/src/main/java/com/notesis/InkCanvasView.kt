@@ -566,18 +566,50 @@ enum class Tool {
             withSelfOverlap(pressurePen, SelfOverlap.ANY)
         }
 
-        /** The mesh-rendered twin of a saved pen family, or null for any other family. */
+        /**
+         * The mesh-rendered twin of a saved family whose ink fills its outline
+         * (DISCARD), or null for any other family. Not only the two pens: a
+         * pen given a nib angle, the fountain pen, the calligraphy nib and the
+         * oil brush fill their outlines too, and an outline that doubles back
+         * on itself in a quick scribble fills the loops it makes - the black
+         * wedges in fast circles. The twin is the same tip with an overlap the
+         * mesh renderer draws as the ink actually went.
+         */
+        @OptIn(ExperimentalInkCustomBrushApi::class)
         fun meshFamilyOf(family: BrushFamily): BrushFamily? = when (family) {
             pen -> penMesh
             pressurePen -> pressurePenMesh
-            else -> null
+            else -> synchronized(meshTwinsByFamily) {
+                meshTwinsByFamily[family]?.let { return@synchronized it.takeIf { twin -> twin !== family } }
+                val fills = family.coats.isNotEmpty() && family.coats.all { coat ->
+                    coat.paintPreferences.isNotEmpty() && coat.paintPreferences.all { it.selfOverlap == SelfOverlap.DISCARD }
+                }
+                val twin = if (fills) withAllSelfOverlap(family, SelfOverlap.ANY) else family
+                if (meshTwinsByFamily.size > MAX_MESH_TWIN_FAMILIES) { meshTwinsByFamily.clear(); storedByTwin.clear() }
+                meshTwinsByFamily[family] = twin
+                if (twin !== family) storedByTwin[twin] = family
+                twin.takeIf { it !== family }
+            }
         }
 
         /** Undo [meshFamilyOf], so notes on disk keep the families they always had. */
         fun storedFamilyOf(family: BrushFamily): BrushFamily = when (family) {
             penMesh -> pen
             pressurePenMesh -> pressurePen
-            else -> family
+            else -> synchronized(meshTwinsByFamily) { storedByTwin[family] } ?: family
+        }
+
+        private val meshTwinsByFamily = HashMap<BrushFamily, BrushFamily>()
+        private val storedByTwin = HashMap<BrushFamily, BrushFamily>()
+        private const val MAX_MESH_TWIN_FAMILIES = 256
+
+        /** [family] with every coat's paints drawn at [overlap]. */
+        @OptIn(ExperimentalInkCustomBrushApi::class)
+        private fun withAllSelfOverlap(family: BrushFamily, overlap: SelfOverlap): BrushFamily {
+            val coats = family.coats.map { coat ->
+                coat.copy(paintPreferences = coat.paintPreferences.map { BrushPaint(it.textureLayers, it.colorFunctions, overlap) })
+            }
+            return runCatching { family.copy(coats = coats) }.getOrDefault(family)
         }
         /** Graphite through paper tooth, answering pressure and tilt. See [PencilBrushes]. */
         private val pencil by lazy { PencilBrushes.graphite }
@@ -4043,9 +4075,25 @@ class InkCanvasView @JvmOverloads constructor(
     /** True while the gesture in progress came in as Samsung's side-button actions. */
     private var samsungSideButton = false
 
+    /** A finger or pen came down on the page; see [onTouch]. */
+    var onTouchDown: (() -> Unit)? = null
+
+    /** Whether a keyboard with keys is attached and open, for the shortcuts. */
+    private fun hasKeysKeyboard(): Boolean = resources.configuration.let {
+        it.keyboard != android.content.res.Configuration.KEYBOARD_NOKEYS &&
+            it.hardKeyboardHidden == android.content.res.Configuration.HARDKEYBOARDHIDDEN_NO
+    }
+
     private fun onTouch(event: MotionEvent): Boolean {
-        // Keyboard shortcuts need focus; a keyboard can be attached at any time.
-        if (event.actionMasked == MotionEvent.ACTION_DOWN && !isFocused) requestFocus()
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            // Whatever text field had the keyboard lets it go, for good: taking
+            // focus from it here and handing focus back to the bar later let
+            // the bar's side bring that field - and the keyboard - straight
+            // back, so the keyboard flickered up and down between touches.
+            onTouchDown?.invoke()
+            // Keyboard shortcuts need focus, and only a keyboard with keys needs them.
+            if (!isFocused && hasKeysKeyboard()) requestFocus()
+        }
         if (activeStylusPointer == null && eyedropper.onTouch(event)) return true
         val stylus = event.getToolType(event.actionIndex) == MotionEvent.TOOL_TYPE_STYLUS
         // A pen landing while fingers still hold the page: the pen wins, and

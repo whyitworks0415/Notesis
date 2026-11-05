@@ -1625,7 +1625,9 @@ private fun HomeScreen(
                 // Opaque, so the frost replaces the page rather than adding to it.
                 .background(homeColor?.let { Color(it) } ?: MaterialTheme.colorScheme.surface)
                 // A look draws its own ground, unless a colour of the user's own replaces it.
-                .then(homeLookGround()?.takeIf { homeColor == null }?.let { Modifier.background(it) } ?: Modifier),
+                .then(homeLookColors()?.takeIf { homeColor == null }?.let { look ->
+                    Modifier.drawBehind { look.drawGround(this) }
+                } ?: Modifier),
         ) {
         HomeBackground(homePhoto)
         val smartHere = results == null && folder.isBlank() && smartOpen == null && tagFilter == null &&
@@ -4066,6 +4068,8 @@ private fun NoteScreen(
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
+    // Cleared when the page is touched; see InkCanvasView.onTouchDown.
+    val noteFocus = androidx.compose.ui.platform.LocalFocusManager.current
     // Remembered for a smart folder of the notes opened lately.
     LaunchedEffect(note.id) { RecentlyOpened.note(context, note.id) }
     val lifecycleOwner = context as? LifecycleOwner
@@ -5338,6 +5342,7 @@ private fun NoteScreen(
                     // update block does not rerun every time the panel toggles.
                     // Only the panel's own scope reads these (see Isolated
                     // below), so the flip recomposes the panel, not the screen.
+                    view.onTouchDown = { noteFocus.clearFocus() }
                     view.onWritingStarted = {
                         activePane = 0
                         if (showPages) {
@@ -8109,6 +8114,7 @@ private fun ReferencePanel(
     val latestClose by rememberUpdatedState(onClose)
     val latestView by rememberUpdatedState(onView)
     val latestActive by rememberUpdatedState(onActive)
+    val paneFocus = androidx.compose.ui.platform.LocalFocusManager.current
     val latestEdited by rememberUpdatedState(onEdited)
     val latestRotate by rememberUpdatedState(onRotate)
     val latestRotateEnd by rememberUpdatedState(onRotateEnd)
@@ -8463,6 +8469,7 @@ private fun ReferencePanel(
                                     latestEdited()
                                     if (sharedDocument != null) latestSharedChanged()
                                 }
+                                onTouchDown = { paneFocus.clearFocus() }
                                 onWritingStarted = { latestActive() }
                                 onRotateNote = { latestRotate(it) }
                                 onRotateNoteEnd = { latestRotateEnd() }
