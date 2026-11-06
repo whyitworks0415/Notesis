@@ -1267,11 +1267,6 @@ private fun HomeScreen(
     val liquidBackdrop = if (currentSkin.isRefractive && BACKDROP_DRAWABLE && !InteractionGovernor.observedPowerSave) {
         rememberLiquidGlassBackdrop()
     } else null
-    // The library's ground alone - colour, look or photo, with nothing on it -
-    // recorded apart, for the cards to be glass over: a card sampling the
-    // library's own recording would sample itself.
-    val groundLayer = rememberLiquidGlassBackdrop()
-    val groundBackdrop = groundLayer.takeIf { liquidBackdrop != null }
     // Menus open in windows of their own; seen through them, the library has to
     // be put back where it is on screen, or they show some other part of it.
     var homeLayerOrigin by remember { mutableStateOf(Offset.Zero) }
@@ -1619,11 +1614,10 @@ private fun HomeScreen(
         },
     ) { padding ->
         // Nothing inside the recording may sample it; see NoBackdrop.
-        // Nothing inside the recording may sample it; see NoBackdrop. The cards
-        // sample the ground's own recording instead, which holds nothing of theirs.
+        // Nothing inside the recording may sample it; see NoBackdrop.
         CompositionLocalProvider(
             LocalBackdrop provides NoBackdrop,
-            LocalLiquidGlassBackdrop provides groundBackdrop,
+            LocalLiquidGlassBackdrop provides null,
         ) {
         Box(
             Modifier
@@ -1633,7 +1627,11 @@ private fun HomeScreen(
                 .onGloballyPositioned { homeLayerOrigin = it.positionOnScreen() }
                 .then(
                     if (liquidBackdrop != null) {
-                        Modifier.captureLiquidGlassBackdrop(liquidBackdrop)
+                        // Not while the list scrolls: recording the whole library
+                        // every frame of a fling, for the glass at the top to
+                        // blur, was most of what made it stutter. The glass
+                        // keeps the last frame and catches up when it stops.
+                        Modifier.captureLiquidGlassBackdrop(liquidBackdrop, paused = { gridState.isScrollInProgress })
                     } else {
                         Modifier
                     },
@@ -1643,7 +1641,6 @@ private fun HomeScreen(
         Box(
             Modifier
                 .matchParentSize()
-                .then(if (groundBackdrop != null) Modifier.captureLiquidGlassBackdrop(groundBackdrop) else Modifier)
                 // Opaque, so the frost replaces the page rather than adding to it.
                 .background(homeColor?.let { Color(it) } ?: MaterialTheme.colorScheme.surface)
                 // A look draws its own ground, unless a colour of the user's own replaces it.
@@ -2899,12 +2896,12 @@ private fun NoteCard(
     val cardShape = Ui.Shape.card
     // A selected card sits back a little inside its ring, as Photos marks a pick.
     val sink by androidx.compose.animation.core.animateFloatAsState(if (selected) 0.95f else 1f, Ui.Motion.spring(), label = "cardSelected")
-    // Glass over the library's ground under the glass skin; see HomeScreen's groundBackdrop.
-    val glass = skin.isRefractive && LocalLiquidGlassBackdrop.current != null
+    // Glass under the glass skin, drawn without sampling the ground; see cardGlass.
+    val glass = skin.isRefractive
     Card(
         modifier = Modifier
             .graphicsLayer { scaleX = sink; scaleY = sink }
-            .then(if (glass) Modifier.liquidGlass(shape = cardShape, panel = true, shadowElevation = 0.dp) else Modifier)
+            .then(if (glass) Modifier.cardGlass(cardShape) else Modifier)
             .then(if (selected) Modifier.border(2.5.dp, MaterialTheme.colorScheme.primary, cardShape) else Modifier),
         onClick = onOpen,
         shape = cardShape,

@@ -574,3 +574,28 @@ internal fun LiquidGlassPreviewTheme(content: @Composable () -> Unit) {
         content = content,
     )
 }
+
+/**
+ * A library card's glass, drawn without looking at what is under it: a
+ * translucent body, a sheen from the top and the light caught along its
+ * rim. The ground under the cards is a colour or a soft gradient, which
+ * blurred looks all but the same as it does sharp, so sampling it cost a
+ * full blur per card per frame for nothing - and a screen of cards
+ * scrolling was a dozen of those a frame.
+ */
+@Composable
+internal fun Modifier.cardGlass(shape: Shape): Modifier {
+    val settings = LocalSkinSettings.current
+    val scheme = MaterialTheme.colorScheme
+    val dark = scheme.surface.luminance() < 0.5f
+    val shine = (settings.reflection.coerceIn(0f, 1f) / SkinSettings.LEGACY_REFLECTION).coerceIn(0f, 2f)
+    val body = scheme.surface.copy(alpha = if (dark) 0.46f else 0.56f)
+    val sheen = Brush.verticalGradient(listOf(
+        Color.White.copy(alpha = (0.16f * shine).coerceAtMost(0.4f)), Color.Transparent, Color.Black.copy(alpha = 0.03f),
+    ))
+    return this
+        .clip(shape)
+        .background(body)
+        .background(sheen)
+        .glassRim(shape, (0.32f * shine).coerceIn(0f, 1f), Color(settings.border), dark = dark)
+}
