@@ -9454,34 +9454,59 @@ class InkCanvasView @JvmOverloads constructor(
             ink.look = look
         }
 
-        /** Each whiteboard stroke as drawn, and the epsilon it was built at; see [boardStroke]. */
-        private val boardDrawn = java.util.IdentityHashMap<Stroke, Pair<Float, Stroke>>()
+        /** A whiteboard stroke as drawn: built at [epsilon], near the origin, to be drawn moved by ([dx], [dy]). */
+        private inner class BoardDrawn(val epsilon: Float, val stroke: Stroke, val dx: Float, val dy: Float)
+
+        /** Each whiteboard stroke as drawn; see [boardStroke]. */
+        private val boardDrawn = java.util.IdentityHashMap<Stroke, BoardDrawn>()
 
         /**
-         * A whiteboard stroke as it should be drawn: built afresh from its
-         * own inputs, at the fidelity the zoom wants and, for opaque ink that
-         * fills its outline, in the mesh family. The pages' strokes are
-         * rebuilt so by the refine pass; the board's never were, and kept
-         * whatever mesh they had when they were written - on a note heavy
-         * with ink, a coarse one, borrowed from the outline-filling family,
-         * whose quick scribbles came out with their loops filled in black.
-         * At most [budget] strokes are built in one frame; the rest are
-         * drawn as they are and built in the frames after.
+         * A whiteboard stroke as it should be drawn: built afresh from its own
+         * inputs, at the fidelity the zoom wants, in the mesh family for opaque
+         * ink - and moved to near the origin, to be drawn translated back.
+         *
+         * The board keeps its ink in the document's own units, which far down a
+         * long note run to tens of thousands. Ink's geometry and its mesh shader
+         * work in single and, on these GPUs, half precision; at coordinates that
+         * large the triangles of a quick scribble came out bent and its loops
+         * filled in black. Page ink never showed it: it is kept per page, in
+         * units of one page. Built near the origin, a board stroke is in the
+         * same small numbers as a page's. At most [budget] are built in one
+         * frame; the rest are drawn as they were and built in the frames after.
          */
-        private fun boardStroke(stroke: Stroke, epsilon: Float, budget: IntArray): Stroke {
-            boardDrawn[stroke]?.let { (built, drawn) -> if (abs(built - epsilon) < EPSILON_SLOP) return drawn }
-            if (budget[0] <= 0) {
+        private fun boardStroke(stroke: Stroke, epsilon: Float, budget: IntArray): BoardDrawn? {
+            boardDrawn[stroke]?.let { if (abs(it.epsilon - epsilon) < EPSILON_SLOP) return it }
+            if (budget[0] <= 0 || stroke.inputs.size == 0) {
                 postInvalidateOnAnimation()
-                return boardDrawn[stroke]?.second ?: onScreen(stroke)
+                return boardDrawn[stroke]
             }
             budget[0]--
             val opaque = Color.alpha(stroke.brush.colorIntArgb) == 255
             val family = (if (meshInk && opaque) Tool.meshFamilyOf(stroke.brush.family) else null) ?: stroke.brush.family
             val drawn = runCatching {
-                Stroke(stroke.brush.copy(family = family, epsilon = inkEpsilon(stroke.brush.family, stroke.brush.size, epsilon)),
-                    stroke.inputs)
-            }.getOrElse { onScreen(stroke) }
-            boardDrawn[stroke] = epsilon to drawn
+                val scratch = StrokeInput()
+                val first = stroke.inputs.populate(0, scratch)
+                // A round origin near the stroke, so neighbouring strokes share one.
+                val dx = kotlin.math.floor(first.x / BOARD_ORIGIN_STEP) * BOARD_ORIGIN_STEP
+                val dy = kotlin.math.floor(first.y / BOARD_ORIGIN_STEP) * BOARD_ORIGIN_STEP
+                val inputs = MutableStrokeInputBatch()
+                for (i in 0 until stroke.inputs.size) {
+                    val input = stroke.inputs.populate(i, scratch)
+                    inputs.add(
+                        type = input.toolType,
+                        x = input.x - dx,
+                        y = input.y - dy,
+                        elapsedTimeMillis = input.elapsedTimeMillis,
+                        pressure = input.pressure,
+                        tiltRadians = input.tiltRadians,
+                        orientationRadians = input.orientationRadians,
+                    )
+                }
+                val brush = stroke.brush.copy(family = family,
+                    epsilon = inkEpsilon(stroke.brush.family, stroke.brush.size, epsilon))
+                BoardDrawn(epsilon, Stroke(brush, inputs.toImmutable()), dx, dy)
+            }.getOrNull() ?: return boardDrawn[stroke]
+            boardDrawn[stroke] = drawn
             return drawn
         }
 
@@ -9849,7 +9874,15 @@ class InkCanvasView @JvmOverloads constructor(
                         val box = stroke.shape.computeBoundingBox() ?: continue
                         if (box.xMax < viewport[0] || box.xMin > viewport[2] ||
                             box.yMax < viewport[1] || box.yMin > viewport[3]) continue
-                        scope.drawStroke(boardStroke(stroke, boardEpsilon, rebuilds))
+                        val drawn = boardStroke(stroke, boardEpsilon, rebuilds)
+                        if (drawn == null) {
+                            scope.drawStroke(onScreen(stroke))
+                        } else {
+                            scoped.save()
+                            scoped.translate(drawn.dx, drawn.dy)
+                            scope.drawStroke(drawn.stroke)
+                            scoped.restore()
+                        }
                     }
                     if (boardDrawn.size > board.size * 2 + 32) {
                         val kept = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Stroke, Boolean>()).apply { addAll(board) }
@@ -10503,6 +10536,8 @@ class InkCanvasView @JvmOverloads constructor(
         const val MAX_SCREEN_BRUSHES = 256
         /** How many whiteboard strokes may be built afresh in one frame; see boardStroke. */
         const val BOARD_REBUILDS_PER_FRAME = 24
+        /** The grid whiteboard strokes are moved to an origin on: see boardStroke. */
+        const val BOARD_ORIGIN_STEP = 512f
         /** A few pens, colours and zoom levels; see [currentBrush]. */
         const val RECENT_BRUSHES = 8
         /** Page units round a picture still drawn when just off screen: shadows, handles. */
