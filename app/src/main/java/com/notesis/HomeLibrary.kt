@@ -387,7 +387,8 @@ internal fun FolderTile(
                 .clickable(onClick = onOpen)
                 .padding(start = LIBRARY_CARD_INSET, end = LIBRARY_CARD_INSET, top = LIBRARY_CARD_INSET),
         ) {
-            val inner = RoundedCornerShape(Ui.concentric(Ui.Corner.card, LIBRARY_CARD_INSET))
+            // The same corner as the card round it, as a note's page has.
+            val inner = Ui.Shape.card
             Box(
                 Modifier
                     .fillMaxWidth()

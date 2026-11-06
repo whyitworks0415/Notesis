@@ -2937,10 +2937,12 @@ private fun NoteCard(
             )
         },
     ) {
-        // The page sits inset in the card on its own paper corner, the
-        // card's corner one inset in, with the name and date under it.
+        // The page sits inset in the card, rounded as the card is, with the
+        // name and date under it.
         Column(Modifier.padding(start = NOTE_CARD_INSET, end = NOTE_CARD_INSET, top = NOTE_CARD_INSET)) {
-            val paper = RoundedCornerShape(Ui.concentric(Ui.Corner.card, NOTE_CARD_INSET))
+            // The page's corner the card's own: inset by a concentric radius it read
+            // as a square set into a round card, the two curves too far apart.
+            val paper = Ui.Shape.card
             Box(
                 Modifier
                     .fillMaxWidth()
