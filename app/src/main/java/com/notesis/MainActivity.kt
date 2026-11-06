@@ -1348,7 +1348,11 @@ private fun HomeScreen(
     }
     CompositionLocalProvider(
         LocalBackdrop provides backdrop,
-        LocalLiquidGlassBackdrop provides if (currentSkin.isRefractive) liquidBackdrop else null,
+        // Placed by the recording's place on screen, as the note screen's bars are:
+        // the recording is made by hand (so it can pause while the list scrolls)
+        // and so carries no position of its own for the glass to line up with -
+        // given the bare recording, the bars, search and filter bar lost their glass.
+        LocalLiquidGlassBackdrop provides if (currentSkin.isRefractive) homePopupBackdrop else null,
         // The menus opened from inside the list look at the page through this.
         LocalGlassPopupBackdrop provides if (currentSkin.isRefractive) homePopupBackdrop else null,
     ) {
