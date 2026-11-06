@@ -1359,6 +1359,8 @@ private fun HomeScreen(
     // The clock floats over the library too, on the same glass as its bars.
     Box(Modifier.fillMaxSize()) {
     Scaffold(
+        // Under the header too, the library's own ground colour, not the theme's.
+        containerColor = homeColor?.let { Color(it) } ?: homeLookTop() ?: MaterialTheme.colorScheme.background,
         // Ctrl+N a note, Ctrl+Shift+N a folder, Ctrl+F the search box.
         modifier = Modifier.onPreviewKeyEvent { event ->
             val native = event.nativeKeyEvent

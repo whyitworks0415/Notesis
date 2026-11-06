@@ -345,13 +345,13 @@ internal object HomeLooks {
 @Composable
 internal fun HomeLookTheme(content: @Composable () -> Unit) {
     val colors = HomeLooks.look.colors(isDarkTheme())
-    if (colors == null) {
-        content()
-        return
-    }
     val base = MaterialTheme.colorScheme
+    val indication = androidx.compose.foundation.LocalIndication.current
+    // Always inside the one MaterialTheme, the default look too: wrapping the
+    // library only for some looks put it in a different place in the tree for
+    // the others, and changing look rebuilt it - closing what was open on it.
     MaterialTheme(
-        colorScheme = base.copy(
+        colorScheme = if (colors == null) base else base.copy(
             background = colors.top,
             onBackground = colors.ink,
             surface = colors.card,
@@ -364,8 +364,11 @@ internal fun HomeLookTheme(content: @Composable () -> Unit) {
         ),
         shapes = MaterialTheme.shapes,
         typography = MaterialTheme.typography,
-        content = content,
-    )
+    ) {
+        // A theme hands out its own press indication; the skin's is carried in.
+        androidx.compose.runtime.CompositionLocalProvider(
+            androidx.compose.foundation.LocalIndication provides indication, content = content)
+    }
 }
 
 /** The look in use, or null for the theme's own plain surface. */

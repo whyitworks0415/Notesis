@@ -250,6 +250,14 @@ internal fun HomeBackgroundDialog(store: PenStore, onChanged: () -> Unit, onDism
             else error = "Couldn't read the photo. Please choose another one."
         }
     }
+    // A colour of the user's own is the whole ground: the look under it goes
+    // back to the default, so its cards and words do not stay in another look.
+    fun applyColor(value: Int) {
+        store.homeColor = value or 0xFF000000.toInt()
+        store.homePhoto = null
+        if (HomeLooks.look != HomeLook.DEFAULT) HomeLooks.set(context, HomeLook.DEFAULT)
+        onChanged()
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Note list background") },
@@ -259,13 +267,18 @@ internal fun HomeBackgroundDialog(store: PenStore, onChanged: () -> Unit, onDism
             Text("Home look", style = MaterialTheme.typography.labelLarge)
             HomeLookPicker { store.homePhoto = null; store.homeColor = null; onChanged() }
             Text("Or one colour", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = Ui.Space.m))
-            ColorInput(color) { color = it }
+            // Shown on the library as it is picked, so what is applied is what was seen.
+            ColorInput(color) {
+                color = it
+                applyColor(it)
+            }
             TextButton(onClick = { picker.launch(arrayOf("image/*")) }) { Text("Choose photo") }
             TextButton(onClick = { store.homePhoto = null; store.homeColor = null; onChanged(); onDismiss() }) { Text("Use default background") }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         } },
         confirmButton = { TextButton(onClick = {
-            store.homeColor = color; store.homePhoto = null; onChanged(); onDismiss()
+            applyColor(color)
+            onDismiss()
         }) { Text("Apply color") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
