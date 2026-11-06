@@ -9454,6 +9454,37 @@ class InkCanvasView @JvmOverloads constructor(
             ink.look = look
         }
 
+        /** Each whiteboard stroke as drawn, and the epsilon it was built at; see [boardStroke]. */
+        private val boardDrawn = java.util.IdentityHashMap<Stroke, Pair<Float, Stroke>>()
+
+        /**
+         * A whiteboard stroke as it should be drawn: built afresh from its
+         * own inputs, at the fidelity the zoom wants and, for opaque ink that
+         * fills its outline, in the mesh family. The pages' strokes are
+         * rebuilt so by the refine pass; the board's never were, and kept
+         * whatever mesh they had when they were written - on a note heavy
+         * with ink, a coarse one, borrowed from the outline-filling family,
+         * whose quick scribbles came out with their loops filled in black.
+         * At most [budget] strokes are built in one frame; the rest are
+         * drawn as they are and built in the frames after.
+         */
+        private fun boardStroke(stroke: Stroke, epsilon: Float, budget: IntArray): Stroke {
+            boardDrawn[stroke]?.let { (built, drawn) -> if (abs(built - epsilon) < EPSILON_SLOP) return drawn }
+            if (budget[0] <= 0) {
+                postInvalidateOnAnimation()
+                return boardDrawn[stroke]?.second ?: onScreen(stroke)
+            }
+            budget[0]--
+            val opaque = Color.alpha(stroke.brush.colorIntArgb) == 255
+            val family = (if (meshInk && opaque) Tool.meshFamilyOf(stroke.brush.family) else null) ?: stroke.brush.family
+            val drawn = runCatching {
+                Stroke(stroke.brush.copy(family = family, epsilon = inkEpsilon(stroke.brush.family, stroke.brush.size, epsilon)),
+                    stroke.inputs)
+            }.getOrElse { onScreen(stroke) }
+            boardDrawn[stroke] = epsilon to drawn
+            return drawn
+        }
+
         /** The stroke as it should be drawn on screen; see [meshInk]. */
         private fun onScreen(stroke: Stroke): Stroke {
             if (!meshInk) return stroke
@@ -9812,11 +9843,17 @@ class InkCanvasView @JvmOverloads constructor(
                 if (whiteboard && board.isNotEmpty()) {
                     scoped.save()
                     scoped.concat(documentToScreen)
+                    val boardEpsilon = epsilonFor(tessellationBucket(currentScale()))
+                    val rebuilds = intArrayOf(BOARD_REBUILDS_PER_FRAME)
                     for (stroke in board) {
                         val box = stroke.shape.computeBoundingBox() ?: continue
                         if (box.xMax < viewport[0] || box.xMin > viewport[2] ||
                             box.yMax < viewport[1] || box.yMin > viewport[3]) continue
-                        scope.drawStroke(onScreen(stroke))
+                        scope.drawStroke(boardStroke(stroke, boardEpsilon, rebuilds))
+                    }
+                    if (boardDrawn.size > board.size * 2 + 32) {
+                        val kept = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Stroke, Boolean>()).apply { addAll(board) }
+                        boardDrawn.keys.retainAll(kept)
                     }
                     scoped.restore()
                     visibleCount += board.size
@@ -10464,6 +10501,8 @@ class InkCanvasView @JvmOverloads constructor(
         /** How long the pen rests over a link before what it leads to is shown. */
         const val LINK_PREVIEW_HOLD_MS = 600L
         const val MAX_SCREEN_BRUSHES = 256
+        /** How many whiteboard strokes may be built afresh in one frame; see boardStroke. */
+        const val BOARD_REBUILDS_PER_FRAME = 24
         /** A few pens, colours and zoom levels; see [currentBrush]. */
         const val RECENT_BRUSHES = 8
         /** Page units round a picture still drawn when just off screen: shadows, handles. */
