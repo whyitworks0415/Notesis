@@ -1921,6 +1921,8 @@ class InkCanvasView @JvmOverloads constructor(
     private val documentToScreen = Matrix()
     private val screenToDocument = Matrix()
     private val strokeTransform = Matrix()
+    /** [strokeTransform] for a board stroke, moved to that stroke's origin. */
+    private val boardWetTransform = Matrix()
     private val matrixValues = FloatArray(9)
     private val pageProbe = FloatArray(2)
 
@@ -4461,7 +4463,26 @@ class InkCanvasView @JvmOverloads constructor(
                     }
                     // "World" here is the page, so the finished stroke comes
                     // back in page-local coordinates and stays with its page.
-                    val toPage = screenToPage(index)
+                    var toPage = screenToPage(index)
+                    // The board runs to tens of thousands of units in a long
+                    // note, where float ink geometry breaks into wedges while
+                    // it is written. So its live stroke is built near an origin
+                    // on the same grid the dry board uses, and moved back at
+                    // pen-up; the saved stroke stays in document coordinates.
+                    var originX = 0f
+                    var originY = 0f
+                    if (onBoard) {
+                        pageProbe[0] = event.getX(event.actionIndex)
+                        pageProbe[1] = event.getY(event.actionIndex)
+                        toPage.mapPoints(pageProbe)
+                        originX = kotlin.math.floor(pageProbe[0] / BOARD_ORIGIN_STEP) * BOARD_ORIGIN_STEP
+                        originY = kotlin.math.floor(pageProbe[1] / BOARD_ORIGIN_STEP) * BOARD_ORIGIN_STEP
+                        if (originX != 0f || originY != 0f) {
+                            boardWetTransform.set(toPage)
+                            boardWetTransform.postTranslate(-originX, -originY)
+                            toPage = boardWetTransform
+                        }
+                    }
                     // Both wet layers sit in the screen's frame, so a turned
                     // note's compatible ink can keep its surface too; see drawChild.
                     activeStrokeId = withWetEvent(event) { screen ->
@@ -4483,7 +4504,7 @@ class InkCanvasView @JvmOverloads constructor(
                         latency.record(PerformanceMetric.FIRST_INK, System.nanoTime() - event.eventTime * 1_000_000L)
                     }
                     if (brush !== stored) activeStrokeId?.let { wetTrueColors[it] = stored.colorIntArgb }
-                    activeStrokeId?.let { wetStarts[it] = WetStart(if (onBoard) document.board else document.pages[index], strokeIsMask) }
+                    activeStrokeId?.let { wetStarts[it] = WetStart(if (onBoard) document.board else document.pages[index], strokeIsMask, originX, originY) }
                     // Everything below waits until the first mark is handed on.
                     onWritingStarted?.invoke()
                     // MotionEventPredictor is useful only for wet freehand ink.
@@ -9076,8 +9097,11 @@ class InkCanvasView @JvmOverloads constructor(
                 else wetStroke.brush.copy(family = storedFamily)
             val storedBrush = if (trueColor == null || trueColor == familyBrush.colorIntArgb) familyBrush
                 else familyBrush.copyWithColorIntArgb(colorIntArgb = trueColor)
-            val finishedStroke = if (storedBrush === wetStroke.brush) wetStroke
+            val restyled = if (storedBrush === wetStroke.brush) wetStroke
                 else wetStroke.copy(storedBrush)
+            // A board stroke written near its origin goes back to where it is.
+            val finishedStroke = if (start == null || (start.originX == 0f && start.originY == 0f)) restyled
+                else translate(restyled, start.originX, start.originY)
             val finishedTool = Tool.ofBrushFamily(finishedStroke.brush.family)
             val stroke = when {
                 // One pass, one rebuild at most: the spur and the dwell tidying
@@ -9155,7 +9179,13 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     /** Where a pen stroke was started, and as what, until Ink hands it back finished. */
-    private class WetStart(val page: Page, val mask: Boolean) {
+    private class WetStart(
+        val page: Page,
+        val mask: Boolean,
+        /** Where a board stroke was built from; it goes back by this at pen-up. */
+        val originX: Float = 0f,
+        val originY: Float = 0f,
+    ) {
         /** When its pen lifted, for PEN_FINALIZE; 0 when not measured. */
         var liftedNanos = 0L
         /** Held still at its end long enough to be straightened or recognised; see holdToDraw. */
