@@ -195,7 +195,7 @@ internal fun TutorialOverlay(
     fun go(page: Int) {
         scope.launch {
             // Material steps; the glass skins slide.
-            if (skin.animatesPopups) pager.animateScrollToPage(page) else pager.scrollToPage(page)
+            pager.animateScrollToPage(page)
         }
     }
     Box(

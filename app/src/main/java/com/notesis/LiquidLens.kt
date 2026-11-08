@@ -1,13 +1,7 @@
 package com.notesis
 
-import android.content.Context
-import android.hardware.Sensor
-import android.hardware.SensorEvent
-import android.hardware.SensorEventListener
-import android.hardware.SensorManager
 import android.os.Build
 import android.graphics.RenderEffect
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.BackdropEffectScope
 import com.kyant.backdrop.effects.effect
@@ -242,73 +236,4 @@ internal fun BackdropEffectScope.liquidLens(p: LiquidLensParams) {
         setFloatUniform("rimEven", p.rimEven.coerceIn(0f, 1f))
     } }.getOrNull() ?: return
     effect(RenderEffect.createRuntimeShaderEffect(shader, "content"))
-}
-
-/**
- * Where the light comes from, as LiquidGlassView's LightSourceController
- * works it out: from the top left at rest - (0.866, 0.5), pointing the way
- * the light travels, y down - and, while [listen] is on, from wherever "up"
- * is as the device tilts, low-pass filtered. Shared by every pane.
- */
-internal object GravityLight : SensorEventListener {
-    const val DEFAULT_X = 0.866f
-    const val DEFAULT_Y = 0.5f
-    private const val SMOOTHING = 0.14f
-    private const val NOTIFY = 0.004f
-
-    val direction = mutableStateOf(DEFAULT_X to DEFAULT_Y)
-    private var x = DEFAULT_X
-    private var y = DEFAULT_Y
-    private var manager: SensorManager? = null
-    private var users = 0
-    private var rotation: () -> Int = { android.view.Surface.ROTATION_0 }
-
-    fun listen(context: Context, display: () -> Int) {
-        users++
-        rotation = display
-        if (users > 1) return
-        val sm = context.applicationContext.getSystemService(Context.SENSOR_SERVICE) as? SensorManager ?: return
-        val sensor = sm.getDefaultSensor(Sensor.TYPE_GRAVITY) ?: sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) ?: return
-        manager = sm
-        sm.registerListener(this, sensor, SensorManager.SENSOR_DELAY_GAME)
-    }
-
-    fun stop() {
-        users = (users - 1).coerceAtLeast(0)
-        if (users > 0) return
-        manager?.unregisterListener(this)
-        manager = null
-        x = DEFAULT_X; y = DEFAULT_Y
-        direction.value = DEFAULT_X to DEFAULT_Y
-    }
-
-    override fun onSensorChanged(event: SensorEvent) {
-        val gx = event.values[0]
-        val gy = event.values[1]
-        val (ux, uy) = when (rotation()) {
-            android.view.Surface.ROTATION_90 -> -gy to gx
-            android.view.Surface.ROTATION_180 -> -gx to -gy
-            android.view.Surface.ROTATION_270 -> gy to -gx
-            else -> gx to gy
-        }
-        val planar = sqrt(ux * ux + uy * uy)
-        val tilt = (planar / SensorManager.GRAVITY_EARTH).coerceIn(0f, 1f)
-        var tx = DEFAULT_X
-        var ty = DEFAULT_Y
-        if (planar > 0.5f) {
-            tx = -ux / planar * tilt + DEFAULT_X * (1f - tilt)
-            ty = uy / planar * tilt + DEFAULT_Y * (1f - tilt)
-        }
-        val len = sqrt(tx * tx + ty * ty)
-        if (len > 1e-4f) { tx /= len; ty /= len }
-        var nx = x + (tx - x) * SMOOTHING
-        var ny = y + (ty - y) * SMOOTHING
-        val nLen = sqrt(nx * nx + ny * ny)
-        if (nLen > 1e-4f) { nx /= nLen; ny /= nLen }
-        x = nx; y = ny
-        val (ox, oy) = direction.value
-        if (kotlin.math.abs(nx - ox) > NOTIFY || kotlin.math.abs(ny - oy) > NOTIFY) direction.value = nx to ny
-    }
-
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
 }

@@ -92,8 +92,7 @@ internal fun glassToolbarTools(level: Int): List<GlassToolbarTool> = ToolbarLayo
 /**
  * How the bar moves between its four sizes: how long it takes and the curve
  * it takes it on. Kept on the device and read as state, so a change in the
- * menu shows on the very next switch. Only Liquid glass moves; Material and
- * Glassmorphism switch at once (see [animatesChrome]).
+ * menu shows on the very next switch. Every look moves.
  */
 /**
  * Whether the bar runs across the top or down the side. Kept for every
@@ -493,7 +492,7 @@ private fun GlassActionButton(
     val pressed by interaction.collectIsPressedAsState()
     // Only a trigger lifts on press, in the same rest -> lifted -> rest cycle as
     // the tool pill; an ordinary button stays flat, and still skins never lift.
-    val lifts = persistentGlass && skin.animatesChrome && rememberLiquidGlassEffectsAllowed() &&
+    val lifts = persistentGlass && rememberLiquidGlassEffectsAllowed() &&
         !look.highContrast && look.liquidGlassResponse > 0f
     // A recipe with its own press switched on grows (or shrinks) the button its way.
     val recipe = if (glass) look.pressRecipe() else null
@@ -598,7 +597,7 @@ internal class GlassToolbarPopupPosition(
  * top row, the tool strip, the pen options and the Functions button; at the
  * smaller sizes the tool strip as a capsule of its own beside a round
  * Functions button. The skin only decides what those surfaces are made of
- * (see [skinMaterial]) and whether anything moves (see [animatesChrome]).
+ * (see [skinMaterial]); every look moves.
  */
 @Composable
 internal fun LiquidGlassToolbar(
@@ -629,8 +628,8 @@ internal fun LiquidGlassToolbar(
     val look = LocalSkinSettings.current
     val motionAllowed = rememberLiquidGlassEffectsAllowed() && !look.highContrast
     // The bar's own morphs and fades; the popup's growth is its own question.
-    val effects = skin.animatesChrome && motionAllowed
-    val popupMotion = skin.animatesPopups && motionAllowed
+    val effects = motionAllowed
+    val popupMotion = motionAllowed
     val popupBackdrop = LocalGlassPopupBackdrop.current ?: LocalLiquidGlassBackdrop.current
     // The one radius the bar is built from. Everything inside it - the strip,
     // its pill, the Functions button - is concentric with it.
@@ -1268,39 +1267,58 @@ internal class PopupGrowth(shown: Boolean) {
         // curve started on it lost its first steps to that frame and jumped.
         // It goes out unseen; the curve starts on the frame after.
         if (animate && width.value == 0f && height.value == 0f) awaitFirstFrames()
-        move(1f, animate, profile?.open ?: POPUP_OPEN, 0f)
+        val spec = profile?.open ?: POPUP_OPEN
+        move(1f, animate, spec, spec, 0f, widthDelayMs = profile?.widthDelayMs ?: 0)
     }
 
     suspend fun close(animate: Boolean) {
         closing = true
-        move(0f, animate, profile?.close ?: POPUP_CLOSE, profile?.closeVelocity ?: 0f)
+        val spec = profile?.close ?: POPUP_CLOSE
+        move(0f, animate, profile?.closeWidth ?: spec, spec, profile?.closeVelocity ?: 0f)
     }
 
     private suspend fun move(
         target: Float, animate: Boolean,
-        spec: androidx.compose.animation.core.AnimationSpec<Float>,
+        widthSpec: androidx.compose.animation.core.AnimationSpec<Float>,
+        heightSpec: androidx.compose.animation.core.AnimationSpec<Float>,
         velocity: Float,
+        widthDelayMs: Int = 0,
     ) {
         if (!animate) {
             width.snapTo(target)
             height.snapTo(target)
             return
         }
-        // The same curve on both, so the shape never changes proportion on the way.
+        // The same curve on both unless the opening pours, so the shape keeps
+        // its proportion on the way; a poured one runs down, then spreads.
         coroutineScope {
-            launch { width.animateTo(target, spec, initialVelocity = velocity) }
-            launch { height.animateTo(target, spec, initialVelocity = velocity) }
+            launch {
+                if (widthDelayMs > 0) kotlinx.coroutines.delay(widthDelayMs.toLong())
+                width.animateTo(target, widthSpec, initialVelocity = velocity)
+            }
+            launch { height.animateTo(target, heightSpec, initialVelocity = velocity) }
         }
     }
 }
 
-/** A popup's growth, with the opening of the recipe in use when its own is switched on. */
+/**
+ * A popup's growth: Material's out of the button on its spring, the glass
+ * looks' poured as Mornye pours its menus, or a recipe's own opening where
+ * that is switched on.
+ */
 @Composable
 internal fun rememberPopupGrowth(shown: Boolean): PopupGrowth {
     val growth = remember { PopupGrowth(shown) }
     val look = LocalSkinSettings.current
-    growth.profile = if (LocalSkin.current == Skin.LIQUID_GLASS) look.openProfile() else null
+    growth.profile = popupOpening(LocalSkin.current, look)
     return growth
+}
+
+/** How [skin]'s popups open under [look]; see [rememberPopupGrowth]. */
+internal fun popupOpening(skin: Skin, look: SkinSettings): OpenProfile = when (skin) {
+    Skin.MATERIAL -> MaterialOpen
+    Skin.GLASSMORPHISM -> PourOpen
+    Skin.LIQUID_GLASS -> look.openProfile() ?: PourOpen
 }
 
 // Material's emphasized accelerate: leaves slowly and is gone quickly.
@@ -1345,7 +1363,7 @@ internal fun Modifier.growOutOf(anchor: () -> Offset?, growth: PopupGrowth): Mod
                 scaleY = popupGrowScale(h, POPUP_START_SCALE_Y)
             } else {
                 val start = if (growth.closing) profile.closeScale else profile.startScale
-                alpha = profile.alpha(minOf(w, h))
+                alpha = profile.alpha(maxOf(w, h))
                 scaleX = profile.scaleOf(w, start)
                 scaleY = profile.scaleOf(h, start)
                 translationY = -profile.dropDp * density * (1f - minOf(w, h).coerceIn(0f, 1f))
@@ -1369,13 +1387,6 @@ internal fun ToolbarMotionSettings() {
             if (ToolbarMotion.durationMs == 0) "Instant switch" else "Switch time ${ToolbarMotion.durationMs} ms",
             style = MaterialTheme.typography.bodyMedium,
         )
-        if (!LocalSkin.current.animatesChrome) {
-            Text(
-                "Used by Liquid glass. ${LocalSkin.current.label} switches sizes at once.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline,
-            )
-        }
         SkinSlider(
             value = ToolbarMotion.durationMs.toFloat(),
             onValueChange = { ToolbarMotion.update(durationMs = it.roundToInt()) },

@@ -623,10 +623,10 @@ internal fun CoachMarks(targets: CoachTargets, all: List<CoachMark> = HOME_MARKS
     var origin by remember { mutableStateOf(Offset.Zero) }
     val pad = with(density) { 8.dp.toPx() }
     val wanted = (targets.bounds[mark.target] ?: Rect.Zero).translate(-origin.x, -origin.y).inflate(pad)
-    // Material jumps from mark to mark; the glass skins slide the light across.
+    // The light slides across from mark to mark, in every look.
     val hole by animateRectAsState(
         wanted,
-        if (skin.animatesPopups) Ui.Motion.tween<Rect>() else snap<Rect>(),
+        Ui.Motion.tween<Rect>(),
         label = "Coach mark",
     )
     val scrim = Color.Black.copy(alpha = 0.55f)
@@ -753,16 +753,12 @@ internal fun NoteTips(onLastPage: () -> Boolean, modifier: Modifier = Modifier) 
             )
         }
     }
-    if (skin.animatesPopups) {
-        AnimatedVisibility(
-            visible = current != null,
-            enter = fadeIn(Ui.Motion.tween()) + slideInVertically(Ui.Motion.tween()) { it / 3 },
-            exit = fadeOut(Ui.Motion.tween()) + slideOutVertically(Ui.Motion.tween()) { it / 4 },
-            modifier = modifier,
-        ) { content() }
-    } else if (current != null) {
-        Box(modifier) { content() }
-    }
+    AnimatedVisibility(
+        visible = current != null,
+        enter = fadeIn(Ui.Motion.tween()) + slideInVertically(Ui.Motion.tween()) { it / 3 },
+        exit = fadeOut(Ui.Motion.tween()) + slideOutVertically(Ui.Motion.tween()) { it / 4 },
+        modifier = modifier,
+    ) { content() }
 }
 
 @Composable

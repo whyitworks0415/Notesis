@@ -179,17 +179,14 @@ internal fun SkinPreview(skin: Skin, modifier: Modifier, style: LiquidStyle = Li
                         bar.topLeft, bar.size, radius, style = Stroke(1.dp.toPx()),
                     )
                 }
-                // Kyant0's: a light surface at 40%, colour lifted, a thin lit rim.
-                LiquidStyle.KYANT -> {
-                    drawRoundRect(Color(0xFFFAFAFA).copy(alpha = 0.4f), bar.topLeft, bar.size, radius)
-                    drawRoundRect(Color.White, bar.topLeft, bar.size, radius, style = Stroke(0.6.dp.toPx()))
-                }
-                // QWEA0's: a faint white body, lit from the top left.
-                LiquidStyle.QWEA -> {
-                    drawRoundRect(Color.White.copy(alpha = 0x24 / 255f), bar.topLeft, bar.size, radius)
+                // Mornye's: a clear white body, a hairline contact edge, lit at top and bottom, its red accent.
+                LiquidStyle.MORNYE -> {
+                    drawRoundRect(mornyeFill(0.75f, panel = false, dark = false), bar.topLeft, bar.size, radius)
+                    drawRoundRect(Color.Black.copy(alpha = 0.16f), bar.topLeft, bar.size, radius, style = Stroke(0.5.dp.toPx()))
                     drawRoundRect(
-                        Brush.linearGradient(listOf(Color.White, Color.White.copy(alpha = 0.1f)), start = bar.topLeft, end = bar.bottomRight),
-                        bar.topLeft, bar.size, radius, style = Stroke(1.5.dp.toPx()),
+                        Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.6f), Color.White.copy(alpha = 0.05f),
+                            Color.White.copy(alpha = 0.35f)), startY = bar.top, endY = bar.bottom),
+                        bar.topLeft, bar.size, radius, style = Stroke(1.dp.toPx()),
                     )
                 }
                 LiquidStyle.NOTESIS -> {
@@ -203,12 +200,13 @@ internal fun SkinPreview(skin: Skin, modifier: Modifier, style: LiquidStyle = Li
                 }
             }
         }
-        // The tools, the first one picked.
+        // The tools, the first one picked, in Mornye's red where that is the look.
+        val picked = if (skin == Skin.LIQUID_GLASS && style == LiquidStyle.MORNYE) Color(MornyeAccent.RED.light) else accent
         val step = bar.width / 4f
         for (i in 0 until 4) {
             val c = Offset(bar.left + step * (i + 0.5f), bar.center.y)
-            if (i == 0) drawCircle(accent.copy(alpha = 0.25f), radius = bar.height * 0.42f, center = c)
-            drawCircle(if (i == 0) accent else onSurface.copy(alpha = 0.7f), radius = bar.height * 0.14f, center = c)
+            if (i == 0) drawCircle(picked.copy(alpha = 0.25f), radius = bar.height * 0.42f, center = c)
+            drawCircle(if (i == 0) picked else onSurface.copy(alpha = 0.7f), radius = bar.height * 0.14f, center = c)
         }
     }
 }

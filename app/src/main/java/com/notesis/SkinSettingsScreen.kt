@@ -497,7 +497,7 @@ internal fun AppearanceSettings(
                 AppearanceGroup.ICONS -> IconsGroup()
                 AppearanceGroup.PANELS -> PanelsGroup(skin, settings, onChange)
                 AppearanceGroup.GLASS -> GlassGroup(skin, settings, onChange, onSkin)
-                AppearanceGroup.COLORS -> ColorsGroup(settings, onChange)
+                AppearanceGroup.COLORS -> ColorsGroup(skin, settings, onChange)
             }
             HorizontalDivider(Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
             OutlinedButton(onClick = { onChange(SkinSettings()) }, modifier = Modifier.heightIn(min = 48.dp)) {
@@ -615,6 +615,9 @@ private fun StyleGroup(
 private fun IconsGroup() {
     val context = LocalContext.current
     SettingsSectionHeader("Icon set")
+    if (LocalSkin.current == Skin.MATERIAL) {
+        SettingsNote("Material draws Material Symbols Rounded, as Android does; the set below is for the other looks.")
+    }
     LiquidSegmentedControl(
         segments = listOf("Reicons", "AnimateIcons"),
         selectedIndex = if (AppIconStyle.animated) 1 else 0,
@@ -627,7 +630,7 @@ private fun IconsGroup() {
         "Icon animation", AppIconStyle.animate, { AppIconStyle.setAnimate(context, it) },
         hint = "Icons move once when tapped or chosen. Off keeps them still.",
         disabledReason = when {
-            !skin.animatesChrome -> "${skin.displayName} keeps its icons still"
+            AppIconStyle.materialSymbols -> "Material Symbols stay still"
             AppIconStyle.animated -> null
             else -> "Only the AnimateIcons set moves"
         },
@@ -692,8 +695,12 @@ private fun GlassGroup(skin: Skin, settings: SkinSettings, onChange: (SkinSettin
     }
     when (settings.liquidStyle) {
         LiquidStyle.IOS -> { IosGlassControls(settings.ios) { onChange(settings.copy(ios = it)) }; return }
-        LiquidStyle.KYANT -> { KyantGlassControls(settings.kyant) { onChange(settings.copy(kyant = it)) }; return }
-        LiquidStyle.QWEA -> { QweaGlassControls(settings.qwea) { onChange(settings.copy(qwea = it)) }; return }
+        LiquidStyle.MORNYE -> {
+            MornyeGlassControls(settings.mornye, settings.accent, settings.themeMode == AppThemeMode.DARK) {
+                onChange(settings.copy(mornye = it))
+            }
+            return
+        }
         LiquidStyle.NOTESIS -> Unit
     }
     val defaults = SkinSettings()
@@ -867,132 +874,71 @@ private fun lightAngleLabel(angle: Float): String = when (angle.roundToInt()) {
     else -> "%.0f°".format(angle)
 }
 
-/** Kyant0/AndroidLiquidGlass's numbers, under the names its effects take. */
+/** Mornye's glass: how clear it is, its rim, its corner and the accent its colours are built from. */
 @Composable
-private fun KyantGlassControls(k: KyantGlass, onChange: (KyantGlass) -> Unit) {
-    val d = KyantGlass()
-    SettingsNote("From Kyant0/AndroidLiquidGlass's catalog: bars and buttons as its bottom tabs, " +
-        "panels, menus and dialogs as its dialog - twice the blur and bending, a brighter surface.")
-    SettingsSectionHeader("Lens")
-    AppearanceSlider("Refraction height", "%.0f dp".format(k.refractionHeight), k.refractionHeight,
-        KyantGlass.HEIGHT_RANGE, step = 1f, default = d.refractionHeight,
-        note = "How far in from the edge the page is bent. Buttons take half.",
-    ) { onChange(k.copy(refractionHeight = it)) }
-    AppearanceSlider("Refraction amount", "%.0f dp".format(k.refractionAmount), k.refractionAmount,
-        KyantGlass.AMOUNT_RANGE, step = 1f, default = d.refractionAmount,
-        note = "How far the page is bent. Panels take twice this.",
-    ) { onChange(k.copy(refractionAmount = it)) }
-    SettingsToggle("Depth effect", k.depthEffect, { onChange(k.copy(depthEffect = it)) },
-        hint = "The lens bends towards the corners too, on bars and buttons. Panels always have it.")
-    SettingsToggle("Chromatic aberration", k.chromaticAberration, { onChange(k.copy(chromaticAberration = it)) },
-        hint = "The colours split a little at the edge. Off in the catalog, on by default here.")
-    SettingsSectionHeader("Material")
-    AppearanceSlider("Blur radius", "%.0f dp".format(k.blur), k.blur, KyantGlass.BLUR_RANGE, step = 1f, default = d.blur,
-        note = "Bars. Panels take twice this in the light, buttons a quarter.",
-    ) { onChange(k.copy(blur = it)) }
-    AppearanceSlider("Vibrancy", "%.2f×".format(k.saturation), k.saturation, KyantGlass.SATURATION_RANGE,
-        step = 0.05f, default = d.saturation, note = "Saturation of the page through the glass.",
-    ) { onChange(k.copy(saturation = it)) }
-    AppearanceSlider("Surface", "%.0f%%".format(k.surface * 100), k.surface, 0f..1f, step = 0.01f, default = d.surface,
-        note = "The #FAFAFA coat over the glass (#121212 in the dark). Panels add 20% in the light.",
-    ) { onChange(k.copy(surface = it)) }
-    AppearanceSlider("Highlight", "%.0f%%".format(k.highlight * 100), k.highlight, 0f..1f, step = 0.01f, default = d.highlight,
-        note = "The lit rim.",
-    ) { onChange(k.copy(highlight = it)) }
-    AppearanceSlider("Corner radius", "%.0f dp".format(k.corner), k.corner, SkinSettings.CORNER_RANGE, step = 1f,
-        default = d.corner, note = "Its dialog's: 48.",
-    ) { onChange(k.copy(corner = it)) }
-    ProjectMotionControls(k.motion, "the catalog") { onChange(k.copy(motion = it)) }
-    OutlinedButton(onClick = { onChange(d.copy(motion = k.motion)) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to the defaults") }
-    OutlinedButton(onClick = { onChange(KyantGlass.CATALOG.copy(corner = k.corner, motion = k.motion)) },
-        modifier = Modifier.heightIn(min = 48.dp)) { Text("Use the catalog's bottom tabs as written") }
-}
-
-/** QWEA0/Liquid-Glass-Android's numbers, as its demo app's drawer sets them. */
-@Composable
-private fun QweaGlassControls(q: QweaGlass, onChange: (QweaGlass) -> Unit) {
-    val d = QweaGlass()
-    SettingsNote("From QWEA0/Liquid-Glass-Android (MIT): LiquidGlassView's own defaults, which its demo app starts " +
-        "from, drawn through a port of its lens shader. Pixels are the screen's, as the view's are.")
-    SettingsSectionHeader("Lens")
-    LiquidSegmentedControl(
-        segments = QweaMaterial.entries.map { it.label },
-        selectedIndex = q.material.ordinal,
-        onSelected = { onChange(q.copy(material = QweaMaterial.entries[it])) },
-        modifier = Modifier.fillMaxWidth(),
-        useLiquidGlass = false,
-    )
-    SettingsNote(if (q.material == QweaMaterial.REGULAR) "Regular: full blur, the material's light tint."
-        else "Clear: a third of the blur and a fixed 16% dimming layer, for glass over pictures.")
-    SettingsToggle("Sensor highlight", q.sensorHighlight, { onChange(q.copy(sensorHighlight = it)) },
-        hint = "The light on the rim follows gravity as the device tilts.")
-    SettingsToggle("Adaptive tint", q.adaptiveTint, { onChange(q.copy(adaptiveTint = it)) },
-        hint = "Regular only: darker over light parts of the page, lighter over dark ones, pixel by pixel.")
-    SettingsToggle("Refraction no fold", q.noFold, { onChange(q.copy(noFold = it)) },
-        hint = "The bending held below where the rim folds into a mirror image of the inside.")
-    SettingsToggle("Refraction outward", q.outward, { onChange(q.copy(outward = it)) },
-        hint = "The rim draws in the page from outside the glass instead of inside it.")
-    SettingsToggle("Adaptive lens scale", q.adaptiveLensScale, { onChange(q.copy(adaptiveLensScale = it)) },
-        hint = "On panes under 110 dp the bevel and the bending shrink with the pane.")
-    AppearanceSlider("Bevel width", "%.0f px".format(q.bevelWidth), q.bevelWidth, QweaGlass.BEVEL_RANGE, step = 1f,
-        default = d.bevelWidth, note = "The band round the edge where the light is bent.",
-    ) { onChange(q.copy(bevelWidth = it)) }
-    AppearanceSlider("Refraction", "%.0f px".format(q.refractionHeight), q.refractionHeight, QweaGlass.REFRACTION_RANGE,
-        step = 1f, default = d.refractionHeight, note = "How far the page is pulled in at the very edge.",
-    ) { onChange(q.copy(refractionHeight = it)) }
-    AppearanceSlider("Falloff", "%.1f".format(q.falloff), q.falloff, QweaGlass.FALLOFF_RANGE, step = 0.1f,
-        default = d.falloff, note = "How tightly the bending crowds the edge. 0 is a square bevel.",
-    ) { onChange(q.copy(falloff = it)) }
-    AppearanceSlider("Dispersion", "%.2f".format(q.dispersion), q.dispersion, 0f..1f, step = 0.01f, default = d.dispersion,
-        note = "Each colour bent by a little more or less: a spectral fringe at the edge.",
-    ) { onChange(q.copy(dispersion = it)) }
-    AppearanceSlider("Edge softness", "%.0f px".format(q.edgeSoftness), q.edgeSoftness, QweaGlass.SOFTNESS_RANGE,
-        step = 1f, default = d.edgeSoftness, note = "Smooths the hard line the bending makes at the edge.",
-    ) { onChange(q.copy(edgeSoftness = it)) }
-    SettingsSectionHeader("Glass")
-    SettingsToggle("Enable blur", q.blurOn, { onChange(q.copy(blurOn = it)) })
-    AppearanceSlider("Blur amount", "%.3f".format(q.blurAmount), q.blurAmount, 0f..1f, step = 0.005f, default = d.blurAmount,
-        note = "Bars and buttons. The blur is 4 + 32 × this, in pixels.",
-    ) { onChange(q.copy(blurAmount = it)) }
-    AppearanceSlider("Panel blur amount", "%.2f".format(q.panelBlurAmount), q.panelBlurAmount, 0f..1f, step = 0.01f,
-        default = d.panelBlurAmount, note = "Panels, menus and dialogs: its dialog builder's 0.6.",
-    ) { onChange(q.copy(panelBlurAmount = it)) }
-    AppearanceSlider("Saturation", "%.0f%%".format(q.saturation * 100), q.saturation, QweaGlass.SATURATION_RANGE,
-        step = 0.01f, default = d.saturation,
-    ) { onChange(q.copy(saturation = it)) }
-    AppearanceSlider("Corner radius", "%.0f dp".format(q.corner), q.corner, SkinSettings.CORNER_RANGE, step = 1f,
-        default = d.corner, note = "Panels, as its dialog builder: 28. Bars and buttons are capsules.",
-    ) { onChange(q.copy(corner = it)) }
-    SettingsToggle("Over light", q.overLight, { onChange(q.copy(overLight = it)) },
-        hint = "Tells the glass it sits over a light page: more blur, a dark tint, a deeper shadow.")
-    SettingsToggle("Edge highlight", q.edgeHighlight, { onChange(q.copy(edgeHighlight = it)) })
-    AppearanceSlider("Highlight opacity", "%.0f%%".format(q.highlight * 100), q.highlight, 0f..1f, step = 0.01f,
-        default = d.highlight,
-    ) { onChange(q.copy(highlight = it)) }
-    SettingsToggle("Shadow", q.shadow, { onChange(q.copy(shadow = it)) },
-        hint = "Off in LiquidGlassView. Shadows in Colors › Readability must be on as well.")
-    SettingsSectionHeader("Glass tint")
-    val swatches = listOf(0 to "None", 0xFF007AFF.toInt() to "Blue", 0xFF34C759.toInt() to "Green",
-        0xFFFF9500.toInt() to "Orange", 0xFFFF2D55.toInt() to "Pink", 0xFFAF52DE.toInt() to "Purple")
-    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
-        swatches.forEach { (color, name) ->
-            SettingsChoiceChip(selected = q.tintColor == color, onClick = { onChange(q.copy(tintColor = color)) }, label = name)
+private fun MornyeGlassControls(m: MornyeGlass, appAccent: Int, dark: Boolean, onChange: (MornyeGlass) -> Unit) {
+    val d = MornyeGlass()
+    SettingsNote("From Mornye (LGPL-3.0), written again from its numbers: a white body that clears as the clarity " +
+        "rises, a gentle lens, a fine lit rim and iOS's grouped colours. Bars take its clear tint, panels and menus " +
+        "its stronger one so their words read.")
+    SettingsSectionHeader("Accent")
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(Ui.Space.s),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        MornyeAccent.entries.forEach { accent ->
+            val picked = m.accent == accent
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(Ui.Space.xs)) {
+                Box(
+                    Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(Color(accent.argb(dark, appAccent)).copy(alpha = 1f))
+                        .border(if (picked) 3.dp else 1.dp,
+                            if (picked) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline, CircleShape)
+                        .clickable(onClickLabel = accent.label) { onChange(m.copy(accent = accent)) },
+                )
+                Text(accent.label, style = MaterialTheme.typography.labelSmall)
+            }
         }
     }
-    AppearanceSlider("Tint strength", "%.0f%%".format(q.tintStrength * 100), q.tintStrength, 0f..1f, step = 0.01f,
-        default = d.tintStrength, disabledReason = if (q.tintColor == 0) "Pick a tint first" else null,
-    ) { onChange(q.copy(tintStrength = it)) }
-    SettingsSectionHeader("Interaction")
-    AppearanceSlider("Press scale", "%.2f".format(q.pressScale), q.pressScale, QweaGlass.PRESS_RANGE, step = 0.01f,
-        default = d.pressScale, note = "Below 1 a press shrinks the button, above 1 grows it. Used with Press in Motion.",
-    ) { onChange(q.copy(pressScale = it)) }
-    ProjectMotionControls(q.motion, "LiquidGlassView") { onChange(q.copy(motion = it)) }
-    OutlinedButton(onClick = { onChange(d) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to the demo's values") }
+    SettingsNote("App accent follows the colour set in Colours below.")
+    SettingsSectionHeader("Glass")
+    AppearanceSlider("Clarity", "%.0f%%".format(m.clarity * 100), m.clarity, 0f..1f, step = 0.05f, default = d.clarity,
+        note = "Higher shows more of the page and blurs it less. Below 20% the glass is a plain tinted surface.",
+    ) { onChange(m.copy(clarity = it)) }
+    SettingsToggle("Glass outlines", m.outlines, { onChange(m.copy(outlines = it)) },
+        hint = "A hairline edge with a lit rim inside it.")
+    AppearanceSlider("Corner radius", "%.0f dp".format(m.corner), m.corner, SkinSettings.CORNER_RANGE, step = 1f,
+        default = d.corner, note = "32 by default, as its panels.",
+    ) { onChange(m.copy(corner = it)) }
+    ProjectMotionControls(m.motion, "Mornye") { onChange(m.copy(motion = it)) }
+    OutlinedButton(onClick = { onChange(d.copy(accent = m.accent)) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to the defaults") }
 }
 
 @Composable
-private fun ColorsGroup(settings: SkinSettings, onChange: (SkinSettings) -> Unit) {
+private fun ColorsGroup(skin: Skin, settings: SkinSettings, onChange: (SkinSettings) -> Unit) {
     var editing by remember { mutableStateOf<ColorSlot?>(null) }
+    if (skin == Skin.MATERIAL) {
+        SettingsSectionHeader("Material colours")
+        val wallpaperAvailable = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S
+        SettingsToggle("Wallpaper colours", settings.dynamicColor, { onChange(settings.copy(dynamicColor = it)) },
+            hint = "The theme takes its colours from the wallpaper, as Android does. Off, from the accent below.",
+            disabledReason = when {
+                !wallpaperAvailable -> "Needs Android 12 or later"
+                settings.highContrast -> "High contrast uses the accent"
+                else -> null
+            },
+        )
+        SettingsToggle("AMOLED black", settings.amoled, { onChange(settings.copy(amoled = it)) },
+            hint = "In dark mode, a black page with near-black panels.",
+            disabledReason = if (settings.themeMode != AppThemeMode.DARK) "Used in dark mode" else null,
+        )
+    }
+    if (skin == Skin.LIQUID_GLASS && settings.liquidStyle == LiquidStyle.MORNYE) {
+        SettingsNote("Mornye builds its colours from its own accent, chosen in Glass. The ink below still applies.")
+    }
     SettingsSectionHeader("Cards and buttons")
     ColorSlot.entries.forEach { slot ->
         ColorRow(slot.label, slot.read(settings), selected = editing == slot,

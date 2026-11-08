@@ -177,7 +177,7 @@ fun Modifier.liquidGlass(
     if (enabled && amount > 0.001f && effectsAllowed && backdrop != null &&
         skin == Skin.LIQUID_GLASS && settings.liquidStyle != LiquidStyle.NOTESIS) {
         return styledLiquidGlass(settings.liquidStyle, settings, glassShape, backdrop, panel, dark,
-            shadows = shadows && shadowElevation > 0.dp, rim = drawBorder, amount = amount, light = glassLight(settings))
+            shadows = shadows && shadowElevation > 0.dp, rim = drawBorder, amount = amount)
     }
     if (enabled && amount > 0.001f && effectsAllowed && backdrop != null) {
         var result = this

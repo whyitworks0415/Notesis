@@ -32,13 +32,17 @@ class LiquidMotionTest {
         assertEquals(1.30f, press.scale(168f, 168f, 3f), 0.01f)
     }
 
-    @Test fun `Kyant0 grows by 4 dp of the height and QWEA0 shrinks to its press scale`() {
-        val kyant = SkinSettings(liquidStyle = LiquidStyle.KYANT).pressRecipe()!!
-        assertEquals(1f + 4f / 48f, kyant.scale(200f, 48f, 1f), 0.0001f)
-        val qwea = SkinSettings(liquidStyle = LiquidStyle.QWEA)
-        assertEquals(0.95f, qwea.pressRecipe()!!.scale(100f, 40f, 2f), 0f)
-        val pressed = qwea.copy(qwea = qwea.qwea.copy(pressScale = 1.1f))
-        assertEquals(1.1f, pressed.pressRecipe()!!.scale(100f, 40f, 2f), 0f)
+    @Test fun `Mornye swells by a tenth of the short side, 2 to 5 points`() {
+        val press = SkinSettings(liquidStyle = LiquidStyle.MORNYE).pressRecipe()!!
+        // A 40 pt button: 4 points over its 40.
+        assertEquals(1f + 4f / 40f, press.scale(40f, 40f, 1f), 0.0001f)
+        // A wide bar moves no more than 5 points along its length.
+        assertEquals(1f + 5f / 400f, press.scale(400f, 56f, 1f), 0.0001f)
+        // At 2x density the same in points.
+        assertEquals(1f + 8f / 80f, press.scale(80f, 80f, 2f), 0.0001f)
+        assertEquals(2f, mornyeSwell(10f, 10f, 1f), 0f)
+        // Its spring: stiffness 420, damping 24, underdamped.
+        assertEquals(24.0 / (2.0 * Math.sqrt(420.0)), MORNYE_PRESS_RATIO.toDouble(), 0.0001)
     }
 
     @Test fun `the slide springs are the projects'`() {
@@ -47,13 +51,12 @@ class LiquidMotionTest {
         assertEquals(4 * Math.PI * Math.PI / (0.15 * 0.15), i.follow!!.first, 0.01)
         assertEquals(4 * Math.PI * Math.PI / (0.35 * 0.35), i.travel.first, 0.01)
         assertEquals(2 * 0.85 * Math.sqrt(i.travel.first), i.travel.second, 0.001)
-        val k = SkinSettings(liquidStyle = LiquidStyle.KYANT).slideProfile()!!
-        assertEquals(1000.0, k.travel.first, 0.0)
-        assertEquals(2 * Math.sqrt(1000.0), k.travel.second, 0.001)
-        assertEquals(2 * 0.6 * Math.sqrt(250.0), k.liftX.second, 0.001)
-        assertEquals(2 * 0.7 * Math.sqrt(250.0), k.liftY.second, 0.001)
-        // QWEA0's droplet stays under the finger.
-        assertNull(SkinSettings(liquidStyle = LiquidStyle.QWEA).slideProfile()!!.follow)
+        // Mornye's pill lands critically damped in about 240 ms and lifts on its press spring.
+        val m = SkinSettings(liquidStyle = LiquidStyle.MORNYE).slideProfile()!!
+        assertNull(m.follow)
+        assertEquals(4 * Math.PI * Math.PI / (0.24 * 0.24), m.travel.first, 0.01)
+        assertEquals(2 * Math.sqrt(m.travel.first), m.travel.second, 0.001)
+        assertEquals(420.0 to 24.0, m.liftX)
     }
 
     @Test fun `the iOS menu swells a little past its size and squeezes on the way back`() {
@@ -64,14 +67,38 @@ class LiquidMotionTest {
         assertEquals(0.06f, open.scaleOf(0f, 0.06f), 0.0001f)
         assertEquals(true, open.scaleOf(-0.2f, 0.06f) > 0f)
         assertEquals(-3.2f, open.closeVelocity, 0f)
-        // QWEA0's dialog comes from 0.86 and goes to 0.88.
-        val qwea = SkinSettings(liquidStyle = LiquidStyle.QWEA).openProfile()!!
-        assertEquals(0.86f, qwea.startScale, 0f)
-        assertEquals(0.88f, qwea.closeScale, 0f)
-        assertEquals(0.86f, qwea.scaleOf(0f, qwea.startScale), 0f)
-        // Kyant0's drops 48 dp into place without scaling.
-        val kyant = SkinSettings(liquidStyle = LiquidStyle.KYANT).openProfile()!!
-        assertEquals(48f, kyant.dropDp, 0f)
-        assertEquals(1f, kyant.scaleOf(0.3f, kyant.startScale), 0f)
+        // Mornye's own opening is the pour.
+        assertEquals(PourOpen, SkinSettings(liquidStyle = LiquidStyle.MORNYE).openProfile())
+    }
+
+    @Test fun `a poured menu runs just past its size and the width follows the height`() {
+        // From the drop to full, then past full by only 0.35 of the overshoot.
+        assertEquals(0.12f, pourScale(0f, 0.12f), 0f)
+        assertEquals(0.56f, pourScale(0.5f, 0.12f), 0.0001f)
+        assertEquals(1f, pourScale(1f, 0.12f), 0f)
+        assertEquals(1f + 0.08f * 0.35f, pourScale(1.08f, 0.12f), 0.0001f)
+        assertEquals(50, PourOpen.widthDelayMs)
+        assertNotNull(PourOpen.closeWidth)
+        // The spring: damping 0.62 at 15 rad/s, which overshoots by about 8%.
+        assertEquals(225f, POUR_STIFFNESS, 0f)
+        val zeta = POUR_DAMPING_RATIO.toDouble()
+        assertEquals(0.084, Math.exp(-zeta * Math.PI / Math.sqrt(1 - zeta * zeta)), 0.002)
+    }
+
+    @Test fun `every look's popups move, Material on its spring and the glass looks poured`() {
+        assertEquals(MaterialOpen, popupOpening(Skin.MATERIAL, SkinSettings()))
+        assertEquals(PourOpen, popupOpening(Skin.GLASSMORPHISM, SkinSettings()))
+        assertEquals(PourOpen, popupOpening(Skin.LIQUID_GLASS, SkinSettings()))
+        assertEquals(PourOpen, popupOpening(Skin.LIQUID_GLASS, SkinSettings(liquidStyle = LiquidStyle.MORNYE)))
+        // iOS keeps its own while its switch is on, and pours when it is off.
+        val ios = SkinSettings(liquidStyle = LiquidStyle.IOS)
+        assertEquals(ios.openProfile()!!.startScale, popupOpening(Skin.LIQUID_GLASS, ios).startScale, 0f)
+        assertEquals(-3.2f, popupOpening(Skin.LIQUID_GLASS, ios).closeVelocity, 0f)
+        val iosOff = ios.copy(ios = ios.ios.copy(motion = ProjectMotion(open = false)))
+        assertEquals(PourOpen, popupOpening(Skin.LIQUID_GLASS, iosOff))
+        // Material grows from 0.8 and fades in; it never overshoots.
+        assertEquals(0.8f, MaterialOpen.startScale, 0f)
+        assertEquals(0f, MaterialOpen.alpha(0f), 0f)
+        assertEquals(1f, MaterialOpen.alpha(0.6f), 0f)
     }
 }

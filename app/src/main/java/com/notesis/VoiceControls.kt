@@ -52,7 +52,7 @@ internal fun VoiceRecordButton(
     diameter: Dp = 76.dp,
 ) {
     val look = LocalSkinSettings.current
-    val moves = LocalSkin.current.animatesChrome && rememberLiquidGlassEffectsAllowed() && !look.highContrast
+    val moves = rememberLiquidGlassEffectsAllowed() && !look.highContrast
     val red = Color(0xFFE5484D)
     // 0 the dot, 1 the square.
     val morph by animateFloatAsState(if (active) 1f else 0f,

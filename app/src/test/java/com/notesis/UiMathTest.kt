@@ -94,8 +94,6 @@ class UiMathTest {
         assertEquals(Skin.MATERIAL, Skin.fromName("liquid_glass"))
         assertEquals(listOf("Material", "Glassmorphism", "Liquid glass"), Skin.entries.map { it.label })
         assertEquals(listOf(Skin.LIQUID_GLASS), Skin.entries.filter { it.isRefractive })
-        assertEquals(listOf(Skin.LIQUID_GLASS), Skin.entries.filter { it.animatesChrome })
-        assertEquals(listOf(Skin.GLASSMORPHISM, Skin.LIQUID_GLASS), Skin.entries.filter { it.animatesPopups })
     }
 
     @Test fun `a popup grows from the point it was opened from`() {

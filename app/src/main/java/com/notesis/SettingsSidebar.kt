@@ -315,7 +315,7 @@ internal fun AnimatedSettingsSidebar(
     nav: SidebarNav?,
     content: @Composable (nav: SidebarNav, appear: () -> Float, closing: Boolean) -> Unit,
 ) {
-    val animate = LocalSkin.current.animatesPopups && rememberLiquidGlassEffectsAllowed() &&
+    val animate = rememberLiquidGlassEffectsAllowed() &&
         !LocalSkinSettings.current.highContrast
     // The screen it was on, kept for the slide out; not state, since [nav]
     // itself is what recomposes this.
@@ -404,7 +404,7 @@ internal fun NoteSettingsSidebar(
     ) {
         // Material and Glassmorphism turn the page at once; their chrome does not move.
         Crossfade(targetState = nav.current,
-            animationSpec = if (LocalSkin.current.animatesChrome) Ui.Motion.tween() else snap(),
+            animationSpec = Ui.Motion.tween(),
             label = "settings page") { page ->
             val content: @Composable () -> Unit = {
                 when (page) {

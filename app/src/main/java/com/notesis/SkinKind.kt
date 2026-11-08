@@ -6,13 +6,15 @@ package com.notesis
  *
  * All three share one toolbar, one set of shapes and one layout; what differs
  * is the material. Material is solid, Glassmorphism is frosted glass, and
- * Liquid glass is a refractive lens.
+ * Liquid glass is a refractive lens, drawn by one of its recipes - its own,
+ * iOS's or Mornye's (see [LiquidStyle]). Every one of them moves: popups grow
+ * out of their button, buttons answer a press, icons play.
  *
  * Saved by [name], so a constant is never renamed: Liquid glass is still
  * LIQUID_GLASS on disk, from when it was called the glass bar.
  */
 enum class Skin(val label: String, val blurb: String) {
-    MATERIAL("Material", "Android default. Solid and still."),
+    MATERIAL("Material", "Material 3 as Mornye draws it: wallpaper colours, rounded symbols and springy motion."),
     GLASSMORPHISM("Glassmorphism", "Frosted glass. Blurs what is behind it, evenly translucent."),
     LIQUID_GLASS(
         "Liquid glass",
@@ -41,21 +43,3 @@ enum class Skin(val label: String, val blurb: String) {
 /** The skin that bends the page behind it rather than only blurring it. */
 val Skin.isRefractive: Boolean
     get() = this == Skin.LIQUID_GLASS
-
-/**
- * Whether the chrome moves: icons that play, bars that morph between sizes,
- * a lens that swells under the finger, a ripple or hover wash. Material and
- * Glassmorphism stay still; the one motion they keep is the toolbar's
- * selection sliding to the tool in hand.
- */
-val Skin.animatesChrome: Boolean
-    get() = this == Skin.LIQUID_GLASS
-
-/**
- * Whether a popup grows out of the button that opened it, and the settings
- * sidebar slides in from its edge. Glassmorphism keeps this one, since a
- * panel appearing from nowhere over glass loses where it came from; Material
- * simply shows it.
- */
-val Skin.animatesPopups: Boolean
-    get() = this != Skin.MATERIAL

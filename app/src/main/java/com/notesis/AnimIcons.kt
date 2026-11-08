@@ -252,11 +252,9 @@ internal fun AnimIconImage(
 ) {
     val time = remember(icon) { Animatable(0f) }
     var first by remember { mutableStateOf(true) }
-    // Material and Glassmorphism hold their icons still, whatever the icon set.
-    val skinMoves = LocalSkin.current.animatesChrome
     LaunchedEffect(icon, play) {
         if (first) { first = false; return@LaunchedEffect }
-        if (!AppIconStyle.animate || !skinMoves) return@LaunchedEffect
+        if (!AppIconStyle.animate) return@LaunchedEffect
         time.snapTo(0f)
         time.animateTo(icon.length, tween((icon.length * 1000).toInt().coerceAtLeast(1), easing = LinearEasing))
         time.snapTo(0f)
@@ -312,8 +310,19 @@ internal object AppIconStyle {
         prefs(context).edit().putBoolean("iconAnimation", on).apply()
     }
 
-    /** [lucide] when AnimateIcons is chosen, else [reicon]. Reads snapshot state, so callers recompose on a switch. */
-    fun pick(lucide: AnimIcon, reicon: ImageVector): ImageVector = if (animated) lucide.vector else reicon
+    /**
+     * Whether the Material look is on, whose icons are Material Symbols
+     * Rounded whatever set is chosen, as Mornye's Material draws them. Set
+     * by the activity as the look changes; read by [Reicons].
+     */
+    var materialSymbols by mutableStateOf(false)
+
+    /**
+     * [lucide] when AnimateIcons is chosen, else [reicon]; under Material the
+     * reicon, which is then its Material Symbol. Reads snapshot state, so
+     * callers recompose on a switch.
+     */
+    fun pick(lucide: AnimIcon, reicon: ImageVector): ImageVector = if (animated && !materialSymbols) lucide.vector else reicon
 }
 
 /** [androidx.compose.material3.IconButton] whose icon plays once per tap. */

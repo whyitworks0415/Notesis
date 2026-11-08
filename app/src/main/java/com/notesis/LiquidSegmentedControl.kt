@@ -71,9 +71,9 @@ private fun SegmentedControlBody(
     val selected = selectedIndex.coerceIn(segments.indices)
     val latestSelect by rememberUpdatedState(onSelected)
     val effectsAllowed = rememberLiquidGlassEffectsAllowed()
-    // Still skins keep one motion: the selection slides across without
-    // stretching, as the toolbar's highlight does.
-    val still = !LocalSkin.current.animatesChrome
+    // Every look stretches the selection as it travels now; kept as a name
+    // so the one place that would hold it still stays easy to find.
+    val still = false
     val morph = remember { Animatable(0f) }
     var previous by remember { mutableIntStateOf(selected) }
 

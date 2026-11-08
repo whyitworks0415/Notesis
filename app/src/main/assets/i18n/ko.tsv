@@ -241,9 +241,6 @@ Long-press for menu	길게 눌러 메뉴 열기
 Value	값
 A lens that bends the page. The selection glides after your fingertip.	페이지를 휘게 하는 렌즈. 선택이 손끝을 따라 미끄러집니다.
 The iOS material as liquid_glass_widgets measured it: a frosted body, a thin bright rim, and the native springs.	liquid_glass_widgets가 측정한 iOS 재질: 서리 낀 본체, 가늘고 밝은 가장자리, iOS의 스프링.
-As Kyant0/AndroidLiquidGlass draws it: vivid colour, a deep lens and a lit rim.	Kyant0/AndroidLiquidGlass가 그리는 대로: 선명한 색, 깊은 렌즈, 빛나는 가장자리.
-As QWEA0/Liquid-Glass-Android's demo starts it: a wide bevel, light blur and light lit from the top left.	QWEA0/Liquid-Glass-Android 데모의 처음 모습: 넓은 가장자리 띠, 옅은 블러, 왼쪽 위에서 오는 빛.
-Regular	Regular
 Imported document	가져온 문서
 Couldn't import the PDF	PDF를 가져오지 못했습니다
 Can't read the file	파일을 읽을 수 없습니다
@@ -950,7 +947,6 @@ Corners	모서리
 Sharp	뾰족하게
 Rounded {0}	둥글게 {0}
 Colours, corners, blur and dark mode are in Settings › Appearance.	색, 모서리, 블러, 다크 모드는 설정 › 화면에 있습니다.
-Android default. Solid and still.	Android 기본. 불투명하고 움직임이 없습니다.
 Frosted glass. Blurs what is behind it, evenly translucent.	서리 낀 유리. 뒤를 흐리게 하고, 고르게 비칩니다.
 Light mode	라이트 모드
 Dark mode	다크 모드
@@ -978,7 +974,6 @@ Change photo	사진 바꾸기
 Icon set	아이콘 세트
 Icon animation	아이콘 애니메이션
 Icons move once when tapped or chosen. Off keeps them still.	아이콘을 누르거나 고르면 한 번 움직입니다. 끄면 움직이지 않습니다.
-{0} keeps its icons still	{0}에서는 아이콘이 움직이지 않습니다
 Only the AnimateIcons set moves	AnimateIcons 세트만 움직입니다
 Panels, menus and the toolbar	패널, 메뉴, 툴바
 {0} sets its corner, blur, surface, rim and motion in Glass, with the numbers its project uses.	{0}은(는) 모서리, 블러, 표면, 가장자리, 움직임을 유리 탭에서 그 프로젝트의 값으로 정합니다.
@@ -1035,71 +1030,13 @@ How much the bevel darkens towards the edge.	가장자리로 갈수록 띠가 �
 29 by default; its GlassMenu's is 32.	기본값은 29, GlassMenu는 32입니다.
 Back to the defaults	기본값으로 되돌리기
 Use the ios27Light preset as measured	측정한 ios27Light 프리셋 쓰기
-From Kyant0/AndroidLiquidGlass's catalog: bars and buttons as its bottom tabs, panels, menus and dialogs as its dialog - twice the blur and bending, a brighter surface.	Kyant0/AndroidLiquidGlass 데모 앱에서 가져왔습니다: 툴바와 버튼은 하단 탭, 패널·메뉴·대화상자는 대화상자 값. 블러와 굴절은 두 배, 표면은 더 밝게.
-Refraction height	굴절 높이
-How far in from the edge the page is bent. Buttons take half.	가장자리에서 얼마나 안쪽까지 페이지를 휘게 할지. 버튼은 절반.
-Refraction amount	굴절량
-How far the page is bent. Panels take twice this.	페이지가 휘는 정도. 패널은 두 배.
-Depth effect	깊이 효과
-The lens bends towards the corners too, on bars and buttons. Panels always have it.	툴바와 버튼에서도 렌즈가 모서리 쪽으로 휩니다. 패널은 항상 켜져 있습니다.
-The colours split a little at the edge. Off in the catalog, on by default here.	가장자리에서 색이 살짝 갈라집니다. 데모 앱에서는 꺼져 있고, 여기서는 기본으로 켜져 있습니다.
-Blur radius	블러 반경
-Bars. Panels take twice this in the light, buttons a quarter.	툴바 기준. 패널은 라이트에서 두 배, 버튼은 4분의 1.
-Vibrancy	선명도
-Saturation of the page through the glass.	유리 너머 페이지의 채도.
-Surface	표면
-The #FAFAFA coat over the glass (#121212 in the dark). Panels add 20% in the light.	유리 위에 덮는 #FAFAFA 막(다크에서는 #121212). 라이트에서 패널은 20% 더합니다.
-The lit rim.	빛나는 가장자리.
-Its dialog's: 48.	대화상자 값: 48.
-the catalog	데모 앱
-Use the catalog's bottom tabs as written	데모 앱의 하단 탭 값 그대로 쓰기
-From QWEA0/Liquid-Glass-Android (MIT): LiquidGlassView's own defaults, which its demo app starts from, drawn through a port of its lens shader. Pixels are the screen's, as the view's are.	QWEA0/Liquid-Glass-Android(MIT)에서 가져왔습니다: 데모 앱이 시작하는 LiquidGlassView 기본값을, 옮겨 온 렌즈 셰이더로 그립니다. 픽셀은 LiquidGlassView처럼 화면의 실제 픽셀입니다.
-Regular: full blur, the material's light tint.	Regular: 블러 100%, 재질의 옅은 색조.
-Clear: a third of the blur and a fixed 16% dimming layer, for glass over pictures.	Clear: 블러 3분의 1에 16% 어둡게. 사진 위의 유리용.
-Sensor highlight	센서 하이라이트
-The light on the rim follows gravity as the device tilts.	기기를 기울이면 가장자리의 빛이 중력을 따라 움직입니다.
-Adaptive tint	적응형 색조
-Regular only: darker over light parts of the page, lighter over dark ones, pixel by pixel.	Regular에서만: 페이지의 밝은 곳 위에서는 어둡게, 어두운 곳 위에서는 밝게, 픽셀마다.
-Refraction no fold	굴절 접힘 없음
-The bending held below where the rim folds into a mirror image of the inside.	가장자리가 안쪽을 거울처럼 접어 비추기 전까지만 휘게 합니다.
-Refraction outward	바깥쪽 굴절
-The rim draws in the page from outside the glass instead of inside it.	가장자리가 유리 안쪽 대신 바깥쪽 페이지를 끌어옵니다.
-Adaptive lens scale	적응형 렌즈 크기
-On panes under 110 dp the bevel and the bending shrink with the pane.	110dp보다 작은 요소에서는 띠와 굴절이 요소 크기에 맞춰 줄어듭니다.
-Bevel width	가장자리 띠 너비
-The band round the edge where the light is bent.	빛이 휘는, 가장자리를 두른 띠.
-Refraction	굴절
-How far the page is pulled in at the very edge.	가장자리 끝에서 페이지를 얼마나 끌어당길지.
-Falloff	감쇠
-How tightly the bending crowds the edge. 0 is a square bevel.	휘어짐이 가장자리에 얼마나 몰릴지. 0은 고른 경사.
-Dispersion	색분산
-Each colour bent by a little more or less: a spectral fringe at the edge.	색마다 조금씩 다르게 휘어 가장자리에 무지개 테가 생깁니다.
-Edge softness	가장자리 부드럽게
-Smooths the hard line the bending makes at the edge.	휘어짐이 가장자리에 만드는 딱딱한 선을 부드럽게 합니다.
-Enable blur	블러 켜기
-Blur amount	블러 양
-Bars and buttons. The blur is 4 + 32 × this, in pixels.	툴바와 버튼. 블러는 4 + 32 × 이 값(픽셀)입니다.
-Panel blur amount	패널 블러 양
-Panels, menus and dialogs: its dialog builder's 0.6.	패널, 메뉴, 대화상자: 대화상자 빌더 값 0.6.
-Panels, as its dialog builder: 28. Bars and buttons are capsules.	패널은 대화상자 빌더처럼 28. 툴바와 버튼은 캡슐 모양입니다.
-Over light	밝은 배경
-Tells the glass it sits over a light page: more blur, a dark tint, a deeper shadow.	유리가 밝은 페이지 위에 있다고 알립니다: 블러를 더하고, 어두운 색조와 더 짙은 그림자.
-Edge highlight	가장자리 하이라이트
-Highlight opacity	하이라이트 불투명도
-Shadow	그림자
-Off in LiquidGlassView. Shadows in Colors › Readability must be on as well.	LiquidGlassView에서는 꺼져 있습니다. 색 › 가독성의 그림자도 켜져 있어야 합니다.
 Glass tint	유리 색
 Blue	파랑
 Green	초록
 Orange	주황
 Pink	분홍
 Purple	보라
-Tint strength	색 세기
-Pick a tint first	먼저 색을 고르세요
 Interaction	반응
-Press scale	누르기 크기
-Below 1 a press shrinks the button, above 1 grows it. Used with Press in Motion.	1보다 작으면 누를 때 버튼이 작아지고, 크면 커집니다. 움직임의 누르기와 함께 쓰입니다.
-Back to the demo's values	데모 값으로 되돌리기
 Cards and buttons	카드와 버튼
 The whole theme is made from this color	전체 테마가 이 색으로 만들어집니다
 Readability	가독성
@@ -1143,7 +1080,6 @@ No other notes yet	아직 다른 노트가 없습니다
 Back to functions	기능으로 돌아가기
 Instant switch	즉시 전환
 Switch time {0} ms	전환 시간 {0}ms
-Used by Liquid glass. {0} switches sizes at once.	Liquid glass에서 쓰입니다. {0}에서는 크기가 바로 바뀝니다.
 Timer	타이머
 Stopwatch	스톱워치
 Default	기본
@@ -1610,3 +1546,28 @@ Earth	흙
 Forest	숲
 Muted	차분한
 Vintage	빈티지
+iOS	iOS
+Mornye	Mornye
+Mornye's glass: a clear tinted body, a fine lit rim, iOS colours and an accent of your choice.	Mornye의 유리: 맑게 물든 몸체, 가는 빛 테두리, iOS 색과 고를 수 있는 강조색.
+Material 3 as Mornye draws it: wallpaper colours, rounded symbols and springy motion.	Mornye가 그리는 Material 3: 배경화면 색, 둥근 심볼 아이콘, 스프링 모션.
+Red	빨강
+Teal	청록
+App accent	앱 강조색
+From Mornye (LGPL-3.0), written again from its numbers: a white body that clears as the clarity rises, a gentle lens, a fine lit rim and iOS's grouped colours. Bars take its clear tint, panels and menus its stronger one so their words read.	Mornye(LGPL-3.0)의 수치를 바탕으로 새로 만든 유리입니다. 투명도가 높을수록 맑아지는 흰 몸체, 부드러운 렌즈, 가는 빛 테두리, iOS의 그룹 색을 씁니다. 바는 맑은 틴트를, 패널과 메뉴는 글자가 잘 읽히도록 더 진한 틴트를 씁니다.
+App accent follows the colour set in Colours below.	앱 강조색은 아래 색상에서 정한 색을 따릅니다.
+Clarity	투명도
+Higher shows more of the page and blurs it less. Below 20% the glass is a plain tinted surface.	높을수록 페이지가 더 보이고 덜 흐려집니다. 20% 아래에서는 유리 대신 단색 틴트 면이 됩니다.
+Glass outlines	유리 테두리
+A hairline edge with a lit rim inside it.	가는 외곽선과 그 안쪽의 빛 테두리입니다.
+32 by default, as its panels.	기본값은 32로, Mornye 패널과 같습니다.
+Material colours	Material 색
+Wallpaper colours	배경화면 색
+The theme takes its colours from the wallpaper, as Android does. Off, from the accent below.	Android처럼 배경화면에서 테마 색을 가져옵니다. 끄면 아래 강조색으로 만듭니다.
+Needs Android 12 or later	Android 12 이상에서 쓸 수 있습니다
+High contrast uses the accent	고대비에서는 강조색을 씁니다
+AMOLED black	AMOLED 검정
+In dark mode, a black page with near-black panels.	다크 모드에서 바탕은 검정, 패널은 거의 검정으로 그립니다.
+Used in dark mode	다크 모드에서 쓰입니다
+Mornye builds its colours from its own accent, chosen in Glass. The ink below still applies.	Mornye는 유리 탭에서 고른 자체 강조색으로 색을 만듭니다. 아래 글자 색은 그대로 적용됩니다.
+Material draws Material Symbols Rounded, as Android does; the set below is for the other looks.	Material은 Android처럼 Material Symbols Rounded 아이콘을 씁니다. 아래 아이콘 세트는 다른 룩에 적용됩니다.
+Material Symbols stay still	Material Symbols 아이콘은 움직이지 않습니다

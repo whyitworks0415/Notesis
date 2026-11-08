@@ -103,6 +103,20 @@ internal val OPEN_SOURCE_COMPONENTS = listOf(
         listOf("animateicons/LICENSE", "animateicons/THIRD_PARTY_NOTICES.md"),
     ),
     OpenSourceComponent(
+        "Material Symbols Rounded (icons of the Material look)",
+        "Google LLC",
+        "Apache License 2.0",
+        "https://github.com/google/material-design-icons",
+        listOf(APACHE),
+    ),
+    OpenSourceComponent(
+        "Mornye (the Mornye look's glass, colours and motion, written again from its values)",
+        "zarzet and Mornye contributors",
+        "GNU LGPL 3.0",
+        "https://github.com/mornyeapp/Mornye",
+        listOf("licenses/Mornye.LICENSE"),
+    ),
+    OpenSourceComponent(
         "Reicon 1.2.5 icons",
         "REICON",
         "MIT",

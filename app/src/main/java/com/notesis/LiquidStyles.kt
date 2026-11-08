@@ -34,18 +34,17 @@ import org.json.JSONObject
  *   against the native control - its iOS 27 regular presets - drawn through
  *   a lens with its paraxial rim, with its springs for the press, the
  *   selection and the menus (see [IosGlass]).
- * - [KYANT] follows the catalog app of Kyant0/AndroidLiquidGlass (Apache 2.0),
- *   the library the app's glass is built on (see [KyantGlass]).
- * - [QWEA] is QWEA0/Liquid-Glass-Android's LiquidGlassView (MIT) as its demo
- *   app starts it, through its own lens shader (see [QweaGlass], [liquidLens]).
+ * - [MORNYE] is the glass of the Mornye music player (LGPL-3.0): its tint,
+ *   clarity, rim and press, written again here from its numbers rather than
+ *   copied (see [MornyeGlass]). It brings its own iOS palette and accent.
  *
- * Saved by [name].
+ * Saved by [name]. Kyant0's and QWEA0's recipes were here until 0.91; a
+ * setting saved with either comes back as [NOTESIS].
  */
 enum class LiquidStyle(val label: String, val blurb: String) {
     NOTESIS("Liquid glass", "A lens that bends the page. The selection glides after your fingertip."),
-    IOS("Liquid glass · iOS", "The iOS material as liquid_glass_widgets measured it: a frosted body, a thin bright rim, and the native springs."),
-    KYANT("Liquid glass · Kyant0", "As Kyant0/AndroidLiquidGlass draws it: vivid colour, a deep lens and a lit rim."),
-    QWEA("Liquid glass · QWEA0", "As QWEA0/Liquid-Glass-Android's demo starts it: a wide bevel, light blur and light lit from the top left."),
+    IOS("iOS", "The iOS material as liquid_glass_widgets measured it: a frosted body, a thin bright rim, and the native springs."),
+    MORNYE("Mornye", "Mornye's glass: a clear tinted body, a fine lit rim, iOS colours and an accent of your choice."),
     ;
 
     companion object {
@@ -195,229 +194,12 @@ data class IosGlass(
     }
 }
 
-/**
- * Kyant0/AndroidLiquidGlass's glass, as its catalog sets it. The defaults are
- * the catalog's LiquidBottomTabs: vibrancy() (saturation 1.5), blur 8 dp,
- * lens(24 dp, 24 dp), a #FAFAFA surface at 40% (#121212 at 40% in the dark)
- * and Highlight.Default. Panels take its DialogContent instead, which is the
- * same glass with twice the blur and lens and a brighter surface: blur 16 dp
- * (8 in the dark), lens(24 dp, 48 dp, depthEffect), brightness +0.2 and the
- * surface at 60% in the light, Highlight.Plain, in a 48 dp corner. Small round
- * buttons take its LiquidButton: blur 2 dp, lens(12 dp, 24 dp). Its motion:
- * a button swells by 4 dp of its height on spring(0.5, 300) with a glow under
- * the finger (InteractiveHighlight); the tab indicator follows on
- * spring(1, 1000) and lifts to 78/56 on spring(0.6, 250) across and
- * spring(0.7, 250) down; the control centre comes down 48 dp, fading in, on
- * spring(0.5, 300) and goes on spring(1, 300).
- *
- * Those are kept as [CATALOG]. A fresh install starts from values set by eye
- * on a device: refraction height 10 dp and amount 35 dp, depth effect and
- * chromatic aberration on, blur 13 dp, vibrancy 2, surface 97%, highlight
- * full; the panels' and buttons' ratios to them are the catalog's still.
- */
-data class KyantGlass(
-    /** blur(), in dp. */
-    val blur: Float = 13f,
-    /** lens()'s refractionHeight: how far in from the edge the bending reaches, in dp. */
-    val refractionHeight: Float = 10f,
-    /** lens()'s refractionAmount: how far the page is bent, in dp. */
-    val refractionAmount: Float = 35f,
-    /** vibrancy()'s saturation. */
-    val saturation: Float = 2f,
-    /** The surface colour's alpha over the bent page. */
-    val surface: Float = 0.97f,
-    /** The highlight's alpha. */
-    val highlight: Float = 1f,
-    /** lens()'s chromaticAberration; off in the catalog. */
-    val chromaticAberration: Boolean = true,
-    /** lens()'s depthEffect on bars and buttons too; the catalog keeps it for panels. */
-    val depthEffect: Boolean = true,
-    /** DialogContent's RoundedRectangle(48 dp). */
-    val corner: Float = 48f,
-    val motion: ProjectMotion = ProjectMotion(),
-) {
-    fun toJson(): JSONObject = JSONObject()
-        .put("blur", blur.toDouble()).put("refractionHeight", refractionHeight.toDouble())
-        .put("refractionAmount", refractionAmount.toDouble()).put("saturation", saturation.toDouble())
-        .put("surface", surface.toDouble()).put("highlight", highlight.toDouble())
-        .put("chromaticAberration", chromaticAberration).put("depthEffect", depthEffect)
-        .put("corner", corner.toDouble()).put("motion", motion.toJson())
-
-    companion object {
-        val BLUR_RANGE = 0f..32f
-        val HEIGHT_RANGE = 0f..64f
-        val AMOUNT_RANGE = 0f..64f
-        val SATURATION_RANGE = 1f..2f
-
-        /**
-         * The catalog's LiquidBottomTabs, as 0.76 started from them. Saved
-         * settings still at them take the present defaults, set by eye on the
-         * device: a shallower, stronger lens, more blur and colour, the
-         * surface nearly solid, depth and chromatic aberration on.
-         */
-        val CATALOG = KyantGlass(blur = 8f, refractionHeight = 24f, refractionAmount = 24f, saturation = 1.5f,
-            surface = 0.4f, chromaticAberration = false, depthEffect = false)
-
-        fun fromJson(json: JSONObject?): KyantGlass {
-            val d = KyantGlass()
-            if (json == null) return d
-            val read = readJson(json, d)
-            return if (read.copy(motion = CATALOG.motion) == CATALOG) d.copy(motion = read.motion) else read
-        }
-
-        private fun readJson(json: JSONObject, d: KyantGlass): KyantGlass {
-            return KyantGlass(
-                blur = json.f("blur", d.blur, BLUR_RANGE),
-                refractionHeight = json.f("refractionHeight", d.refractionHeight, HEIGHT_RANGE),
-                refractionAmount = json.f("refractionAmount", d.refractionAmount, AMOUNT_RANGE),
-                saturation = json.f("saturation", d.saturation, SATURATION_RANGE),
-                surface = json.f("surface", d.surface, 0f..1f),
-                highlight = json.f("highlight", d.highlight, 0f..1f),
-                chromaticAberration = json.optBoolean("chromaticAberration", d.chromaticAberration),
-                depthEffect = json.optBoolean("depthEffect", d.depthEffect),
-                corner = json.f("corner", d.corner, SkinSettings.CORNER_RANGE),
-                motion = ProjectMotion.fromJson(json.optJSONObject("motion")),
-            )
-        }
-    }
-}
-
-/**
- * QWEA0/Liquid-Glass-Android's two materials, as its GlassMaterial has them:
- * how much of the blur is kept, a dimming layer, the tint when it does not
- * follow the page, and how bright the rim is.
- */
-enum class QweaMaterial(val label: String, val blurScale: Float, val dim: Float, val baseTint: Float, val specBoost: Float) {
-    /** Readability first: full blur, a tint that may follow the page. */
-    REGULAR("Regular", 1f, 0f, 0x24 / 255f, 1f),
-    /** For glass over pictures: a third of the blur, a fixed 16% dimming layer. */
-    CLEAR("Clear", 0.35f, 0.16f, 0x14 / 255f, 1.2f),
-    ;
-
-    companion object {
-        fun fromName(name: String?): QweaMaterial = entries.firstOrNull { it.name == name } ?: REGULAR
-    }
-}
-
-/**
- * QWEA0/Liquid-Glass-Android's LiquidGlassView as its demo app starts it -
- * the view's own defaults, every one of which the demo's drawer can change:
- * backdrop blur on at blurAmount 0.0625 (a blur of 4 + 32 × amount px; 12 + it
- * over light), saturation 140%, regular material, the edge highlight on at
- * 100%, adaptive tint and the gravity-lit highlight off, refraction inwards
- * and folding, adaptive lens scale on, bevel 48 px, refraction 160 px,
- * falloff 2, dispersion 0.10, no edge softness, no glass tint (the demo's
- * swatch starts at 30% when one is picked), no shadow; a press shrinks it to
- * 0.95 over 200 ms. Its view is a capsule (cornerRadius 999 px); panels take
- * its dialog builder's 28 dp corner and blurAmount 0.6, which it gives dialogs
- * so their text has something under it, opening from 0.86 over 250 ms and
- * closing to 0.88 over 150 ms. Its tab bar's droplet travels for 380 ms on an
- * overshoot of 1.1. Pixels are the device's, as the view's are.
- */
-data class QweaGlass(
-    val material: QweaMaterial = QweaMaterial.REGULAR,
-    val blurOn: Boolean = true,
-    /** blurAmount on bars and buttons. */
-    val blurAmount: Float = 0.0625f,
-    /** blurAmount on panels, menus and dialogs: the dialog builder's DEFAULT_BLUR. */
-    val panelBlurAmount: Float = 0.6f,
-    /** saturation, as a factor (140% is 1.4). */
-    val saturation: Float = 1.4f,
-    /** overLight: the glass sits over a light backdrop - more blur, a dark tint, a deeper shadow. */
-    val overLight: Boolean = false,
-    val edgeHighlight: Boolean = true,
-    /** edgeHighlightOpacity, 0 to 1. */
-    val highlight: Float = 1f,
-    /** enableSensorHighlight: the light follows gravity as the device tilts. */
-    val sensorHighlight: Boolean = false,
-    /** enableAdaptiveTint: dark over a light page, light over a dark one, pixel by pixel. */
-    val adaptiveTint: Boolean = false,
-    /** refractionNoFold: the bending held below where the rim would fold into a mirror image. */
-    val noFold: Boolean = false,
-    /** refractionOutward: the rim draws in the page from outside the glass. */
-    val outward: Boolean = false,
-    val adaptiveLensScale: Boolean = true,
-    /** bevelWidth, px. */
-    val bevelWidth: Float = 48f,
-    /** refractionHeight, px. */
-    val refractionHeight: Float = 160f,
-    val falloff: Float = 2f,
-    /** dispersionStrength. */
-    val dispersion: Float = 0.10f,
-    /** edgeSoftness, px. */
-    val edgeSoftness: Float = 0f,
-    /** glassTint's hue, as ARGB; transparent is none. */
-    val tintColor: Int = 0,
-    /** glassTint's strength. */
-    val tintStrength: Float = 0.30f,
-    /** enableShadow. */
-    val shadow: Boolean = false,
-    /** pressScale: < 1 a press shrinks the glass, > 1 grows it. */
-    val pressScale: Float = 0.95f,
-    /** The dialog builder's corner, dp; bars and buttons are capsules. */
-    val corner: Float = 28f,
-    val motion: ProjectMotion = ProjectMotion(),
-) {
-    fun toJson(): JSONObject = JSONObject()
-        .put("material", material.name).put("blurOn", blurOn).put("blurAmount", blurAmount.toDouble())
-        .put("panelBlurAmount", panelBlurAmount.toDouble()).put("saturation", saturation.toDouble())
-        .put("overLight", overLight).put("edgeHighlight", edgeHighlight).put("highlight", highlight.toDouble())
-        .put("sensorHighlight", sensorHighlight).put("adaptiveTint", adaptiveTint)
-        .put("noFold", noFold).put("outward", outward).put("adaptiveLensScale", adaptiveLensScale)
-        .put("bevelWidth", bevelWidth.toDouble()).put("refractionHeight", refractionHeight.toDouble())
-        .put("falloff", falloff.toDouble()).put("dispersion", dispersion.toDouble())
-        .put("edgeSoftness", edgeSoftness.toDouble()).put("tintColor", tintColor)
-        .put("tintStrength", tintStrength.toDouble()).put("shadow", shadow)
-        .put("pressScale", pressScale.toDouble()).put("corner", corner.toDouble()).put("motion", motion.toJson())
-
-    companion object {
-        val SATURATION_RANGE = 1f..2f
-        val BEVEL_RANGE = 2f..120f
-        val REFRACTION_RANGE = 0f..200f
-        val FALLOFF_RANGE = 0f..4f
-        val SOFTNESS_RANGE = 0f..40f
-        val PRESS_RANGE = 0.8f..1.2f
-
-        fun fromJson(json: JSONObject?): QweaGlass {
-            val d = QweaGlass()
-            if (json == null) return d
-            return QweaGlass(
-                material = QweaMaterial.fromName(json.optString("material", d.material.name)),
-                blurOn = json.optBoolean("blurOn", d.blurOn),
-                blurAmount = json.f("blurAmount", d.blurAmount, 0f..1f),
-                panelBlurAmount = json.f("panelBlurAmount", d.panelBlurAmount, 0f..1f),
-                saturation = json.f("saturation", d.saturation, SATURATION_RANGE),
-                overLight = json.optBoolean("overLight", d.overLight),
-                edgeHighlight = json.optBoolean("edgeHighlight", d.edgeHighlight),
-                highlight = json.f("highlight", d.highlight, 0f..1f),
-                sensorHighlight = json.optBoolean("sensorHighlight", d.sensorHighlight),
-                adaptiveTint = json.optBoolean("adaptiveTint", d.adaptiveTint),
-                noFold = json.optBoolean("noFold", d.noFold),
-                outward = json.optBoolean("outward", d.outward),
-                adaptiveLensScale = json.optBoolean("adaptiveLensScale", d.adaptiveLensScale),
-                bevelWidth = json.f("bevelWidth", d.bevelWidth, BEVEL_RANGE),
-                refractionHeight = json.f("refractionHeight", d.refractionHeight, REFRACTION_RANGE),
-                falloff = json.f("falloff", d.falloff, FALLOFF_RANGE),
-                dispersion = json.f("dispersion", d.dispersion, 0f..1f),
-                edgeSoftness = json.f("edgeSoftness", d.edgeSoftness, SOFTNESS_RANGE),
-                tintColor = json.optInt("tintColor", d.tintColor),
-                tintStrength = json.f("tintStrength", d.tintStrength, 0f..1f),
-                shadow = json.optBoolean("shadow", d.shadow),
-                pressScale = json.f("pressScale", d.pressScale, PRESS_RANGE),
-                corner = json.f("corner", d.corner, SkinSettings.CORNER_RANGE),
-                motion = ProjectMotion.fromJson(json.optJSONObject("motion")),
-            )
-        }
-    }
-}
-
 /** The corner Liquid glass's chrome takes under the recipe in use. */
 val SkinSettings.glassCorner: Float
     get() = when (liquidStyle) {
         LiquidStyle.NOTESIS -> liquidGlassCorner
         LiquidStyle.IOS -> ios.corner
-        LiquidStyle.KYANT -> kyant.corner
-        LiquidStyle.QWEA -> qwea.corner
+        LiquidStyle.MORNYE -> mornye.corner
     }
 
 /** The recipe's motion switches; null for this app's own glass, which has only its own. */
@@ -425,8 +207,7 @@ val SkinSettings.projectMotion: ProjectMotion?
     get() = when (liquidStyle) {
         LiquidStyle.NOTESIS -> null
         LiquidStyle.IOS -> ios.motion
-        LiquidStyle.KYANT -> kyant.motion
-        LiquidStyle.QWEA -> qwea.motion
+        LiquidStyle.MORNYE -> mornye.motion
     }
 
 /** Sets [SkinSettings.liquidStyle] and keeps it; provided where the settings live. */
@@ -434,7 +215,7 @@ val LocalLiquidStyleChange = staticCompositionLocalOf<(LiquidStyle) -> Unit> { {
 
 /**
  * One of the looks a picker offers: a skin, and for Liquid glass which recipe.
- * Six in all - Material, Glassmorphism and Liquid glass's four.
+ * Five in all - Material, Glassmorphism and Liquid glass's three.
  */
 data class Look(val skin: Skin, val style: LiquidStyle = LiquidStyle.NOTESIS) {
     val label: String get() = if (skin == Skin.LIQUID_GLASS) style.label else skin.label
@@ -470,11 +251,9 @@ internal fun Modifier.styledLiquidGlass(
     rim: Boolean = true,
     exportedBackdrop: LayerBackdrop? = null,
     amount: Float = 1f,
-    light: Pair<Float, Float> = GravityLight.DEFAULT_X to GravityLight.DEFAULT_Y,
 ): Modifier = when (style) {
     LiquidStyle.IOS -> iosGlass(settings.ios, shape, backdrop, dark, shadows, rim, exportedBackdrop, amount)
-    LiquidStyle.KYANT -> kyantGlass(settings.kyant, shape, backdrop, panel, dark, shadows, rim, exportedBackdrop, amount)
-    LiquidStyle.QWEA -> qweaGlass(settings.qwea, shape, backdrop, panel, dark, shadows, rim, exportedBackdrop, amount, light)
+    LiquidStyle.MORNYE -> mornyeGlass(settings.mornye, shape, backdrop, panel, dark, shadows, rim, exportedBackdrop, amount)
     LiquidStyle.NOTESIS -> this
 }
 
@@ -576,120 +355,3 @@ private fun Modifier.rimShade(shape: Shape, strength: Float, dark: Boolean): Mod
         translate(stroke / 2f, stroke / 2f) { drawOutline(outline, shade, style = Stroke(stroke)) }
     }
 }
-
-private fun Modifier.kyantGlass(
-    k: KyantGlass,
-    shape: Shape,
-    backdrop: Backdrop,
-    panel: Boolean,
-    dark: Boolean,
-    shadows: Boolean,
-    rim: Boolean,
-    exportedBackdrop: LayerBackdrop?,
-    amount: Float,
-): Modifier = drawBackdrop(
-    backdrop = backdrop,
-    shape = { shape },
-    effects = {
-        val button = size.minDimension < BUTTON_SIZE.toPx()
-        val asPanel = panel && !button
-        colorControls(brightness = if (asPanel && !dark) 0.2f * amount else 0f, saturation = 1f + (k.saturation - 1f) * amount)
-        // Dialog 16 dp (8 in the dark), tabs 8, button 2: the setting is the tabs'.
-        val blurDp = when {
-            asPanel -> if (dark) k.blur else k.blur * 2f
-            button -> k.blur / 4f
-            else -> k.blur
-        }
-        blur(blurDp.dp.toPx() * amount)
-        // Dialog lens(24, 48), tabs lens(24, 24), button lens(12, 24).
-        val height = if (button) k.refractionHeight / 2f else k.refractionHeight
-        val bend = if (asPanel) k.refractionAmount * 2f else k.refractionAmount
-        lens(
-            refractionHeight = (height.dp.toPx() * amount).coerceAtMost(size.minDimension / 2f),
-            refractionAmount = bend.dp.toPx() * amount,
-            depthEffect = asPanel || k.depthEffect,
-            chromaticAberration = k.chromaticAberration,
-        )
-    },
-    highlight = if (rim && k.highlight > 0.001f) {
-        { (if (panel) Highlight.Plain else Highlight.Default).copy(alpha = k.highlight * amount) }
-    } else null,
-    shadow = if (shadows) { { Shadow.Default.copy(alpha = amount) } } else null,
-    exportedBackdrop = exportedBackdrop,
-    onDrawSurface = {
-        // DialogContent: #FAFAFA at 60% in the light, #121212 at 40% in the dark;
-        // the tabs and buttons at 40% in both. The setting moves them together.
-        val asPanel = panel && size.minDimension >= BUTTON_SIZE.toPx()
-        drawRect(if (dark) Color(0xFF121212).copy(alpha = k.surface)
-            else Color(0xFFFAFAFA).copy(alpha = (k.surface + if (asPanel) 0.2f else 0f).coerceIn(0f, 1f)))
-    },
-)
-
-/** LiquidGlassView's lens, through the port of its shader (see [liquidLens]). */
-private fun Modifier.qweaGlass(
-    q: QweaGlass,
-    shape: Shape,
-    backdrop: Backdrop,
-    panel: Boolean,
-    dark: Boolean,
-    shadows: Boolean,
-    rim: Boolean,
-    exportedBackdrop: LayerBackdrop?,
-    amount: Float,
-    light: Pair<Float, Float>,
-): Modifier {
-    val m = q.material
-    // currentTintColor: over light, black at 0x33; else the material's white.
-    // The adaptive tint is worked out in the shader, pixel by pixel.
-    val tint = if (q.overLight) Color(0x33000000) else Color.White.copy(alpha = m.baseTint)
-    val glassTint = if (android.graphics.Color.alpha(q.tintColor) == 0) Color.Transparent
-        else Color(q.tintColor).copy(alpha = q.tintStrength)
-    val spec = if (rim && q.edgeHighlight) q.highlight * m.specBoost * amount else 0f
-    val (lx, ly) = if (q.sensorHighlight) light else GravityLight.DEFAULT_X to GravityLight.DEFAULT_Y
-    return drawBackdrop(
-        backdrop = backdrop,
-        shape = { shape },
-        effects = {
-            if (q.blurOn) {
-                // calculatedBlurRadius = (overLight ? 12 : 4) + blurAmount × 32, in px, times the material's share.
-                val asPanel = panel && size.minDimension >= BUTTON_SIZE.toPx()
-                val amountOfBlur = if (asPanel) q.panelBlurAmount else q.blurAmount
-                blur(((if (q.overLight) 12f else 4f) + amountOfBlur * 32f) * m.blurScale * amount)
-            }
-            liquidLens(LiquidLensParams(
-                cornerRadius = cornerOf(shape, size, layoutDirection, this),
-                bevel = q.bevelWidth * amount,
-                refract = q.refractionHeight * amount,
-                falloff = q.falloff,
-                outward = q.outward,
-                noFold = q.noFold,
-                adaptiveScale = q.adaptiveLensScale,
-                rimSoft = q.edgeSoftness,
-                dispersion = q.dispersion,
-                lightX = lx, lightY = ly,
-                spec = spec,
-                tint = tint.copy(alpha = tint.alpha * amount),
-                adaptiveTint = q.adaptiveTint && m == QweaMaterial.REGULAR,
-                glassTint = glassTint.copy(alpha = glassTint.alpha * amount),
-                dim = m.dim * amount,
-                saturation = 1f + (q.saturation - 1f) * amount,
-            ))
-        },
-        highlight = null,
-        // LiquidGlassView's shadow: (overLight ? 70 : 40) px soft, (16 : 12) px down, black at (75 : 25)%.
-        shadow = if (shadows && q.shadow) {
-            {
-                Shadow(
-                    radius = (if (q.overLight) 70f else 40f).toDpPx(),
-                    offset = DpOffset(0.dp, (if (q.overLight) 16f else 12f).toDpPx()),
-                    color = Color.Black.copy(alpha = if (q.overLight) 0.75f else 0.25f),
-                    alpha = amount,
-                )
-            }
-        } else null,
-        exportedBackdrop = exportedBackdrop,
-    )
-}
-
-/** [this] many px as dp at the screen's density, for numbers a library gave in px. */
-private fun Float.toDpPx(): Dp = (this / android.content.res.Resources.getSystem().displayMetrics.density).dp

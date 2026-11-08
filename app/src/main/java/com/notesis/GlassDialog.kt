@@ -5,8 +5,15 @@ import android.view.WindowManager
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.material3.AlertDialogDefaults
 import androidx.compose.material3.MenuDefaults
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -45,6 +52,16 @@ fun AlertDialog(
     tonalElevation: Dp = AlertDialogDefaults.TonalElevation,
     properties: DialogProperties = DialogProperties(),
 ) {
+    // How it arrives, after Mornye: under Material out of 0.85 on Material 3
+    // Expressive's default spatial spring, fading in as it comes; under the
+    // glass looks out of 0.96 over 220 ms, unfaded, so its blur behind is
+    // never seen through a fading layer. Still where animations are off.
+    val material = LocalSkin.current == Skin.MATERIAL
+    val moves = rememberLiquidGlassEffectsAllowed()
+    val arrival = remember { Animatable(if (moves) 0f else 1f) }
+    LaunchedEffect(Unit) {
+        if (arrival.value < 1f) arrival.animateTo(1f, dialogArrival(material))
+    }
     MaterialAlertDialog(
         onDismissRequest = onDismissRequest,
         // The window is only reachable from inside the dialog's own content, and
@@ -53,7 +70,14 @@ fun AlertDialog(
         // Colour and shape a dialog takes from the theme; the lit edge it has
         // to be given. Without it a glass dialog was a Material panel that
         // happened to be translucent.
-        modifier = modifier.then(skinEdge(shape)),
+        modifier = modifier
+            .graphicsLayer {
+                val scale = dialogArrivalScale(arrival.value, material)
+                scaleX = scale
+                scaleY = scale
+                if (material) alpha = (arrival.value / 0.4f).coerceIn(0f, 1f)
+            }
+            .then(skinEdge(shape)),
         dismissButton = dismissButton,
         icon = icon,
         title = title,
@@ -146,6 +170,17 @@ fun BlurBehind() {
 }
 
 private const val DIM = 0.18f
+
+/** The spring or curve a dialog arrives on; see [AlertDialog]. */
+internal fun dialogArrival(material: Boolean): androidx.compose.animation.core.AnimationSpec<Float> =
+    if (material) spring(dampingRatio = 0.8f, stiffness = 380f)
+    else tween(220, easing = CubicBezierEasing(0.33f, 1f, 0.68f, 1f))
+
+/** The scale a dialog is drawn at as it arrives, [progress] 0 to 1 (a spring may run past). */
+internal fun dialogArrivalScale(progress: Float, material: Boolean): Float {
+    val start = if (material) 0.85f else 0.96f
+    return start + (1f - start) * progress
+}
 
 /** Material's dialog padding: how far a dialog's content sits from its edge. */
 private val DIALOG_INSET = 24.dp

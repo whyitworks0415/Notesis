@@ -46,7 +46,7 @@ import androidx.compose.ui.window.DialogWindowProvider
  */
 @Stable
 internal class ToolPanelState(
-    /** Whether the panel grows and folds at all; Material simply shows and hides it. */
+    /** Whether the panel grows and folds at all; off where animations are turned off. */
     val animate: Boolean,
 ) {
     internal var closing by mutableStateOf<(() -> Unit)?>(null)
@@ -64,7 +64,7 @@ internal class ToolPanelState(
 
 @Composable
 internal fun rememberToolPanelState(): ToolPanelState {
-    val animate = LocalSkin.current.animatesPopups && rememberLiquidGlassEffectsAllowed()
+    val animate = rememberLiquidGlassEffectsAllowed()
     return remember { ToolPanelState(animate) }
 }
 

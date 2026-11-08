@@ -89,15 +89,7 @@ private fun PreviewDark() = ChromeSample(
 private fun ChromeSample(skin: Skin, look: SkinSettings) {
     ProvideSkin(skin, look) {
         MaterialTheme(
-            colorScheme = skinColors(
-                schemeFrom(
-                    look.accent,
-                    look.highContrast,
-                    look.themeMode == AppThemeMode.DARK,
-                ),
-                skin,
-                look,
-            ),
+            colorScheme = skinColors(lookScheme(null, skin, look), skin, look),
             shapes = skinShapes(skin),
         ) {
             var amount by remember { mutableFloatStateOf(0.42f) }

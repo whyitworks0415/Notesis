@@ -78,10 +78,16 @@ data class SkinSettings(
     val liquidStyle: LiquidStyle = LiquidStyle.NOTESIS,
     /** [LiquidStyle.IOS]'s own settings. */
     val ios: IosGlass = IosGlass(),
-    /** [LiquidStyle.KYANT]'s own settings. */
-    val kyant: KyantGlass = KyantGlass(),
-    /** [LiquidStyle.QWEA]'s own settings. */
-    val qwea: QweaGlass = QweaGlass(),
+    /** [LiquidStyle.MORNYE]'s own settings. */
+    val mornye: MornyeGlass = MornyeGlass(),
+    /**
+     * Material takes its colours from the wallpaper (Android 12 and up), as
+     * Mornye's Material does; off, from [accent]. A setting saved before
+     * there was a choice keeps the accent its owner picked.
+     */
+    val dynamicColor: Boolean = true,
+    /** Material's dark mode on a black page, with near-black panels. */
+    val amoled: Boolean = false,
     /**
      * Each kind of chrome's own transparency over the glass the style draws:
      * 1 is the glass as it is, 0 solid. The toolbar and its buttons, the
@@ -129,9 +135,9 @@ data class SkinSettings(
         .put("shadows", shadows)
         .put("liquidStyle", liquidStyle.name)
         .put("ios", ios.toJson())
-        .put("kyant", kyant.toJson())
-        // "qwea" held 0.75's settings, in dp where these are the view's pixels.
-        .put("qweaView", qwea.toJson())
+        .put("mornye", mornye.toJson())
+        .put("dynamicColor", dynamicColor)
+        .put("amoled", amoled)
         .put("toolbarClarity", toolbarClarity.toDouble())
         .put("popupClarity", popupClarity.toDouble())
         .put("sidebarClarity", sidebarClarity.toDouble())
@@ -255,8 +261,10 @@ data class SkinSettings(
                 shadows = json.optBoolean("shadows", d.shadows),
                 liquidStyle = LiquidStyle.fromName(json.optString("liquidStyle", d.liquidStyle.name)),
                 ios = IosGlass.fromJson(json.optJSONObject("ios")),
-                kyant = KyantGlass.fromJson(json.optJSONObject("kyant")),
-                qwea = QweaGlass.fromJson(json.optJSONObject("qweaView")),
+                mornye = MornyeGlass.fromJson(json.optJSONObject("mornye")),
+                // Saved before the switch: on only if the accent was never changed.
+                dynamicColor = json.optBoolean("dynamicColor", json.optInt("accent", d.accent) == d.accent),
+                amoled = json.optBoolean("amoled", d.amoled),
                 toolbarClarity = json.unit("toolbarClarity", d.toolbarClarity),
                 popupClarity = json.unit("popupClarity", d.popupClarity),
                 sidebarClarity = json.unit("sidebarClarity", d.sidebarClarity),

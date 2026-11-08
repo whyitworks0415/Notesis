@@ -128,73 +128,8 @@ fun ProvideSkin(skin: Skin, settings: SkinSettings, content: @Composable () -> U
         LocalSkinSettings provides settings,
         LocalLiquidGlassEffectsAllowed provides effectsAllowed,
     )
-    if (!skin.animatesChrome) {
-        // Still chrome: no ripple and no hover or press wash, in Material's
-        // own components (the ripple configuration) and in every plain
-        // clickable (the indication). Keyboard focus still shows, or a
-        // keyboard user would have no idea where they are.
-        values += LocalRippleConfiguration provides null
-        values += LocalIndication provides FocusOnlyIndication
-    }
-    // QWEA0's gravity-lit highlight: the sensor runs only while it is wanted.
-    val tiltLight = skin == Skin.LIQUID_GLASS && settings.liquidStyle == LiquidStyle.QWEA && settings.qwea.sensorHighlight
-    val view = androidx.compose.ui.platform.LocalView.current
-    androidx.compose.runtime.DisposableEffect(tiltLight) {
-        if (tiltLight) GravityLight.listen(view.context) { view.display?.rotation ?: android.view.Surface.ROTATION_0 }
-        onDispose { if (tiltLight) GravityLight.stop() }
-    }
     CompositionLocalProvider(*values.toTypedArray(), content = content)
 }
-
-/** Where the glass's light comes from: the tilt of the device while QWEA0's sensor highlight is on. */
-@Composable
-internal fun glassLight(settings: SkinSettings): Pair<Float, Float> =
-    if (settings.liquidStyle == LiquidStyle.QWEA && settings.qwea.sensorHighlight) GravityLight.direction.value
-    else GravityLight.DEFAULT_X to GravityLight.DEFAULT_Y
-
-/**
- * An indication that answers focus and nothing else: no ripple on a press,
- * no wash on hover. A quiet veil while the element holds keyboard focus.
- */
-private object FocusOnlyIndication : IndicationNodeFactory {
-    override fun create(interactionSource: InteractionSource): DelegatableNode =
-        FocusOnlyIndicationNode(interactionSource)
-
-    override fun equals(other: Any?): Boolean = other === this
-    override fun hashCode(): Int = System.identityHashCode(this)
-}
-
-private class FocusOnlyIndicationNode(
-    private val source: InteractionSource,
-) : Modifier.Node(), DrawModifierNode, CompositionLocalConsumerModifierNode {
-    private var focused = false
-
-    override fun onAttach() {
-        // Undispatched: a clickable may create this only as focus arrives,
-        // and a collector that starts a frame later would miss that focus.
-        coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
-            val held = mutableListOf<FocusInteraction.Focus>()
-            source.interactions.collect { interaction ->
-                when (interaction) {
-                    is FocusInteraction.Focus -> held += interaction
-                    is FocusInteraction.Unfocus -> held -= interaction.focus
-                }
-                val now = held.isNotEmpty()
-                if (now != focused) {
-                    focused = now
-                    invalidateDraw()
-                }
-            }
-        }
-    }
-
-    override fun ContentDrawScope.draw() {
-        drawContent()
-        if (focused) drawRect(currentValueOf(LocalContentColor).copy(alpha = FOCUS_VEIL_ALPHA))
-    }
-}
-
-private const val FOCUS_VEIL_ALPHA = 0.12f
 
 @Composable
 fun Skin.tokens(): SkinTokens = when (this) {

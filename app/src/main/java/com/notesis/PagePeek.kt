@@ -104,7 +104,7 @@ internal fun PagePeek(
 ) {
     val density = LocalDensity.current
     val config = LocalConfiguration.current
-    val moves = LocalSkin.current.animatesPopups && rememberLiquidGlassEffectsAllowed()
+    val moves = rememberLiquidGlassEffectsAllowed()
     val grow = remember { Animatable(0f) }
     LaunchedEffect(shown) {
         if (shown) grow.animateTo(1f, if (moves) Ui.Motion.spring(0.78f) else snap())

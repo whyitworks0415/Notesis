@@ -289,7 +289,11 @@ class MainActivity : ComponentActivity() {
         setContent {
             // Hoisted to the top so a change repaints every bar at once rather
             // than whichever screen happened to be looking.
-            var skin by remember { mutableStateOf(prefs.skin) }
+            var skin by remember {
+                // Set before anything draws an icon, so Material's first frame has its symbols.
+                mutableStateOf(prefs.skin).also { AppIconStyle.materialSymbols = it.value == Skin.MATERIAL }
+            }
+            SideEffect { AppIconStyle.materialSymbols = skin == Skin.MATERIAL }
             var look by remember { mutableStateOf(lookStore.load()) }
             var settingsOpen by remember { mutableStateOf(false) }
             // The fastest refresh rate the panel has, unless turned off or saving power.
@@ -317,8 +321,9 @@ class MainActivity : ComponentActivity() {
             // the accent changes: forty tones is forty bisections, which is
             // nothing once and not nothing on every recomposition.
             val darkMode = look.themeMode == AppThemeMode.DARK
-            val scheme = remember(look.accent, look.highContrast, darkMode) {
-                schemeFrom(look.accent, look.highContrast, darkMode)
+            val scheme = remember(skin, look.accent, look.highContrast, darkMode, look.liquidStyle,
+                look.mornye.accent, look.dynamicColor, look.amoled) {
+                lookScheme(this@MainActivity, skin, look)
             }
             // edge-to-edge 시스템 바의 아이콘도 앱 모드와 동시에 바꿉니다.
             SideEffect {
@@ -4613,7 +4618,7 @@ private fun NoteScreen(
         // Material and Glassmorphism switch sizes at once; only Liquid glass morphs.
         when {
             liveBarWidth != null -> snap()
-            skin.animatesChrome && toolbarEffects -> ToolbarMotion.spec()
+            toolbarEffects -> ToolbarMotion.spec()
             else -> tween(0)
         },
         label = "Top bar mode width",
@@ -4630,7 +4635,7 @@ private fun NoteScreen(
     var showPages by remember { mutableStateOf(false) }
     // The bar and the rest of the chrome over the note, put away upwards by
     // taps on the page's right edge (see EDGE_HIDE_CHROME).
-    val chromeHide = rememberChromeHideState(skin.animatesChrome && toolbarEffects)
+    val chromeHide = rememberChromeHideState(toolbarEffects)
     val chromeAway = { chromeHide.away.value }
     var pageSidebarWidth by remember { mutableFloatStateOf(penStore.pageSidebarWidth) }
     var pageGridColumns by remember { mutableIntStateOf(penStore.pageGridColumns) }
@@ -5878,7 +5883,7 @@ private fun NoteScreen(
                 Modifier
                     .align(Alignment.TopStart)
                     // Turning across or down the side, it travels between the two.
-                    .toolbarTurnMorph(barVertical to barRight, skin.animatesChrome && toolbarEffects)
+                    .toolbarTurnMorph(barVertical to barRight, toolbarEffects)
                     .awayUpwards(chromeAway)
                     // Capped, not just clamped. The tool row scrolls, and a
                     // scrolling row takes every pixel it is offered, so on a
@@ -7493,7 +7498,7 @@ private fun NoteScreen(
     }
         if (barDocked && !collapsed) {
             toolbar(
-                Modifier.toolbarTurnMorph(barVertical to barRight, skin.animatesChrome && toolbarEffects)
+                Modifier.toolbarTurnMorph(barVertical to barRight, toolbarEffects)
                     .awayUpwards(chromeAway).then(when {
                     // Docked down the side: against the chosen edge, in the middle of it.
                     barRight -> Modifier.align(Alignment.CenterEnd)
@@ -8708,7 +8713,7 @@ private fun PageScrubber(
     // it eases onto that page's place on the track.
     var dragFraction by remember { mutableFloatStateOf(NOT_DRAGGING) }
     var pressed by remember { mutableStateOf(false) }
-    val shown = sliderShownFraction(fraction, dragFraction, animate = LocalSkin.current.animatesChrome)
+    val shown = sliderShownFraction(fraction, dragFraction, animate = true)
     val thumbY = (shown * travel).roundToInt()
 
     fun jumpAt(y: Float) {

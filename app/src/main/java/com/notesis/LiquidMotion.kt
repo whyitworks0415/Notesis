@@ -53,21 +53,13 @@ internal fun SkinSettings.slideProfile(): SlideProfile? {
                 liftY = lift to dampingFor(1.0 - 0.15, lift),
             )
         }
-        // DampedDragAnimation: the value on spring(1, 1000) whether dragged or
-        // sent; the indicator's scale on spring(0.6, 250) across, (0.7, 250) down.
-        LiquidStyle.KYANT -> SlideProfile(
-            follow = 1000.0 to dampingFor(1.0, 1000.0),
-            travel = 1000.0 to dampingFor(1.0, 1000.0),
-            liftX = 250.0 to dampingFor(0.6, 250.0),
-            liftY = 250.0 to dampingFor(0.7, 250.0),
-        )
-        // LiquidGlassTabBar's droplet: 380 ms on OvershootInterpolator(1.1),
-        // as the spring that settles in that time with that overshoot -
-        // withDurationAndBounce(380 ms, 0.25). It stays under the finger while dragged.
-        LiquidStyle.QWEA -> {
-            val k = stiffnessFor(380)
-            val pair = k to dampingFor(0.75, k)
-            SlideProfile(follow = null, travel = pair, liftX = pair, liftY = pair)
+        // Its selection pill slides on 220 ms of ease-out-cubic; as a spring, the
+        // critically damped one that settles in that time. The lens under the
+        // finger lifts on its press spring: stiffness 420, damping 24.
+        LiquidStyle.MORNYE -> {
+            val land = stiffnessFor(240)
+            val lift = MORNYE_PRESS_STIFFNESS.toDouble() to MORNYE_PRESS_DAMPING.toDouble()
+            SlideProfile(follow = null, travel = land to dampingFor(1.0, land), liftX = lift, liftY = lift)
         }
         LiquidStyle.NOTESIS -> null
     }
@@ -100,19 +92,15 @@ internal fun SkinSettings.pressRecipe(): PressRecipe? {
             press = spring(dampingRatio = 1f - 0.25f, stiffness = stiffnessFor(250).toFloat()),
             release = spring(dampingRatio = 1f - 0.45f, stiffness = stiffnessFor(280).toFloat()),
         )
-        // LiquidButton: lerp(1, 1 + 4 dp / height, pressProgress), the progress on spring(0.5, 300).
-        LiquidStyle.KYANT -> PressRecipe(
-            scale = { _, h, d -> 1f + 4f * d / max(h, 1f) },
-            press = spring(dampingRatio = 0.5f, stiffness = 300f),
-            release = spring(dampingRatio = 0.5f, stiffness = 300f),
-        )
-        // LiquidGlassView.animatePressScale: to pressScale and back over 200 ms, decelerating.
-        LiquidStyle.QWEA -> {
-            val to = qwea.pressScale
+        // MornyeGlassPress: a fixed swell of a tenth of the short side, held
+        // between 2 and 5 points, so a wide bar moves no more than a button,
+        // on an underdamped spring (stiffness 420, damping 24) both ways.
+        LiquidStyle.MORNYE -> {
+            val spring = spring<Float>(dampingRatio = MORNYE_PRESS_RATIO, stiffness = MORNYE_PRESS_STIFFNESS)
             PressRecipe(
-                scale = { _, _, _ -> to },
-                press = tween(200, easing = decelerate(1f)),
-                release = tween(200, easing = decelerate(1f)),
+                scale = { w, h, d -> 1f + mornyeSwell(w, h, d) / max(max(w, h), 1f) },
+                press = spring,
+                release = spring,
             )
         }
         LiquidStyle.NOTESIS -> null
@@ -136,6 +124,10 @@ internal class OpenProfile(
     val dropDp: Float = 0f,
     val closeVelocity: Float = 0f,
     val scaleOf: (progress: Float, start: Float) -> Float = { p, s -> s + (1f - s) * p },
+    /** How long the width waits behind the height on the way out, so it runs down before it spreads. */
+    val widthDelayMs: Int = 0,
+    /** The width's own close, when it folds ahead of the height; null is [close]. */
+    val closeWidth: AnimationSpec<Float>? = null,
 )
 
 private val EaseIn = CubicBezierEasing(0.42f, 0f, 1f, 1f)
@@ -168,28 +160,75 @@ internal fun SkinSettings.openProfile(): OpenProfile? {
                 ((s + (1f - s) * sizeT) * container).coerceAtLeast(0.01f)
             },
         )
-        // ControlCenterContent: down 48 dp into place, fading in on EaseIn,
-        // on spring(0.5, 300) opening and spring(1, 300) closing.
-        LiquidStyle.KYANT -> OpenProfile(
-            open = spring(dampingRatio = 0.5f, stiffness = 300f),
-            close = spring(dampingRatio = 1f, stiffness = 300f),
-            startScale = 1f,
-            closeScale = 1f,
-            alpha = { p -> EaseIn.transform(p.coerceIn(0f, 1f)) },
-            dropDp = 48f,
-        )
-        // LiquidGlassDialogBuilder: from 0.86 and transparent over 250 ms on
-        // DecelerateInterpolator(1.6); to 0.88 over 150 ms on AccelerateInterpolator(1.4).
-        LiquidStyle.QWEA -> OpenProfile(
-            open = tween(250, easing = decelerate(1.6f)),
-            close = tween(150, easing = accelerate(1.4f)),
-            startScale = 0.86f,
-            closeScale = 0.88f,
-            alpha = { p -> p.coerceIn(0f, 1f) },
-        )
+        // Mornye's context menu: poured out of the button (see [PourOpen]).
+        LiquidStyle.MORNYE -> PourOpen
         LiquidStyle.NOTESIS -> null
     }
 }
 
 /** How small a morphing menu starts: the trigger's size against the menu's, about. */
 private const val POPUP_MORPH_START = 0.06f
+
+/** Mornye's press spring: stiffness 420, damping 24, so a release overshoots a little and settles. */
+internal const val MORNYE_PRESS_STIFFNESS = 420f
+internal const val MORNYE_PRESS_DAMPING = 24f
+internal val MORNYE_PRESS_RATIO: Float = (MORNYE_PRESS_DAMPING / (2.0 * sqrt(MORNYE_PRESS_STIFFNESS.toDouble()))).toFloat()
+
+/** How far a Mornye control swells under a finger, in px: a tenth of its short side, 2 to 5 points. */
+internal fun mornyeSwell(width: Float, height: Float, density: Float): Float =
+    (minOf(width, height) * 0.10f).coerceIn(2f * density, 5f * density)
+
+/**
+ * The scale a poured menu is drawn at for a spring [progress]: out of [start]
+ * to full, and past full by only 0.35 of the spring's overshoot, so the
+ * glass runs just past its size and settles rather than bouncing.
+ */
+internal fun pourScale(progress: Float, start: Float): Float = when {
+    progress <= 0f -> start
+    progress <= 1f -> start + (1f - start) * progress
+    else -> 1f + (progress - 1f) * POUR_OVERSHOOT_KEPT
+}
+
+/** How much of the spring's overshoot a poured menu keeps. */
+internal const val POUR_OVERSHOOT_KEPT = 0.35f
+
+/** Mornye's pouring spring: damping ratio 0.62 at 15 radians a second. */
+internal const val POUR_DAMPING_RATIO = 0.62f
+internal const val POUR_STIFFNESS = 15f * 15f
+
+private val EaseInCubic = CubicBezierEasing(0.32f, 0f, 0.67f, 0f)
+
+/**
+ * Mornye's context menu, as the glass looks open every menu and panel: a drop
+ * at the button that runs down - the height first, on an underdamped spring -
+ * and spreads 50 ms later to its width, landing with a small wobble; it is
+ * seen from the start, as glass is. It goes back into the button in 240 ms,
+ * the width folding first.
+ */
+internal val PourOpen = OpenProfile(
+    open = spring(dampingRatio = POUR_DAMPING_RATIO, stiffness = POUR_STIFFNESS),
+    close = tween(240, easing = EaseInCubic),
+    startScale = POUR_START,
+    closeScale = POUR_START,
+    alpha = { p -> (p / 0.3f).coerceIn(0f, 1f) },
+    scaleOf = ::pourScale,
+    widthDelayMs = 50,
+    closeWidth = tween(200, easing = EaseInCubic),
+)
+
+/** A 44-point drop against a panel of about 360: where a poured menu starts. */
+private const val POUR_START = 0.12f
+
+/**
+ * Material's: out of the button from 0.8, as its menus grow, on Material 3
+ * Expressive's slow spatial spring with no overshoot - Mornye keeps a sheet or
+ * menu from overshooting its own size - and fading in on the way; back in
+ * 200 ms on the emphasised accelerate curve.
+ */
+internal val MaterialOpen = OpenProfile(
+    open = spring(dampingRatio = 1f, stiffness = 200f),
+    close = tween(200, easing = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)),
+    startScale = 0.8f,
+    closeScale = 0.8f,
+    alpha = { p -> (p / 0.45f).coerceIn(0f, 1f) },
+)
