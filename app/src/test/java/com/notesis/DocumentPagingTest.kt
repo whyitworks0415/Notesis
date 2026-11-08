@@ -47,4 +47,35 @@ class DocumentPagingTest {
         assertEquals(200f + Document.PAGE_GAP, grid.topOf(2))
         assertEquals(2, grid.pageAt(10f, grid.topOf(2) + 10f))
     }
+
+    @Test fun `fit width is cached between touch samples and follows layout invalidation`() {
+        var reads = 0
+        val backing = MutableList(200) { Page(width = 100f, height = 200f) }
+        val counted = object : AbstractMutableList<Page>() {
+            override val size get() = backing.size
+            override fun get(index: Int): Page { reads++; return backing[index] }
+            override fun add(index: Int, element: Page) { backing.add(index, element) }
+            override fun removeAt(index: Int) = backing.removeAt(index)
+            override fun set(index: Int, element: Page) = backing.set(index, element)
+        }
+        val doc = Document(counted)
+        assertEquals(100f, doc.fitWidth())
+        reads = 0
+        repeat(240) { assertEquals(100f, doc.fitWidth()) }
+        assertEquals(0, reads)
+        backing[100].width = 300f
+        doc.invalidateLayout()
+        assertEquals(300f, doc.fitWidth())
+        doc.layoutMode = PageLayoutMode.SPREAD_2X1
+        assertEquals(600f + Document.PAGE_GAP, doc.fitWidth())
+    }
+
+    @Test fun `infinite paper uses a sheet for fitting rather than its expanded width`() {
+        val page = Page(width = 10000f, height = 200f, background = PageBackground.INFINITE_ALL)
+        val doc = Document(mutableListOf(page))
+        assertEquals(Page.A4_WIDTH, doc.fitWidth())
+        page.background = PageBackground.BLANK
+        doc.invalidateLayout()
+        assertEquals(10000f, doc.fitWidth())
+    }
 }

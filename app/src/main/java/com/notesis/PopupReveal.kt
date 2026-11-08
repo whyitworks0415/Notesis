@@ -138,12 +138,11 @@ internal fun revealPath(outline: RevealOutline): Path {
     val p = outline.points
     val n = p.size / 2
     val path = Path()
-    // The two points each corner's curve runs between, along its edges.
-    val inX = FloatArray(n)
-    val inY = FloatArray(n)
-    val outX = FloatArray(n)
-    val outY = FloatArray(n)
-    for (i in 0 until n) {
+    // Start at corner zero's outgoing point, then round corners 1..0.
+    // Keep the coordinates local: four scratch arrays per outline were
+    // short-lived garbage on every frame of every popup.
+    for (k in 0..n) {
+        val i = k % n
         val x = p[2 * i]
         val y = p[2 * i + 1]
         val px = p[2 * ((i + n - 1) % n)]
@@ -153,16 +152,14 @@ internal fun revealPath(outline: RevealOutline): Path {
         val toPrev = sqrt((px - x) * (px - x) + (py - y) * (py - y))
         val toNext = sqrt((nx - x) * (nx - x) + (ny - y) * (ny - y))
         val r = min(outline.radius, min(toPrev, toNext) / 2f).coerceAtLeast(0f)
-        inX[i] = if (toPrev > 0f) x + (px - x) / toPrev * r else x
-        inY[i] = if (toPrev > 0f) y + (py - y) / toPrev * r else y
-        outX[i] = if (toNext > 0f) x + (nx - x) / toNext * r else x
-        outY[i] = if (toNext > 0f) y + (ny - y) / toNext * r else y
-    }
-    path.moveTo(outX[0], outY[0])
-    for (k in 1..n) {
-        val i = k % n
-        path.lineTo(inX[i], inY[i])
-        path.quadraticTo(p[2 * i], p[2 * i + 1], outX[i], outY[i])
+        val outX = if (toNext > 0f) x + (nx - x) / toNext * r else x
+        val outY = if (toNext > 0f) y + (ny - y) / toNext * r else y
+        if (k == 0) path.moveTo(outX, outY) else {
+            val inX = if (toPrev > 0f) x + (px - x) / toPrev * r else x
+            val inY = if (toPrev > 0f) y + (py - y) / toPrev * r else y
+            path.lineTo(inX, inY)
+            path.quadraticTo(x, y, outX, outY)
+        }
     }
     path.close()
     return path

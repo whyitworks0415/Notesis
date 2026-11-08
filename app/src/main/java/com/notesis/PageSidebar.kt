@@ -300,6 +300,10 @@ internal fun PageSidebar(
 ) {
     val doc = document ?: return
     val pages = doc.pages
+    // A visible card used to scan the whole note to find its number. Keep
+    // identity across filtering and rebuild only when page order changes.
+    val pageIds = pages.map { it.id }
+    val pageIndices = remember(pageIds) { pageIds.withIndex().associate { it.value to it.index } }
     // Kept with the search, so a panel that writing put away opens again on
     // the tab it was left on.
     var tab by remember { mutableIntStateOf((search?.panelTab ?: 0).coerceIn(0, PAGE_PANEL_TABS.lastIndex)) }
@@ -350,7 +354,7 @@ internal fun PageSidebar(
         tocName = page.tocTitle.orEmpty()
     }
     editingPage?.let { page ->
-        val index = pages.indexOf(page)
+        val index = pageIndices[page.id] ?: -1
         if (index >= 0) AlertDialog(
             onDismissRequest = { editingPage = null },
             title = { Text("Contents entry for page ${index + 1}") },
@@ -540,7 +544,7 @@ internal fun PageSidebar(
                             val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
                             // Opened on the page in hand rather than at the first.
                             LaunchedEffect(Unit) {
-                                val at = shownPages.indexOfFirst { pages.indexOf(it) == currentPage }
+                                val at = shownPages.indexOfFirst { pageIndices[it.id] == currentPage }
                                 if (at > 0) gridState.scrollToItem(at)
                             }
                             val haptics = LocalHapticFeedback.current
@@ -560,7 +564,7 @@ internal fun PageSidebar(
                                 verticalArrangement = Arrangement.spacedBy(Ui.Space.s),
                             ) {
                                 items(shownPages, key = { it.id }) { page ->
-                                    val index = pages.indexOf(page)
+                                    val index = pageIndices[page.id] ?: return@items
                                     DisposableEffect(page.id) { onDispose { sweep.bounds.remove(page.id) } }
                                     Box(Modifier.onGloballyPositioned { sweep.bounds[page.id] = it.boundsInRoot() }
                                         // The pen resting over a card shows its page large beside the panel.
@@ -615,7 +619,7 @@ internal fun PageSidebar(
                             val peeked = peek
                             if (peeked != null) {
                                 val (pageId, card) = peeked
-                                val index = pages.indexOfFirst { it.id == pageId }
+                                val index = pageIndices[pageId] ?: -1
                                 val page = pages.getOrNull(index)
                                 if (page == null) {
                                     peek = null
@@ -755,7 +759,7 @@ internal fun PageSidebar(
                                     if (parent && page.id in tocFolded) foldedAt = page.tocLevel
                                 }
                                 items(visible, key = { it.first.id }) { (page, parent) ->
-                                    val index = pages.indexOf(page)
+                                    val index = pageIndices[page.id] ?: return@items
                                     TocTreeRow(
                                         index = index,
                                         page = page,
@@ -805,7 +809,7 @@ internal fun PageSidebar(
                                     )
                                 }
                                 items(taped, key = { it.id }) { page ->
-                                    val index = pages.indexOf(page)
+                                    val index = pageIndices[page.id] ?: return@items
                                     MaskChip(
                                         index = index,
                                         page = page,

@@ -1367,8 +1367,14 @@ class InkCanvasView @JvmOverloads constructor(
     /** Fired with how many strokes the loop caught, zero when it is let go. */
     var onLassoSelected: ((Int) -> Unit)? = null
 
-    /** Reads a picture's bytes. Called on the UI thread, so it should cache. */
+    /** Original-resolution pictures for selection and capture, never the screen's draw. */
     var imageLoader: ((String) -> Bitmap?)? = null
+
+    /** Cache-only screen lookup: a miss schedules decoding and returns at once. */
+    var imagePreviewLoader: ((String) -> Bitmap?)? = null
+    var templatePreviewLoader: ((String) -> Bitmap?)? = null
+
+    fun imagePreviewReady() { if (!disposed) dry.postInvalidateOnAnimation() }
 
     /** Stores a bitmap in this note and returns its picture id; for pictures pasted from another note. */
     var imageAdder: ((Bitmap) -> String?)? = null
@@ -5270,6 +5276,9 @@ class InkCanvasView @JvmOverloads constructor(
                 // Owned before the fling stops, so stopping it does not tell
                 // the host the page has come to rest for the moment between.
                 viewportInteracting = true
+                // Give the first MOVE room too, rather than waiting until it
+                // arrives to ask optional background work to yield.
+                holdMoving()
                 stopFling(resumeDetail = false)
                 pendingPinch = 1f
                 // A delayed idle refine may still be waiting from the previous
@@ -5278,7 +5287,6 @@ class InkCanvasView @JvmOverloads constructor(
                 // as a new interaction begins; a page it was reading in is
                 // still kept (see refineVisiblePages).
                 cancelDetailWork()
-                scheduleRefine()
                 onViewportInteractionChanged?.invoke(true)
                 val focus = focusOf(event, skipPointerIndex = -1)
                 lastFocusX = focus[0]
@@ -9970,7 +9978,7 @@ class InkCanvasView @JvmOverloads constructor(
 
         private fun drawImages(canvas: Canvas, page: Page) {
             if (page.images.isEmpty()) return
-            val loader = imageLoader ?: return
+            val loader = (if (canvas.isHardwareAccelerated) imagePreviewLoader else null) ?: imageLoader ?: return
             val liftedPage = movingLasso && lassoImages.isNotEmpty() &&
                 document.pages.getOrNull(lassoPage) === page
             for (image in page.images) {
@@ -10434,7 +10442,8 @@ class InkCanvasView @JvmOverloads constructor(
                 }
 
                 PageBackground.CUSTOM -> {
-                    page.templateId?.let { id -> templateLoader?.invoke(id) }?.let { bitmap ->
+                    val loader = (if (canvas.isHardwareAccelerated) templatePreviewLoader else null) ?: templateLoader
+                    page.templateId?.let { id -> loader?.invoke(id) }?.let { bitmap ->
                         canvas.drawBitmap(bitmap, null, pageRect, bitmapPaint)
                     }
                 }

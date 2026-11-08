@@ -2,7 +2,6 @@ package com.notesis
 
 import android.graphics.Bitmap
 import android.net.Uri
-import android.util.LruCache
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -4329,18 +4328,6 @@ private fun NoteScreen(
         lifecycleOwner?.lifecycle?.addObserver(observer)
         onDispose { lifecycleOwner?.lifecycle?.removeObserver(observer) }
     }
-    // Every page redraw asks for the pictures on it, so decoding has to happen
-    // once rather than once a frame.
-    val imageCache = remember(note.id) {
-        // Bounded by bytes, not by count: a handful of large pictures is what
-        // would run the heap out, and counting entries cannot see that.
-        object : LruCache<String, Bitmap>(IMAGE_CACHE_BYTES) {
-            override fun sizeOf(key: String, value: Bitmap) = value.byteCount
-        }
-    }
-    DisposableEffect(imageCache) {
-        onDispose { imageCache.evictAll() }
-    }
     // Folded away, the bar becomes a handle that can be dragged; unfolding puts
     // it back wherever that handle was left, which is the point of moving it.
     var toolbarSize by remember { mutableIntStateOf(penStore.toolbarSize) }
@@ -4682,6 +4669,15 @@ private fun NoteScreen(
     val liveZoom = remember { floatArrayOf(1f) }
     var zoomMenu by remember { mutableStateOf(false) }
     var canvas by remember { mutableStateOf<InkCanvasView?>(null) }
+    val imagePreviews = remember(note.id, store) {
+        CanvasImagePreviews(IMAGE_CACHE_BYTES,
+            file = { key ->
+                if (key.startsWith("t:")) store.templateFile(key.substring(2))
+                else store.imageFile(note.id, key.substring(2))
+            },
+            onReady = { canvas?.imagePreviewReady() })
+    }
+    DisposableEffect(imagePreviews) { onDispose { imagePreviews.close() } }
     // Whether undo and redo have anything, each its own state: read as the
     // edit counter, every stroke recomposed the whole toolbar on the UI thread
     // at the pen-up, as the next stroke was starting. Derived, the toolbar
@@ -5319,24 +5315,11 @@ private fun NoteScreen(
                         onTextRequested = { page, x, y -> textAt(page, x, y) }
                         onLassoSelected = { lassoCount = it; lassoMoves++ }
                         onLassoScreenMoved = { lassoMoves++ }
-                        // A file that cannot be read is remembered as such: it was
-                        // read and failed again on every frame that drew its page.
-                        val unreadable = HashSet<String>()
-                        imageLoader = { imageId ->
-                            imageCache.get(imageId) ?: if (imageId in unreadable) null else runCatching {
-                                android.graphics.BitmapFactory
-                                    .decodeFile(store.imageFile(note.id, imageId).path)
-                            }.getOrNull().also { if (it != null) imageCache.put(imageId, it) else unreadable += imageId }
-                        }
+                        imageLoader = imagePreviews::originalImage
+                        imagePreviewLoader = imagePreviews::image
                         imageAdder = { bitmap -> store.addImage(note.id, bitmap)?.first }
-                        // Cached like the pictures: a custom paper was decoded
-                        // from disk on every frame, and uploaded as a new texture.
-                        templateLoader = { templateId ->
-                            val key = "t:$templateId"
-                            imageCache.get(key) ?: if (key in unreadable) null else runCatching {
-                                android.graphics.BitmapFactory.decodeFile(store.templateFile(templateId).path)
-                            }.getOrNull().also { if (it != null) imageCache.put(key, it) else unreadable += key }
-                        }
+                        templateLoader = imagePreviews::originalTemplate
+                        templatePreviewLoader = imagePreviews::template
                         // Rendered on a worker; the dialog is a UI thing.
                         onCaptured = { bitmap -> post { if (captureToAi) sendCaptureToAi() else captured = bitmap } }
                         canvas = this
@@ -8166,10 +8149,17 @@ private fun ReferencePanel(
         if (sharedDocument != null) onSharedOpen()
         onDispose { if (sharedDocument != null) latestSharedChanged() }
     }
-    // A pane holds half what a floating panel does: up to four of them share the screen.
-    val imageCache = remember { object : LruCache<String, Bitmap>((if (pinned) 8 else 16) * 1024 * 1024) {
-        override fun sizeOf(key: String, value: Bitmap) = value.byteCount
-    } }
+    // Each note has its own lifetime; a late decode from a switched note
+    // cannot populate the new panel or notify its canvas.
+    val imagePreviews = remember(noteId, pinned, store) {
+        CanvasImagePreviews((if (pinned) 8 else 16) * 1024 * 1024,
+            file = { key ->
+                if (key.startsWith("t:")) store.templateFile(key.substring(2))
+                else store.imageFile(noteId, key.substring(2))
+            },
+            onReady = { view?.imagePreviewReady() })
+    }
+    DisposableEffect(imagePreviews) { onDispose { imagePreviews.close() } }
     var popupEdits by remember { mutableIntStateOf(0) }
     var popupLassoCount by remember { mutableIntStateOf(0) }
     var noteMenu by remember { mutableStateOf(false) }
@@ -8217,7 +8207,6 @@ private fun ReferencePanel(
             lifecycleOwner?.lifecycle?.removeObserver(observer)
             flushLatest()
             if (view == null) opened?.second?.close()
-            imageCache.evictAll()
         }
     }
     // A note or a page change refits the page to the panel, when that is asked
@@ -8484,16 +8473,10 @@ private fun ReferencePanel(
                                 keepPageAcross = !pinned
                                 pageLoader = { p, epsilon -> store.loadPage(noteId, p, epsilon) }
                                 maskLoader = { p, epsilon -> store.loadMasks(noteId, p, epsilon) }
-                                imageLoader = { imageId ->
-                                    imageCache.get("i:$imageId") ?: runCatching {
-                                        android.graphics.BitmapFactory
-                                            .decodeFile(store.imageFile(noteId, imageId).path)
-                                    }.getOrNull()?.also { imageCache.put("i:$imageId", it) }
-                                }
-                                templateLoader = { templateId ->
-                                    imageCache.get("t:$templateId") ?: runCatching { android.graphics.BitmapFactory.decodeFile(
-                                        store.templateFile(templateId).path) }.getOrNull()?.also { imageCache.put("t:$templateId", it) }
-                                }
+                                imageLoader = imagePreviews::originalImage
+                                imagePreviewLoader = imagePreviews::image
+                                templateLoader = imagePreviews::originalTemplate
+                                templatePreviewLoader = imagePreviews::template
                                 open(ready.first, ready.second, initialPage = page)
                                 onStrokesChanged = {
                                     popupEdits++

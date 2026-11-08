@@ -5,6 +5,18 @@ import org.junit.Test
 import kotlin.math.roundToInt
 
 class LiquidGlassBarTest {
+    @Test fun `a control follows a grab and move without waiting for a frame tick`() {
+        val motion = LiquidGlassMotion(0f, control = true)
+        motion.grab(0.25f)
+        assertEquals(0.25f, motion.position, 0f)
+        motion.follow(0.8f)
+        assertEquals(0.8f, motion.position, 0f)
+        motion.release(1f)
+        repeat(300) { i -> motion.tick((i + 1) / 60.0, 1 / 60.0, 70f) }
+        assertEquals(1f, motion.position, 0f)
+        assertEquals(false, motion.running)
+    }
+
     @Test fun `lens in the middle of the bar keeps its size`() {
         val body = liquidGlassLensBody(200f, 90f, 50f, barWidth = 400f, edge = 1f, minWidth = 60f)
         assertEquals(200f, body.x, 0f)

@@ -396,6 +396,8 @@ class Document(val pages: MutableList<Page>) {
     private var tops = FloatArray(0)
     private var lefts = FloatArray(0)
     private var widest = Page.A4_WIDTH
+    private var fitCellWidth = Page.A4_WIDTH
+    private var hasInfinitePage = false
     private var total = Page.A4_HEIGHT
     private var laidOutFor = -1
     var layoutMode: PageLayoutMode = PageLayoutMode.VERTICAL
@@ -414,6 +416,11 @@ class Document(val pages: MutableList<Page>) {
     private fun layout() {
         val signature = pages.size * 10 + layoutMode.ordinal
         if (laidOutFor == signature) return
+        // clampTransform asks for this on every finger sample. Resolve it
+        // with the page layout, rather than scanning a long note each time.
+        fitCellWidth = pages.maxOfOrNull { if (it.background == PageBackground.INFINITE_ALL) Page.A4_WIDTH else it.width }
+            ?: Page.A4_WIDTH
+        hasInfinitePage = pages.any { it.background == PageBackground.INFINITE_ALL }
         tops = FloatArray(pages.size)
         lefts = FloatArray(pages.size)
         memoLefts = FloatArray(pages.size) { pages[it].width + PAGE_GAP }
@@ -538,13 +545,13 @@ class Document(val pages: MutableList<Page>) {
     }
 
     fun fitWidth(): Float {
+        layout()
         // A sheet that runs every way is as wide as it has grown; its 100% is a page's width.
-        val cell = pages.maxOfOrNull { if (it.background == PageBackground.INFINITE_ALL) Page.A4_WIDTH else it.width }
-            ?: Page.A4_WIDTH
+        val cell = fitCellWidth
         return when (layoutMode) {
             PageLayoutMode.HORIZONTAL -> cell
             PageLayoutMode.SPREAD_2X1, PageLayoutMode.SPREAD_COVER -> cell * 2f + PAGE_GAP
-            else -> if (pages.any { it.background == PageBackground.INFINITE_ALL }) cell else widestPage()
+            else -> if (hasInfinitePage) cell else widest
         }
     }
 
