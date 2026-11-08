@@ -1278,12 +1278,6 @@ internal class PopupGrowth(shown: Boolean) {
     var closing = false
         private set
 
-    /**
-     * Run just before a move starts, while the popup still stands as it is:
-     * a revealing popup takes its picture here (see [revealOutOf]).
-     */
-    var prepare: (suspend () -> Unit)? = null
-
     /** Whether the popup is anywhere but fully open: on its way, or shut. */
     fun moving(w: Float, h: Float): Boolean = w < 1f || h < 1f || width.isRunning || height.isRunning
 
@@ -1294,7 +1288,6 @@ internal class PopupGrowth(shown: Boolean) {
         // curve started on it lost its first steps to that frame and jumped.
         // It goes out unseen; the curve starts on the frame after.
         if (animate && width.value == 0f && height.value == 0f) awaitFirstFrames()
-        if (animate) runCatching { prepare?.invoke() }
         val spec = profile?.open ?: POPUP_OPEN
         // Opened again while closing: on from where it is, at the speed it has.
         val resumed = midFlight()
@@ -1308,8 +1301,6 @@ internal class PopupGrowth(shown: Boolean) {
 
     suspend fun close(animate: Boolean) {
         closing = true
-        // Taken again from the open popup, which may have changed while it was open.
-        if (animate && !midFlight()) runCatching { prepare?.invoke() }
         val spec = profile?.close ?: POPUP_CLOSE
         // Caught while still opening, it turns round at the speed it has
         // rather than being thrown back at the profile's own.

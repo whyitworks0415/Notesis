@@ -603,9 +603,7 @@ class MainActivity : ComponentActivity() {
         StudyClock.touched()
         DisplayRate.apply(this)
         JankWatch.start(this)
-        // The springs allow for the screen's rate; see [lowRateStretch].
         MotionPrefs.refreshHz = display?.refreshRate ?: 60f
-        MotionStats.start(this)
     }
 
     override fun onPause() {

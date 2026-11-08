@@ -71,10 +71,15 @@ internal class InteractionTracker(
         if (writers.isNotEmpty() || movers.isNotEmpty()) 0L else (now - lastEnd).coerceAtLeast(0L)
 
     companion object {
-        /** Long enough to span the gap between two handwritten strokes. */
-        const val SETTLE_MS = 350L
+        /**
+         * Long enough to span the gap between two handwritten strokes, and
+         * between two words. At 350 the pause between words ran out: the
+         * page was recorded again for the glass and the deferred work woke,
+         * the heaviest frames there are, just as the next word began.
+         */
+        const val SETTLE_MS = 700L
         /** In power saving the pause is longer, so deferred work trickles back rather than bursts. */
-        const val SETTLE_POWER_SAVE_MS = 600L
+        const val SETTLE_POWER_SAVE_MS = 1000L
     }
 }
 

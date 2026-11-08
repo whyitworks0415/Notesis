@@ -5683,9 +5683,9 @@ class InkCanvasView @JvmOverloads constructor(
         if (hypot(vx, vy) < MIN_FLING_VELOCITY) return
         flingVx = vx
         flingVy = vy
-        // Frame times from here on; the first step covers the time from the
-        // lift to the first frame, which is never more than a frame.
-        flingLastNanos = System.nanoTime()
+        // Frame times from here on; the first frame steps one whole frame
+        // (see [flingStepSeconds]).
+        flingLastNanos = 0L
         if (!flinging) {
             flinging = true
             holdMoving()
@@ -5720,9 +5720,8 @@ class InkCanvasView @JvmOverloads constructor(
     private val flingStep = object : Choreographer.FrameCallback {
         override fun doFrame(frameTimeNanos: Long) {
             if (!flinging || disposed) return
-            val dt = flingDt(frameTimeNanos, flingLastNanos)
-            // A frame time can trail the lift's own clock reading; never step backwards.
-            flingLastNanos = maxOf(flingLastNanos, frameTimeNanos)
+            val dt = flingStepSeconds(frameTimeNanos, flingLastNanos, displayHz)
+            flingLastNanos = frameTimeNanos
 
             documentToScreen.getValues(matrixValues)
             val beforeX = matrixValues[Matrix.MTRANS_X]

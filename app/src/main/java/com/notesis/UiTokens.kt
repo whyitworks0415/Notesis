@@ -129,8 +129,12 @@ object Ui {
                 motionSpring(ORDINARY_RESPONSE, 1f)
             }
 
-        /** The ordinary move's response: settles about where a curve of [MS] ended, with a soft tail. */
-        const val ORDINARY_RESPONSE = 0.3f
+        /**
+         * The ordinary move's response: settled about where a curve of [MS]
+         * ended. It was 0.3, whose long tail every fade and slide waited out,
+         * and the chrome felt late beside the curve it replaced.
+         */
+        const val ORDINARY_RESPONSE = 0.2f
     }
 
     /** Hit areas and fixed control sizes. */

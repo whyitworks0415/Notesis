@@ -104,6 +104,18 @@ class ViewportPolicyTest {
     }
 
     @Test
+    fun `a fling's first frame moves a whole frame, not nothing`() {
+        // First frame: one frame of the screen's rate, wherever the vsync stamp falls.
+        assertEquals(1f / 60f, flingStepSeconds(5L, 0L, 60f), 1e-6f)
+        assertEquals(1f / 120f, flingStepSeconds(5L, 0L, 120f), 1e-6f)
+        // An unknown rate never makes a step longer than the clamp.
+        assertTrue(flingStepSeconds(5L, 0L, 0f) <= MAX_FLING_STEP_S)
+        // After it, frame to frame.
+        val last = 1_000_000_000L
+        assertEquals(1f / 60f, flingStepSeconds(last + 16_666_667L, last, 60f), 1e-4f)
+    }
+
+    @Test
     fun `fling decays and its end condition is reached`() {
         var v = 6000f
         var frames = 0

@@ -34,6 +34,16 @@ internal fun flingDt(frameNanos: Long, lastNanos: Long): Float =
     ((frameNanos - lastNanos) / 1e9f).coerceIn(0f, MAX_FLING_STEP_S)
 
 /**
+ * A fling frame's step in seconds: [flingDt] from the last frame, or, on the
+ * first frame ([lastNanos] 0), one whole frame of a [hz] screen. The first
+ * was once timed from the lift, read after the vsync the frame is stamped
+ * with, so it came out nothing: the page stood still for a frame just as
+ * the finger let go, a hitch at the start of every fling on 60 Hz.
+ */
+internal fun flingStepSeconds(frameNanos: Long, lastNanos: Long, hz: Float): Float =
+    if (lastNanos == 0L) (1f / hz.coerceAtLeast(20f)).coerceAtMost(MAX_FLING_STEP_S) else flingDt(frameNanos, lastNanos)
+
+/**
  * How far a fling going at [velocity] travels in [dt] seconds under
  * exponential [friction]: the exact integral of v·e^(-friction·t), so the
  * glide covers the same distance at 60Hz, at 120Hz, and across a dropped

@@ -6,10 +6,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.layer.CompositingStrategy
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.graphics.Outline
@@ -188,12 +186,12 @@ internal val StillMotion: () -> Float = { 0f }
  * place on screen - and leaves it uncut once it has fully come. [corner] is
  * the panel's own.
  *
- * While it moves, the panel is a picture of itself: taken once, just before
- * the motion starts (see [PopupGrowth.prepare]), and only cut on each frame.
- * Drawn live, every frame of the motion ran the glass's blur and lens over
- * the whole panel again - on this tablet that held the motion near 20 frames
- * a second; a picture cut by its layer's outline is a texture the render
- * thread composites, which keeps up with the screen.
+ * While it moves, the panel is drawn once into a layer of its own that the
+ * render thread keeps as a texture, and each frame only cuts that texture
+ * to a new outline. Drawn live, every frame ran the glass's blur and lens
+ * over the whole panel again, which held the motion near 20 frames a
+ * second; a picture read back from the GPU first, as 0.90.15 took, cost the
+ * main thread a stall before the motion could start, felt as a delay.
  */
 @Composable
 internal fun Modifier.revealOutOf(
@@ -203,14 +201,8 @@ internal fun Modifier.revealOutOf(
 ): Modifier {
     val local = remember { floatArrayOf(Float.NaN, Float.NaN) }
     val layer = rememberGraphicsLayer()
-    val shot = remember { mutableStateOf<ImageBitmap?>(null) }
-    growth.prepare = prepare@{
-        if (layer.isReleased) return@prepare
-        shot.value = null
-        // A frame drawn live first, so the layer holds the panel as it is now.
-        withFrameNanos { }
-        shot.value = runCatching { layer.toImageBitmap() }.getOrNull()
-    }
+    // The size the layer was last recorded at; 0 until the first recording.
+    val recorded = remember { IntArray(2) }
     return this
         .onGloballyPositioned { coordinates ->
             val at = anchor(coordinates) ?: return@onGloballyPositioned
@@ -232,14 +224,22 @@ internal fun Modifier.revealOutOf(
             clip = true
         }
         .drawWithContent {
-            val image = shot.value
-            val moving = growth.moving(growth.width.value, growth.height.value)
-            if (moving && image != null && image.width == size.width.toInt() && image.height == size.height.toInt()) {
-                drawImage(image)
-            } else {
-                layer.record { this@drawWithContent.drawContent() }
-                drawLayer(layer)
+            if (layer.isReleased) {
+                drawContent()
+                return@drawWithContent
             }
+            val w = size.width.toInt()
+            val h = size.height.toInt()
+            val moving = growth.moving(growth.width.value, growth.height.value)
+            // Kept as a texture while it moves: only the outline above changes,
+            // so the render thread composites what it already has.
+            layer.compositingStrategy = if (moving) CompositingStrategy.Offscreen else CompositingStrategy.Auto
+            if (!moving || recorded[0] != w || recorded[1] != h) {
+                layer.record { this@drawWithContent.drawContent() }
+                recorded[0] = w
+                recorded[1] = h
+            }
+            drawLayer(layer)
         }
 }
 

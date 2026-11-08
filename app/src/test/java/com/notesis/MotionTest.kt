@@ -16,12 +16,13 @@ class MotionTest {
         assertEquals(springStiffness(0.2f) / 4f, springStiffness(0.4f), 0.01f)
     }
 
-    @Test fun `a 60 Hz screen stretches the springs a little and a fast one not at all`() {
-        assertEquals(1.12f, lowRateStretch(60f), 0f)
-        assertEquals(1.12f, lowRateStretch(59.94f), 0f)
-        assertEquals(1f, lowRateStretch(120f), 0f)
-        assertEquals(1f, lowRateStretch(90f), 0f)
-        assertEquals(1f, lowRateStretch(0f), 0f)
+    @Test fun `the speed alone sets how long a spring takes, up to three times as quick`() {
+        assertEquals(1f, responseScaleFor(1f), 0f)
+        assertEquals(0.5f, responseScaleFor(2f), 0.0001f)
+        // Held to the slider's range.
+        assertEquals(1f / 3f, responseScaleFor(10f), 0.0001f)
+        assertEquals(1f / 0.7f, responseScaleFor(0.1f), 0.0001f)
+        assertEquals(1.3f, MotionPrefs.DEFAULT_SPEED, 0f)
     }
 
     @Test fun `a throw is projected to where it would come to rest`() {
@@ -69,19 +70,19 @@ class MotionTest {
         assertTrue(Ui.Motion.tween<Float>(delayMillis = 40) is TweenSpec<*>)
     }
 
-    @Test fun `pacing leaves a spec alone at the tuned speed on a fast screen`() {
+    @Test fun `pacing quickens a spec by the speed, whatever the screen's rate`() {
         val was = MotionPrefs.refreshHz
         try {
-            MotionPrefs.refreshHz = 120f
             val s = spring<Float>(dampingRatio = 0.8f, stiffness = 400f)
-            assertTrue(s.paced() === s)
-            // On 60 Hz a spring softens and a curve lengthens by the stretch.
-            MotionPrefs.refreshHz = 60f
-            val softened = s.paced() as SpringSpec<Float>
-            assertEquals(400f / (1.12f * 1.12f), softened.stiffness, 0.01f)
-            assertEquals(0.8f, softened.dampingRatio, 0f)
-            val longer = tween<Float>(200).paced() as TweenSpec<Float>
-            assertEquals(224f, longer.durationMillis.toFloat(), 1f)
+            for (hz in listOf(60f, 120f)) {
+                MotionPrefs.refreshHz = hz
+                // At the default speed of 1.3 a spring stiffens by 1.3 squared.
+                val quicker = s.paced() as SpringSpec<Float>
+                assertEquals(400f * 1.3f * 1.3f, quicker.stiffness, 0.5f)
+                assertEquals(0.8f, quicker.dampingRatio, 0f)
+                val shorter = tween<Float>(200).paced() as TweenSpec<Float>
+                assertEquals(153f, shorter.durationMillis.toFloat(), 1f)
+            }
         } finally {
             MotionPrefs.refreshHz = was
         }

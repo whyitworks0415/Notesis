@@ -47,18 +47,19 @@ internal object MotionPrefs {
         private set
 
     /** A trace of blur along fast motion on screens that show only 60 frames a second. */
-    var motionBlur by mutableStateOf(true)
+    var motionBlur by mutableStateOf(false)
         private set
 
     /** The screen's rate, as the activity last read it. */
     var refreshHz by mutableFloatStateOf(60f)
 
     /**
-     * What a spring's response is multiplied by: slower for a slower
-     * [speed], and a little longer on a 60 Hz screen, where a motion of the
-     * same length moves twice as far between frames (see [lowRateStretch]).
+     * What a spring's response is multiplied by: shorter for a quicker
+     * [speed]. A 60 Hz screen once took springs an eighth longer, so each
+     * frame's step stayed small; on the tablet that read as the chrome
+     * answering late, so the rate no longer slows anything.
      */
-    val responseScale: Float get() = lowRateStretch(refreshHz) / speed.coerceIn(SPEED_RANGE)
+    val responseScale: Float get() = responseScaleFor(speed)
 
     private fun prefs(context: Context) = context.getSharedPreferences("pens", Context.MODE_PRIVATE)
 
@@ -66,7 +67,7 @@ internal object MotionPrefs {
         val p = prefs(context)
         speed = p.getFloat(KEY_SPEED, DEFAULT_SPEED).takeIf { it.isFinite() }?.coerceIn(SPEED_RANGE) ?: DEFAULT_SPEED
         haptics = p.getBoolean(KEY_HAPTICS, true)
-        motionBlur = p.getBoolean(KEY_BLUR, true)
+        motionBlur = p.getBoolean(KEY_BLUR, false)
     }
 
     fun setSpeed(context: Context, value: Float) {
@@ -84,19 +85,16 @@ internal object MotionPrefs {
         prefs(context).edit().putBoolean(KEY_BLUR, on).apply()
     }
 
-    const val DEFAULT_SPEED = 1f
-    val SPEED_RANGE = 0.7f..1.4f
+    /** A little quicker than the springs were tuned at: at 1 the chrome felt slow to answer. */
+    const val DEFAULT_SPEED = 1.3f
+    val SPEED_RANGE = 0.7f..3f
     private const val KEY_SPEED = "motionSpeed"
     private const val KEY_HAPTICS = "motionHaptics"
     private const val KEY_BLUR = "motionBlur"
 }
 
-/**
- * How much longer a spring takes on a screen of [hz]: at 60 a motion of the
- * same length jumps twice as far from frame to frame as at 120, and reads as
- * a judder; an eighth longer keeps each step small without feeling slow.
- */
-internal fun lowRateStretch(hz: Float): Float = if (hz in 1f..75f) 1.12f else 1f
+/** A spring's response multiplier at motion [speed]: half as long at twice the speed. */
+internal fun responseScaleFor(speed: Float): Float = 1f / speed.coerceIn(MotionPrefs.SPEED_RANGE)
 
 /** Stiffness per unit mass for a spring that responds in [responseSeconds]: (2π / response)². */
 internal fun springStiffness(responseSeconds: Float): Float {

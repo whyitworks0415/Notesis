@@ -616,12 +616,21 @@ private fun StyleGroup(
 @Composable
 private fun MotionGroup() {
     val context = LocalContext.current
+    // Frames are counted only while this is on screen: a listener on every
+    // frame of the app, and a state write for each, cost the motion it measured.
+    DisposableEffect(context) {
+        var host: android.content.Context? = context
+        while (host is android.content.ContextWrapper && host !is android.app.Activity) host = host.baseContext
+        val activity = host as? android.app.Activity
+        activity?.let { MotionStats.start(it) }
+        onDispose { activity?.let { MotionStats.stop(it) } }
+    }
     SettingsSectionHeader("Motion")
     SettingsNote("Everything moves on springs, as on iOS: a motion caught half way turns from where it is, " +
-        "and a flick carries its speed. On a 60 Hz screen the springs run a little longer, so each frame's step stays small.")
+        "and a flick carries its speed.")
     AppearanceSlider("Speed", "%.0f%%".format(MotionPrefs.speed * 100), MotionPrefs.speed, MotionPrefs.SPEED_RANGE,
         step = 0.05f, default = MotionPrefs.DEFAULT_SPEED,
-        note = "100% is how the motion was tuned. Higher is quicker.",
+        note = "Up to 300%. Higher is quicker; 130% is the default.",
     ) { MotionPrefs.setSpeed(context, it) }
     SettingsToggle("Haptics", MotionPrefs.haptics, { MotionPrefs.setHaptics(context, it) },
         hint = "A light tick where something snaps, a switch flips or a slider lands on a step. " +

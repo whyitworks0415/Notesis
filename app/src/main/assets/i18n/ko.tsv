@@ -1577,8 +1577,8 @@ Late frames	늦은 프레임
 Longest frame	가장 긴 프레임
 While the chrome moves	화면 요소가 움직이는 동안
 Motion blur on 60 Hz	60Hz 모션 블러
-Everything moves on springs, as on iOS: a motion caught half way turns from where it is, and a flick carries its speed. On a 60 Hz screen the springs run a little longer, so each frame's step stays small.	iOS처럼 모든 움직임이 스프링으로 움직입니다. 움직이는 도중에 바꾸면 그 자리에서 방향을 틀고, 튕기면 그 속도가 이어집니다. 60Hz 화면에서는 스프링을 조금 길게 써서 프레임마다 이동 폭이 작게 유지됩니다.
-100% is how the motion was tuned. Higher is quicker.	100%가 맞춰 둔 기본 속도입니다. 높을수록 빨라집니다.
+Everything moves on springs, as on iOS: a motion caught half way turns from where it is, and a flick carries its speed.	iOS처럼 모든 움직임이 스프링으로 움직입니다. 움직이는 도중에 다시 누르면 그 자리에서 방향을 바꾸고, 휙 넘기면 그 속도가 이어집니다.
+Up to 300%. Higher is quicker; 130% is the default.	최대 300%까지 올릴 수 있습니다. 높을수록 빨라지며, 기본값은 130%입니다.
 A light tick where something snaps, a switch flips or a slider lands on a step. The tablet's own vibration setting still applies.	무언가 제자리에 붙거나, 스위치가 바뀌거나, 슬라이더가 눈금에 닿을 때 가볍게 톡 울립니다. 태블릿의 진동 설정은 그대로 적용됩니다.
 A trace of blur along a popup's fastest moment, so it reads as motion rather than as steps. Off in Light mode, and never drawn on faster screens.	팝업이 가장 빠르게 움직이는 순간에 아주 약한 블러를 넣어, 끊긴 단계가 아니라 움직임으로 보이게 합니다. 가벼운 모드에서는 꺼지고, 더 빠른 화면에서는 그리지 않습니다.
 {0} builds its colours from its own accent, chosen in Glass. The ink below still applies.	{0}는 유리 탭에서 고른 자체 강조색으로 색을 만듭니다. 아래 글자 색은 그대로 적용됩니다.
