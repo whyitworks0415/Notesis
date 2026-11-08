@@ -442,7 +442,10 @@ internal fun Modifier.skinShadow(shape: Shape, panel: Boolean = false): Modifier
         Skin.MATERIAL -> shadow(if (panel) 6.dp else 3.dp, shape, clip = false)
         Skin.GLASSMORPHISM -> shadow(skin.tokens().shadow, shape, clip = false)
         // Round the glass, never under it; see [glassShadow].
-        Skin.LIQUID_GLASS -> glassShadow(lensSafeShape(shape), liquidGlassPaneShadow(panel),
+        Skin.LIQUID_GLASS -> glassShadow(LocalSkinSettings.current.let { look ->
+            if (look.liquidStyle == LiquidStyle.MORNYE && look.mornye.smoothCorners) mornyeSquircle(lensSafeShape(shape))
+            else lensSafeShape(shape)
+        }, liquidGlassPaneShadow(panel),
             dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f)
     }
 }

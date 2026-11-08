@@ -1571,3 +1571,5 @@ Used in dark mode	다크 모드에서 쓰입니다
 Mornye builds its colours from its own accent, chosen in Glass. The ink below still applies.	Mornye는 유리 탭에서 고른 자체 강조색으로 색을 만듭니다. 아래 글자 색은 그대로 적용됩니다.
 Material draws Material Symbols Rounded, as Android does; the set below is for the other looks.	Material은 Android처럼 Material Symbols Rounded 아이콘을 씁니다. 아래 아이콘 세트는 다른 룩에 적용됩니다.
 Material Symbols stay still	Material Symbols 아이콘은 움직이지 않습니다
+Smooth corners	부드러운 모서리
+Mornye's squircle: the corner eases out of the straight edge instead of turning on a circle.	Mornye의 스쿼클: 모서리가 원을 따라 꺾이지 않고 직선에서 부드럽게 이어집니다.

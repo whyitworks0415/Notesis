@@ -910,6 +910,8 @@ private fun MornyeGlassControls(m: MornyeGlass, appAccent: Int, dark: Boolean, o
     ) { onChange(m.copy(clarity = it)) }
     SettingsToggle("Glass outlines", m.outlines, { onChange(m.copy(outlines = it)) },
         hint = "A hairline edge with a lit rim inside it.")
+    SettingsToggle("Smooth corners", m.smoothCorners, { onChange(m.copy(smoothCorners = it)) },
+        hint = "Mornye's squircle: the corner eases out of the straight edge instead of turning on a circle.")
     AppearanceSlider("Corner radius", "%.0f dp".format(m.corner), m.corner, SkinSettings.CORNER_RANGE, step = 1f,
         default = d.corner, note = "32 by default, as its panels.",
     ) { onChange(m.copy(corner = it)) }

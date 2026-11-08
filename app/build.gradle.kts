@@ -14,8 +14,8 @@ android {
         // dependable from Q onward, even though ink itself declares minSdk 23.
         minSdk = 29
         targetSdk = 36
-        versionCode = 201
-        versionName = "0.90.10"
+        versionCode = 202
+        versionName = "0.90.11"
         testInstrumentationRunner = "com.notesis.CustomizationInstrumentation"
         // Ship arm64 for the tablet; opt into x86_64 for emulator GPU checks.
         ndk { abiFilters += providers.gradleProperty("notesis.testAbi").getOrElse("arm64-v8a") }
@@ -90,6 +90,8 @@ dependencies {
     // compileSdk 36 / AGP 8 line. Backdrop 2.x requires compileSdk 37 and AGP
     // 9.1+, which would turn this visual change into a toolchain migration.
     implementation("io.github.kyant0:backdrop:1.0.6")
+    // Backdrop's own shapes, for an outline its lens reads the corners of (Mornye's squircle).
+    implementation("io.github.kyant0:shapes:1.2.0")
     // The renderer behind @Preview. Without it the annotations compile and the
     // preview pane stays empty, which is why the chrome could only be looked at
     // by installing the app - see Previews.kt. Debug only: it is a development

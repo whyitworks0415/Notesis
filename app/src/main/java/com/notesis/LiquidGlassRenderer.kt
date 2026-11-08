@@ -188,13 +188,17 @@ internal fun Modifier.liquidGlassLens(enabled: Boolean, active: () -> Boolean = 
 /** MornyeGlassSurface + MornyeGlassRim from SpotiFLAC, with its tint/blur rules. */
 @Composable
 internal fun Modifier.liquidGlassSurface(
-    shape: Shape,
+    paneShape: Shape,
     settings: SkinSettings,
     navigation: Boolean = false,
     elevation: Dp = 3.dp,
     rim: Boolean = true,
     exportedBackdrop: LayerBackdrop? = null,
 ): Modifier {
+    // Mornye's continuous corners whether or not the lens can run, so its
+    // panes keep one outline when the effects are off.
+    val shape = if (settings.liquidStyle == LiquidStyle.MORNYE && settings.mornye.smoothCorners &&
+        LocalSkin.current == Skin.LIQUID_GLASS) mornyeSquircle(paneShape) else paneShape
     val scheme = MaterialTheme.colorScheme
     val dark = scheme.surface.luminance() < 0.5f
     val backdrop = LocalLiquidGlassBackdrop.current

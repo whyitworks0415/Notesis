@@ -5,9 +5,12 @@ import android.os.Build
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
+import androidx.compose.foundation.shape.CornerBasedShape
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -17,7 +20,9 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.DpOffset
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.LayerBackdrop
@@ -25,6 +30,14 @@ import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.shadow.Shadow
+import com.kyant.shapes.RoundedCornerStyle
+import com.kyant.shapes.RoundedRectangularShape
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.ln
+import kotlin.math.pow
+import kotlin.math.sin
+import kotlin.math.sqrt
 import org.json.JSONObject
 
 /**
@@ -70,11 +83,13 @@ data class MornyeGlass(
     val outlines: Boolean = true,
     val accent: MornyeAccent = MornyeAccent.RED,
     val corner: Float = 32f,
+    /** Mornye's continuous corners (see [MornyeSquircleShape]) rather than round ones. */
+    val smoothCorners: Boolean = true,
     val motion: ProjectMotion = ProjectMotion(),
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("clarity", clarity.toDouble()).put("outlines", outlines).put("accent", accent.name)
-        .put("corner", corner.toDouble()).put("motion", motion.toJson())
+        .put("corner", corner.toDouble()).put("smoothCorners", smoothCorners).put("motion", motion.toJson())
 
     companion object {
         fun fromJson(json: JSONObject?): MornyeGlass {
@@ -87,6 +102,7 @@ data class MornyeGlass(
                 accent = MornyeAccent.fromName(json.optString("accent", d.accent.name)),
                 corner = json.optDouble("corner", d.corner.toDouble()).toFloat()
                     .takeIf { it.isFinite() }?.coerceIn(SkinSettings.CORNER_RANGE) ?: d.corner,
+                smoothCorners = json.optBoolean("smoothCorners", d.smoothCorners),
                 motion = ProjectMotion.fromJson(json.optJSONObject("motion")),
             )
         }
@@ -152,6 +168,9 @@ internal fun Modifier.mornyeGlass(
     exportedBackdrop: LayerBackdrop?,
     amount: Float,
 ): Modifier {
+    // The same outline for the glass, its lens, its shadow and its rim, so
+    // nothing is cut off at a corner.
+    val shape = if (m.smoothCorners) mornyeSquircle(shape) else shape
     val fill = mornyeFill(m.clarity, panel, dark)
     val body = fill.copy(alpha = fill.alpha * amount)
     val samples = m.clarity > 0.2f
@@ -292,4 +311,107 @@ internal fun lookScheme(context: Context?, skin: Skin, look: SkinSettings): Colo
     }
     if (skin == Skin.MATERIAL && look.amoled && dark) scheme = amoledScheme(scheme)
     return scheme
+}
+
+/**
+ * [shape] with Mornye's continuous corners, where it is a rounded rectangle;
+ * anything else - a circle drawn as a path, a custom outline - as it is.
+ */
+internal fun mornyeSquircle(shape: Shape): Shape =
+    if (shape is CornerBasedShape) MornyeSquircleShape(shape) else shape
+
+/**
+ * Mornye's squircle, the outline its glass and lens share: each corner an
+ * L^n superellipse that reaches 1.528 times the radius along the edges and
+ * passes through the same 45° point a circle of that radius would, so the
+ * curve leaves the edge with no step in its curvature. As liquid_glass_easy
+ * 5.1.0 (MIT) draws it with full smoothing.
+ *
+ * It is a Kyant [RoundedRectangularShape], so the lens reads its radius and
+ * bends along the corner rather than treating the pane as square. The radius
+ * is [base]'s top-left corner, so a capsule stays a capsule.
+ */
+internal class MornyeSquircleShape(private val base: CornerBasedShape) : RoundedRectangularShape {
+    override val style: RoundedCornerStyle get() = RoundedCornerStyle.Continuous
+
+    private fun radiusPx(size: Size, density: Density): Float =
+        base.topStart.toPx(size, density).coerceIn(0f, minOf(size.width, size.height) / 2f)
+
+    override fun corners(size: Size, layoutDirection: LayoutDirection, density: Density): RoundedRectangularShape.Corners {
+        val r = radiusPx(size, density)
+        return RoundedRectangularShape.Corners(r, r, r, r)
+    }
+
+    override fun copy(style: RoundedCornerStyle): RoundedRectangularShape = this
+
+    override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline {
+        val points = squirclePoints(size.width, size.height, radiusPx(size, density))
+        if (points.size < 6) return Outline.Rectangle(androidx.compose.ui.geometry.Rect(0f, 0f, size.width, size.height))
+        val path = Path()
+        path.moveTo(points[0], points[1])
+        var i = 2
+        while (i < points.size) {
+            path.lineTo(points[i], points[i + 1])
+            i += 2
+        }
+        path.close()
+        return Outline.Generic(path)
+    }
+
+    override fun equals(other: Any?): Boolean = other is MornyeSquircleShape && other.base == base
+    override fun hashCode(): Int = base.hashCode() * 31 + 7
+}
+
+/** How far a corner reaches along its edges for radius [r]: 1.528 r, held to half the short side. */
+internal fun squircleReach(r: Float, width: Float, height: Float): Float =
+    minOf(r * (1f + 0.528f), minOf(width, height) / 2f)
+
+/** The superellipse's exponent for radius [r] reaching [zone]: it passes through the circle's 45° point. */
+internal fun squircleExponent(r: Float, zone: Float): Float {
+    val base = (1.0 - 0.29289322 * (r / zone)).coerceIn(0.5, 0.999999)
+    return (-1.0 / (ln(base) / ln(2.0))).toFloat()
+}
+
+/**
+ * The outline of a [width] by [height] squircle of radius [r], as x, y pairs
+ * round it from the top-left corner, clockwise. Each corner takes as many
+ * points as keep it within a twentieth of a pixel of the true curve.
+ * Below half a pixel of radius it is the rectangle's four corners.
+ */
+internal fun squirclePoints(width: Float, height: Float, r: Float): FloatArray {
+    val maxCorner = minOf(width, height) / 2f
+    val rr = minOf(r, maxCorner)
+    if (!(rr >= 0.5f) || !(width > 0f) || !(height > 0f)) {
+        return floatArrayOf(0f, 0f, width, 0f, width, height, 0f, height)
+    }
+    val zone = squircleReach(rr, width, height)
+    val inv = 2.0 / squircleExponent(rr, zone)
+    val steps = squircleSegments(zone) * 2
+    val out = FloatArray(4 * (steps + 1) * 2)
+    var k = 0
+    fun corner(cx: Float, cy: Float, sx: Float, sy: Float, reversed: Boolean) {
+        for (j in 0..steps) {
+            val i = if (reversed) steps - j else j
+            val t = (PI / 2) * i / steps
+            val ox = zone * cos(t).coerceIn(0.0, 1.0).pow(inv).toFloat()
+            val oy = zone * sin(t).coerceIn(0.0, 1.0).pow(inv).toFloat()
+            out[k++] = cx + sx * ox
+            out[k++] = cy + sy * oy
+        }
+    }
+    corner(zone, zone, -1f, -1f, reversed = false)
+    corner(width - zone, zone, 1f, -1f, reversed = true)
+    corner(width - zone, height - zone, 1f, 1f, reversed = false)
+    corner(zone, height - zone, -1f, 1f, reversed = true)
+    return out
+}
+
+/**
+ * Straight segments for a corner of [reach] pixels: the fewest that keep the
+ * chords within 0.05 px of the curve (their sag is about 0.103 reach / n²),
+ * between 3 and 40.
+ */
+internal fun squircleSegments(reach: Float): Int {
+    if (!reach.isFinite() || reach <= 0f) return 3
+    return kotlin.math.ceil(sqrt(0.103 * reach / 0.05)).toInt().coerceIn(3, 40)
 }

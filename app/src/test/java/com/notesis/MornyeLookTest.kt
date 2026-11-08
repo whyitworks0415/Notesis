@@ -81,4 +81,44 @@ class MornyeLookTest {
         }
         assertTrue(Reicons.Add !== MaterialSymbols.Add)
     }
+
+    @Test fun `the squircle reaches 1_528 r and meets the circle at 45 degrees`() {
+        val r = 10f
+        val zone = squircleReach(r, 100f, 100f)
+        assertEquals(15.28f, zone, 0.001f)
+        // Held to half the short side.
+        assertEquals(20f, squircleReach(30f, 40f, 100f), 0f)
+        val n = squircleExponent(r, zone)
+        val along = zone * Math.pow(Math.cos(Math.PI / 4), 2.0 / n).toFloat()
+        // The diagonal point sits where a circle of radius r puts it: r (1 - 1/sqrt 2) in from each edge.
+        assertEquals(r * (1f - 0.70710678f), zone - along, 0.01f)
+    }
+
+    @Test fun `the squircle outline runs clockwise inside its box`() {
+        val w = 300f
+        val h = 120f
+        val points = squirclePoints(w, h, 32f)
+        val zone = squircleReach(32f, w, h)
+        val steps = squircleSegments(zone) * 2
+        assertEquals(4 * (steps + 1) * 2, points.size)
+        // From the left edge at the top-left corner's reach, to the top edge.
+        assertEquals(0f, points[0], 0.001f)
+        assertEquals(zone, points[1], 0.001f)
+        assertEquals(zone, points[2 * steps], 0.001f)
+        assertEquals(0f, points[2 * steps + 1], 0.001f)
+        for (i in points.indices step 2) {
+            assertTrue(points[i] in -0.001f..w + 0.001f)
+            assertTrue(points[i + 1] in -0.001f..h + 0.001f)
+        }
+        // A radius under half a pixel is the rectangle.
+        assertEquals(8, squirclePoints(w, h, 0.2f).size)
+        assertEquals(3, squircleSegments(0f))
+        assertEquals(40, squircleSegments(1e6f))
+    }
+
+    @Test fun `Mornye's corners are smooth until switched off`() {
+        assertEquals(true, MornyeGlass().smoothCorners)
+        val off = MornyeGlass(smoothCorners = false)
+        assertEquals(off, MornyeGlass.fromJson(off.toJson()))
+    }
 }

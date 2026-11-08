@@ -61,7 +61,7 @@ internal val OPEN_SOURCE_COMPONENTS = listOf(
         listOf("licenses/BouncyCastle.txt"),
     ),
     OpenSourceComponent(
-        "Backdrop 1.0.6",
+        "Backdrop 1.0.6 · Shapes 1.2.0",
         "Kyant",
         "Apache License 2.0",
         "https://github.com/Kyant0/AndroidLiquidGlass",
@@ -82,7 +82,7 @@ internal val OPEN_SOURCE_COMPONENTS = listOf(
         listOf("licenses/liquid_glass_widgets.LICENSE"),
     ),
     OpenSourceComponent(
-        "liquid_glass_easy 4.3.2 (ported to Kotlin · AGSL)",
+        "liquid_glass_easy 4.3.2 (ported to Kotlin · AGSL) · 5.1.0 squircle outline",
         "Ahmed Gamil",
         "MIT",
         "https://github.com/AhmeedGamil/liquid_glass_easy",
