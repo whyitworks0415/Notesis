@@ -74,10 +74,14 @@ class LiquidMotionTest {
         assertEquals(0.56f, pourScale(0.5f, 0.12f), 0.0001f)
         assertEquals(1f, pourScale(1f, 0.12f), 0f)
         assertEquals(1f + 0.08f * 0.35f, pourScale(1.08f, 0.12f), 0.0001f)
-        assertEquals(50, PourOpen.widthDelayMs)
+        // A frame behind, and leaving with speed so the first frames are seen to move.
+        assertEquals(16, PourOpen.widthDelayMs)
+        assertTrue(PourOpen.openVelocity > 0f)
+        // Material's kick stays under its spring's rate, so it never overshoots.
+        assertTrue(MaterialOpen.openVelocity in 0.1f..14f)
         assertNotNull(PourOpen.closeWidth)
-        // The spring: damping 0.62 at 15 rad/s, which overshoots by about 8%.
-        assertEquals(225f, POUR_STIFFNESS, 0f)
+        // The spring: damping 0.62 at 19 rad/s, which overshoots by about 8%.
+        assertEquals(361f, POUR_STIFFNESS, 0f)
         val zeta = POUR_DAMPING_RATIO.toDouble()
         assertEquals(0.084, Math.exp(-zeta * Math.PI / Math.sqrt(1 - zeta * zeta)), 0.002)
     }

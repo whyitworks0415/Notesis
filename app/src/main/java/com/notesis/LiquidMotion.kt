@@ -123,6 +123,12 @@ internal class OpenProfile(
     val alpha: (Float) -> Float,
     val dropDp: Float = 0f,
     val closeVelocity: Float = 0f,
+    /**
+     * The progress per second an opening starts with. From rest, a spring's
+     * first frames hardly move, and a popup that answered a tap two frames
+     * late then crept out read as a beat behind the finger.
+     */
+    val openVelocity: Float = 0f,
     val scaleOf: (progress: Float, start: Float) -> Float = { p, s -> s + (1f - s) * p },
     /** How long the width waits behind the height on the way out, so it runs down before it spreads. */
     val widthDelayMs: Int = 0,
@@ -174,9 +180,13 @@ internal fun pourScale(progress: Float, start: Float): Float = when {
 /** How much of the spring's overshoot a poured menu keeps. */
 internal const val POUR_OVERSHOOT_KEPT = 0.35f
 
-/** Mornye's pouring spring: damping ratio 0.62 at 15 radians a second. */
+/**
+ * The pouring spring: Mornye's damping ratio of 0.62, at 19 radians a second
+ * rather than its 15, which on a 60 Hz screen took a frame or two longer to
+ * be seen moving than a tap allows.
+ */
 internal const val POUR_DAMPING_RATIO = 0.62f
-internal const val POUR_STIFFNESS = 15f * 15f
+internal const val POUR_STIFFNESS = 19f * 19f
 
 private val EaseInCubic = CubicBezierEasing(0.32f, 0f, 0.67f, 0f)
 
@@ -194,7 +204,10 @@ internal val PourOpen = OpenProfile(
     closeScale = POUR_START,
     alpha = { p -> (p / 0.3f).coerceIn(0f, 1f) },
     scaleOf = ::pourScale,
-    widthDelayMs = 50,
+    // One frame behind the height: still runs down before it spreads, without
+    // three frames of a drop that has not begun to widen.
+    widthDelayMs = 16,
+    openVelocity = 5f,
     closeWidth = tween(200, easing = EaseInCubic),
     reveal = true,
 )
@@ -214,4 +227,6 @@ internal val MaterialOpen = OpenProfile(
     startScale = 0.8f,
     closeScale = 0.8f,
     alpha = { p -> (p / 0.45f).coerceIn(0f, 1f) },
+    // Under the spring's own 14 rad/s, so it still lands without overshoot.
+    openVelocity = 3f,
 )

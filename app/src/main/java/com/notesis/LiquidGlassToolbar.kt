@@ -1253,11 +1253,12 @@ private fun ToolbarMenuContent(
  */
 @Stable
 /**
- * Lets the frame that first composes and draws something new go by, and the
- * one after it, before anything is timed from them.
+ * Lets the frame that first composes and draws something new go by before
+ * anything is timed from it. It waited for the frame after as well, which on
+ * a 60 Hz screen held every popup and panel still for a frame more than
+ * needed: the beat between a tap and the first movement.
  */
 internal suspend fun awaitFirstFrames() {
-    androidx.compose.runtime.withFrameNanos { }
     androidx.compose.runtime.withFrameNanos { }
 }
 
@@ -1291,7 +1292,7 @@ internal class PopupGrowth(shown: Boolean) {
         val spec = profile?.open ?: POPUP_OPEN
         // Opened again while closing: on from where it is, at the speed it has.
         val resumed = midFlight()
-        move(1f, animate, spec, spec, if (resumed) Float.NaN else 0f,
+        move(1f, animate, spec, spec, if (resumed) Float.NaN else profile?.openVelocity ?: 0f,
             widthDelayMs = if (resumed) 0 else profile?.widthDelayMs ?: 0)
     }
 
