@@ -96,3 +96,45 @@ internal fun ProvideMovingBackdrops(motion: () -> Float, content: @Composable ()
         content = content,
     )
 }
+
+/**
+ * How far a sliding panel is from where it comes to rest, in px along x,
+ * written by the panel's own layer each frame it moves (see [ProvideSlidingBackdrops]).
+ */
+internal class SlideShift {
+    var x = 0f
+}
+
+internal val LocalSlideShift = compositionLocalOf<SlideShift?> { null }
+
+/**
+ * The glass inside a panel that slides in from an edge: it looks at the page
+ * where the panel will come to rest, all the way in, and so need not be
+ * drawn again on each frame of the slide - the frosted page under it moves
+ * with it, which no one can tell from glass looking through. Redrawn at every
+ * frame of a slide, the panel's blur was what made a sidebar stutter.
+ */
+@Composable
+internal fun ProvideSlidingBackdrops(shift: SlideShift, content: @Composable () -> Unit) {
+    val base = LocalLiquidGlassBackdrop.current
+    val sliding = remember(base, shift) { base?.let { SlidingBackdrop(it, shift) } }
+    CompositionLocalProvider(
+        LocalLiquidGlassBackdrop provides sliding,
+        LocalSlideShift provides shift,
+        content = content,
+    )
+}
+
+/** [inner], drawn as it would be with the pane [shift] further along: where it comes to rest. */
+private class SlidingBackdrop(private val inner: Backdrop, private val shift: SlideShift) : Backdrop {
+    override val isCoordinatesDependent: Boolean get() = inner.isCoordinatesDependent
+
+    override fun DrawScope.drawBackdrop(
+        density: Density, coordinates: LayoutCoordinates?, layerBlock: (GraphicsLayerScope.() -> Unit)?,
+    ) {
+        val dx = shift.x
+        withTransform({ translate(dx, 0f) }) {
+            with(inner) { drawBackdrop(density, coordinates, layerBlock) }
+        }
+    }
+}

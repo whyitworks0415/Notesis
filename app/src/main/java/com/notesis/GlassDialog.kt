@@ -66,9 +66,17 @@ fun AlertDialog(
     LaunchedEffect(Unit) {
         if (arrival.value < 1f) arrival.animateTo(1f, dialogArrival(material).paced())
     }
+    // Under the glass looks it comes out of the touch that opened it, as a
+    // popup comes out of its button: cut to a shape that runs out of that
+    // point, the dialog drawn once and never scaled (see PopupReveal.kt).
+    val growth = rememberPopupGrowth(shown = !moves)
+    val pours = moves && growth.profile?.reveal == true
+    val opener = remember { LastTouch.recent() }
+    LaunchedEffect(Unit) { if (pours) growth.open(true) }
     // Sent away by a tap past it or by Back, it goes back the way it came
-    // before it is gone: a quick shrink and fade, as Mornye's dialogs close.
-    // Its own buttons still close it at once - they decide what happens next.
+    // before it is gone: into the touch under the glass looks, a quick shrink
+    // and fade under Material. Its own buttons still close it at once - they
+    // decide what happens next.
     val scope = rememberCoroutineScope()
     val leaving = remember { booleanArrayOf(false) }
     val latestDismiss by rememberUpdatedState(onDismissRequest)
@@ -77,7 +85,8 @@ fun AlertDialog(
         else if (!leaving[0]) {
             leaving[0] = true
             scope.launch {
-                arrival.animateTo(0f, tween(DIALOG_LEAVE_MS, easing = CubicBezierEasing(0.32f, 0f, 0.67f, 0f)))
+                if (pours) growth.close(true)
+                else arrival.animateTo(0f, tween(DIALOG_LEAVE_MS, easing = CubicBezierEasing(0.32f, 0f, 0.67f, 0f)))
                 latestDismiss()
             }
         }
@@ -91,12 +100,16 @@ fun AlertDialog(
         // to be given. Without it a glass dialog was a Material panel that
         // happened to be translucent.
         modifier = modifier
-            .graphicsLayer {
-                val scale = dialogArrivalScale(arrival.value, material)
-                scaleX = scale
-                scaleY = scale
-                if (material || leaving[0]) alpha = (arrival.value / 0.4f).coerceIn(0f, 1f)
-            }
+            .then(if (pours) {
+                Modifier.revealOutOf(growth, Ui.Corner.sheet) { c -> opener?.let { c.screenToLocal(it) } }
+            } else {
+                Modifier.graphicsLayer {
+                    val scale = dialogArrivalScale(arrival.value, material)
+                    scaleX = scale
+                    scaleY = scale
+                    if (material || leaving[0]) alpha = (arrival.value / 0.4f).coerceIn(0f, 1f)
+                }
+            })
             .then(skinEdge(shape)),
         dismissButton = dismissButton,
         icon = icon,

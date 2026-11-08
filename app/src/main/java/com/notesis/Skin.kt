@@ -566,6 +566,8 @@ private fun Modifier.frost(): Modifier {
     // Set while a popup this pane belongs to is growing; reading it redraws
     // the pane each frame of that, so the page under it keeps its place.
     val motion = LocalBackdropMotion.current
+    // In a sliding panel it looks at the page where the panel comes to rest.
+    val slide = LocalSlideShift.current
     val placed = remember { arrayOfNulls<LayoutCoordinates>(1) }
     var here by remember { mutableStateOf(Offset.Zero) }
     return this
@@ -584,7 +586,11 @@ private fun Modifier.frost(): Modifier {
             // backdrop back by this pane's place on screen - and at the
             // inverse of any scale it is drawn at - lands the right part of
             // the page underneath it.
-            pane.record { drawBackdropAligned(layer, backdrop.origin, placed[0]) }
+            val dx = slide?.x ?: 0f
+            // Sliding, what it frosts is where the panel rests and does not
+            // change: recorded once, then only drawn on each frame of the slide.
+            val keep = slide != null && ChromeMotion.busy && pane.size.width > 0
+            if (!keep) pane.record { translate(dx, 0f) { drawBackdropAligned(layer, backdrop.origin, placed[0]) } }
             drawLayer(pane)
         }
 }

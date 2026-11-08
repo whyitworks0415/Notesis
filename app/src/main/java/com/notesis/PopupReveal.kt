@@ -1,92 +1,207 @@
 package com.notesis
 
 import androidx.compose.foundation.shape.CornerSize
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.runtime.Stable
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 /*
- * A popup that pours out of its button as Mornye's menus do: the glass really
- * changes size - a drop at the button running down to the panel's height and
- * spreading to its width - while what is on it is laid out once at its
- * resting size and stays still on the screen, seen only where the glass has
- * reached. Nothing is scaled, so the words and icons never squash, and the
- * glass's lens, rim and corners are true on every frame.
- *
- * Two layout steps, as Mornye's _MenuFrame and _MenuContent: [revealFrame]
- * takes the panel's resting room and places the glass inside it; between it
- * and [revealContent] go the glass and its clip, so they are drawn at the
- * glass's present size; [revealContent] lays the content out at the resting
- * size and holds it in place as the glass moves round it.
+ * A popup that comes out of the button it was opened from, as Apple's menus
+ * do: a rounded shape narrow at the button and wide at its far end - a
+ * rounded trapezoid - that runs out of the button and spreads until it is the
+ * panel, and goes back into the button the same way. What is on the panel is
+ * never scaled and never laid out again: the panel is drawn once, glass and
+ * all, at its full size, and only the outline it is cut to changes from frame
+ * to frame. An outline is a property of the panel's layer, so each frame of
+ * the motion is a recomposite on the render thread, not a redraw of the glass -
+ * which, redrawn at a new size on every frame, was what made the popups stutter.
  */
 
-/** Where a revealing popup's glass is, shared by its two layout steps and its corner. */
-@Stable
-internal class RevealGeometry(
-    /** The glass's corner at rest, in px. */
-    var restingCornerPx: Float = 0f,
-) {
-    internal var constraints = Constraints()
-    internal var resting = IntSize.Zero
-    /** The button it comes out of, in the panel's resting room, px. */
-    internal var anchor: Offset? = null
-    internal var left = 0f
-    internal var top = 0f
-    internal var cornerPx = 0f
-
-    /** The glass's outline: its corner follows [cornerPx], read each time it is drawn. */
-    val shape = RoundedCornerShape(LiveCornerSize { cornerPx })
-}
-
-/** A corner whose size is read when the outline is made, frame by frame. */
-internal class LiveCornerSize(private val px: () -> Float) : CornerSize {
-    override fun toPx(shapeSize: Size, density: Density): Float =
-        px().coerceIn(0f, min(shapeSize.width, shapeSize.height) / 2f)
-}
-
-/** The glass's place and size for a pour [w] wide and [h] tall; see [revealRect]. */
-internal data class RevealRect(val left: Float, val top: Float, val width: Float, val height: Float)
+/** The corners of a popup's outline as it comes out, clockwise from the near edge, and how round they are. */
+internal class RevealOutline(val points: FloatArray, val radius: Float)
 
 /**
- * Where the glass is, inside a resting room [restingW] by [restingH], when the
- * pour has gone [w] of the way across and [h] down: from a [drop] across at
- * ([anchorX], [anchorY]) to the whole room. Past 1 a spring runs a little
- * further, and the glass with it by only [POUR_OVERSHOOT_KEPT] of that.
+ * The outline of a [width] by [height] panel coming out of ([anchorX],
+ * [anchorY]) - in the panel's own coordinates, usually just outside one of
+ * its edges - when it has run [extent] of the way out and spread [spread] of
+ * the way across. It starts as a [start]-wide round end at the anchor; its far
+ * edge spreads first and its near edge, at the button, last, so it is narrow
+ * where it comes out. At rest the corners are [corner].
  */
-internal fun revealRect(anchorX: Float, anchorY: Float, restingW: Float, restingH: Float, drop: Float, w: Float, h: Float): RevealRect {
-    fun kept(p: Float) = if (p <= 1f) p.coerceAtLeast(0f) else 1f + (p - 1f) * POUR_OVERSHOOT_KEPT
-    val sw = kept(w)
-    val sh = kept(h)
-    val width = max(drop + (restingW - drop) * sw, 0f)
-    val height = max(drop + (restingH - drop) * sh, 0f)
-    val dropLeft = anchorX - drop / 2f
-    val dropTop = anchorY - drop / 2f
-    return RevealRect(dropLeft * (1f - sw), dropTop * (1f - sh), width, height)
+internal fun revealOutline(
+    anchorX: Float, anchorY: Float, width: Float, height: Float,
+    start: Float, corner: Float, extent: Float, spread: Float,
+): RevealOutline {
+    val e = keptOvershoot(extent)
+    val s = keptOvershoot(spread)
+    val near = (s * s).coerceAtMost(s)
+    // Which edge it comes out of: the one the anchor is beyond, or, from inside
+    // the panel, it opens all round from the anchor.
+    val above = anchorY <= 0f
+    val below = anchorY >= height
+    val before = anchorX <= 0f
+    val after = anchorX >= width
+    val radius = lerp(start / 2f, corner, s.coerceIn(0f, 1f))
+    if (above || below) {
+        val centre = anchorX.coerceIn(start / 2f, max(start / 2f, width - start / 2f))
+        val reach = lerp(start, height, e)
+        val nearHalf = lerp(start, width, near) / 2f
+        val farHalf = lerp(start, width, s) / 2f
+        val nearCentre = lerp(centre, width / 2f, near)
+        val farCentre = lerp(centre, width / 2f, s)
+        val nearY = if (above) 0f else height
+        val farY = if (above) reach else height - reach
+        return RevealOutline(floatArrayOf(
+            nearCentre - nearHalf, nearY, nearCentre + nearHalf, nearY,
+            farCentre + farHalf, farY, farCentre - farHalf, farY,
+        ), radius)
+    }
+    if (before || after) {
+        val centre = anchorY.coerceIn(start / 2f, max(start / 2f, height - start / 2f))
+        val reach = lerp(start, width, e)
+        val nearHalf = lerp(start, height, near) / 2f
+        val farHalf = lerp(start, height, s) / 2f
+        val nearCentre = lerp(centre, height / 2f, near)
+        val farCentre = lerp(centre, height / 2f, s)
+        val nearX = if (before) 0f else width
+        val farX = if (before) reach else width - reach
+        return RevealOutline(floatArrayOf(
+            nearX, nearCentre - nearHalf, nearX, nearCentre + nearHalf,
+            farX, farCentre + farHalf, farX, farCentre - farHalf,
+        ), radius)
+    }
+    // From inside: a rounded box growing from the anchor, down first.
+    val left = lerp(anchorX - start / 2f, 0f, s)
+    val right = lerp(anchorX + start / 2f, width, s)
+    val top = lerp(anchorY - start / 2f, 0f, e)
+    val bottom = lerp(anchorY + start / 2f, height, e)
+    return RevealOutline(floatArrayOf(left, top, right, top, right, bottom, left, bottom), radius)
 }
 
+private fun lerp(a: Float, b: Float, t: Float): Float = a + (b - a) * t
+
+/** A spring's overshoot past 1, kept only in part: see [POUR_OVERSHOOT_KEPT]. */
+private fun keptOvershoot(p: Float): Float = if (p <= 1f) p.coerceAtLeast(0f) else 1f + (p - 1f) * POUR_OVERSHOOT_KEPT
+
 /**
- * The glass's corner at [width] by [height]: a drop is round, and the corner
- * tightens to [resting] as the glass spreads, on an ease-in of the width [w].
+ * [outline] as a path: each corner rounded by as much of its radius as the
+ * two edges meeting there leave room for, on a curve that leaves the edges
+ * without a kink.
  */
-internal fun revealCorner(width: Float, height: Float, resting: Float, w: Float): Float {
-    val half = min(width, height) / 2f
-    val t = w.coerceIn(0f, 1f)
-    val eased = t * t * t
-    return min(half, half + (resting - half) * eased)
+internal fun revealPath(outline: RevealOutline): Path {
+    val p = outline.points
+    val n = p.size / 2
+    val path = Path()
+    // The two points each corner's curve runs between, along its edges.
+    val inX = FloatArray(n)
+    val inY = FloatArray(n)
+    val outX = FloatArray(n)
+    val outY = FloatArray(n)
+    for (i in 0 until n) {
+        val x = p[2 * i]
+        val y = p[2 * i + 1]
+        val px = p[2 * ((i + n - 1) % n)]
+        val py = p[2 * ((i + n - 1) % n) + 1]
+        val nx = p[2 * ((i + 1) % n)]
+        val ny = p[2 * ((i + 1) % n) + 1]
+        val toPrev = sqrt((px - x) * (px - x) + (py - y) * (py - y))
+        val toNext = sqrt((nx - x) * (nx - x) + (ny - y) * (ny - y))
+        val r = min(outline.radius, min(toPrev, toNext) / 2f).coerceAtLeast(0f)
+        inX[i] = if (toPrev > 0f) x + (px - x) / toPrev * r else x
+        inY[i] = if (toPrev > 0f) y + (py - y) / toPrev * r else y
+        outX[i] = if (toNext > 0f) x + (nx - x) / toNext * r else x
+        outY[i] = if (toNext > 0f) y + (ny - y) / toNext * r else y
+    }
+    path.moveTo(outX[0], outY[0])
+    for (k in 1..n) {
+        val i = k % n
+        path.lineTo(inX[i], inY[i])
+        path.quadraticTo(p[2 * i], p[2 * i + 1], outX[i], outY[i])
+    }
+    path.close()
+    return path
+}
+
+/** A shape that is one frame's [RevealOutline], whatever size it is asked for. */
+private class RevealShape(private val outline: RevealOutline) : Shape {
+    override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline =
+        Outline.Generic(revealPath(outline))
+}
+
+/** How wide the end a popup comes out of starts: about a button, Mornye's 44 points. */
+internal val REVEAL_START: Dp = 44.dp
+
+/** A motion read in a glass's draw that never changes: for a popup that is cut, not moved. */
+internal val StillMotion: () -> Float = { 0f }
+
+/**
+ * Cuts this panel to the outline it has at [growth]'s progress as it comes
+ * out of the point [anchor] gives - in this panel's coordinates, from its
+ * place on screen - and leaves it uncut once it has fully come. [corner] is
+ * the panel's own. While it is cut it casts a shadow along the cut, so the
+ * glass's own shadow, cut away until then, does not pop in at the end.
+ */
+@Composable
+internal fun Modifier.revealOutOf(
+    growth: PopupGrowth,
+    corner: Dp,
+    anchor: (LayoutCoordinates) -> Offset?,
+): Modifier {
+    val local = remember { floatArrayOf(Float.NaN, Float.NaN) }
+    val shadows = LocalSkinSettings.current.shadows
+    return this
+        .onGloballyPositioned { coordinates ->
+            val at = anchor(coordinates) ?: return@onGloballyPositioned
+            local[0] = at.x
+            local[1] = at.y
+        }
+        .graphicsLayer {
+            val w = growth.width.value
+            val h = growth.height.value
+            val done = w >= 1f && h >= 1f && !growth.width.isRunning && !growth.height.isRunning
+            if (done) {
+                clip = false
+                shape = RectangleShape
+                shadowElevation = 0f
+                return@graphicsLayer
+            }
+            val ax = if (local[0].isNaN()) size.width / 2f else local[0]
+            val ay = if (local[1].isNaN()) -1f else local[1]
+            val outline = revealOutline(ax, ay, size.width, size.height, REVEAL_START.toPx(), corner.toPx(), h, w)
+            shape = RevealShape(outline)
+            clip = true
+            shadowElevation = if (shadows) REVEAL_SHADOW.toPx() * min(w, h).coerceIn(0f, 1f) else 0f
+        }
+}
+
+/** The shadow a popup casts along its outline while it comes out. */
+private val REVEAL_SHADOW: Dp = 6.dp
+
+/**
+ * What is on a revealing popup, faded as [revealFade] has it, draw by draw,
+ * so no layer the size of the panel is filled each frame. Put after the
+ * panel's glass, so the glass itself stays whole.
+ */
+internal fun Modifier.revealFade(growth: PopupGrowth): Modifier = graphicsLayer {
+    compositingStrategy = CompositingStrategy.ModulateAlpha
+    alpha = revealFade(growth.width.value, growth.height.value)
 }
 
 /**
@@ -95,48 +210,8 @@ internal fun revealCorner(width: Float, height: Float, resting: Float, w: Float)
  */
 internal fun revealFade(w: Float, h: Float): Float = ((min(w, h) - 0.3f) / 0.5f).coerceIn(0f, 1f)
 
-/** The size of the drop a revealing popup starts from: Mornye's 44 points. */
-internal val REVEAL_DROP: Dp = 44.dp
-
-/** The panel's resting room, with the glass placed inside it; see the file's note. */
-internal fun Modifier.revealFrame(geo: RevealGeometry, anchor: () -> Offset?): Modifier = this
-    .onGloballyPositioned { coordinates ->
-        val at = anchor() ?: return@onGloballyPositioned
-        geo.anchor = coordinates.screenToLocal(at)
-    }
-    .layout { measurable, constraints ->
-        geo.constraints = constraints
-        // Loose, so the glass's size - smaller than the room, or a hair past
-        // it at the top of its spring - is taken as it is, not centred.
-        val glass = measurable.measure(Constraints())
-        val width = geo.resting.width.coerceIn(constraints.minWidth, constraints.maxWidth)
-        val height = geo.resting.height.coerceIn(constraints.minHeight, constraints.maxHeight)
-        layout(width, height) { glass.place(geo.left.roundToInt(), geo.top.roundToInt()) }
-    }
-
-/**
- * The content at its resting size, held still while the glass round it grows
- * by [growth]; and faded as [revealFade] has it, draw by draw, so no layer
- * the size of the panel is filled each frame.
- */
-internal fun Modifier.revealContent(geo: RevealGeometry, growth: PopupGrowth): Modifier = this
-    .graphicsLayer {
-        compositingStrategy = CompositingStrategy.ModulateAlpha
-        alpha = revealFade(growth.width.value, growth.height.value)
-    }
-    .layout { measurable, _ ->
-        val content = measurable.measure(geo.constraints)
-        geo.resting = IntSize(content.width, content.height)
-        val restingW = content.width.toFloat()
-        val restingH = content.height.toFloat()
-        val at = geo.anchor ?: Offset(restingW / 2f, 0f)
-        val w = growth.width.value
-        val h = growth.height.value
-        val r = revealRect(at.x, at.y, restingW, restingH, REVEAL_DROP.toPx(), w, h)
-        geo.left = r.left
-        geo.top = r.top
-        geo.cornerPx = revealCorner(r.width, r.height, geo.restingCornerPx, w)
-        layout(r.width.roundToInt().coerceAtLeast(1), r.height.roundToInt().coerceAtLeast(1)) {
-            content.place(-r.left.roundToInt(), -r.top.roundToInt())
-        }
-    }
+/** A corner whose size is read when the outline is made; kept for shapes that change as they are drawn. */
+internal class LiveCornerSize(private val px: () -> Float) : CornerSize {
+    override fun toPx(shapeSize: Size, density: Density): Float =
+        px().coerceIn(0f, min(shapeSize.width, shapeSize.height) / 2f)
+}

@@ -19,7 +19,12 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -45,13 +50,30 @@ internal fun GlassMenu(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    if (!expanded) return
+    // Out of what opened it and back into it, as the toolbar's popups: kept
+    // on screen while it goes back, then taken away.
+    val growth = rememberPopupGrowth(shown = false)
+    val animate = rememberLiquidGlassEffectsAllowed()
+    var present by remember { mutableStateOf(expanded) }
+    LaunchedEffect(expanded, animate) {
+        if (expanded) {
+            present = true
+            growth.open(animate)
+        } else {
+            growth.close(animate)
+            present = false
+        }
+    }
+    if (!expanded && !present) return
+    val reveal = animate && growth.profile?.reveal == true
     // Inside the library's recorded content the glass may not look at its own
     // recording; popups are given the page capture separately for that.
     val backdrop = LocalGlassPopupBackdrop.current ?: LocalLiquidGlassBackdrop.current
     val gap = with(androidx.compose.ui.platform.LocalDensity.current) { 6.dp.roundToPx() }
+    // What it was opened from, in the popup's window, as the position puts it.
+    val anchor = remember { floatArrayOf(Float.NaN, Float.NaN) }
     Popup(
-        popupPositionProvider = remember(gap) { BelowAnchor(gap) },
+        popupPositionProvider = remember(gap) { BelowAnchor(gap, anchor) },
         onDismissRequest = onDismissRequest,
         properties = PopupProperties(focusable = true),
     ) {
@@ -67,8 +89,14 @@ internal fun GlassMenu(
                         .width(IntrinsicSize.Max)
                         .widthIn(min = 200.dp, max = 320.dp)
                         .heightIn(max = 520.dp)
+                        .then(if (reveal) {
+                            Modifier.revealOutOf(growth, Ui.Corner.card) { c ->
+                                if (anchor[0].isNaN()) null else c.windowToLocal(Offset(anchor[0], anchor[1]))
+                            }
+                        } else Modifier.growOutOf({ null }, growth))
                         .skinMaterial(shape, panel = true, role = ChromeRole.POPUP)
                         .clip(shape)
+                        .then(if (reveal) Modifier.revealFade(growth) else Modifier)
                         .verticalScroll(rememberScrollState())
                         .padding(vertical = GLASS_MENU_INSET),
                     content = content,
@@ -115,13 +143,16 @@ internal fun GlassMenuItem(
     }
 }
 
-private class BelowAnchor(private val gap: Int) : PopupPositionProvider {
+/** Places the menu under its anchor, and writes where the anchor's middle is in the popup into [anchor]. */
+private class BelowAnchor(private val gap: Int, private val anchor: FloatArray) : PopupPositionProvider {
     override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection,
         popupContentSize: IntSize): IntOffset {
         val x = (anchorBounds.right - popupContentSize.width).coerceIn(0, (windowSize.width - popupContentSize.width).coerceAtLeast(0))
         val below = anchorBounds.bottom + gap
         val y = if (below + popupContentSize.height <= windowSize.height) below
             else (anchorBounds.top - gap - popupContentSize.height).coerceAtLeast(0)
+        anchor[0] = (anchorBounds.left + anchorBounds.right) / 2f - x
+        anchor[1] = (anchorBounds.top + anchorBounds.bottom) / 2f - y
         return IntOffset(x, y)
     }
 }

@@ -170,13 +170,16 @@ internal fun SettingsSidebarFrame(
         val latestScreen by rememberUpdatedState(screen)
         val latestCommit by rememberUpdatedState(onWidthChange)
         val scheme = MaterialTheme.colorScheme
+        val slideShift = LocalSlideShift.current
         Row(Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(shown.dp)
             // Slides in from the end edge it stands on and back out past it.
-            // Read in the layer, so a frame of the slide is a redraw only.
+            // Read in the layer, so a frame of the slide is a recomposite only.
             .graphicsLayer {
                 val outside = 1f - appear().coerceIn(0f, 1f)
                 // Pulled past its narrowest it follows the finger out, to be let go of.
                 translationX = (outside * size.width + past.dp.toPx()) * (if (rtl) -1f else 1f)
+                // The glass looks at the page where the panel rests; see [ProvideSlidingBackdrops].
+                slideShift?.x = translationX
             }) {
             val hapticView = androidx.compose.ui.platform.LocalView.current
             if (!full) {
@@ -358,8 +361,10 @@ internal fun AnimatedSettingsSidebar(
     // Material takes it away the moment it closes; the others once it is out.
     if (!open && !(animate && present)) return
     val shown = nav ?: last[0] ?: return
-    // The glass in it looks at the page again on each frame of the slide.
-    ProvideMovingBackdrops(appear) {
+    // The glass in it looks at the page where it comes to rest, so it is drawn
+    // once rather than again on each frame of the slide; see [ProvideSlidingBackdrops].
+    val shift = remember { SlideShift() }
+    ProvideSlidingBackdrops(shift) {
         content(shown, appear, !open)
     }
 }

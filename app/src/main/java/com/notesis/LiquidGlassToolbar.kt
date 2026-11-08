@@ -816,11 +816,10 @@ internal fun LiquidGlassToolbar(
                             // the parent toolbar's exported frost across windows.
                             CompositionLocalProvider(LocalLiquidGlassHostBackdrop provides null,
                                 LocalLiquidGlassBackdrop provides popupBackdrop) {
-                              ProvideMovingBackdrops(menuGrowth.motion) {
-                                val reveal = menuGrowth.profile?.reveal == true && popupMotion
-                                val outerPx = with(androidx.compose.ui.platform.LocalDensity.current) { outer.toPx() }
-                                val revealGeo = remember { RevealGeometry() }
-                                revealGeo.restingCornerPx = outerPx
+                              // Cut out of the button rather than scaled, its glass is drawn
+                              // once and need not look at the page again on each frame.
+                              val reveal = menuGrowth.profile?.reveal == true && popupMotion
+                              ProvideMovingBackdrops(if (reveal) StillMotion else menuGrowth.motion) {
                                 val paneModifier = Modifier.width(minOf(340.dp,
                                     (LocalConfiguration.current.screenWidthDp - 24).coerceAtLeast(140).dp)).heightIn(max = maxHeight)
                                 val menuBody: @Composable () -> Unit = {
@@ -853,12 +852,12 @@ internal fun LiquidGlassToolbar(
                                         // and the menu on it stays its size, seen where the glass
                                         // has reached (see PopupReveal.kt). Its shadow is cast
                                         // outside the morph, whose lens layer would cut it off.
-                                        Box(paneModifier.revealFrame(revealGeo) { anchor }
-                                            .skinShadow(revealGeo.shape, panel = true)
+                                        Box(paneModifier.revealOutOf(menuGrowth, outer) { c -> anchor?.let { c.screenToLocal(it) } }
+                                            .skinShadow(outline, panel = true)
                                             .then(if (skin == Skin.LIQUID_GLASS) Modifier.liquidGlassMorph(page) else Modifier)
-                                            .skinMaterial(revealGeo.shape, panel = true, shadow = false, role = ChromeRole.POPUP)
-                                            .clip(revealGeo.shape)
-                                            .revealContent(revealGeo, menuGrowth)) {
+                                            .skinMaterial(outline, panel = true, shadow = false, role = ChromeRole.POPUP)
+                                            .clip(outline)
+                                            .revealFade(menuGrowth)) {
                                             if (skin != Skin.LIQUID_GLASS) BlurBehind()
                                             menuBody()
                                         }

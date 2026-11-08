@@ -150,6 +150,7 @@ internal object PenPopupAnchor {
 
     /** Every touch down in the window, in screen pixels; kept when it is on the bar. */
     fun touchedScreen(x: Float, y: Float) {
+        LastTouch.at(x, y)
         val bar = barBounds ?: return
         if (bar.contains(Offset(x, y))) tapped(Offset(x, y))
     }
@@ -1494,3 +1495,23 @@ private fun DensityRow(density: Int?, onDensity: (Int?) -> Unit) {
 
 /** The nib angle's slider moves in steps of this many degrees. */
 private const val NIB_ANGLE_STEP = 5f
+
+/**
+ * The last touch anywhere in the window, in screen pixels: where a dialog
+ * opened by it comes out of (see [AlertDialog]).
+ */
+internal object LastTouch {
+    @Volatile private var x = 0f
+    @Volatile private var y = 0f
+    @Volatile private var atMs = 0L
+
+    fun at(x: Float, y: Float) {
+        this.x = x
+        this.y = y
+        atMs = android.os.SystemClock.uptimeMillis()
+    }
+
+    /** The last touch, if it was recent enough to be what opened something. */
+    fun recent(): Offset? =
+        if (atMs != 0L && android.os.SystemClock.uptimeMillis() - atMs <= 1500L) Offset(x, y) else null
+}

@@ -135,28 +135,36 @@ class MornyeLookTest {
         assertEquals(green.ios, IosGlass.fromJson(green.ios.toJson()))
     }
 
-    @Test fun `a revealing popup's glass runs from a drop at the button to the whole panel`() {
-        // Shut: a 44 px drop centred on the button at (100, 0).
-        val shut = revealRect(100f, 0f, 300f, 400f, 44f, 0f, 0f)
-        assertEquals(RevealRect(78f, -22f, 44f, 44f), shut)
-        // Open: the whole room, from its corner.
-        val open = revealRect(100f, 0f, 300f, 400f, 44f, 1f, 1f)
-        assertEquals(0f, open.left, 0.001f)
-        assertEquals(0f, open.top, 0.001f)
-        assertEquals(300f, open.width, 0.001f)
-        assertEquals(400f, open.height, 0.001f)
-        // Half way down but not yet across: tall and narrow.
-        val tall = revealRect(100f, 0f, 300f, 400f, 44f, 0f, 0.5f)
-        assertEquals(44f, tall.width, 0f)
-        assertEquals(222f, tall.height, 0.01f)
-        // Past full, it runs on by only a third or so of the spring's overshoot.
-        assertEquals(300f + 256f * 0.1f * POUR_OVERSHOOT_KEPT, revealRect(100f, 0f, 300f, 400f, 44f, 1.1f, 1f).width, 0.01f)
+    @Test fun `a popup comes out of the button narrow at the button and wide at its far end`() {
+        // A 300 x 400 panel under a button at (100, -20): it comes out of the top edge.
+        val shut = revealOutline(100f, -20f, 300f, 400f, 44f, 28f, 0f, 0f).points
+        // Shut, it is the button's end: 44 wide at the top, 44 down.
+        assertEquals(78f, shut[0], 0.01f); assertEquals(0f, shut[1], 0.01f)
+        assertEquals(122f, shut[2], 0.01f)
+        assertEquals(44f, shut[5], 0.01f)
+        // Run out and half spread: the far edge is wider than the near one.
+        val half = revealOutline(100f, -20f, 300f, 400f, 44f, 28f, 1f, 0.5f).points
+        val nearWidth = half[2] - half[0]
+        val farWidth = half[4] - half[6]
+        assertTrue(farWidth > nearWidth)
+        assertEquals(400f, half[5], 0.01f)
+        // Open, it is the panel.
+        val open = revealOutline(100f, -20f, 300f, 400f, 44f, 28f, 1f, 1f)
+        assertEquals(0f, open.points[0], 0.01f); assertEquals(300f, open.points[2], 0.01f)
+        assertEquals(400f, open.points[5], 0.01f)
+        assertEquals(28f, open.radius, 0.01f)
+        // Shut, its corners make a round end.
+        assertEquals(22f, revealOutline(100f, -20f, 300f, 400f, 44f, 28f, 0f, 0f).radius, 0.01f)
+        // From below it comes up out of the bottom edge; from the side, out of that side.
+        val up = revealOutline(100f, 420f, 300f, 400f, 44f, 28f, 0.5f, 0f).points
+        assertEquals(400f, up[1], 0.01f)
+        assertTrue(up[5] < 400f)
+        val side = revealOutline(-20f, 100f, 300f, 400f, 44f, 28f, 0.5f, 0f).points
+        assertEquals(0f, side[0], 0.01f)
+        assertTrue(side[4] > 0f)
     }
 
-    @Test fun `the drop is round and its corner tightens to the panel's as it spreads`() {
-        assertEquals(22f, revealCorner(44f, 44f, 28f, 0f), 0f)
-        assertEquals(28f, revealCorner(300f, 400f, 28f, 1f), 0f)
-        assertTrue(revealCorner(200f, 300f, 28f, 0.5f) in 28f..100f)
+    @Test fun `what is on the glass waits for it`() {
         // What is on the glass waits, then fades up.
         assertEquals(0f, revealFade(0.2f, 0.5f), 0f)
         assertEquals(1f, revealFade(1f, 1f), 0f)
