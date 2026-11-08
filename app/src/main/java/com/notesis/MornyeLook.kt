@@ -6,6 +6,7 @@ import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.foundation.shape.CornerBasedShape
+import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Size
@@ -20,7 +21,6 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -30,8 +30,6 @@ import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.shadow.Shadow
-import com.kyant.shapes.RoundedCornerStyle
-import com.kyant.shapes.RoundedRectangularShape
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.ln
@@ -318,7 +316,7 @@ internal fun lookScheme(context: Context?, skin: Skin, look: SkinSettings): Colo
  * anything else - a circle drawn as a path, a custom outline - as it is.
  */
 internal fun mornyeSquircle(shape: Shape): Shape =
-    if (shape is CornerBasedShape) MornyeSquircleShape(shape) else shape
+    if (shape is CornerBasedShape && shape !is MornyeSquircleShape) MornyeSquircleShape(shape.topStart) else shape
 
 /**
  * Mornye's squircle, the outline its glass and lens share: each corner an
@@ -327,26 +325,21 @@ internal fun mornyeSquircle(shape: Shape): Shape =
  * curve leaves the edge with no step in its curvature. As liquid_glass_easy
  * 5.1.0 (MIT) draws it with full smoothing.
  *
- * It is a Kyant [RoundedRectangularShape], so the lens reads its radius and
- * bends along the corner rather than treating the pane as square. The radius
- * is [base]'s top-left corner, so a capsule stays a capsule.
+ * A [CornerBasedShape], so the lens, which reads the corners of one, bends
+ * along the corner rather than treating the pane as square. One radius for
+ * all four corners, [corner]'s; a capsule's 50% stays a capsule.
  */
-internal class MornyeSquircleShape(private val base: CornerBasedShape) : RoundedRectangularShape {
-    override val style: RoundedCornerStyle get() = RoundedCornerStyle.Continuous
-
-    private fun radiusPx(size: Size, density: Density): Float =
-        base.topStart.toPx(size, density).coerceIn(0f, minOf(size.width, size.height) / 2f)
-
-    override fun corners(size: Size, layoutDirection: LayoutDirection, density: Density): RoundedRectangularShape.Corners {
-        val r = radiusPx(size, density)
-        return RoundedRectangularShape.Corners(r, r, r, r)
-    }
-
-    override fun copy(style: RoundedCornerStyle): RoundedRectangularShape = this
-
-    override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline {
-        val points = squirclePoints(size.width, size.height, radiusPx(size, density))
-        if (points.size < 6) return Outline.Rectangle(androidx.compose.ui.geometry.Rect(0f, 0f, size.width, size.height))
+internal class MornyeSquircleShape(corner: CornerSize) : CornerBasedShape(corner, corner, corner, corner) {
+    override fun createOutline(
+        size: Size,
+        topStart: Float,
+        topEnd: Float,
+        bottomEnd: Float,
+        bottomStart: Float,
+        layoutDirection: LayoutDirection,
+    ): Outline {
+        val points = squirclePoints(size.width, size.height, topStart)
+        if (points.size < 16) return Outline.Rectangle(androidx.compose.ui.geometry.Rect(0f, 0f, size.width, size.height))
         val path = Path()
         path.moveTo(points[0], points[1])
         var i = 2
@@ -358,8 +351,11 @@ internal class MornyeSquircleShape(private val base: CornerBasedShape) : Rounded
         return Outline.Generic(path)
     }
 
-    override fun equals(other: Any?): Boolean = other is MornyeSquircleShape && other.base == base
-    override fun hashCode(): Int = base.hashCode() * 31 + 7
+    override fun copy(topStart: CornerSize, topEnd: CornerSize, bottomEnd: CornerSize, bottomStart: CornerSize): CornerBasedShape =
+        MornyeSquircleShape(topStart)
+
+    override fun equals(other: Any?): Boolean = other is MornyeSquircleShape && other.topStart == topStart
+    override fun hashCode(): Int = topStart.hashCode() * 31 + 7
 }
 
 /** How far a corner reaches along its edges for radius [r]: 1.528 r, held to half the short side. */

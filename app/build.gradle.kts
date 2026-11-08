@@ -90,8 +90,6 @@ dependencies {
     // compileSdk 36 / AGP 8 line. Backdrop 2.x requires compileSdk 37 and AGP
     // 9.1+, which would turn this visual change into a toolchain migration.
     implementation("io.github.kyant0:backdrop:1.0.6")
-    // Backdrop's own shapes, for an outline its lens reads the corners of (Mornye's squircle).
-    implementation("io.github.kyant0:shapes:1.2.0")
     // The renderer behind @Preview. Without it the annotations compile and the
     // preview pane stays empty, which is why the chrome could only be looked at
     // by installing the app - see Previews.kt. Debug only: it is a development

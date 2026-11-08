@@ -61,7 +61,7 @@ internal val OPEN_SOURCE_COMPONENTS = listOf(
         listOf("licenses/BouncyCastle.txt"),
     ),
     OpenSourceComponent(
-        "Backdrop 1.0.6 · Shapes 1.2.0",
+        "Backdrop 1.0.6",
         "Kyant",
         "Apache License 2.0",
         "https://github.com/Kyant0/AndroidLiquidGlass",
