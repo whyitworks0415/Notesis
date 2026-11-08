@@ -284,6 +284,7 @@ class MainActivity : ComponentActivity() {
         val prefs = PenStore(this)
         ToolbarLayout.load(this)
         AppIconStyle.load(this)
+        MotionPrefs.load(this)
         val lookStore = SkinSettingsStore(this)
         acceptDocumentIntent(intent)
         setContent {
@@ -601,10 +602,14 @@ class MainActivity : ComponentActivity() {
         StudyClock.touched()
         DisplayRate.apply(this)
         JankWatch.start(this)
+        // The springs allow for the screen's rate; see [lowRateStretch].
+        MotionPrefs.refreshHz = display?.refreshRate ?: 60f
+        MotionStats.start(this)
     }
 
     override fun onPause() {
         JankWatch.stop(this)
+        MotionStats.stop(this)
         // The widget shows the library as it is now.
         NotesWidget.refresh(this)
         StudyClock.foreground = false
@@ -1363,6 +1368,7 @@ private fun HomeScreen(
     ) {
     // The clock floats over the library too, on the same glass as its bars.
     Box(Modifier.fillMaxSize()) {
+    GlassWarmup()
     Scaffold(
         // Under the header too, the library's own ground colour, not the theme's.
         containerColor = homeColor?.let { Color(it) } ?: homeLookTop() ?: MaterialTheme.colorScheme.background,
@@ -1642,7 +1648,7 @@ private fun HomeScreen(
                         // every frame of a fling, for the glass at the top to
                         // blur, was most of what made it stutter. The glass
                         // keeps the last frame and catches up when it stops.
-                        Modifier.captureLiquidGlassBackdrop(liquidBackdrop, paused = { gridState.isScrollInProgress })
+                        Modifier.captureLiquidGlassBackdrop(liquidBackdrop, paused = { gridState.isScrollInProgress || ChromeMotion.busy })
                     } else {
                         Modifier
                     },
@@ -5242,8 +5248,12 @@ private fun NoteScreen(
                             // Any canvas busy - this one, or the reference panel's -
                             // and through the short settle after: the panes keep the
                             // last recording until the screen is idle again.
+                            // Also while a popup or sidebar moves: the page behind it is
+                            // not changing, and re-recording it every frame is the
+                            // heaviest thing a 60 Hz frame of that motion would do.
                             paused = { !turnStale() &&
                                 (drawingPage || movingPage || InteractionGovernor.observed != Interaction.IDLE ||
+                                    ChromeMotion.busy ||
                                     // Another app's window in use over or beside this one: hold the last frost.
                                     (sharedScreen && !WindowFocus.focused)) },
                             source = pageBackdrop,

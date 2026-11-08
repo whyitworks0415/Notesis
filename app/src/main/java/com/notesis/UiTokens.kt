@@ -99,19 +99,38 @@ object Ui {
     object Motion {
         const val MS = 180
 
-        /** Stiffness per unit mass for a spring of [dampingRatio] that settles in [MS]. */
+        /**
+         * Stiffness per unit mass for a spring of [dampingRatio] that settles
+         * in [MS], at the motion speed and the screen's rate (see [MotionPrefs]).
+         */
         fun stiffness(dampingRatio: Float): Float {
             val omega = 4f / (dampingRatio * MS / 1000f)
-            return omega * omega
+            val scale = MotionPrefs.responseScale
+            return omega * omega / (scale * scale)
         }
 
         fun <T> spring(dampingRatio: Float = 0.86f, visibilityThreshold: T? = null): androidx.compose.animation.core.SpringSpec<T> =
             androidx.compose.animation.core.spring(dampingRatio, stiffness(dampingRatio), visibilityThreshold)
 
+        /**
+         * The chrome's ordinary move, once a curve of [MS]: a spring now,
+         * critically damped so nothing fades or slides past its place, which
+         * keeps the speed it has if it is turned round half way. A move held
+         * back by [delayMillis] - a staggered list - keeps its curve, as a
+         * spring cannot wait.
+         */
         fun <T> tween(
             delayMillis: Int = 0,
             easing: androidx.compose.animation.core.Easing = androidx.compose.animation.core.FastOutSlowInEasing,
-        ): androidx.compose.animation.core.TweenSpec<T> = androidx.compose.animation.core.tween(MS, delayMillis, easing)
+        ): androidx.compose.animation.core.FiniteAnimationSpec<T> =
+            if (delayMillis > 0) {
+                androidx.compose.animation.core.tween((MS * MotionPrefs.responseScale).toInt(), delayMillis, easing)
+            } else {
+                motionSpring(ORDINARY_RESPONSE, 1f)
+            }
+
+        /** The ordinary move's response: settles about where a curve of [MS] ended, with a soft tail. */
+        const val ORDINARY_RESPONSE = 0.3f
     }
 
     /** Hit areas and fixed control sizes. */

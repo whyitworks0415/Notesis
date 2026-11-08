@@ -398,7 +398,7 @@ private suspend fun copyPreviewPhoto(context: Context, uri: Uri): Boolean = with
 }
 
 private enum class AppearanceGroup(val label: String) {
-    STYLE("Style"), PANELS("Panels"), GLASS("Glass"), COLORS("Colors"), ICONS("Icons"),
+    STYLE("Style"), PANELS("Panels"), GLASS("Glass"), COLORS("Colors"), ICONS("Icons"), MOTION("Motion"),
 }
 
 /**
@@ -495,6 +495,7 @@ internal fun AppearanceSettings(
                     )
                 }
                 AppearanceGroup.ICONS -> IconsGroup()
+                AppearanceGroup.MOTION -> MotionGroup()
                 AppearanceGroup.PANELS -> PanelsGroup(skin, settings, onChange)
                 AppearanceGroup.GLASS -> GlassGroup(skin, settings, onChange, onSkin)
                 AppearanceGroup.COLORS -> ColorsGroup(skin, settings, onChange)
@@ -609,6 +610,30 @@ private fun StyleGroup(
             }
         }
     }
+}
+
+/** How the chrome moves: its speed, the light taps under the finger and the blur along fast motion. */
+@Composable
+private fun MotionGroup() {
+    val context = LocalContext.current
+    SettingsSectionHeader("Motion")
+    SettingsNote("Everything moves on springs, as on iOS: a motion caught half way turns from where it is, " +
+        "and a flick carries its speed. On a 60 Hz screen the springs run a little longer, so each frame's step stays small.")
+    AppearanceSlider("Speed", "%.0f%%".format(MotionPrefs.speed * 100), MotionPrefs.speed, MotionPrefs.SPEED_RANGE,
+        step = 0.05f, default = MotionPrefs.DEFAULT_SPEED,
+        note = "100% is how the motion was tuned. Higher is quicker.",
+    ) { MotionPrefs.setSpeed(context, it) }
+    SettingsToggle("Haptics", MotionPrefs.haptics, { MotionPrefs.setHaptics(context, it) },
+        hint = "A light tick where something snaps, a switch flips or a slider lands on a step. " +
+            "The tablet's own vibration setting still applies.")
+    SettingsToggle("Motion blur on 60 Hz", MotionPrefs.motionBlur, { MotionPrefs.setMotionBlur(context, it) },
+        hint = "A trace of blur along a popup's fastest moment, so it reads as motion rather than as steps. " +
+            "Off in Light mode, and never drawn on faster screens.")
+    SettingsSectionHeader("While the chrome moves")
+    DiagnosticRow("Frames", MotionStats.frames.toString())
+    DiagnosticRow("Late frames", MotionStats.late.toString())
+    DiagnosticRow("Longest frame", "%.1f ms".format(MotionStats.worstMs))
+    OutlinedButton(onClick = { MotionStats.reset() }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Reset") }
 }
 
 @Composable

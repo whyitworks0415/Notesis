@@ -445,7 +445,7 @@ internal fun DiagnosticsSettings(
 }
 
 @Composable
-private fun DiagnosticRow(label: String, value: String, header: Boolean = false) {
+internal fun DiagnosticRow(label: String, value: String, header: Boolean = false) {
     val style = if (header) MaterialTheme.typography.labelSmall else MaterialTheme.typography.bodyMedium
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
         Text(label, style = style, modifier = Modifier.weight(1f).padding(end = 8.dp),

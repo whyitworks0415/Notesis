@@ -648,9 +648,18 @@ fun SkinSlider(
      */
     step: Float = 0f,
 ) {
+    // A light tick as the handle lands on another step, where the slider has
+    // steps; a continuous one slides without.
+    val view = androidx.compose.ui.platform.LocalView.current
+    val ticked = remember { floatArrayOf(value) }
+    val change: (Float) -> Unit = { next ->
+        if (step > 0f && next != ticked[0]) Haptics.tick(view)
+        ticked[0] = next
+        onValueChange(next)
+    }
     // A control keeps the glass it was designed with, however the panels are tuned.
     CompositionLocalProvider(LocalSkinSettings provides LocalSkinSettings.current.controlOptics()) {
-        SkinSliderBody(value, onValueChange, valueRange, modifier, step)
+        SkinSliderBody(value, change, valueRange, modifier, step)
     }
 }
 
@@ -803,9 +812,10 @@ private fun SkinSliderBody(
  */
 @Composable
 fun SkinSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    val view = androidx.compose.ui.platform.LocalView.current
     // A control keeps the glass it was designed with, however the panels are tuned.
     CompositionLocalProvider(LocalSkinSettings provides LocalSkinSettings.current.controlOptics()) {
-        SkinSwitchBody(checked, onCheckedChange)
+        SkinSwitchBody(checked) { on -> Haptics.tick(view); onCheckedChange(on) }
     }
 }
 

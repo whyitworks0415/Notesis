@@ -3,6 +3,7 @@ package com.notesis
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -176,6 +177,7 @@ internal fun SettingsSidebarFrame(
                 // Pulled past its narrowest it follows the finger out, to be let go of.
                 translationX = (outside * size.width + past.dp.toPx()) * (if (rtl) -1f else 1f)
             }) {
+            val hapticView = androidx.compose.ui.platform.LocalView.current
             if (!full) {
                 Box(
                     Modifier
@@ -188,7 +190,7 @@ internal fun SettingsSidebarFrame(
                                 // Kept at the width it was pulled to: put back to its own
                                 // width first, it grew for a moment on the way out.
                                 if (pulledToClose(past)) { latestClose(); return }
-                                draft?.let { latestCommit(it) }
+                                draft?.let { latestCommit(settingsSidebarWidth(it, latestScreen)) }
                                 past = 0f
                                 draft = null
                                 reach = null
@@ -203,8 +205,16 @@ internal fun SettingsSidebarFrame(
                                 val grow = (if (rtl) dragAmount else -dragAmount) / density
                                 val wanted = (reach ?: latestShown) + grow
                                 reach = wanted
-                                draft = settingsSidebarWidth(wanted, latestScreen)
+                                val held = settingsSidebarWidth(wanted, latestScreen)
+                                val over = wanted - held
+                                // Past its widest it gives a little, stiffer the further it is
+                                // pulled, and comes back to its widest when let go.
+                                val wasOver = (draft ?: held) > held + 0.5f
+                                draft = if (over > 0f) held + rubberBand(over, SIDEBAR_STRETCH_DP) else held
+                                if (over > 0f && !wasOver) Haptics.tick(hapticView)
+                                val wasClosing = pulledToClose(past)
                                 past = (SETTINGS_SIDEBAR_MIN_DP - wanted).coerceAtLeast(0f)
+                                if (pulledToClose(past) != wasClosing) Haptics.snap(hapticView)
                             }
                         }
                         .semantics {
@@ -330,9 +340,9 @@ internal fun AnimatedSettingsSidebar(
             // The first frame with the sidebar in it is the slow one; the slide
             // starts after it (see PopupGrowth.open), not on it.
             if (animate && progress.value == 0f) awaitFirstFrames()
-            if (animate) progress.animateTo(1f, SIDEBAR_OPEN) else progress.snapTo(1f)
+            if (animate) ChromeMotion.during { progress.animateTo(1f, SIDEBAR_OPEN) } else progress.snapTo(1f)
         } else {
-            if (animate) progress.animateTo(0f, SIDEBAR_CLOSE) else progress.snapTo(0f)
+            if (animate) ChromeMotion.during { progress.animateTo(0f, SIDEBAR_CLOSE) } else progress.snapTo(0f)
             present = false
         }
     }
@@ -349,15 +359,19 @@ internal fun AnimatedSettingsSidebar(
     }
 }
 
+/** How far past its widest the sidebar can be stretched at most, in dp; it gives far less. */
+private const val SIDEBAR_STRETCH_DP = 120f
+
 /** How much further than the panel its content travels as it comes in. */
 private val SIDEBAR_CONTENT_LEAD = 24.dp
 
-// In on Material's emphasized decelerate - most of the way at once, then a
-// long soft landing - and no overshoot: a panel against the screen's edge
-// that springs past its place opens a gap along that edge.
-private val SIDEBAR_OPEN = tween<Float>(Ui.Motion.MS, easing = EmphasizedDecelerateEasing)
-// Out in the same time, gathering speed as it goes.
-private val SIDEBAR_CLOSE = tween<Float>(Ui.Motion.MS, easing = EmphasizedAccelerateEasing)
+// In on the slow spatial spring, critically damped: a panel against the
+// screen's edge that springs past its place opens a gap along that edge.
+// A spring rather than a curve, so a sidebar sent back while it is still
+// coming turns round at the speed it has.
+private val SIDEBAR_OPEN: AnimationSpec<Float> get() = MotionTokens.spatialSlow()
+// Out a little quicker, still without passing its edge.
+private val SIDEBAR_CLOSE: AnimationSpec<Float> get() = motionSpring(0.32f, 1f)
 
 /**
  * The note's settings sidebar. Each screen's content comes from the note,

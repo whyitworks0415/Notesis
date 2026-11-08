@@ -50,8 +50,12 @@ fun LiquidSegmentedControl(
     useLiquidGlass: Boolean = true,
 ) {
     // A control keeps the glass it was designed with, however the panels are tuned.
+    val view = androidx.compose.ui.platform.LocalView.current
     androidx.compose.runtime.CompositionLocalProvider(LocalSkinSettings provides LocalSkinSettings.current.controlOptics()) {
-        SegmentedControlBody(segments, selectedIndex, onSelected, modifier, useLiquidGlass)
+        SegmentedControlBody(segments, selectedIndex, { index ->
+            if (index != selectedIndex) Haptics.tick(view)
+            onSelected(index)
+        }, modifier, useLiquidGlass)
     }
 }
 

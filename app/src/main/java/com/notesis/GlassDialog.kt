@@ -12,7 +12,11 @@ import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import kotlinx.coroutines.launch
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -60,10 +64,26 @@ fun AlertDialog(
     val moves = rememberLiquidGlassEffectsAllowed()
     val arrival = remember { Animatable(if (moves) 0f else 1f) }
     LaunchedEffect(Unit) {
-        if (arrival.value < 1f) arrival.animateTo(1f, dialogArrival(material))
+        if (arrival.value < 1f) arrival.animateTo(1f, dialogArrival(material).paced())
+    }
+    // Sent away by a tap past it or by Back, it goes back the way it came
+    // before it is gone: a quick shrink and fade, as Mornye's dialogs close.
+    // Its own buttons still close it at once - they decide what happens next.
+    val scope = rememberCoroutineScope()
+    val leaving = remember { booleanArrayOf(false) }
+    val latestDismiss by rememberUpdatedState(onDismissRequest)
+    val dismiss: () -> Unit = {
+        if (!moves) latestDismiss()
+        else if (!leaving[0]) {
+            leaving[0] = true
+            scope.launch {
+                arrival.animateTo(0f, tween(DIALOG_LEAVE_MS, easing = CubicBezierEasing(0.32f, 0f, 0.67f, 0f)))
+                latestDismiss()
+            }
+        }
     }
     MaterialAlertDialog(
-        onDismissRequest = onDismissRequest,
+        onDismissRequest = dismiss,
         // The window is only reachable from inside the dialog's own content, and
         // confirmButton is the one slot every call site fills.
         confirmButton = { BlurBehind(); confirmButton() },
@@ -75,7 +95,7 @@ fun AlertDialog(
                 val scale = dialogArrivalScale(arrival.value, material)
                 scaleX = scale
                 scaleY = scale
-                if (material) alpha = (arrival.value / 0.4f).coerceIn(0f, 1f)
+                if (material || leaving[0]) alpha = (arrival.value / 0.4f).coerceIn(0f, 1f)
             }
             .then(skinEdge(shape)),
         dismissButton = dismissButton,
@@ -170,6 +190,9 @@ fun BlurBehind() {
 }
 
 private const val DIM = 0.18f
+
+/** How long a dialog sent away takes to go. */
+private const val DIALOG_LEAVE_MS = 160
 
 /** The spring or curve a dialog arrives on; see [AlertDialog]. */
 internal fun dialogArrival(material: Boolean): androidx.compose.animation.core.AnimationSpec<Float> =

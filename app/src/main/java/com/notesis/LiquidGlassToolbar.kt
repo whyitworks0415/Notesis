@@ -1268,13 +1268,23 @@ internal class PopupGrowth(shown: Boolean) {
         // It goes out unseen; the curve starts on the frame after.
         if (animate && width.value == 0f && height.value == 0f) awaitFirstFrames()
         val spec = profile?.open ?: POPUP_OPEN
-        move(1f, animate, spec, spec, 0f, widthDelayMs = profile?.widthDelayMs ?: 0)
+        // Opened again while closing: on from where it is, at the speed it has.
+        val resumed = midFlight()
+        move(1f, animate, spec, spec, if (resumed) Float.NaN else 0f,
+            widthDelayMs = if (resumed) 0 else profile?.widthDelayMs ?: 0)
     }
+
+    /** Neither shut nor fully open: a move was caught on its way. */
+    private fun midFlight(): Boolean =
+        width.isRunning || height.isRunning || width.value in 0.001f..0.999f || height.value in 0.001f..0.999f
 
     suspend fun close(animate: Boolean) {
         closing = true
         val spec = profile?.close ?: POPUP_CLOSE
-        move(0f, animate, profile?.closeWidth ?: spec, spec, profile?.closeVelocity ?: 0f)
+        // Caught while still opening, it turns round at the speed it has
+        // rather than being thrown back at the profile's own.
+        val throwBack = if (midFlight()) Float.NaN else profile?.closeVelocity ?: 0f
+        move(0f, animate, profile?.closeWidth ?: spec, spec, throwBack)
     }
 
     private suspend fun move(
@@ -1291,12 +1301,17 @@ internal class PopupGrowth(shown: Boolean) {
         }
         // The same curve on both unless the opening pours, so the shape keeps
         // its proportion on the way; a poured one runs down, then spreads.
-        coroutineScope {
-            launch {
-                if (widthDelayMs > 0) kotlinx.coroutines.delay(widthDelayMs.toLong())
-                width.animateTo(target, widthSpec, initialVelocity = velocity)
+        // NaN velocity: each axis keeps the speed it is already moving at.
+        val widthStart = if (velocity.isNaN()) width.velocity else velocity
+        val heightStart = if (velocity.isNaN()) height.velocity else velocity
+        ChromeMotion.during {
+            coroutineScope {
+                launch {
+                    if (widthDelayMs > 0) kotlinx.coroutines.delay((widthDelayMs * MotionPrefs.responseScale).toLong())
+                    width.animateTo(target, widthSpec.paced(), initialVelocity = widthStart)
+                }
+                launch { height.animateTo(target, heightSpec.paced(), initialVelocity = heightStart) }
             }
-            launch { height.animateTo(target, heightSpec, initialVelocity = velocity) }
         }
     }
 }
@@ -1369,7 +1384,24 @@ internal fun Modifier.growOutOf(anchor: () -> Offset?, growth: PopupGrowth): Mod
                 translationY = -profile.dropDp * density * (1f - minOf(w, h).coerceIn(0f, 1f))
             }
             transformOrigin = origin
+            // On a 60 Hz screen the fast start of a popup jumps far between
+            // frames; a trace of blur along it reads as motion rather than
+            // as steps. Gone as it slows, and never at 120 Hz.
+            renderEffect = popupMotionBlur(growth, size.width, size.height, 4.dp.toPx())
         }
+}
+
+/** The blur along a growing popup's motion, or none; see [motionBlurPx]. */
+private fun popupMotionBlur(growth: PopupGrowth, width: Float, height: Float, maxPx: Float): androidx.compose.ui.graphics.RenderEffect? {
+    if (android.os.Build.VERSION.SDK_INT < 31 || !MotionPrefs.motionBlur || InteractionGovernor.lightMode) return null
+    val hz = MotionPrefs.refreshHz
+    // An edge of a pane scaled about a point inside it moves at about the
+    // scale's speed times half the pane's size.
+    val bx = motionBlurPx(growth.width.velocity * width / 2f, hz, maxPx)
+    val by = motionBlurPx(growth.height.velocity * height / 2f, hz, maxPx)
+    if (bx <= 0f && by <= 0f) return null
+    return androidx.compose.ui.graphics.BlurEffect(bx.coerceAtLeast(0.01f), by.coerceAtLeast(0.01f),
+        androidx.compose.ui.graphics.TileMode.Decal)
 }
 
 /**
@@ -1461,10 +1493,15 @@ private fun ToolStrip(
             .then(if (ownSurface) Modifier.skinMaterial(RoundedCornerShape(corner), role = ChromeRole.TOOLBAR) else Modifier)) {
             if (selected != null) {
                 // Kept inside the strip if the spring runs a hair past the end.
+                // Moved in the draw, to the fraction of a pixel: placed on
+                // whole pixels its slow end crept on in visible steps, which
+                // a 60 Hz screen shows plainly.
                 Box(Modifier
-                    .offset {
-                        val along = (padding + cell * slide.value.coerceIn(0f, tools.lastIndex.toFloat())).roundToPx()
-                        if (vertical) IntOffset(padding.roundToPx(), along) else IntOffset(along, padding.roundToPx())
+                    .graphicsLayer {
+                        val along = (padding + cell * slide.value.coerceIn(0f, tools.lastIndex.toFloat())).toPx()
+                        val across = padding.toPx()
+                        translationX = if (vertical) across else along
+                        translationY = if (vertical) along else across
                     }
                     .then(if (vertical) Modifier.size(cellHeight, cell) else Modifier.size(cell, cellHeight))
                     .background(highlight, pill))

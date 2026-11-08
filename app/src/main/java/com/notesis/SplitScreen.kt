@@ -34,6 +34,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -146,9 +147,16 @@ internal fun SplitSeams(
     for (seam in tree.seams(area, gap)) androidx.compose.runtime.key(seam.path, seam.index) {
         var dragged by remember(seam.path, seam.index, seam.sideBySide) { mutableStateOf<Float?>(null) }
         var menuOpen by remember { mutableStateOf(false) }
+        // The line is drawn a frame's worth ahead of the hand while it moves
+        // (see [dragLead]), so it does not trail the finger on a 60 Hz screen.
+        var lead by remember { mutableStateOf(0f) }
+        val tracker = remember { androidx.compose.ui.input.pointer.util.VelocityTracker() }
+        val view = androidx.compose.ui.platform.LocalView.current
         val r = seam.rect
         val shift = dragged ?: 0f
         val closing = dragged?.let { if (seam.length > 0f) tree.seamCloses(seam.path, seam.index, it / seam.length) else null }
+        // A light tick as the drag crosses into closing a part, and none back out.
+        androidx.compose.runtime.LaunchedEffect(closing) { if (closing != null) Haptics.snap(view) }
         // What would close, darkened, while the hand is over the edge.
         if (closing != null) {
             val ids = tree.seamChild(seam.path, seam.index, closing)?.paneIds().orEmpty()
@@ -172,7 +180,11 @@ internal fun SplitSeams(
         // The line itself, as wide as the room between the parts.
         Box(
             Modifier
-                .offset { IntOffset((r.left + if (seam.sideBySide) shift else 0f).roundToInt(), (r.top + if (seam.sideBySide) 0f else shift).roundToInt()) }
+                .offset { IntOffset(r.left.roundToInt(), r.top.roundToInt()) }
+                // The hand's share moved in the draw, to the fraction of a pixel.
+                .graphicsLayer {
+                    if (seam.sideBySide) translationX = shift + lead else translationY = shift + lead
+                }
                 .size(with(density) { r.width.coerceAtLeast(1f).toDp() }, with(density) { r.height.coerceAtLeast(1f).toDp() })
                 .background(if (dragged != null) held else line),
         )
@@ -188,19 +200,29 @@ internal fun SplitSeams(
                 .size(with(density) { width.toDp() }, with(density) { height.toDp() })
                 .pointerInput(seam) {
                     detectDragGestures(
-                        onDragStart = { dragged = 0f },
+                        onDragStart = { dragged = 0f; lead = 0f; tracker.resetTracking() },
                         onDragEnd = {
                             val moved = dragged ?: 0f
+                            val speed = tracker.calculateVelocity().x
                             dragged = null
+                            lead = 0f
                             if (seam.length <= 0f || moved == 0f) return@detectDragGestures
                             val fraction = moved / seam.length
+                            // A flick towards an edge closes as a drag all the way
+                            // there would: decided by where the throw would come to
+                            // rest, not by where the finger happened to stop.
+                            val thrown = projectedEnd(moved, speed, SEAM_THROW_DECELERATION) / seam.length
                             val side = tree.seamCloses(seam.path, seam.index, fraction)
+                                ?: tree.seamCloses(seam.path, seam.index, thrown.coerceIn(-1f, 1f))
                             if (side != null) onClose(seam, side) else onMove(seam, fraction)
                         },
-                        onDragCancel = { dragged = null },
+                        onDragCancel = { dragged = null; lead = 0f },
                     ) { change, amount ->
                         change.consume()
-                        dragged = (dragged ?: 0f) + if (seam.sideBySide) amount.x else amount.y
+                        val next = (dragged ?: 0f) + if (seam.sideBySide) amount.x else amount.y
+                        dragged = next
+                        tracker.addPosition(change.uptimeMillis, androidx.compose.ui.geometry.Offset(next, 0f))
+                        lead = dragLead(tracker.calculateVelocity().x, maxPx = 16.dp.toPx())
                     }
                 }
                 .semantics { contentDescription = if (seam.sideBySide) "Resize the parts left and right" else "Resize the parts above and below" },
@@ -317,3 +339,6 @@ internal fun SplitSideHeading(side: String, title: String) {
             overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
     }
 }
+
+/** How quickly a thrown seam slows, a millisecond: a short reach, so only a real flick closes a part. */
+private const val SEAM_THROW_DECELERATION = 0.99f
