@@ -65,7 +65,13 @@ class CanvasImagePreviewsTest {
             assertEquals(256, original.width)
             assertEquals(256, original.height)
             original.recycle()
-            shadowOf(Looper.getMainLooper()).idle()
+            // The cache becomes readable just before its worker posts the
+            // notification. Wait for that dispatch, not for incidental timing.
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+            while (notifications == 0 && System.nanoTime() < deadline) {
+                shadowOf(Looper.getMainLooper()).idle()
+                Thread.sleep(10)
+            }
             assertTrue(notifications > 0)
             previews.close()
             assertNull(previews.image("photo"))

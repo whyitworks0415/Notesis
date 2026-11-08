@@ -25,7 +25,7 @@ internal class CanvasImagePreviews(
         override fun sizeOf(key: String, value: Preview) = value.bitmap.allocationByteCount
     }
     private val maxImageBytes = (bytes.toLong() / 2).coerceAtLeast(4)
-    private val resources = AsyncResourceCache(
+    private val resources: AsyncResourceCache<String, Preview> = AsyncResourceCache(
         executor = worker,
         cached = cache::get,
         store = { key: String, value: Preview -> cache.put(key, value); Unit },
