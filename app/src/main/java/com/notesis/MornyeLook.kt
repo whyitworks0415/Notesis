@@ -107,6 +107,14 @@ data class MornyeGlass(
     }
 }
 
+/** Whether the recipe in use draws Mornye's continuous corners: Mornye's own, and iOS with it. */
+internal val SkinSettings.smoothCorners: Boolean
+    get() = when (liquidStyle) {
+        LiquidStyle.MORNYE -> mornye.smoothCorners
+        LiquidStyle.IOS -> ios.smoothCorners
+        LiquidStyle.NOTESIS -> false
+    }
+
 /** iOS grouped colours, as Mornye's theme sets them. */
 private val GROUPED_LIGHT = Color(0xFFF2F2F7)
 private val GROUPED_DARK = Color(0xFF1C1C1E)
@@ -296,8 +304,11 @@ internal fun amoledScheme(scheme: ColorScheme): ColorScheme = scheme.copy(
  */
 internal fun lookScheme(context: Context?, skin: Skin, look: SkinSettings): ColorScheme {
     val dark = look.themeMode == AppThemeMode.DARK
-    if (skin == Skin.LIQUID_GLASS && look.liquidStyle == LiquidStyle.MORNYE) {
-        val accent = look.mornye.accent.argb(dark, look.accent)
+    // iOS takes Mornye's colours too - iOS's grouped greys and an accent of
+    // its own, blue unless another is chosen.
+    if (skin == Skin.LIQUID_GLASS && look.liquidStyle != LiquidStyle.NOTESIS) {
+        val chosen = if (look.liquidStyle == LiquidStyle.IOS) look.ios.accent else look.mornye.accent
+        val accent = chosen.argb(dark, look.accent)
         return mornyeScheme(schemeFrom(accent, look.highContrast, dark), accent, dark)
     }
     val wallpaper = skin == Skin.MATERIAL && look.dynamicColor && !look.highContrast &&

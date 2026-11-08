@@ -127,9 +127,60 @@ fun ProvideSkin(skin: Skin, settings: SkinSettings, content: @Composable () -> U
         LocalSkin provides skin,
         LocalSkinSettings provides settings,
         LocalLiquidGlassEffectsAllowed provides effectsAllowed,
+        // No grey wash under a hovering pointer and no grey flash on a press,
+        // in Material's own components (the ripple) and in every plain
+        // clickable (the indication), in every look: the controls answer a
+        // touch with their own motion. Keyboard focus still shows, or a
+        // keyboard user would not know where they are.
+        LocalRippleConfiguration provides null,
+        LocalIndication provides FocusOnlyIndication,
     )
     CompositionLocalProvider(*values.toTypedArray(), content = content)
 }
+
+/**
+ * An indication that answers focus and nothing else: no ripple on a press,
+ * no wash on hover. A quiet veil while the element holds keyboard focus.
+ */
+private object FocusOnlyIndication : IndicationNodeFactory {
+    override fun create(interactionSource: InteractionSource): DelegatableNode =
+        FocusOnlyIndicationNode(interactionSource)
+
+    override fun equals(other: Any?): Boolean = other === this
+    override fun hashCode(): Int = System.identityHashCode(this)
+}
+
+private class FocusOnlyIndicationNode(
+    private val source: InteractionSource,
+) : Modifier.Node(), DrawModifierNode, CompositionLocalConsumerModifierNode {
+    private var focused = false
+
+    override fun onAttach() {
+        // Undispatched: a clickable may create this only as focus arrives,
+        // and a collector that starts a frame later would miss that focus.
+        coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            val held = mutableListOf<FocusInteraction.Focus>()
+            source.interactions.collect { interaction ->
+                when (interaction) {
+                    is FocusInteraction.Focus -> held += interaction
+                    is FocusInteraction.Unfocus -> held -= interaction.focus
+                }
+                val now = held.isNotEmpty()
+                if (now != focused) {
+                    focused = now
+                    invalidateDraw()
+                }
+            }
+        }
+    }
+
+    override fun ContentDrawScope.draw() {
+        drawContent()
+        if (focused) drawRect(currentValueOf(LocalContentColor).copy(alpha = FOCUS_VEIL_ALPHA))
+    }
+}
+
+private const val FOCUS_VEIL_ALPHA = 0.12f
 
 @Composable
 fun Skin.tokens(): SkinTokens = when (this) {
@@ -443,7 +494,7 @@ internal fun Modifier.skinShadow(shape: Shape, panel: Boolean = false): Modifier
         Skin.GLASSMORPHISM -> shadow(skin.tokens().shadow, shape, clip = false)
         // Round the glass, never under it; see [glassShadow].
         Skin.LIQUID_GLASS -> glassShadow(LocalSkinSettings.current.let { look ->
-            if (look.liquidStyle == LiquidStyle.MORNYE && look.mornye.smoothCorners) mornyeSquircle(lensSafeShape(shape))
+            if (look.smoothCorners) mornyeSquircle(lensSafeShape(shape))
             else lensSafeShape(shape)
         }, liquidGlassPaneShadow(panel),
             dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f)

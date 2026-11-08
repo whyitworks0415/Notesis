@@ -134,7 +134,10 @@ fun Modifier.liquidGlass(
         val square = shape == RoundedCornerShape(0.dp)
         // A round corner, as the toolbar and every popup draw theirs: one
         // shape family across the skins, and an outline Backdrop can take.
-        val liquidShape = if (circle || square) shape else RoundedCornerShape(settings.glassCorner.dp)
+        // A popup pouring out of its button brings a corner that changes as
+        // it grows (see PopupReveal.kt); that one is kept as it is.
+        val growing = (shape as? androidx.compose.foundation.shape.CornerBasedShape)?.topStart is LiveCornerSize
+        val liquidShape = if (circle || square || growing) shape else RoundedCornerShape(settings.glassCorner.dp)
         // No lens over a resting surface. The lens is a shader over the
         // element's whole drawing, so it ran every icon, line of text and
         // control on a panel through refraction and resampling, and they came

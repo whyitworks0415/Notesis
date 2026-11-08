@@ -128,46 +128,28 @@ internal class OpenProfile(
     val widthDelayMs: Int = 0,
     /** The width's own close, when it folds ahead of the height; null is [close]. */
     val closeWidth: AnimationSpec<Float>? = null,
+    /**
+     * The glass grows and the content stays at its size, seen only where the
+     * glass has reached (see PopupReveal.kt), rather than the whole popup
+     * being scaled.
+     */
+    val reveal: Boolean = false,
 )
 
 private val EaseIn = CubicBezierEasing(0.42f, 0f, 1f, 1f)
-private val LinearToEaseOut = CubicBezierEasing(0.35f, 0.91f, 0.33f, 0.97f)
 
 /** The opening under the recipe in use, or null for the app's own. */
 internal fun SkinSettings.openProfile(): OpenProfile? {
     if (projectMotion?.open != true) return null
     return when (liquidStyle) {
-        // GlassMorphController: open on stiffness 120, damping 16 (ζ ≈ 0.73),
-        // close on 200 / 21 thrown back at −3.2. The size follows
-        // linearToEaseOut of the clamped value; past 1 the body swells by a
-        // tenth of the overshoot, below 0 it squeezes by 0.55 of it.
-        LiquidStyle.IOS -> OpenProfile(
-            open = spring(dampingRatio = (16.0 / (2.0 * sqrt(120.0))).toFloat(), stiffness = 120f),
-            close = spring(dampingRatio = (21.0 / (2.0 * sqrt(200.0))).toFloat(), stiffness = 200f),
-            startScale = POPUP_MORPH_START,
-            closeScale = POPUP_MORPH_START,
-            alpha = { p -> (p / 0.3f).coerceIn(0f, 1f) },
-            closeVelocity = -3.2f,
-            scaleOf = { p, s ->
-                val clamped = p.coerceIn(0f, 1f)
-                val under = if (p < 0f) p else 0f
-                val sizeT = LinearToEaseOut.transform(clamped) + under
-                val container = when {
-                    p > 1f -> 1f + (p - 1f) * 0.10f
-                    p < 0f -> 1f + p * 0.55f
-                    else -> 1f
-                }
-                ((s + (1f - s) * sizeT) * container).coerceAtLeast(0.01f)
-            },
-        )
+        // iOS and Mornye together: its menus pour out of the button as
+        // Mornye's do, the glass growing round content that stays its size.
+        LiquidStyle.IOS -> PourOpen
         // Mornye's context menu: poured out of the button (see [PourOpen]).
         LiquidStyle.MORNYE -> PourOpen
         LiquidStyle.NOTESIS -> null
     }
 }
-
-/** How small a morphing menu starts: the trigger's size against the menu's, about. */
-private const val POPUP_MORPH_START = 0.06f
 
 /** Mornye's press spring: stiffness 420, damping 24, so a release overshoots a little and settles. */
 internal const val MORNYE_PRESS_STIFFNESS = 420f
@@ -214,6 +196,7 @@ internal val PourOpen = OpenProfile(
     scaleOf = ::pourScale,
     widthDelayMs = 50,
     closeWidth = tween(200, easing = EaseInCubic),
+    reveal = true,
 )
 
 /** A 44-point drop against a panel of about 360: where a poured menu starts. */

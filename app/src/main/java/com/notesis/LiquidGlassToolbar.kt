@@ -817,6 +817,10 @@ internal fun LiquidGlassToolbar(
                             CompositionLocalProvider(LocalLiquidGlassHostBackdrop provides null,
                                 LocalLiquidGlassBackdrop provides popupBackdrop) {
                               ProvideMovingBackdrops(menuGrowth.motion) {
+                                val reveal = menuGrowth.profile?.reveal == true && popupMotion
+                                val outerPx = with(androidx.compose.ui.platform.LocalDensity.current) { outer.toPx() }
+                                val revealGeo = remember { RevealGeometry() }
+                                revealGeo.restingCornerPx = outerPx
                                 val paneModifier = Modifier.width(minOf(340.dp,
                                     (LocalConfiguration.current.screenWidthDp - 24).coerceAtLeast(140).dp)).heightIn(max = maxHeight)
                                 val menuBody: @Composable () -> Unit = {
@@ -844,7 +848,21 @@ internal fun LiquidGlassToolbar(
                                 Box(Modifier.growOutOf({ anchor }, menuGrowth)
                                     .dismissInRoom(POPUP_SHADOW_ROOM) { open = false }
                                     .padding(POPUP_SHADOW_ROOM)) {
-                                    if (skin == Skin.LIQUID_GLASS) {
+                                    if (reveal) {
+                                        // Poured out of the button: the glass grows from a drop
+                                        // and the menu on it stays its size, seen where the glass
+                                        // has reached (see PopupReveal.kt). Its shadow is cast
+                                        // outside the morph, whose lens layer would cut it off.
+                                        Box(paneModifier.revealFrame(revealGeo) { anchor }
+                                            .skinShadow(revealGeo.shape, panel = true)
+                                            .then(if (skin == Skin.LIQUID_GLASS) Modifier.liquidGlassMorph(page) else Modifier)
+                                            .skinMaterial(revealGeo.shape, panel = true, shadow = false, role = ChromeRole.POPUP)
+                                            .clip(revealGeo.shape)
+                                            .revealContent(revealGeo, menuGrowth)) {
+                                            if (skin != Skin.LIQUID_GLASS) BlurBehind()
+                                            menuBody()
+                                        }
+                                    } else if (skin == Skin.LIQUID_GLASS) {
                                         // The menu is the same liquid glass as the bar it came
                                         // from, looking at the page through the lens. Its shadow
                                         // is cast outside the morph, whose lens layer would cut
@@ -1374,6 +1392,11 @@ internal fun Modifier.growOutOf(anchor: () -> Offset?, growth: PopupGrowth): Mod
             val w = growth.width.value
             val h = growth.height.value
             val profile = growth.profile
+            if (profile?.reveal == true) {
+                // Nothing scaled: the pane's glass grows itself and what is on
+                // it stays its size (see PopupReveal.kt).
+                return@graphicsLayer
+            }
             if (profile == null) {
                 alpha = popupGrowAlpha(w, h)
                 scaleX = popupGrowScale(w, POPUP_START_SCALE_X)

@@ -121,4 +121,41 @@ class MornyeLookTest {
         val off = MornyeGlass(smoothCorners = false)
         assertEquals(off, MornyeGlass.fromJson(off.toJson()))
     }
+
+    @Test fun `iOS takes Mornye's colours with its own blue`() {
+        val ios = SkinSettings(liquidStyle = LiquidStyle.IOS)
+        assertEquals(MornyeAccent.BLUE, ios.ios.accent)
+        val scheme = lookScheme(null, Skin.LIQUID_GLASS, ios)
+        assertEquals(MornyeAccent.BLUE.light, scheme.primary.toArgb())
+        assertEquals(Color(0xFFF2F2F7), scheme.surfaceContainer)
+        assertEquals(true, ios.smoothCorners)
+        assertEquals(false, SkinSettings().smoothCorners)
+        val green = ios.copy(ios = ios.ios.copy(accent = MornyeAccent.GREEN))
+        assertEquals(MornyeAccent.GREEN.light, lookScheme(null, Skin.LIQUID_GLASS, green).primary.toArgb())
+        assertEquals(green.ios, IosGlass.fromJson(green.ios.toJson()))
+    }
+
+    @Test fun `a revealing popup's glass runs from a drop at the button to the whole panel`() {
+        // Shut: a 44 px drop centred on the button at (100, 0).
+        val shut = revealRect(100f, 0f, 300f, 400f, 44f, 0f, 0f)
+        assertEquals(RevealRect(78f, -22f, 44f, 44f), shut)
+        // Open: the whole room, from its corner.
+        assertEquals(RevealRect(0f, 0f, 300f, 400f), revealRect(100f, 0f, 300f, 400f, 44f, 1f, 1f))
+        // Half way down but not yet across: tall and narrow.
+        val tall = revealRect(100f, 0f, 300f, 400f, 44f, 0f, 0.5f)
+        assertEquals(44f, tall.width, 0f)
+        assertEquals(222f, tall.height, 0.01f)
+        // Past full, it runs on by only a third or so of the spring's overshoot.
+        assertEquals(300f + 256f * 0.1f * POUR_OVERSHOOT_KEPT, revealRect(100f, 0f, 300f, 400f, 44f, 1.1f, 1f).width, 0.01f)
+    }
+
+    @Test fun `the drop is round and its corner tightens to the panel's as it spreads`() {
+        assertEquals(22f, revealCorner(44f, 44f, 28f, 0f), 0f)
+        assertEquals(28f, revealCorner(300f, 400f, 28f, 1f), 0f)
+        assertTrue(revealCorner(200f, 300f, 28f, 0.5f) in 28f..100f)
+        // What is on the glass waits, then fades up.
+        assertEquals(0f, revealFade(0.2f, 0.5f), 0f)
+        assertEquals(1f, revealFade(1f, 1f), 0f)
+        assertEquals(0.5f, revealFade(0.55f, 1f), 0.001f)
+    }
 }

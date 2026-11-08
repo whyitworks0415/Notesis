@@ -324,7 +324,7 @@ class MainActivity : ComponentActivity() {
             // nothing once and not nothing on every recomposition.
             val darkMode = look.themeMode == AppThemeMode.DARK
             val scheme = remember(skin, look.accent, look.highContrast, darkMode, look.liquidStyle,
-                look.mornye.accent, look.dynamicColor, look.amoled) {
+                look.mornye.accent, look.ios.accent, look.dynamicColor, look.amoled) {
                 lookScheme(this@MainActivity, skin, look)
             }
             // edge-to-edge 시스템 바의 아이콘도 앱 모드와 동시에 바꿉니다.

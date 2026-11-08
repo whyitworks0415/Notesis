@@ -117,6 +117,10 @@ internal fun ToolPanel(
         // on the same round outline, in every skin (see [chromeCorner]).
         val corner = skin.tokens().corner
         val shape = RoundedCornerShape(corner)
+        val reveal = state.animate && growth.profile?.reveal == true
+        val revealGeo = remember { RevealGeometry() }
+        revealGeo.restingCornerPx = with(androidx.compose.ui.platform.LocalDensity.current) { corner.toPx() }
+        val paneShape = if (reveal) revealGeo.shape else shape
         val tallest = LocalConfiguration.current.screenHeightDp.dp * 0.9f
         // Where the panel's top first lands, kept there: a part opening inside
         // it, or another tab of it, makes it longer downwards rather than
@@ -139,10 +143,14 @@ internal fun ToolPanel(
                 .widthIn(max = maxWidth)
                 .fillMaxWidth()
                 .heightIn(max = tallest)
+                // Poured out of the point under the glass looks: the glass
+                // grows and what is on it stays its size (see PopupReveal.kt).
+                .then(if (reveal) Modifier.revealFrame(revealGeo) { anchor } else Modifier)
                 // Liquid glass under the glass skin, the same lens as the bar
                 // it came from; frost or a solid panel under the others.
-                .skinMaterial(shape, panel = true, role = ChromeRole.POPUP)
-                .clip(shape)
+                .skinMaterial(paneShape, panel = true, role = ChromeRole.POPUP)
+                .clip(paneShape)
+                .then(if (reveal) Modifier.revealContent(revealGeo, growth) else Modifier)
                 // No size animation of its own: a part that opens inside grows
                 // on one curve and the panel, measured round it, comes with it.
                 .verticalScroll(rememberScrollState())

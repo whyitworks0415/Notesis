@@ -719,7 +719,12 @@ private fun GlassGroup(skin: Skin, settings: SkinSettings, onChange: (SkinSettin
         return
     }
     when (settings.liquidStyle) {
-        LiquidStyle.IOS -> { IosGlassControls(settings.ios) { onChange(settings.copy(ios = it)) }; return }
+        LiquidStyle.IOS -> {
+            IosGlassControls(settings.ios, settings.accent, settings.themeMode == AppThemeMode.DARK) {
+                onChange(settings.copy(ios = it))
+            }
+            return
+        }
         LiquidStyle.MORNYE -> {
             MornyeGlassControls(settings.mornye, settings.accent, settings.themeMode == AppThemeMode.DARK) {
                 onChange(settings.copy(mornye = it))
@@ -768,8 +773,13 @@ private fun ProjectMotionControls(m: ProjectMotion, project: String, onChange: (
 
 /** liquid_glass_widgets' iOS material, under the names its LiquidGlassSettings take. */
 @Composable
-private fun IosGlassControls(g: IosGlass, onChange: (IosGlass) -> Unit) {
+private fun IosGlassControls(g: IosGlass, appAccent: Int, dark: Boolean, onChange: (IosGlass) -> Unit) {
     val d = IosGlass()
+    SettingsNote("iOS together with Mornye: iOS's glass, with Mornye's colours, its continuous corners and its " +
+        "menus that pour out of their button.")
+    MornyeAccentPicker(g.accent, appAccent, dark) { onChange(g.copy(accent = it)) }
+    SettingsToggle("Smooth corners", g.smoothCorners, { onChange(g.copy(smoothCorners = it)) },
+        hint = "Mornye's squircle: the corner eases out of the straight edge instead of turning on a circle.")
     SettingsNote("From liquid_glass_widgets 1.16.1 (MIT), whose iOS 27 regular presets were measured against the " +
         "native control: a frosted body over a lightly blurred page, a paraxial rim and the native springs. " +
         "The defaults are set by eye from there. Dark mode takes its dark preset, moved in proportion to what is set here.")
@@ -822,8 +832,8 @@ private fun IosGlassControls(g: IosGlass, onChange: (IosGlass) -> Unit) {
         default = d.corner, note = "29 by default; its GlassMenu's is 32.",
     ) { onChange(g.copy(corner = it)) }
     ProjectMotionControls(g.motion, "liquid_glass_widgets") { onChange(g.copy(motion = it)) }
-    OutlinedButton(onClick = { onChange(d.copy(motion = g.motion)) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to the defaults") }
-    OutlinedButton(onClick = { onChange(IosGlass.PRESET.copy(motion = g.motion)) }, modifier = Modifier.heightIn(min = 48.dp)) {
+    OutlinedButton(onClick = { onChange(d.copy(motion = g.motion, accent = g.accent)) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to the defaults") }
+    OutlinedButton(onClick = { onChange(IosGlass.PRESET.copy(motion = g.motion, accent = g.accent)) }, modifier = Modifier.heightIn(min = 48.dp)) {
         Text("Use the ios27Light preset as measured")
     }
 }
@@ -899,13 +909,9 @@ private fun lightAngleLabel(angle: Float): String = when (angle.roundToInt()) {
     else -> "%.0f°".format(angle)
 }
 
-/** Mornye's glass: how clear it is, its rim, its corner and the accent its colours are built from. */
+/** The accent the Mornye and iOS looks build their colours from: iOS's system colours, or the app's own. */
 @Composable
-private fun MornyeGlassControls(m: MornyeGlass, appAccent: Int, dark: Boolean, onChange: (MornyeGlass) -> Unit) {
-    val d = MornyeGlass()
-    SettingsNote("From Mornye (LGPL-3.0), written again from its numbers: a white body that clears as the clarity " +
-        "rises, a gentle lens, a fine lit rim and iOS's grouped colours. Bars take its clear tint, panels and menus " +
-        "its stronger one so their words read.")
+private fun MornyeAccentPicker(chosen: MornyeAccent, appAccent: Int, dark: Boolean, onPick: (MornyeAccent) -> Unit) {
     SettingsSectionHeader("Accent")
     Row(
         Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -913,7 +919,7 @@ private fun MornyeGlassControls(m: MornyeGlass, appAccent: Int, dark: Boolean, o
         verticalAlignment = Alignment.CenterVertically,
     ) {
         MornyeAccent.entries.forEach { accent ->
-            val picked = m.accent == accent
+            val picked = chosen == accent
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(Ui.Space.xs)) {
                 Box(
                     Modifier
@@ -922,13 +928,23 @@ private fun MornyeGlassControls(m: MornyeGlass, appAccent: Int, dark: Boolean, o
                         .background(Color(accent.argb(dark, appAccent)).copy(alpha = 1f))
                         .border(if (picked) 3.dp else 1.dp,
                             if (picked) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline, CircleShape)
-                        .clickable(onClickLabel = accent.label) { onChange(m.copy(accent = accent)) },
+                        .clickable(onClickLabel = accent.label) { onPick(accent) },
                 )
                 Text(accent.label, style = MaterialTheme.typography.labelSmall)
             }
         }
     }
     SettingsNote("App accent follows the colour set in Colours below.")
+}
+
+/** Mornye's glass: how clear it is, its rim, its corner and the accent its colours are built from. */
+@Composable
+private fun MornyeGlassControls(m: MornyeGlass, appAccent: Int, dark: Boolean, onChange: (MornyeGlass) -> Unit) {
+    val d = MornyeGlass()
+    SettingsNote("From Mornye (LGPL-3.0), written again from its numbers: a white body that clears as the clarity " +
+        "rises, a gentle lens, a fine lit rim and iOS's grouped colours. Bars take its clear tint, panels and menus " +
+        "its stronger one so their words read.")
+    MornyeAccentPicker(m.accent, appAccent, dark) { onChange(m.copy(accent = it)) }
     SettingsSectionHeader("Glass")
     AppearanceSlider("Clarity", "%.0f%%".format(m.clarity * 100), m.clarity, 0f..1f, step = 0.05f, default = d.clarity,
         note = "Higher shows more of the page and blurs it less. Below 20% the glass is a plain tinted surface.",
@@ -963,8 +979,8 @@ private fun ColorsGroup(skin: Skin, settings: SkinSettings, onChange: (SkinSetti
             disabledReason = if (settings.themeMode != AppThemeMode.DARK) "Used in dark mode" else null,
         )
     }
-    if (skin == Skin.LIQUID_GLASS && settings.liquidStyle == LiquidStyle.MORNYE) {
-        SettingsNote("Mornye builds its colours from its own accent, chosen in Glass. The ink below still applies.")
+    if (skin == Skin.LIQUID_GLASS && settings.liquidStyle != LiquidStyle.NOTESIS) {
+        SettingsNote("${settings.liquidStyle.label} builds its colours from its own accent, chosen in Glass. The ink below still applies.")
     }
     SettingsSectionHeader("Cards and buttons")
     ColorSlot.entries.forEach { slot ->

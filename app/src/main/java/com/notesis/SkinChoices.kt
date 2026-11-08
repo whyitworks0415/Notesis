@@ -201,7 +201,12 @@ internal fun SkinPreview(skin: Skin, modifier: Modifier, style: LiquidStyle = Li
             }
         }
         // The tools, the first one picked, in Mornye's red where that is the look.
-        val picked = if (skin == Skin.LIQUID_GLASS && style == LiquidStyle.MORNYE) Color(MornyeAccent.RED.light) else accent
+        val picked = when {
+            skin != Skin.LIQUID_GLASS -> accent
+            style == LiquidStyle.MORNYE -> Color(MornyeAccent.RED.light)
+            style == LiquidStyle.IOS -> Color(MornyeAccent.BLUE.light)
+            else -> accent
+        }
         val step = bar.width / 4f
         for (i in 0 until 4) {
             val c = Offset(bar.left + step * (i + 0.5f), bar.center.y)

@@ -43,7 +43,7 @@ import org.json.JSONObject
  */
 enum class LiquidStyle(val label: String, val blurb: String) {
     NOTESIS("Liquid glass", "A lens that bends the page. The selection glides after your fingertip."),
-    IOS("iOS", "The iOS material as liquid_glass_widgets measured it: a frosted body, a thin bright rim, and the native springs."),
+    IOS("iOS", "iOS's glass as liquid_glass_widgets measured it, with Mornye's colours, continuous corners and pouring menus."),
     MORNYE("Mornye", "Mornye's glass: a clear tinted body, a fine lit rim, iOS colours and an accent of your choice."),
     ;
 
@@ -126,6 +126,10 @@ data class IosGlass(
     val lightAngle: Float = 90f,
     /** The rim lit evenly all the way round rather than where it faces the light. */
     val rimAllRound: Boolean = false,
+    /** The colour its theme is built from, as Mornye's: iOS's own blue unless chosen. */
+    val accent: MornyeAccent = MornyeAccent.BLUE,
+    /** Mornye's continuous corners (see [MornyeSquircleShape]) rather than round ones. */
+    val smoothCorners: Boolean = true,
     val motion: ProjectMotion = ProjectMotion(),
 ) {
     fun toJson(): JSONObject = JSONObject()
@@ -136,6 +140,7 @@ data class IosGlass(
         .put("edgeAbsorption", edgeAbsorption.toDouble()).put("dispersion", dispersion.toDouble())
         .put("corner", corner.toDouble()).put("motion", motion.toJson())
         .put("lightAngle", lightAngle.toDouble()).put("rimAllRound", rimAllRound)
+        .put("accent", accent.name).put("smoothCorners", smoothCorners)
 
     /** The bevel's depth in dp. */
     val bevelDp: Float get() = thickness / 3f
@@ -188,6 +193,8 @@ data class IosGlass(
                 corner = json.f("corner", d.corner, SkinSettings.CORNER_RANGE),
                 lightAngle = json.f("lightAngle", d.lightAngle, LIGHT_ANGLE_RANGE),
                 rimAllRound = json.optBoolean("rimAllRound", d.rimAllRound),
+                accent = MornyeAccent.fromName(json.optString("accent", d.accent.name)),
+                smoothCorners = json.optBoolean("smoothCorners", d.smoothCorners),
                 motion = ProjectMotion.fromJson(json.optJSONObject("motion")),
             )
         }
@@ -252,7 +259,8 @@ internal fun Modifier.styledLiquidGlass(
     exportedBackdrop: LayerBackdrop? = null,
     amount: Float = 1f,
 ): Modifier = when (style) {
-    LiquidStyle.IOS -> iosGlass(settings.ios, shape, backdrop, dark, shadows, rim, exportedBackdrop, amount)
+    LiquidStyle.IOS -> iosGlass(settings.ios, if (settings.ios.smoothCorners) mornyeSquircle(shape) else shape,
+        backdrop, dark, shadows, rim, exportedBackdrop, amount)
     LiquidStyle.MORNYE -> mornyeGlass(settings.mornye, shape, backdrop, panel, dark, shadows, rim, exportedBackdrop, amount)
     LiquidStyle.NOTESIS -> this
 }
@@ -264,6 +272,10 @@ internal fun Modifier.styledLiquidGlass(
  */
 private fun cornerOf(shape: Shape, size: Size, layoutDirection: LayoutDirection, density: Density): Float {
     if (size.isUnspecified || !(size.width > 0f) || !(size.height > 0f)) return 0f
+    // A squircle draws as a path but still names its corner, which the lens bends along.
+    if (shape is androidx.compose.foundation.shape.CornerBasedShape) {
+        return runCatching { shape.topStart.toPx(size, density) }.getOrNull()?.takeIf { it.isFinite() } ?: 0f
+    }
     return when (val outline = runCatching { shape.createOutline(size, layoutDirection, density) }.getOrNull()) {
         is Outline.Rounded -> outline.roundRect.topLeftCornerRadius.x.takeIf { it.isFinite() } ?: 0f
         else -> 0f

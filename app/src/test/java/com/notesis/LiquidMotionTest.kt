@@ -3,6 +3,8 @@ package com.notesis
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class LiquidMotionTest {
@@ -59,16 +61,11 @@ class LiquidMotionTest {
         assertEquals(420.0 to 24.0, m.liftX)
     }
 
-    @Test fun `the iOS menu swells a little past its size and squeezes on the way back`() {
-        val open = ios.openProfile()!!
-        assertEquals(1f, open.scaleOf(1f, 0.06f), 0.0001f)
-        assertEquals(1.005f, open.scaleOf(1.05f, 0.06f), 0.0001f)
-        // At rest closed it is the trigger's size; below 0 it is squeezed, never inverted.
-        assertEquals(0.06f, open.scaleOf(0f, 0.06f), 0.0001f)
-        assertEquals(true, open.scaleOf(-0.2f, 0.06f) > 0f)
-        assertEquals(-3.2f, open.closeVelocity, 0f)
-        // Mornye's own opening is the pour.
+    @Test fun `iOS and Mornye pour their menus out, revealing content that keeps its size`() {
+        assertEquals(PourOpen, ios.openProfile())
         assertEquals(PourOpen, SkinSettings(liquidStyle = LiquidStyle.MORNYE).openProfile())
+        assertTrue(PourOpen.reveal)
+        assertFalse(MaterialOpen.reveal)
     }
 
     @Test fun `a poured menu runs just past its size and the width follows the height`() {
@@ -90,10 +87,9 @@ class LiquidMotionTest {
         assertEquals(PourOpen, popupOpening(Skin.GLASSMORPHISM, SkinSettings()))
         assertEquals(PourOpen, popupOpening(Skin.LIQUID_GLASS, SkinSettings()))
         assertEquals(PourOpen, popupOpening(Skin.LIQUID_GLASS, SkinSettings(liquidStyle = LiquidStyle.MORNYE)))
-        // iOS keeps its own while its switch is on, and pours when it is off.
+        // iOS pours whether its own switch is on or off.
         val ios = SkinSettings(liquidStyle = LiquidStyle.IOS)
-        assertEquals(ios.openProfile()!!.startScale, popupOpening(Skin.LIQUID_GLASS, ios).startScale, 0f)
-        assertEquals(-3.2f, popupOpening(Skin.LIQUID_GLASS, ios).closeVelocity, 0f)
+        assertEquals(PourOpen, popupOpening(Skin.LIQUID_GLASS, ios))
         val iosOff = ios.copy(ios = ios.ios.copy(motion = ProjectMotion(open = false)))
         assertEquals(PourOpen, popupOpening(Skin.LIQUID_GLASS, iosOff))
         // Material grows from 0.8 and fades in; it never overshoots.

@@ -197,8 +197,7 @@ internal fun Modifier.liquidGlassSurface(
 ): Modifier {
     // Mornye's continuous corners whether or not the lens can run, so its
     // panes keep one outline when the effects are off.
-    val shape = if (settings.liquidStyle == LiquidStyle.MORNYE && settings.mornye.smoothCorners &&
-        LocalSkin.current == Skin.LIQUID_GLASS) mornyeSquircle(paneShape) else paneShape
+    val shape = if (settings.smoothCorners && LocalSkin.current == Skin.LIQUID_GLASS) mornyeSquircle(paneShape) else paneShape
     val scheme = MaterialTheme.colorScheme
     val dark = scheme.surface.luminance() < 0.5f
     val backdrop = LocalLiquidGlassBackdrop.current
