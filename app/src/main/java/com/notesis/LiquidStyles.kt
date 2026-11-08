@@ -38,7 +38,7 @@ import org.json.JSONObject
  *   clarity, rim and press, written again here from its numbers rather than
  *   copied (see [MornyeGlass]). It brings its own iOS palette and accent.
  *
- * Saved by [name]. Kyant0's and QWEA0's recipes were here until 0.91; a
+ * Saved by [name]. Kyant0's and QWEA0's recipes were here until 0.90.10; a
  * setting saved with either comes back as [NOTESIS].
  */
 enum class LiquidStyle(val label: String, val blurb: String) {
