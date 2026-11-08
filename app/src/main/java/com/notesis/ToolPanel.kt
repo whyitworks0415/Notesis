@@ -148,7 +148,6 @@ internal fun ToolPanel(
                 // it came from; frost or a solid panel under the others.
                 .skinMaterial(shape, panel = true, role = ChromeRole.POPUP)
                 .clip(shape)
-                .then(if (reveal) Modifier.revealFade(growth) else Modifier)
                 // No size animation of its own: a part that opens inside grows
                 // on one curve and the panel, measured round it, comes with it.
                 .verticalScroll(rememberScrollState())

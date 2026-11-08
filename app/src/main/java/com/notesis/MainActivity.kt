@@ -5837,22 +5837,9 @@ private fun NoteScreen(
             }
         }
 
-        // The whiteboard's sides, set by hand: a grip at each lower edge, pulled
-        // outwards for more room beside the pages and inwards for less.
-        if (whiteboard && !collapsed) {
-            listOf(Alignment.BottomStart to -1f, Alignment.BottomEnd to 1f).forEach { (corner, outward) ->
-                WhiteboardGrip(
-                    onDrag = { dx ->
-                        val width = canvas?.noteWidthOnScreen()?.takeIf { it > 1f } ?: return@WhiteboardGrip
-                        whiteboardMargin = (whiteboardMargin + outward * dx / width)
-                            .coerceIn(BOARD_MARGIN_MIN, BOARD_MARGIN_MAX)
-                    },
-                    onDragEnd = { penStore.whiteboardMargin = whiteboardMargin },
-                    modifier = Modifier.align(corner).awayUpwards(chromeAway)
-                        .windowInsetsPadding(ChromeInsets).padding(bottom = 128.dp),
-                )
-            }
-        }
+        // The whiteboard's room either side is set in the note's view settings
+        // ("Room either side"); the two grips that also set it at the lower
+        // corners read as stray grey bars and are gone.
 
         // The smaller bars have no top row, so no way back: a round button of
         // the bar's own material in the top corner, the height of the bar's
@@ -7024,15 +7011,10 @@ private fun NoteScreen(
         }
         // The layer panel slides in from the end, like the page sidebar; the
         // canvas saves every change itself.
-        // On the sidebar's springs, and counted as the chrome moving, so the
-        // page behind is not recorded again on every frame of the slide.
-        val layersShown = remember { androidx.compose.animation.core.MutableTransitionState(false) }
-        layersShown.targetState = showLayers && canvas != null
-        HoldChromeMotion(!layersShown.isIdle)
-        androidx.compose.animation.AnimatedVisibility(
-            visibleState = layersShown,
-            enter = slideInHorizontally(sidebarOpenSpring(IntOffset.VisibilityThreshold)) { it },
-            exit = slideOutHorizontally(sidebarCloseSpring(IntOffset.VisibilityThreshold)) { it },
+        // On the sidebar's springs, moved by its layer, its glass not blurred
+        // again on each frame of the slide (see [SlideInPanel]).
+        SlideInPanel(
+            visible = showLayers && canvas != null,
             modifier = Modifier.align(Alignment.CenterEnd).padding(end = webOverlap),
         ) {
             canvas?.let { view -> LayerPanel(view, onClose = { showLayers = false }) }
@@ -7187,13 +7169,9 @@ private fun NoteScreen(
         Isolated {
         // Opened by hand, it closes the usual way again.
         LaunchedEffect(showPages) { if (showPages) pagesClosedByPen = false }
-        val pagesShown = remember { androidx.compose.animation.core.MutableTransitionState(showPages) }
-        pagesShown.targetState = showPages
-        HoldChromeMotion(!pagesShown.isIdle)
-        androidx.compose.animation.AnimatedVisibility(
-            visibleState = pagesShown,
-            enter = slideInHorizontally(sidebarOpenSpring(IntOffset.VisibilityThreshold)) { it },
-            exit = if (pagesClosedByPen) ExitTransition.None else slideOutHorizontally(sidebarCloseSpring(IntOffset.VisibilityThreshold)) { it },
+        SlideInPanel(
+            visible = showPages,
+            instantExit = pagesClosedByPen,
             modifier = Modifier.align(Alignment.CenterEnd).padding(end = webOverlap),
         ) {
             // Split, the panel can be about any part's note (see sources below).
@@ -8999,27 +8977,6 @@ internal val WHITEBOARD_COLORS = listOf(
     0xFF2E3A33.toInt() to "Chalkboard",
     0xFF1C1D20.toInt() to "Dark",
 )
-
-/** A small pill at the screen's edge that a finger drags sideways; see the whiteboard's sides. */
-@Composable
-internal fun WhiteboardGrip(onDrag: (Float) -> Unit, onDragEnd: () -> Unit, modifier: Modifier = Modifier) {
-    val ink = MaterialTheme.colorScheme.onSurface
-    Box(
-        modifier
-            .size(width = 28.dp, height = 72.dp)
-            .pointerInput(Unit) {
-                detectHorizontalDragGestures(onDragEnd = onDragEnd, onDragCancel = onDragEnd) { change, dx ->
-                    change.consume()
-                    onDrag(dx)
-                }
-            }
-            .semantics { contentDescription = "Whiteboard width" },
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(Modifier.size(width = 6.dp, height = 48.dp).clip(RoundedCornerShape(3.dp))
-            .background(ink.copy(alpha = 0.28f)))
-    }
-}
 
 /**
  * Paper sizes as other apps count them - pixels at 300 dpi - so a size typed

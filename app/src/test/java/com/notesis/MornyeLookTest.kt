@@ -135,39 +135,30 @@ class MornyeLookTest {
         assertEquals(green.ios, IosGlass.fromJson(green.ios.toJson()))
     }
 
-    @Test fun `a popup comes out of the button narrow at the button and wide at its far end`() {
+    @Test fun `a popup comes out of the button narrow there, round, and ends as the panel`() {
         // A 300 x 400 panel under a button at (100, -20): it comes out of the top edge.
-        val shut = revealOutline(100f, -20f, 300f, 400f, 44f, 28f, 0f, 0f).points
-        // Shut, it is the button's end: 44 wide at the top, 44 down.
-        assertEquals(78f, shut[0], 0.01f); assertEquals(0f, shut[1], 0.01f)
-        assertEquals(122f, shut[2], 0.01f)
-        assertEquals(44f, shut[5], 0.01f)
-        // Run out and half spread: the far edge is wider than the near one.
+        val shut = revealOutline(100f, -20f, 300f, 400f, 44f, 28f, 0f, 0f)
+        // Shut, it is a round end about the button: 44 across, as round as it can be.
+        assertEquals(44f, shut.points[2] - shut.points[0], 0.01f)
+        assertEquals(22f, shut.radius, 0.01f)
+        // Run out and half spread: wider at the far end than at the button.
         val half = revealOutline(100f, -20f, 300f, 400f, 44f, 28f, 1f, 0.5f).points
-        val nearWidth = half[2] - half[0]
-        val farWidth = half[4] - half[6]
-        assertTrue(farWidth > nearWidth)
-        assertEquals(400f, half[5], 0.01f)
-        // Open, it is the panel.
+        assertTrue(half[4] - half[6] > half[2] - half[0])
+        // Open, it is the panel with the panel's corners.
         val open = revealOutline(100f, -20f, 300f, 400f, 44f, 28f, 1f, 1f)
-        assertEquals(0f, open.points[0], 0.01f); assertEquals(300f, open.points[2], 0.01f)
+        assertEquals(0f, open.points[0], 0.01f)
+        assertEquals(0f, open.points[1], 0.01f)
+        assertEquals(300f, open.points[2], 0.01f)
         assertEquals(400f, open.points[5], 0.01f)
         assertEquals(28f, open.radius, 0.01f)
-        // Shut, its corners make a round end.
-        assertEquals(22f, revealOutline(100f, -20f, 300f, 400f, 44f, 28f, 0f, 0f).radius, 0.01f)
-        // From below it comes up out of the bottom edge; from the side, out of that side.
+        // Rounder than the bare trapezoid on the way: the drop's share keeps its corners large.
+        val mid = revealOutline(100f, -20f, 300f, 400f, 44f, 28f, 0.6f, 0.3f)
+        assertTrue(mid.radius > 22f * TRAPEZOID_SHARE)
+        // From below it comes up; from the side, out of that side.
         val up = revealOutline(100f, 420f, 300f, 400f, 44f, 28f, 0.5f, 0f).points
-        assertEquals(400f, up[1], 0.01f)
-        assertTrue(up[5] < 400f)
+        assertTrue(up[5] < up[1])
         val side = revealOutline(-20f, 100f, 300f, 400f, 44f, 28f, 0.5f, 0f).points
-        assertEquals(0f, side[0], 0.01f)
-        assertTrue(side[4] > 0f)
+        assertTrue(side[4] > side[0])
     }
 
-    @Test fun `what is on the glass waits for it`() {
-        // What is on the glass waits, then fades up.
-        assertEquals(0f, revealFade(0.2f, 0.5f), 0f)
-        assertEquals(1f, revealFade(1f, 1f), 0f)
-        assertEquals(0.5f, revealFade(0.55f, 1f), 0.001f)
-    }
 }

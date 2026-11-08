@@ -6,7 +6,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.RectangleShape
@@ -52,13 +57,26 @@ internal fun revealOutline(
     val e = keptOvershoot(extent)
     val s = keptOvershoot(spread)
     val near = (s * s).coerceAtMost(s)
+    // Mornye's drop, the rounder of the two: a box growing out of a round end
+    // at the anchor to the panel, its corners round until it has spread.
+    val boxW = max(lerp(start, width, s), 0f)
+    val boxH = max(lerp(start, height, e), 0f)
+    val boxL = (anchorX - start / 2f) * (1f - s)
+    val boxT = (anchorY - start / 2f) * (1f - e)
+    val boxR = boxL + boxW
+    val boxB = boxT + boxH
+    val half = min(boxW, boxH) / 2f
+    val t = s.coerceIn(0f, 1f)
+    val boxRadius = min(half, half + (corner - half) * t * t * t)
     // Which edge it comes out of: the one the anchor is beyond, or, from inside
     // the panel, it opens all round from the anchor.
     val above = anchorY <= 0f
     val below = anchorY >= height
     val before = anchorX <= 0f
     val after = anchorX >= width
-    val radius = lerp(start / 2f, corner, s.coerceIn(0f, 1f))
+    val trapRadius = lerp(start / 2f, corner, t)
+    val trap: FloatArray
+    val box: FloatArray
     if (above || below) {
         val centre = anchorX.coerceIn(start / 2f, max(start / 2f, width - start / 2f))
         val reach = lerp(start, height, e)
@@ -68,12 +86,13 @@ internal fun revealOutline(
         val farCentre = lerp(centre, width / 2f, s)
         val nearY = if (above) 0f else height
         val farY = if (above) reach else height - reach
-        return RevealOutline(floatArrayOf(
+        trap = floatArrayOf(
             nearCentre - nearHalf, nearY, nearCentre + nearHalf, nearY,
             farCentre + farHalf, farY, farCentre - farHalf, farY,
-        ), radius)
-    }
-    if (before || after) {
+        )
+        box = if (above) floatArrayOf(boxL, boxT, boxR, boxT, boxR, boxB, boxL, boxB)
+            else floatArrayOf(boxL, boxB, boxR, boxB, boxR, boxT, boxL, boxT)
+    } else if (before || after) {
         val centre = anchorY.coerceIn(start / 2f, max(start / 2f, height - start / 2f))
         val reach = lerp(start, width, e)
         val nearHalf = lerp(start, height, near) / 2f
@@ -82,18 +101,30 @@ internal fun revealOutline(
         val farCentre = lerp(centre, height / 2f, s)
         val nearX = if (before) 0f else width
         val farX = if (before) reach else width - reach
-        return RevealOutline(floatArrayOf(
+        trap = floatArrayOf(
             nearX, nearCentre - nearHalf, nearX, nearCentre + nearHalf,
             farX, farCentre + farHalf, farX, farCentre - farHalf,
-        ), radius)
+        )
+        box = if (before) floatArrayOf(boxL, boxT, boxL, boxB, boxR, boxB, boxR, boxT)
+            else floatArrayOf(boxR, boxT, boxR, boxB, boxL, boxB, boxL, boxT)
+    } else {
+        // From inside: a rounded box growing from the anchor, down first.
+        trap = floatArrayOf(
+            lerp(anchorX - start / 2f, 0f, s), lerp(anchorY - start / 2f, 0f, e),
+            lerp(anchorX + start / 2f, width, s), lerp(anchorY - start / 2f, 0f, e),
+            lerp(anchorX + start / 2f, width, s), lerp(anchorY + start / 2f, height, e),
+            lerp(anchorX - start / 2f, 0f, s), lerp(anchorY + start / 2f, height, e),
+        )
+        box = floatArrayOf(boxL, boxT, boxR, boxT, boxR, boxB, boxL, boxB)
     }
-    // From inside: a rounded box growing from the anchor, down first.
-    val left = lerp(anchorX - start / 2f, 0f, s)
-    val right = lerp(anchorX + start / 2f, width, s)
-    val top = lerp(anchorY - start / 2f, 0f, e)
-    val bottom = lerp(anchorY + start / 2f, height, e)
-    return RevealOutline(floatArrayOf(left, top, right, top, right, bottom, left, bottom), radius)
+    // Two parts trapezoid to three parts drop: it still comes out of the
+    // button narrow, but round rather than angular.
+    val points = FloatArray(8) { i -> trap[i] * TRAPEZOID_SHARE + box[i] * (1f - TRAPEZOID_SHARE) }
+    return RevealOutline(points, trapRadius * TRAPEZOID_SHARE + boxRadius * (1f - TRAPEZOID_SHARE))
 }
+
+/** How much of the outline is the trapezoid out of the button; the rest is Mornye's round drop. */
+internal const val TRAPEZOID_SHARE = 0.4f
 
 private fun lerp(a: Float, b: Float, t: Float): Float = a + (b - a) * t
 
@@ -155,8 +186,14 @@ internal val StillMotion: () -> Float = { 0f }
  * Cuts this panel to the outline it has at [growth]'s progress as it comes
  * out of the point [anchor] gives - in this panel's coordinates, from its
  * place on screen - and leaves it uncut once it has fully come. [corner] is
- * the panel's own. While it is cut it casts a shadow along the cut, so the
- * glass's own shadow, cut away until then, does not pop in at the end.
+ * the panel's own.
+ *
+ * While it moves, the panel is a picture of itself: taken once, just before
+ * the motion starts (see [PopupGrowth.prepare]), and only cut on each frame.
+ * Drawn live, every frame of the motion ran the glass's blur and lens over
+ * the whole panel again - on this tablet that held the motion near 20 frames
+ * a second; a picture cut by its layer's outline is a texture the render
+ * thread composites, which keeps up with the screen.
  */
 @Composable
 internal fun Modifier.revealOutOf(
@@ -165,7 +202,15 @@ internal fun Modifier.revealOutOf(
     anchor: (LayoutCoordinates) -> Offset?,
 ): Modifier {
     val local = remember { floatArrayOf(Float.NaN, Float.NaN) }
-    val shadows = LocalSkinSettings.current.shadows
+    val layer = rememberGraphicsLayer()
+    val shot = remember { mutableStateOf<ImageBitmap?>(null) }
+    growth.prepare = prepare@{
+        if (layer.isReleased) return@prepare
+        shot.value = null
+        // A frame drawn live first, so the layer holds the panel as it is now.
+        withFrameNanos { }
+        shot.value = runCatching { layer.toImageBitmap() }.getOrNull()
+    }
     return this
         .onGloballyPositioned { coordinates ->
             val at = anchor(coordinates) ?: return@onGloballyPositioned
@@ -175,11 +220,9 @@ internal fun Modifier.revealOutOf(
         .graphicsLayer {
             val w = growth.width.value
             val h = growth.height.value
-            val done = w >= 1f && h >= 1f && !growth.width.isRunning && !growth.height.isRunning
-            if (done) {
+            if (!growth.moving(w, h)) {
                 clip = false
                 shape = RectangleShape
-                shadowElevation = 0f
                 return@graphicsLayer
             }
             val ax = if (local[0].isNaN()) size.width / 2f else local[0]
@@ -187,28 +230,18 @@ internal fun Modifier.revealOutOf(
             val outline = revealOutline(ax, ay, size.width, size.height, REVEAL_START.toPx(), corner.toPx(), h, w)
             shape = RevealShape(outline)
             clip = true
-            shadowElevation = if (shadows) REVEAL_SHADOW.toPx() * min(w, h).coerceIn(0f, 1f) else 0f
+        }
+        .drawWithContent {
+            val image = shot.value
+            val moving = growth.moving(growth.width.value, growth.height.value)
+            if (moving && image != null && image.width == size.width.toInt() && image.height == size.height.toInt()) {
+                drawImage(image)
+            } else {
+                layer.record { this@drawWithContent.drawContent() }
+                drawLayer(layer)
+            }
         }
 }
-
-/** The shadow a popup casts along its outline while it comes out. */
-private val REVEAL_SHADOW: Dp = 6.dp
-
-/**
- * What is on a revealing popup, faded as [revealFade] has it, draw by draw,
- * so no layer the size of the panel is filled each frame. Put after the
- * panel's glass, so the glass itself stays whole.
- */
-internal fun Modifier.revealFade(growth: PopupGrowth): Modifier = graphicsLayer {
-    compositingStrategy = CompositingStrategy.ModulateAlpha
-    alpha = revealFade(growth.width.value, growth.height.value)
-}
-
-/**
- * How visible what is on the glass is: it waits until the glass has come most
- * of the way, then fades up; it goes the same way, ahead of the glass.
- */
-internal fun revealFade(w: Float, h: Float): Float = ((min(w, h) - 0.3f) / 0.5f).coerceIn(0f, 1f)
 
 /** A corner whose size is read when the outline is made; kept for shapes that change as they are drawn. */
 internal class LiveCornerSize(private val px: () -> Float) : CornerSize {

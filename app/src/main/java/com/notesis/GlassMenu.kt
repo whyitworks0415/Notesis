@@ -96,7 +96,6 @@ internal fun GlassMenu(
                         } else Modifier.growOutOf({ null }, growth))
                         .skinMaterial(shape, panel = true, role = ChromeRole.POPUP)
                         .clip(shape)
-                        .then(if (reveal) Modifier.revealFade(growth) else Modifier)
                         .verticalScroll(rememberScrollState())
                         .padding(vertical = GLASS_MENU_INSET),
                     content = content,
