@@ -61,7 +61,9 @@ internal enum class ToolbarCurve(val label: String, val stored: Int) {
     ;
 
     companion object {
-        val DEFAULT = SINE_IN_OUT
+        // A spring, so a switch of size caught half way turns from where it
+        // is; the curves stay for whoever chose one.
+        val DEFAULT = SPRING
 
         /** The curve saved as [index]; one this build does not know is the default. */
         fun fromStored(index: Int): ToolbarCurve = entries.firstOrNull { it.stored == index } ?: DEFAULT

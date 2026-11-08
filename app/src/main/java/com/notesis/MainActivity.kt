@@ -14,6 +14,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.VisibilityThreshold
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.LinearEasing
@@ -7023,10 +7024,15 @@ private fun NoteScreen(
         }
         // The layer panel slides in from the end, like the page sidebar; the
         // canvas saves every change itself.
+        // On the sidebar's springs, and counted as the chrome moving, so the
+        // page behind is not recorded again on every frame of the slide.
+        val layersShown = remember { androidx.compose.animation.core.MutableTransitionState(false) }
+        layersShown.targetState = showLayers && canvas != null
+        HoldChromeMotion(!layersShown.isIdle)
         androidx.compose.animation.AnimatedVisibility(
-            visible = showLayers && canvas != null,
-            enter = slideInHorizontally(Ui.Motion.tween()) { it },
-            exit = slideOutHorizontally(Ui.Motion.tween()) { it },
+            visibleState = layersShown,
+            enter = slideInHorizontally(sidebarOpenSpring(IntOffset.VisibilityThreshold)) { it },
+            exit = slideOutHorizontally(sidebarCloseSpring(IntOffset.VisibilityThreshold)) { it },
             modifier = Modifier.align(Alignment.CenterEnd).padding(end = webOverlap),
         ) {
             canvas?.let { view -> LayerPanel(view, onClose = { showLayers = false }) }
@@ -7181,10 +7187,13 @@ private fun NoteScreen(
         Isolated {
         // Opened by hand, it closes the usual way again.
         LaunchedEffect(showPages) { if (showPages) pagesClosedByPen = false }
+        val pagesShown = remember { androidx.compose.animation.core.MutableTransitionState(showPages) }
+        pagesShown.targetState = showPages
+        HoldChromeMotion(!pagesShown.isIdle)
         androidx.compose.animation.AnimatedVisibility(
-            visible = showPages,
-            enter = slideInHorizontally(Ui.Motion.tween()) { it },
-            exit = if (pagesClosedByPen) ExitTransition.None else slideOutHorizontally(Ui.Motion.tween()) { it },
+            visibleState = pagesShown,
+            enter = slideInHorizontally(sidebarOpenSpring(IntOffset.VisibilityThreshold)) { it },
+            exit = if (pagesClosedByPen) ExitTransition.None else slideOutHorizontally(sidebarCloseSpring(IntOffset.VisibilityThreshold)) { it },
             modifier = Modifier.align(Alignment.CenterEnd).padding(end = webOverlap),
         ) {
             // Split, the panel can be about any part's note (see sources below).

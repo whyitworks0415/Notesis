@@ -79,7 +79,7 @@ class UiMathTest {
         assertEquals(ToolbarCurve.QUAD_IN_OUT, ToolbarCurve.fromStored(5))
         assertEquals(ToolbarCurve.DEFAULT, ToolbarCurve.fromStored(-1))
         assertEquals(ToolbarCurve.DEFAULT, ToolbarCurve.fromStored(99))
-        assertEquals(ToolbarCurve.SINE_IN_OUT, ToolbarCurve.DEFAULT)
+        assertEquals(ToolbarCurve.SPRING, ToolbarCurve.DEFAULT)
         assertEquals(ToolbarCurve.entries.size, ToolbarCurve.entries.map { it.stored }.distinct().size)
         for (curve in ToolbarCurve.entries) assertEquals(curve, ToolbarCurve.fromStored(curve.stored))
     }

@@ -235,7 +235,8 @@ internal fun ToolbarOrientationChoice(sizeLevel: Int, inMenu: Boolean = false) {
 internal object ToolbarMotion {
     private var prefs: android.content.SharedPreferences? = null
 
-    const val DEFAULT_MS = Ui.Motion.MS
+    /** Long enough for the default spring to settle softly; see [spec]. */
+    const val DEFAULT_MS = 260
     const val MAX_MS = 1000
 
     var durationMs by mutableIntStateOf(DEFAULT_MS)
@@ -271,7 +272,7 @@ internal object ToolbarMotion {
             // about the chosen time (4 / (damping x natural frequency)).
             ToolbarCurve.SPRING -> {
                 val omega = 4f / (SPRING_DAMPING * durationMs / 1000f)
-                spring(dampingRatio = SPRING_DAMPING, stiffness = omega * omega)
+                spring<T>(dampingRatio = SPRING_DAMPING, stiffness = omega * omega).paced()
             }
             ToolbarCurve.SINE_IN_OUT -> tween(durationMs, easing = SineInOutEasing)
             ToolbarCurve.QUAD_IN_OUT -> tween(durationMs, easing = QuadInOutEasing)
@@ -284,7 +285,8 @@ internal object ToolbarMotion {
     private const val KEY_MS = "toolbarMotionMs"
     private const val KEY_UNIFIED = "toolbarMotionUnified180"
     private const val KEY_CURVE = "toolbarMotionEasing"
-    private const val SPRING_DAMPING = 0.78f
+    // Barely under critical: the bar lands without a visible bounce.
+    private const val SPRING_DAMPING = 0.92f
     // Cubic in-out: starts gently, gathers, and settles as gently as it began.
     private val CUBIC_IN_OUT = androidx.compose.animation.core.CubicBezierEasing(0.65f, 0f, 0.35f, 1f)
     // Quintic out: quick off the mark, long soft landing.

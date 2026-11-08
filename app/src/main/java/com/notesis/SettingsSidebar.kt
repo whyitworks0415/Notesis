@@ -163,7 +163,8 @@ internal fun SettingsSidebarFrame(
         var reach by remember { mutableStateOf<Float?>(null) }
         var past by remember { mutableFloatStateOf(0f) }
         val latestClose by rememberUpdatedState(onClose)
-        val shown = settingsSidebarWidth(draft ?: widthDp, screen)
+        // The draft as the drag left it, stretched past its widest included.
+        val shown = draft ?: settingsSidebarWidth(widthDp, screen)
         val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
         val latestShown by rememberUpdatedState(shown)
         val latestScreen by rememberUpdatedState(screen)
@@ -249,6 +250,10 @@ internal fun SettingsSidebarFrame(
                         // than being carried in pasted to it.
                         .graphicsLayer {
                             val p = appear().coerceIn(0f, 1f)
+                            // Faded draw by draw rather than through a layer the
+                            // size of the panel, which every frame of the slide
+                            // would otherwise fill and blend again.
+                            compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha
                             alpha = sidebarContentAlpha(p)
                             translationX = (1f - p) * SIDEBAR_CONTENT_LEAD.toPx() * (if (rtl) -1f else 1f)
                         }
@@ -369,9 +374,9 @@ private val SIDEBAR_CONTENT_LEAD = 24.dp
 // screen's edge that springs past its place opens a gap along that edge.
 // A spring rather than a curve, so a sidebar sent back while it is still
 // coming turns round at the speed it has.
-private val SIDEBAR_OPEN: AnimationSpec<Float> get() = MotionTokens.spatialSlow()
+private val SIDEBAR_OPEN: AnimationSpec<Float> get() = sidebarOpenSpring()
 // Out a little quicker, still without passing its edge.
-private val SIDEBAR_CLOSE: AnimationSpec<Float> get() = motionSpring(0.32f, 1f)
+private val SIDEBAR_CLOSE: AnimationSpec<Float> get() = sidebarCloseSpring()
 
 /**
  * The note's settings sidebar. Each screen's content comes from the note,

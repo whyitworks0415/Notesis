@@ -186,6 +186,10 @@ internal object ChromeMotion {
 
     val busy: Boolean get() = moving > 0
 
+    /** Counts a motion that is not one suspending call, such as an AnimatedVisibility; see [HoldChromeMotion]. */
+    fun hold() { moving++ }
+    fun release() { moving = (moving - 1).coerceAtLeast(0) }
+
     /** Runs [block] counted as motion. */
     suspend fun <T> during(block: suspend () -> T): T {
         moving++
@@ -301,3 +305,26 @@ internal fun GlassWarmup() {
 }
 
 private const val WARMUP_DELAY_MS = 1200L
+
+/** Counts the chrome as moving while [running]; for motions the app does not drive itself. */
+@androidx.compose.runtime.Composable
+internal fun HoldChromeMotion(running: Boolean) {
+    androidx.compose.runtime.DisposableEffect(running) {
+        if (running) ChromeMotion.hold()
+        onDispose { if (running) ChromeMotion.release() }
+    }
+}
+
+/**
+ * Every panel that slides in from an edge - settings, pages, layers - on the
+ * same springs: in critically damped, so it never opens a gap at the edge it
+ * stands on, out a little quicker.
+ */
+internal fun <T> sidebarOpenSpring(visibilityThreshold: T? = null): androidx.compose.animation.core.SpringSpec<T> =
+    motionSpring(SIDEBAR_IN_RESPONSE, 1f, visibilityThreshold)
+
+internal fun <T> sidebarCloseSpring(visibilityThreshold: T? = null): androidx.compose.animation.core.SpringSpec<T> =
+    motionSpring(SIDEBAR_OUT_RESPONSE, 1f, visibilityThreshold)
+
+internal const val SIDEBAR_IN_RESPONSE = 0.42f
+internal const val SIDEBAR_OUT_RESPONSE = 0.3f
