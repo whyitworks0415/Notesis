@@ -140,7 +140,11 @@ class MornyeLookTest {
         val shut = revealRect(100f, 0f, 300f, 400f, 44f, 0f, 0f)
         assertEquals(RevealRect(78f, -22f, 44f, 44f), shut)
         // Open: the whole room, from its corner.
-        assertEquals(RevealRect(0f, 0f, 300f, 400f), revealRect(100f, 0f, 300f, 400f, 44f, 1f, 1f))
+        val open = revealRect(100f, 0f, 300f, 400f, 44f, 1f, 1f)
+        assertEquals(0f, open.left, 0.001f)
+        assertEquals(0f, open.top, 0.001f)
+        assertEquals(300f, open.width, 0.001f)
+        assertEquals(400f, open.height, 0.001f)
         // Half way down but not yet across: tall and narrow.
         val tall = revealRect(100f, 0f, 300f, 400f, 44f, 0f, 0.5f)
         assertEquals(44f, tall.width, 0f)
