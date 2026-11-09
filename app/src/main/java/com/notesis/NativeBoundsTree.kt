@@ -28,6 +28,8 @@ internal object SpatialNative {
         left: Float, top: Float, right: Float, bottom: Float, result: ByteBuffer): Int
     external fun cutRuns(points: ByteBuffer, count: Int, ax: Float, ay: Float, bx: Float, by: Float,
         reach: Float, output: ByteBuffer): Int
+    external fun clipPolyline(points: ByteBuffer, count: Int, sweeps: ByteBuffer, sweepCount: Int,
+        brushRadius: Float, output: ByteBuffer): Int
 }
 
 /** Packed, GC-owned storage. JNI retains no handles and copies no coordinate arrays per query. */

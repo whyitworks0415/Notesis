@@ -233,6 +233,8 @@ private class DiagnosticSnapshot(
 )
 
 private val METRIC_LABELS = listOf(
+    PerformanceMetric.ERASE_WORK to "Partial erase work (frame)",
+    PerformanceMetric.ERASE_APPLY to "Partial erase applied (not pixels)",
     PerformanceMetric.PEN_START_HANDLED to "Pen start handled (not rendered)",
     PerformanceMetric.PEN_FINALIZE_WAIT to "Pen-up callback wait",
     PerformanceMetric.PEN_COMMIT_WORK to "Pen-up commit work (per batch)",

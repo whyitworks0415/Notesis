@@ -176,7 +176,7 @@ internal class StrokeGrid(private val boundedPage: Boolean = true) {
     private class Entry(
         val stroke: Stroke,
         val bounds: RectF,
-        val order: Int,
+        var order: Int,
         var cellKeys: LongArray = LongArray(0),
     )
 
@@ -248,7 +248,7 @@ internal class StrokeGrid(private val boundedPage: Boolean = true) {
         if (entries.size !in NativeBoundsTree.MIN_STROKES..NativeBoundsTree.MAX_STROKES) {
             tree = null; treeOrders = 0; treeEntries = 0; return
         }
-        if (!offThread && entries.size > 2048) return
+        if (!offThread && (entries.size > 2048 || InteractionGovernor.state != Interaction.IDLE)) return
         if (!SpatialNative.ready) return
         if (tree != null && nativeBoundsUseful(entries.size, treeEntries, ordered.size - treeOrders)) return
         val built = NativeBoundsTree.build(entries.size) { buffer ->
@@ -281,19 +281,28 @@ internal class StrokeGrid(private val boundedPage: Boolean = true) {
         val appendOnly = meshRevision == page.meshRevision && strokes.size > indexedSize &&
             (indexedSize == 0 || strokes.getOrNull(indexedSize - 1) === lastStroke)
         if (!appendOnly) {
-            tree = null
-            treeOrders = 0
-            treeEntries = 0
-            cells.clear()
-            spanning.clear()
-            entries.clear()
-            ordered.clear()
-            included.clear()
-            indexedSize = 0
-        }
-        for (i in indexedSize until strokes.size) {
-            index(strokes[i], ordered.size)
-        }
+            tree = null; treeOrders = 0; treeEntries = 0
+            included.clear(); ordered.clear()
+            val present = java.util.Collections.newSetFromMap(IdentityHashMap<Stroke,Boolean>())
+            present.addAll(strokes)
+            val old = entries.entries.iterator()
+            while (old.hasNext()) {
+                val entry = old.next().value
+                if (entry.stroke in present) continue
+                if (entry.cellKeys.isEmpty()) spanning.remove(entry)
+                else for (key in entry.cellKeys) {
+                    val cell = cells[key] ?: continue
+                    cell.remove(entry)
+                    if (cell.isEmpty()) cells.remove(key)
+                }
+                old.remove()
+            }
+            for (stroke in strokes) {
+                val kept = entries[stroke]
+                if (kept == null) index(stroke, ordered.size)
+                else { kept.order = ordered.size; ordered += kept }
+            }
+        } else for (i in indexedSize until strokes.size) index(strokes[i], ordered.size)
         indexedSize = strokes.size
         firstStroke = strokes.firstOrNull()
         lastStroke = strokes.lastOrNull()
@@ -2443,11 +2452,12 @@ class InkCanvasView @JvmOverloads constructor(
         // Rebuilding a page's geometry replaces every Stroke instance on it, so
         // history has to be able to follow the swap rather than keep pointing at
         // objects that are no longer in the page.
-        class Drawn(override val page: Page, var stroke: Stroke, val group: Long = 0L) : Edit
+        class Drawn(override val page: Page, var stroke: Stroke, val group: Long = 0L, val position: Int? = null) : Edit
         class Erased(
             override val page: Page,
             var strokes: List<Stroke>,
             val group: Long = 0L,
+            val positions: IntArray? = null,
         ) : Edit
 
         // Pictures are mutable and moving one is not undoable; adding and
@@ -2661,6 +2671,7 @@ class InkCanvasView @JvmOverloads constructor(
     var releasePdf: (PdfSource) -> Unit = { it.close() }
 
     fun open(document: Document, pdf: PdfSource?, initialPage: Int = 0) {
+        if (erasing) { finishEraseGesture(); endStylus() }
         registeredDocument?.detachCanvas(sharedInkChanged)
         registeredDocument = document
         document.attachCanvas(sharedInkChanged)
@@ -2795,6 +2806,8 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     override fun onDetachedFromWindow() {
+        if (erasing) finishEraseGesture()
+        cancelEraseFrame()
         super.onDetachedFromWindow()
         MemoryTrim.unregister(this)
         runCatching {
@@ -3222,6 +3235,8 @@ class InkCanvasView @JvmOverloads constructor(
     fun canRedo(): Boolean = redoStack.isNotEmpty()
 
     fun undo() {
+        flushPartialErase()
+        sealEraseHistory()
         val edit = undoStack.removeLastOrNull() ?: return
         // A lasso selection describes where strokes are now. Stepping history
         // moves them, so the box would sit over nothing and drag ghosts.
@@ -3254,6 +3269,8 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     fun redo() {
+        flushPartialErase()
+        sealEraseHistory()
         val edit = redoStack.removeLastOrNull() ?: return
         clearLassoSelection()
         clearImageSelection()
@@ -3297,7 +3314,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     private fun applyForward(edit: Edit) {
         when (edit) {
-            is Edit.Drawn -> edit.page.strokes += edit.stroke
+            is Edit.Drawn -> redoInkAt(edit.page.strokes, edit.stroke, edit.position)
             is Edit.Erased -> edit.page.strokes.removeAll(edit.strokes)
             is Edit.ImageReplaced -> { edit.page.images[edit.at] = edit.after; clearImageSelection() }
             is Edit.ImageAdded -> edit.page.images += edit.image
@@ -3342,7 +3359,7 @@ class InkCanvasView @JvmOverloads constructor(
     private fun applyInverse(edit: Edit) {
         when (edit) {
             is Edit.Drawn -> edit.page.strokes.remove(edit.stroke)
-            is Edit.Erased -> edit.page.strokes += edit.strokes
+            is Edit.Erased -> restoreEraseOrder(edit.page.strokes, edit.strokes, edit.positions)
             is Edit.Moved -> swapStrokes(edit.page, edit.after, edit.before)
             is Edit.MaskAdded -> edit.page.masks.remove(edit.mask)
             is Edit.MaskRemoved ->
@@ -4237,6 +4254,8 @@ class InkCanvasView @JvmOverloads constructor(
                 event.getPressure(event.actionIndex),
             )
         }
+        // Erasing always uses the same raw pressure path, whether selected or held on the barrel.
+        if (eraseContact(tool == Tool.ERASER, samsungSideButton || event.isEraserGesture())) return onStylusEvent(event)
         // A pen whose pressure switch is off draws every sample at one
         // pressure: the fountain, calligraphy and vanishing nibs read the
         // pen's pressure in their own brushes, so the switch did nothing for
@@ -4331,6 +4350,7 @@ class InkCanvasView @JvmOverloads constructor(
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 if (activeStylusPointer != null) return true
+                val contactErases = eraseContact(tool == Tool.ERASER, event.isEraserGesture() || samsungSideButton)
                 // A pen may land while a finger fling still owns an animation
                 // frame. Freeze the page before capturing screenToPage; if the
                 // page moves afterwards, wet ink and the physical tip no longer
@@ -4347,7 +4367,7 @@ class InkCanvasView @JvmOverloads constructor(
                 // times, per frame anyone sees.
                 if (!compatWetInk) requestUnbufferedDispatch(event)
                 // A tab on a page's edge opens what is kept there, in any tool.
-                if (openAttachmentAt(event.getX(event.actionIndex), event.getY(event.actionIndex))) return true
+                if (!contactErases && openAttachmentAt(event.getX(event.actionIndex), event.getY(event.actionIndex))) return true
                 val pageIndex = pageUnder(event, event.actionIndex)
                 // Off the pages: the whiteboard takes ink and the eraser, when it is on.
                 val onBoard = pageIndex < 0
@@ -4395,7 +4415,7 @@ class InkCanvasView @JvmOverloads constructor(
                     return true
                 }
                 readButtonGesture.reset()
-                if (captureMode && !eraserGesture) {
+                if (captureMode && !contactErases) {
                     onDrawingChanged?.invoke(true)
                     capturePage = index
                     capturing = true
@@ -4407,7 +4427,7 @@ class InkCanvasView @JvmOverloads constructor(
                 // A selection made without the lasso tool (circle to lasso, a
                 // paste): the pen inside it carries on moving it, and anywhere
                 // else lets it go and writes as usual.
-                if (!lassoMode && !readMode && !eraserGesture && hasLassoSelection()) {
+                if (!lassoMode && !readMode && !contactErases && hasLassoSelection()) {
                     pageLocalInto(event.x, event.y, index, shapeStart)
                     if (index == lassoPage && lassoBounds.contains(shapeStart[0], shapeStart[1])) {
                         onDrawingChanged?.invoke(true)
@@ -4416,33 +4436,33 @@ class InkCanvasView @JvmOverloads constructor(
                     }
                     clearLassoSelection()
                 }
-                if (lassoMode && !eraserGesture) {
+                if (lassoMode && !contactErases) {
                     onDrawingChanged?.invoke(true)
                     beginLasso(event, index)
                     return true
                 }
-                if (imageMode && !eraserGesture) {
+                if (imageMode && !contactErases) {
                     onDrawingChanged?.invoke(true)
                     beginImageGesture(event, index)
                     return true
                 }
-                if (!onBoard && !eraserGesture && tool != Tool.ERASER &&
+                if (!onBoard && !contactErases && tool != Tool.ERASER &&
                     toggleCheckboxAt(event.getX(event.actionIndex), event.getY(event.actionIndex), index)
                 ) return true
                 // Ink - pen, shape, polygon - on a locked or hidden
                 // layer is refused before any of it is drawn. Tape is not on a
                 // layer, and the eraser only ever skips what it may not touch.
-                if (!readMode && !eraserGesture && tool != Tool.ERASER && !maskMode && refuseLockedTarget()) {
+                if (!readMode && !contactErases && tool != Tool.ERASER && !maskMode && refuseLockedTarget()) {
                     return true
                 }
                 val shape = shapeKind
-                if (shape == ShapeKind.POLYGON && !readMode && !eraserGesture && tool != Tool.ERASER) {
+                if (shape == ShapeKind.POLYGON && !readMode && !contactErases && tool != Tool.ERASER) {
                     onDrawingChanged?.invoke(true)
                     onWritingStarted?.invoke()
                     tapPolygon(event, index)
                     return true
                 }
-                if (shape != null && !readMode && !eraserGesture &&
+                if (shape != null && !readMode && !contactErases &&
                     tool != Tool.ERASER
                 ) {
                     onDrawingChanged?.invoke(true)
@@ -4455,7 +4475,7 @@ class InkCanvasView @JvmOverloads constructor(
                     dry.invalidate()
                     return true
                 }
-                if (readMode && !eraserGesture) {
+                if (readMode && !contactErases) {
                     readPressTime = event.eventTime
                     onDrawingChanged?.invoke(true)
                     if (onStrokeTapped != null && tapStrokeAt(event.x, event.y, index)) return true
@@ -4471,13 +4491,17 @@ class InkCanvasView @JvmOverloads constructor(
                     return true
                 }
                 strokeIsMask = maskMode
-                erasing = tool == Tool.ERASER || eraserGesture
+                erasing = contactErases
                 // Past every tap, selection and capture above: this is ink.
                 // onWritingStarted is told below, once the first mark is
                 // down: what it does (closing a panel) is for the host's
                 // next frame, and the pen's first point must not wait on it.
                 if (erasing) {
                     onDrawingChanged?.invoke(true)
+                    clearLassoSelection()
+                    erasePartialAtStart = partialEraser
+                    partialEraseBatch.reset()
+                    eraseTransaction.reset()
                     hasLastErasePoint = false
                     activeEraseGroup = nextEditGroup++
                     eraseChanged = false
@@ -5291,6 +5315,9 @@ class InkCanvasView @JvmOverloads constructor(
         lastStylusY = Float.NaN
         lastStylusDx = 0f
         lastStylusDy = 0f
+        cancelEraseFrame()
+        partialEraseBatch.reset()
+        eraseTransaction.reset()
         erasing = false
         eraseChanged = false
         activeEraseGroup = 0L
@@ -6359,6 +6386,7 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun remapHistory(replacements: IdentityHashMap<Stroke, Stroke>) {
+        eraseTransaction.remap(replacements)
         for (edit in undoStack + redoStack) {
             when (edit) {
                 is Edit.Drawn -> replacements[edit.stroke]?.let { edit.stroke = it }
@@ -8891,7 +8919,113 @@ class InkCanvasView @JvmOverloads constructor(
         }
     }
 
+    private var erasePartialAtStart = false
+    private val partialEraseBatch = EraseBatch()
+    private val eraseTransaction = EraseTransaction<Stroke>()
+    private var eraseFramePosted = false
+    private val eraseFrame = Choreographer.FrameCallback {
+        eraseFramePosted = false
+        if (!disposed && erasing) flushPartialErase()
+    }
+
+    private fun cancelEraseFrame() {
+        if (eraseFramePosted) Choreographer.getInstance().removeFrameCallback(eraseFrame)
+        eraseFramePosted = false
+    }
+
     private fun eraseAlong(event: MotionEvent, pointerIndex: Int, force: Boolean = false) {
+        if (!erasePartialAtStart) { eraseWholeAlong(event, pointerIndex, force); return }
+        val page = activePage ?: return
+        val index = if (page === document.board) BOARD_INDEX else document.pages.indexOf(page)
+        if (index == -1) return
+        fun queue(x: Float, y: Float, pressure: Float, time: Long) {
+            pageLocalInto(x, y, index, erasePagePoint)
+            val scale = if (pressureEraser && strokePressureReal && event.getToolType(pointerIndex) == MotionEvent.TOOL_TYPE_STYLUS)
+                pressureEraserScale(pressure) else 1f
+            partialEraseBatch.append(erasePagePoint[0], erasePagePoint[1], eraserPageWidth() * scale / 2f, time)
+        }
+        for (h in 0 until event.historySize) queue(event.getHistoricalX(pointerIndex,h), event.getHistoricalY(pointerIndex,h),
+            event.getHistoricalPressure(pointerIndex,h), event.getHistoricalEventTime(h))
+        queue(event.getX(pointerIndex), event.getY(pointerIndex), event.getPressure(pointerIndex), event.eventTime)
+        val scale = if (pressureEraser && strokePressureReal && event.getToolType(pointerIndex) == MotionEvent.TOOL_TYPE_STYLUS)
+            pressureEraserScale(event.getPressure(pointerIndex)) else 1f
+        showEraserCursor(event.getX(pointerIndex), event.getY(pointerIndex), eraserScreenRadius() * scale)
+        if (partialEraseBatch.count > 0 && !eraseFramePosted) {
+            eraseFramePosted = true
+            Choreographer.getInstance().postFrameCallback(eraseFrame)
+        }
+    }
+
+    /** Classify every sweep against the original stroke, then rebuild each retained piece once. */
+    private fun flushPartialErase() {
+        cancelEraseFrame()
+        val k = partialEraseBatch.count
+        if (k == 0) return
+        val page = activePage ?: run { partialEraseBatch.reset(); return }
+        val started = if (latencyMonitoringEnabled) System.nanoTime() else 0L
+        val oldest = partialEraseBatch.oldestMillis
+        val sweeps = partialEraseBatch.data
+        var left = Float.POSITIVE_INFINITY; var top = left
+        var right = Float.NEGATIVE_INFINITY; var bottom = right
+        for (i in 0 until k) {
+            val p=i*5;val r=sweeps[p+4]
+            left=min(left,min(sweeps[p],sweeps[p+2])-r);top=min(top,min(sweeps[p+1],sweeps[p+3])-r)
+            right=max(right,max(sweeps[p],sweeps[p+2])+r);bottom=max(bottom,max(sweeps[p+1],sweeps[p+3])+r)
+        }
+        val candidates = if (page === document.board) boardStrokesIn(left,top,right,bottom) else dry.strokesIn(page,left,top,right,bottom)
+        val replacements = IdentityHashMap<Stroke,List<Stroke>>()
+        var built = 0
+        for (stroke in candidates) {
+            if (((!eraseInk || !eraseHighlighter) && !erasable(stroke)) || (!eraseLocked && StrokeTags.locked(stroke)) || !onActiveLayer(stroke)) continue
+            val parts = splitStroke(stroke, sweeps, k) ?: continue
+            parts.forEach { StrokeTags.carry(stroke,it) }
+            built += parts.size; replacements[stroke] = parts
+        }
+        var changed = replacements.isNotEmpty()
+        if (replacements.isNotEmpty()) {
+            val current = page.strokes
+            val next = ArrayList<Stroke>(current.size + built)
+            for (i in current.indices) {
+                val stroke=current[i];val pieces=replacements[stroke]
+                if (pieces == null) next += stroke
+                else {
+                    eraseTransaction.record(current,stroke,pieces)
+                    next.addAll(pieces)
+                }
+            }
+            current.clear();current.addAll(next)
+            page.savedOnDisk=0
+        }
+        if (eraseTape) for (i in page.masks.indices.reversed()) {
+            val mask=page.masks[i]
+            prepareErasePoints(mask.stroke)
+            if (partialEraseWorkspace.fragments(sweeps,k,mask.stroke.brush.size/2f) != null) {
+                page.masks.removeAt(i);undoStack+=Edit.MaskRemoved(page,mask,i,activeEraseGroup);changed=true
+            }
+        }
+        if (eraseImages || eraseText) for (i in page.images.indices.reversed()) {
+            val image=page.images[i]
+            if (image.locked && !eraseLocked) continue
+            if (if (image.textContent != null) !eraseText else !eraseImages) continue
+            if ((0 until k).any { sweepHitsBox(sweeps,it*5,image.x,image.y,image.x+image.width,image.y+image.height) }) {
+                page.images.removeAt(i);undoStack+=Edit.ImageRemoved(page,image,i,activeEraseGroup);changed=true
+            }
+        }
+        partialEraseBatch.drained()
+        if (changed) {
+            redoStack.clear();eraseChanged=true;page.dirty=true;page.revision++
+            // Even equal-count replacements must invalidate tile, bitmap and display-list caches.
+            inkCacheWorkGeneration++
+            dry.invalidate()
+        }
+        if (started != 0L) {
+            val now=System.nanoTime()
+            latency.record(PerformanceMetric.ERASE_WORK,now-started)
+            latency.record(PerformanceMetric.ERASE_APPLY,now-oldest*1_000_000L)
+        }
+    }
+
+    private fun eraseWholeAlong(event: MotionEvent, pointerIndex: Int, force: Boolean = false) {
         val page = activePage ?: return
         val onBoard = page === document.board
         val index = if (onBoard) BOARD_INDEX else document.pages.indexOf(page)
@@ -8976,26 +9110,6 @@ class InkCanvasView @JvmOverloads constructor(
                 ) eraseMaskHits += mask
             }
         }
-        // Partial: each hit is cut where the eraser crossed it. A stroke the
-        // tip only grazed between inputs can come back untouched.
-        val pieces = ArrayList<Stroke>()
-        if (partialEraser && eraseStrokeHits.isNotEmpty()) {
-            val ax = if (hadPrevious) previousX else x
-            val ay = if (hadPrevious) previousY else y
-            val cut = ArrayList<Stroke>(eraseStrokeHits.size)
-            for (stroke in eraseStrokeHits) {
-                val parts = splitStroke(stroke, ax, ay, x, y, radius + stroke.brush.size / 2f)
-                    ?: continue
-                cut += stroke
-                // A piece of a grouped stroke stays in its group.
-                parts.forEach { StrokeTags.carry(stroke, it) }
-                pieces += parts
-            }
-            eraseStrokeHits.clear()
-            eraseStrokeHitSet.clear()
-            eraseStrokeHits += cut
-            eraseStrokeHitSet += cut
-        }
         // Pictures and text boxes go whole, when asked for, if the tip's sweep reaches their box.
         var imagesErased = false
         if (eraseImages || eraseText) {
@@ -9038,10 +9152,6 @@ class InkCanvasView @JvmOverloads constructor(
             // the appended pieces must still read as new to it.
             dry.removeStrokesFromIndex(page, erased)
             undoStack += Edit.Erased(page, erased, activeEraseGroup)
-            for (piece in pieces) {
-                page.strokes += piece
-                undoStack += Edit.Drawn(page, piece, activeEraseGroup)
-            }
         }
         redoStack.clear()
         // Keep the hot eraser loop local to the View. A Compose state write,
@@ -9063,72 +9173,50 @@ class InkCanvasView @JvmOverloads constructor(
     /** The pieces of [stroke] the eraser swept a→b did not reach, or null if it reached none. */
     private val partialEraseWorkspace = PartialEraseWorkspace()
 
-    private fun splitStroke(stroke: Stroke, ax: Float, ay: Float, bx: Float, by: Float, reach: Float): List<Stroke>? {
+    private fun prepareErasePoints(stroke: Stroke) {
         val inputs = stroke.inputs
-        val count = inputs.size
-        if (count == 0) return null
-        partialEraseWorkspace.prepare(count)
-        val xs = partialEraseWorkspace.xs
-        val ys = partialEraseWorkspace.ys
+        partialEraseWorkspace.prepare(inputs.size)
         val sample = StrokeInput()
-        for (i in 0 until count) {
+        for (i in 0 until inputs.size) {
             inputs.populate(i, sample)
             partialEraseWorkspace.put(i, sample.x, sample.y)
         }
-        val runs = partialEraseWorkspace.runs(count, ax, ay, bx, by, reach) ?: return null
-        val other = StrokeInput()
-        return runs.map { run ->
+    }
+
+    @OptIn(androidx.ink.brush.ExperimentalInkCustomBrushApi::class)
+    private fun splitStroke(stroke: Stroke, sweeps: FloatArray, sweepCount: Int): List<Stroke>? {
+        val inputs = stroke.inputs
+        val count = inputs.size
+        if (count == 0) return null
+        prepareErasePoints(stroke)
+        val spans = partialEraseWorkspace.fragments(sweeps, sweepCount, stroke.brush.size / 2f) ?: return null
+        val a = StrokeInput(); val b = StrokeInput()
+        return spans.map { span ->
             val batch = MutableStrokeInputBatch()
-            // Each piece runs on to where the eraser's edge crossed it, an
-            // input made between the last kept sample and the first cut one.
-            fun addBetween(kept: Int, cut: Int) {
-                val t = firstReachFraction(xs[kept], ys[kept], xs[cut], ys[cut], ax, ay, bx, by, reach)
-                if (t <= 0.001f) return
-                inputs.populate(kept, sample)
-                inputs.populate(cut, other)
-                batch.add(
-                    type = sample.toolType,
-                    x = sample.x + (other.x - sample.x) * t,
-                    y = sample.y + (other.y - sample.y) * t,
-                    elapsedTimeMillis = sample.elapsedTimeMillis +
-                        ((other.elapsedTimeMillis - sample.elapsedTimeMillis) * t).toLong(),
-                    pressure = lerpInput(sample.pressure, other.pressure, t),
-                    tiltRadians = lerpInput(sample.tiltRadians, other.tiltRadians, t),
-                    orientationRadians = lerpInput(sample.orientationRadians, other.orientationRadians, t),
-                )
-            }
-            // Before the first kept sample, the boundary has to carry an earlier time.
-            if (run.first > 0) {
-                val t = firstReachFraction(xs[run.first], ys[run.first], xs[run.first - 1], ys[run.first - 1],
-                    ax, ay, bx, by, reach)
-                if (t > 0.001f) {
-                    inputs.populate(run.first, sample)
-                    inputs.populate(run.first - 1, other)
-                    batch.add(
-                        type = sample.toolType,
-                        x = sample.x + (other.x - sample.x) * t,
-                        y = sample.y + (other.y - sample.y) * t,
-                        elapsedTimeMillis = sample.elapsedTimeMillis -
-                            ((sample.elapsedTimeMillis - other.elapsedTimeMillis) * t).toLong(),
-                        pressure = lerpInput(sample.pressure, other.pressure, t),
-                        tiltRadians = lerpInput(sample.tiltRadians, other.tiltRadians, t),
-                        orientationRadians = lerpInput(sample.orientationRadians, other.orientationRadians, t),
-                    )
+            batch.setNoiseSeed(inputs.getNoiseSeed())
+            fun at(position: Double) {
+                val index = kotlin.math.floor(position).toInt().coerceIn(0, count - 1)
+                val t = (position - index).toFloat().coerceIn(0f, 1f)
+                inputs.populate(index, a)
+                if (t <= 0f || index == count - 1) batch.add(a)
+                else {
+                    inputs.populate(index + 1, b)
+                    batch.add(type = a.toolType, x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t,
+                        elapsedTimeMillis = a.elapsedTimeMillis + ((b.elapsedTimeMillis - a.elapsedTimeMillis) * t).toLong(),
+                        strokeUnitLengthCm = a.strokeUnitLengthCm, pressure = lerpInput(a.pressure, b.pressure, t),
+                        tiltRadians = lerpInput(a.tiltRadians, b.tiltRadians, t),
+                        orientationRadians = inkOrientationBetween(a.orientationRadians, b.orientationRadians, t))
                 }
             }
-            for (i in run) {
-                inputs.populate(i, sample)
-                batch.add(
-                    type = sample.toolType,
-                    x = sample.x,
-                    y = sample.y,
-                    elapsedTimeMillis = sample.elapsedTimeMillis,
-                    pressure = sample.pressure,
-                    tiltRadians = sample.tiltRadians,
-                    orientationRadians = sample.orientationRadians,
-                )
+            fun snap(value: Double): Double {
+                val rounded = kotlin.math.round(value)
+                return if (kotlin.math.abs(value-rounded) <= 1e-9) rounded else value
             }
-            if (run.last < count - 1) addBetween(run.last, run.last + 1)
+            val from=snap(span.from);val to=snap(span.to)
+            at(from)
+            var index = kotlin.math.floor(from).toInt() + 1
+            while (index.toDouble() < to - 1e-9) { inputs.populate(index++, a); batch.add(a) }
+            at(to)
             Stroke(stroke.brush, batch)
         }
     }
@@ -9137,7 +9225,16 @@ class InkCanvasView @JvmOverloads constructor(
     private fun lerpInput(a: Float, b: Float, t: Float): Float =
         if (a < 0f || b < 0f) a else a + (b - a) * t
 
+    private fun sealEraseHistory() {
+        val page = activePage ?: return
+        val patch = eraseTransaction.finish(page.strokes) ?: return
+        undoStack += Edit.Erased(page,patch.removed,activeEraseGroup,patch.removedAt)
+        patch.added.forEachIndexed { i,stroke -> undoStack += Edit.Drawn(page,stroke,activeEraseGroup,patch.addedAt[i]) }
+    }
+
     private fun finishEraseGesture() {
+        flushPartialErase()
+        sealEraseHistory()
         if (!eraseChanged) return
         activePage?.let { afterEdit(it) }
     }

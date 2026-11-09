@@ -1,6 +1,22 @@
 #include <jni.h>
 #include "spatial_index.h"
 #include "erase_geometry.h"
+#include "continuous_erase.h"
+
+extern "C" JNIEXPORT jint JNICALL Java_com_notesis_SpatialNative_clipPolyline(
+    JNIEnv* env,jobject,jobject points,jint count,jobject sweeps,jint sweepCount,jfloat brushRadius,jobject output) {
+    if(count<1||count>65536||sweepCount<1||sweepCount>128||!points||!sweeps||!output||
+        env->GetDirectBufferCapacity(points)<jlong(count)*8||env->GetDirectBufferCapacity(sweeps)<jlong(sweepCount)*20) return -2;
+    auto size=env->GetDirectBufferCapacity(output);
+    if(size<16 || size>16*65536) return -2;
+    auto* p=static_cast<notesis::Point*>(env->GetDirectBufferAddress(points));
+    auto* s=static_cast<notesis::Sweep*>(env->GetDirectBufferAddress(sweeps));
+    auto* o=static_cast<notesis::Span*>(env->GetDirectBufferAddress(output));
+    if(reinterpret_cast<std::uintptr_t>(p)%alignof(notesis::Point)||
+       reinterpret_cast<std::uintptr_t>(s)%alignof(notesis::Sweep)||
+       reinterpret_cast<std::uintptr_t>(o)%alignof(notesis::Span)) return -2;
+    return notesis::clipPolyline(p,count,s,sweepCount,brushRadius,o,int(size/16));
+}
 
 extern "C" JNIEXPORT jint JNICALL Java_com_notesis_SpatialNative_cutRuns(
     JNIEnv* env, jobject, jobject points, jint count, jfloat ax, jfloat ay, jfloat bx, jfloat by,

@@ -1602,3 +1602,5 @@ Pen-up callback wait	펜 종료 콜백 대기
 Pen-up commit work (per batch)	펜 종료 반영 작업(배치당)
 First ink (render complete / surface posted)	첫 잉크(렌더 완료/표면 제출)
 Wet ink (render complete / surface posted)	실시간 잉크(렌더 완료/표면 제출)
+Partial erase work (frame)	부분 지우개 작업(프레임당)
+Partial erase applied (not pixels)	부분 지우개 반영(화면 표시 전)

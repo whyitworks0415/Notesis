@@ -10,8 +10,12 @@ internal class PartialEraseWorkspace {
     private var points: ByteBuffer? = null
     private var output: ByteBuffer? = null
     private var native = false
+    private var count = 0
+    private var sweepBuffer: ByteBuffer? = null
+    private var clipOutput: ByteBuffer? = null
     fun prepare(count: Int) {
         require(count >= 0)
+        this.count = count
         if (count > xs.size) {
             val capacity = maxOf(count, (xs.size * 2).coerceAtLeast(128))
             xs = FloatArray(capacity); ys = FloatArray(capacity)
@@ -22,6 +26,19 @@ internal class PartialEraseWorkspace {
             points = ByteBuffer.allocateDirect(bytes).order(ByteOrder.nativeOrder())
             output = ByteBuffer.allocateDirect(bytes).order(ByteOrder.nativeOrder())
         }
+    }
+    fun fragments(sweeps: FloatArray, sweepCount: Int, brushRadius: Float): List<InkSpan>? {
+        if (native && sweepCount in 1..128) {
+            if ((sweepBuffer?.capacity() ?: 0) < sweepCount * 20)
+                sweepBuffer = ByteBuffer.allocateDirect(sweepCount * 20).order(ByteOrder.nativeOrder())
+            for (i in 0 until sweepCount * 5) sweepBuffer!!.putFloat(i * 4, sweeps[i])
+            if ((clipOutput?.capacity() ?: 0) < count * 16)
+                clipOutput = ByteBuffer.allocateDirect(count * 16).order(ByteOrder.nativeOrder())
+            val found = SpatialNative.clipPolyline(points!!, count, sweepBuffer!!, sweepCount, brushRadius, clipOutput!!)
+            if (found == -1) return null
+            if (found >= 0) return List(found) { i -> InkSpan(clipOutput!!.getDouble(i * 16), clipOutput!!.getDouble(i * 16 + 8)) }
+        }
+        return continuousKeep(xs, ys, count, sweeps, sweepCount, brushRadius)
     }
     fun put(index: Int, x: Float, y: Float) {
         xs[index] = x; ys[index] = y

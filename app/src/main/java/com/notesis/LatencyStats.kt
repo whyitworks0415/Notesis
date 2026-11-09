@@ -5,6 +5,8 @@ import java.util.Locale
 /** Metrics collected only while the on-screen diagnostics panel is enabled. */
 internal enum class PerformanceMetric {
     WET_INK,
+    ERASE_WORK,
+    ERASE_APPLY,
     PEN_FINALIZE,
     MESH_REFINE,
     PDF_RENDER,
@@ -263,6 +265,8 @@ class LatencyStats(private val capacity: Int = 512) {
             metricLine("compat surface lock", PerformanceMetric.WET_SURFACE_LOCK),
             metricLine("compat draw+post", PerformanceMetric.WET_SURFACE_DRAW,
                 wetDirtyPixels.snapshot(1000.0)?.let { "area p50 %.0fk px p95 %.0fk px".format(it.p50, it.p95) }),
+            metricLine("partial erase work (frame)", PerformanceMetric.ERASE_WORK),
+            metricLine("partial erase applied (not pixels)", PerformanceMetric.ERASE_APPLY),
             metricLine("pen-up finalize", PerformanceMetric.PEN_FINALIZE),
             metricLine("pen-up callback wait", PerformanceMetric.PEN_FINALIZE_WAIT),
             metricLine("pen-up commit work (batch)", PerformanceMetric.PEN_COMMIT_WORK),
