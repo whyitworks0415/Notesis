@@ -1,5 +1,12 @@
 package com.notesis
 
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -85,13 +92,19 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
-/** The five ways of picking a colour. The choice is remembered across tools. */
+/**
+ * The ways of picking a colour, by the index the choice is remembered by
+ * across tools. The panel offers the grid, the square, the HSV ring and the
+ * RGB disc (see [COLOR_VIEWS]); the HSV bars and RGB strips are no longer
+ * offered and open as the ring and the disc.
+ */
 internal enum class ColorPickerMode(val label: String) {
     SQUARE("Square"),
     BARS("HSV"),
-    RING("Ring"),
+    RING("HSV ring"),
     RGB("RGB"),
-    DISC("Disc"),
+    DISC("RGB disc"),
+    GRID("Grid"),
 }
 
 /**
@@ -261,146 +274,172 @@ internal fun PenDialog(
     val animate = panel.animate
     fun keep() = panel.close { onConfirm(current()) }
     fun cancel() = panel.close(onDismiss)
-    val wide = LocalConfiguration.current.screenWidthDp >= 720
+    var tab by remember { mutableStateOf(PenPanelTab.SETTING) }
+    // Each kind of pen keeps its own settings: leaving one keeps what it was
+    // set to, and coming back to one finds it as it was left.
+    fun takeUp(saved: PenPreset) {
+        color.set(saved.colorArgb)
+        width = saved.width
+        pressure = saved.pressure
+        maxWidth = saved.maxWidth
+        leadMs = saved.leadMs
+        stabilizer = saved.stabilizer
+        linePattern = saved.linePattern
+        autoShapes = saved.autoShapes
+        straightLine = saved.straightLine
+        nibAngle = saved.nibAngle
+        density = saved.density
+    }
+    fun switchNib(next: Tool) {
+        if (next == nib && !(mode == EditMode.PENCIL && drawing != next)) return
+        store.saveNibPreset(mode, current())
+        val saved = store.nibPreset(mode, next, current())
+        nib = next
+        if (saved != null) takeUp(saved)
+    }
+    // Kept as this kind of pen's own as well, for the next time it is chosen.
+    val keepNib: () -> Unit = { if (freehand) store.saveNibPreset(mode, current()) }
 
     ToolPanel(
         title = penPanelTitle(mode),
         state = panel,
-        onOutside = ::keep,
-        maxWidth = if (wide) 880.dp else TOOL_PANEL_WIDTH,
+        onOutside = { keepNib(); keep() },
+        maxWidth = PEN_PANEL_WIDTH,
         // Every pen's settings open with their title at one height, however long they are.
         fixedTop = true,
         actions = {
             TextButton(onClick = ::cancel, modifier = Modifier.heightIn(min = Ui.Size.touchCompact)) { Text("Cancel") }
-            TextButton(onClick = ::keep, modifier = Modifier.heightIn(min = Ui.Size.touchCompact)) { Text("Save") }
+            TextButton(onClick = { keepNib(); keep() }, modifier = Modifier.heightIn(min = Ui.Size.touchCompact)) { Text("Save") }
         },
     ) {
-        val colorPart: @Composable () -> Unit = {
-            if (mode == EditMode.ERASE) {
-                PanelSectionHeader("Eraser")
-                EraserSection(partialEraser, onPartialEraser, gestures, onGestures)
-                if (onClearPage != null || onClearAll != null) {
-                    PanelSectionHeader("Clear")
-                    // Right here rather than behind "More": clearing is what an
-                    // eraser's settings are opened for, often as not.
-                    Row(horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
-                        if (onClearPage != null) OutlinedButton(onClick = { panel.close(onClearPage) }) {
-                            Icon(Reicons.Delete, contentDescription = null, modifier = Modifier.size(Ui.Icon.small))
-                            Spacer(Modifier.width(Ui.Space.xs))
-                            Text("Clear this page")
-                        }
-                        if (onClearAll != null) OutlinedButton(onClick = { panel.close(onClearAll) }) {
-                            Icon(Reicons.Delete, contentDescription = null, modifier = Modifier.size(Ui.Icon.small))
-                            Spacer(Modifier.width(Ui.Space.xs))
-                            Text("Clear all writing")
+        val tabs = if (mode.tints) PenPanelTab.entries.toList() else listOf(PenPanelTab.SETTING)
+        if (tabs.size > 1) MorphSegments(tabs, tab, { it.label }, onSelect = { tab = it })
+        // The pen as it will draw, on both tabs, following every change.
+        PenStrokePreview(
+            width = width.coerceIn(range),
+            color = if (mode == EditMode.ERASE) null else Color(if (opacity) color.argb() else color.rgb()),
+            linePattern = if (freehand && !drawing.isDabbed()) linePattern else 0,
+            tool = drawing, nibAngle = nibAngle, pressure = pressure && mode == EditMode.PEN,
+            modifier = Modifier.fillMaxWidth().height(PREVIEW_HEIGHT),
+        )
+        val settingTab: @Composable () -> Unit = {
+            Column(verticalArrangement = Arrangement.spacedBy(GAP)) {
+                if (mode == EditMode.ERASE) {
+                    EraserSection(partialEraser, onPartialEraser, gestures, onGestures)
+                    if (onClearPage != null || onClearAll != null) {
+                        // Right here rather than behind "More": clearing is what an
+                        // eraser's settings are opened for, often as not.
+                        Row(horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+                            if (onClearPage != null) OutlinedButton(onClick = { panel.close(onClearPage) }) {
+                                Icon(Reicons.Delete, contentDescription = null, modifier = Modifier.size(Ui.Icon.small))
+                                Spacer(Modifier.width(Ui.Space.xs))
+                                Text("Clear this page")
+                            }
+                            if (onClearAll != null) OutlinedButton(onClick = { panel.close(onClearAll) }) {
+                                Icon(Reicons.Delete, contentDescription = null, modifier = Modifier.size(Ui.Icon.small))
+                                Spacer(Modifier.width(Ui.Space.xs))
+                                Text("Clear all writing")
+                            }
                         }
                     }
-                    Text(
-                        "This page: its writing, pictures and tape. All writing: the ink on every page; " +
-                            "pictures, tape and the PDF stay. Undo brings either back.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.outline,
-                    )
                 }
-            } else if (mode.tints) {
-                PanelSectionHeader("Color")
-                ColorSection(
-                    color = color,
-                    opacity = opacity,
-                    initialMode = store.colorPickerMode,
-                    onMode = { store.colorPickerMode = it },
-                    joined = joined,
-                    // Handed over at once, not after the fold: the eyedropper
-                    // takes the panel away itself.
-                    onEyedropper = onEyedropper?.let { pick -> { onConfirm(current()); pick() } },
-                )
-            }
-        }
-        val strokePart: @Composable () -> Unit = {
-            if (mode != EditMode.ERASE) {
-                SavedPensSection(
-                    mode = mode,
-                    store = store,
-                    current = { current() },
-                    onUse = { saved ->
-                        color.set(saved.colorArgb)
-                        width = saved.width
-                        pressure = saved.pressure
-                        nib = saved.nib
-                        maxWidth = saved.maxWidth
-                        leadMs = saved.leadMs
-                        stabilizer = saved.stabilizer
-                        linePattern = saved.linePattern
-                        autoShapes = saved.autoShapes
-                        straightLine = saved.straightLine
-                        nibAngle = saved.nibAngle
-                        density = saved.density
-                    },
-                )
-            }
-            PanelSectionHeader(if (mode == EditMode.PEN) "Pen width" else "Width")
-            WidthSection(
-                mode = mode,
-                width = width,
-                range = range,
-                onWidth = { width = it },
-                preview = if (mode == EditMode.ERASE) null
-                    else Color(if (opacity) color.argb() else color.rgb()),
-                linePattern = if (freehand && !drawing.isDabbed()) linePattern else 0,
-            )
-
-            val nibs = if (freehand) nibsFor(pen.tool) else emptyList()
-            if (nibs.isNotEmpty() || mode == EditMode.PEN) {
-                PanelSectionHeader(if (mode == EditMode.PENCIL) "Pencil type" else "Pen type")
-                // Every type in sight at once, wrapping onto a second line
-                // rather than scrolling - and nothing beside them to cover one.
-                WrappingChips {
-                    nibs.forEach { (tool, label) ->
-                        SettingsChoiceChip(
-                            selected = if (mode == EditMode.PENCIL) drawing == tool else nib == tool,
-                            onClick = { nib = tool },
-                            label = label,
-                        )
-                    }
-                }
+                WidthBlock(mode, width, range) { width = it }
                 if (mode == EditMode.PEN) {
-                    PanelSwitchRow("Pressure", pressure, hint = "Pressing harder draws a wider line") { pressure = it }
+                    MorphSegments(PEN_TYPES.map { it.first }, penTypeShown(nib),
+                        label = { kind -> PEN_TYPES.first { it.first == kind }.second },
+                        onSelect = ::switchNib,
+                        icon = { kind, tint -> PenGlyph(kind, tint) })
+                } else if (mode == EditMode.PENCIL) {
+                    MorphSegments(PENCIL_NIBS.map { it.first }, drawing,
+                        label = { kind -> PENCIL_NIBS.first { it.first == kind }.second },
+                        onSelect = ::switchNib,
+                        icon = { kind, tint -> PenGlyph(kind, tint) })
                 }
-                if (drawing.hasNib()) NibAngleRow(drawing, nibAngle) { nibAngle = it }
-                // The graphite pencil's own axis, beside its width and pressure.
-                if (drawing == Tool.PENCIL) DensityRow(density) { density = it }
-            }
-
-            if (freehand && !drawing.isDabbed()) {
-                PanelSectionHeader("Line style")
-                WrappingChips {
-                    listOf("Solid", "Dotted", "Dashed", "Dash-dot").forEachIndexed { index, label ->
-                        SettingsChoiceChip(
-                            selected = linePattern == index,
-                            onClick = { linePattern = index },
-                            label = label,
-                        )
+                // The row that belongs to the kind of pen: line types for the
+                // ballpoint and the vanishing pen, the angle for a cut nib. It
+                // changes with the pen, one folding away as the other opens.
+                androidx.compose.animation.AnimatedContent(
+                    targetState = penExtraRow(mode, nib, drawing) to drawing,
+                    transitionSpec = {
+                        val enter = if (animate) fadeIn(tween(200, delayMillis = 60)) + expandVertically(tween(240))
+                            else EnterTransition.None
+                        val exit = if (animate) fadeOut(tween(120)) + shrinkVertically(tween(220)) else ExitTransition.None
+                        enter togetherWith exit
+                    },
+                    label = "pen extra row",
+                ) { (row, kind) ->
+                    when (row) {
+                        PenExtraRow.LINE_TYPE -> Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Line type", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.width(LINE_TYPE_LABEL))
+                            MorphSegments(listOf(0, 1, 2), linePattern.takeIf { it in 0..2 },
+                                label = { listOf("Solid", "Dot", "Dash")[it] },
+                                onSelect = { linePattern = it },
+                                modifier = Modifier.weight(1f),
+                                icon = { pattern, tint -> LineGlyph(pattern, tint) })
+                        }
+                        PenExtraRow.NIB_ANGLE -> Column { NibAngleRow(kind, nibAngle) { nibAngle = it } }
+                        PenExtraRow.DENSITY -> Column { DensityRow(density) { density = it } }
+                        PenExtraRow.NONE -> Spacer(Modifier.height(0.dp))
                     }
                 }
-            }
-
-            if (mode in STRAIGHT_LINE_MODES) {
-                PanelSwitchRow(
-                    "Straight line",
-                    straightLine,
-                    hint = "Draws a straight line from where the pen lands to where it lifts",
-                ) { straightLine = it }
+                if (mode == EditMode.PEN) PanelSwitchRow("Pressure", pressure) { pressure = it }
+                if (mode in STRAIGHT_LINE_MODES) PanelSwitchRow("Straight line", straightLine) { straightLine = it }
+                if (freehand) PanelSwitchRow("Recognize shape", autoShapes) { autoShapes = it }
             }
         }
-        if (wide) {
-            Row(horizontalArrangement = Arrangement.spacedBy(Ui.Space.l)) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(GAP)) { colorPart() }
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(GAP)) { strokePart() }
+        val colorTab: @Composable () -> Unit = {
+            Column(verticalArrangement = Arrangement.spacedBy(GAP)) {
+                var view by remember { mutableStateOf(colorViewOf(store.colorPickerMode)) }
+                MorphSegments(COLOR_VIEWS, view, { it.label }, onSelect = {
+                    view = it
+                    store.colorPickerMode = it.ordinal
+                })
+                MorphingPicker(view, animate) { shownView ->
+                    when (shownView) {
+                        ColorPickerMode.GRID -> ColorGrid(color)
+                        ColorPickerMode.RING -> RingPicker(color)
+                        ColorPickerMode.DISC -> DiscPicker(color, joined)
+                        else -> SquarePicker(color, joined)
+                    }
+                }
+                if (opacity) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(GAP)) {
+                        Text("Opacity", style = MaterialTheme.typography.labelMedium)
+                        GradientStrip(
+                            colors = listOf(Color(color.rgb()).copy(alpha = 0f), Color(color.rgb())),
+                            position = color.alpha,
+                            modifier = Modifier.weight(1f).height(STRIP_HEIGHT),
+                            shape = RoundedCornerShape(STRIP_HEIGHT / 2),
+                        ) { color.alpha = it }
+                        Text("${(color.alpha * 100).roundToInt()}%", style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier.width(36.dp))
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(GAP)) {
+                    // The colour itself, then its code, then the eyedropper: one height, one corner.
+                    Box(Modifier.size(FIELD_COMPACT).clip(pickerShape).background(Color.White).background(Color(color.argb()))
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, pickerShape))
+                    HexField(color, opacity, Modifier.weight(1f))
+                    if (onEyedropper != null) {
+                        Box(
+                            Modifier
+                                .size(FIELD_COMPACT)
+                                .clip(pickerShape)
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, pickerShape)
+                                // Handed over at once, not after the fold: the eyedropper
+                                // takes the panel away itself.
+                                .clickable { onConfirm(current()); onEyedropper() },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(Reicons.Colorize, contentDescription = "Eyedropper", modifier = Modifier.size(Ui.Icon.regular))
+                        }
+                    }
+                }
+                Box(Modifier.fillMaxWidth().height(PALETTE_BELOW_HEIGHT)) { PalettePanel(color, opacity, perRow = 8) }
             }
-        } else {
-            colorPart()
-            strokePart()
         }
+        EqualTabs(tabs.indexOf(tab).coerceAtLeast(0), animate,
+            tabs.map { if (it == PenPanelTab.COLOR) colorTab else settingTab })
 
         // The rest of this tool's settings, opened downward on demand.
         Row(
@@ -440,6 +479,14 @@ internal fun PenDialog(
             Column(verticalArrangement = Arrangement.spacedBy(GAP)) {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Text("Only this tool", style = MaterialTheme.typography.labelLarge)
+                if (mode != EditMode.ERASE) {
+                    SavedPensSection(
+                        mode = mode,
+                        store = store,
+                        current = { current() },
+                        onUse = { saved -> nib = saved.nib; takeUp(saved) },
+                    )
+                }
                 if (mode != EditMode.ERASE) PredictionSetting(leadMs) { leadMs = it }
                 if (freehand) {
                     Text(
@@ -459,7 +506,6 @@ internal fun PenDialog(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.outline,
                     )
-                    PanelSwitchRow("Recognize shapes", autoShapes) { autoShapes = it }
                 }
                 WidthCeilings(mode, range) { ceiling ->
                     maxWidth = ceiling
@@ -730,116 +776,8 @@ private val PALETTE_WIDTH = 96.dp
 private val pickerShape: androidx.compose.ui.graphics.Shape
     @Composable get() = RoundedCornerShape(nestedCorner(Ui.Corner.control))
 
-/** One of a row of equal pills that share the width between them. */
-@Composable
-private fun ModePill(label: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
-    val scheme = MaterialTheme.colorScheme
-    Box(
-        modifier
-            .height(36.dp)
-            .clip(CircleShape)
-            .background(if (selected) scheme.secondaryContainer else Color.Transparent)
-            .border(1.dp, if (selected) Color.Transparent else scheme.outlineVariant, CircleShape)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            label,
-            style = MaterialTheme.typography.labelLarge,
-            maxLines = 1,
-            color = if (selected) scheme.onSecondaryContainer else scheme.onSurfaceVariant,
-        )
-    }
-}
 
-@Composable
-private fun ColorSection(
-    color: PenColorState,
-    opacity: Boolean,
-    initialMode: Int,
-    onMode: (Int) -> Unit,
-    joined: Boolean,
-    onEyedropper: (() -> Unit)?,
-) {
-    var pickerMode by remember {
-        mutableStateOf(ColorPickerMode.entries.getOrElse(initialMode) { ColorPickerMode.SQUARE })
-    }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(GAP)) {
-        ColorPickerMode.entries.forEach { option ->
-            ModePill(option.label, pickerMode == option, Modifier.weight(1f)) {
-                pickerMode = option
-                onMode(option.ordinal)
-            }
-        }
-    }
-    PaletteBeside(
-        main = {
-            Column(verticalArrangement = Arrangement.spacedBy(GAP)) {
-                when (pickerMode) {
-                    ColorPickerMode.SQUARE -> SquarePicker(color, joined)
-                    ColorPickerMode.BARS -> BarsPicker(color, joined)
-                    ColorPickerMode.RING -> RingPicker(color)
-                    ColorPickerMode.RGB -> RgbPicker(color, joined)
-                    ColorPickerMode.DISC -> DiscPicker(color, joined)
-                }
-                if (opacity) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(GAP)) {
-                        Text("Opacity", style = MaterialTheme.typography.labelMedium)
-                        GradientStrip(
-                            colors = listOf(Color(color.rgb()).copy(alpha = 0f), Color(color.rgb())),
-                            position = color.alpha,
-                            modifier = Modifier.weight(1f).height(STRIP_HEIGHT),
-                            shape = RoundedCornerShape(STRIP_HEIGHT / 2),
-                        ) { color.alpha = it }
-                        Text(
-                            "${(color.alpha * 100).roundToInt()}%",
-                            style = MaterialTheme.typography.labelMedium,
-                            modifier = Modifier.width(36.dp),
-                        )
-                    }
-                }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(GAP)) {
-                    HexField(color, opacity, Modifier.weight(1f).height(FIELD_HEIGHT))
-                    if (onEyedropper != null) {
-                        val shape = MaterialTheme.shapes.extraSmall
-                        Box(
-                            Modifier
-                                .size(FIELD_HEIGHT)
-                                .clip(shape)
-                                .border(1.dp, MaterialTheme.colorScheme.outline, shape)
-                                .clickable(onClick = onEyedropper),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(Reicons.Colorize, contentDescription = "Eyedropper", modifier = Modifier.size(Ui.Icon.regular))
-                        }
-                    }
-                }
-            }
-        },
-        palette = { PalettePanel(color, opacity) },
-    )
-}
 
-/**
- * The picker on the left and the palette on the right, the palette exactly
- * as tall as everything on the left - picker, opacity and the hex row - so
- * both columns start and end on the same lines.
- */
-@Composable
-private fun PaletteBeside(main: @Composable () -> Unit, palette: @Composable () -> Unit) {
-    Layout(contents = listOf(main, palette)) { measurables, constraints ->
-        val gap = GAP.roundToPx()
-        val paletteWidth = PALETTE_WIDTH.roundToPx().coerceAtMost(constraints.maxWidth / 3)
-        val mainWidth = (constraints.maxWidth - paletteWidth - gap).coerceAtLeast(0)
-        val mains = measurables[0].map { it.measure(Constraints(minWidth = mainWidth, maxWidth = mainWidth)) }
-        val height = mains.maxOfOrNull { it.height } ?: 0
-        val palettes = measurables[1].map { it.measure(Constraints.fixed(paletteWidth, height)) }
-        layout(constraints.maxWidth, height) {
-            mains.forEach { it.place(0, 0) }
-            palettes.forEach { it.place(mainWidth + gap, 0) }
-        }
-    }
-}
 
 /** 1. Saturation across, value down, hue on the strip below. */
 @Composable
@@ -865,46 +803,6 @@ private fun SquarePicker(color: PenColorState, joined: Boolean) {
     }
 }
 
-/** 2. Three upright H, S and V bars, with the colour itself beside them. */
-@Composable
-private fun BarsPicker(color: PenColorState, joined: Boolean) {
-    Row(
-        Modifier.fillMaxWidth().height(PICKER_HEIGHT).then(if (joined) Modifier.clip(pickerShape) else Modifier),
-        horizontalArrangement = Arrangement.spacedBy(if (joined) 0.dp else GAP),
-    ) {
-        VerticalStrip(HUES, color.hue / 360f, "H", joined) { color.hue = it * 360f }
-        VerticalStrip(
-            listOf(Color.hsv(color.hue, 0f, color.value), Color.hsv(color.hue, 1f, color.value)),
-            color.saturation, "S", joined,
-        ) { color.saturation = it }
-        VerticalStrip(
-            listOf(Color.Black, Color.hsv(color.hue, color.saturation, 1f)),
-            color.value, "V", joined,
-        ) { color.value = it }
-        Column(Modifier.weight(1f).fillMaxHeight()) {
-            // Apart, the bars carry their letters above them; the colour
-            // starts on the same line as the bars rather than above them.
-            if (!joined) Spacer(Modifier.height(LABEL_HEIGHT))
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .then(if (joined) Modifier else Modifier.clip(pickerShape))
-                    .background(Color.White)
-                    .background(Color(color.argb())),
-                contentAlignment = if (joined) Alignment.TopStart else Alignment.BottomStart,
-            ) {
-                Text(
-                    "H ${color.hue.roundToInt()}°  S ${(color.saturation * 100).roundToInt()}%  V ${(color.value * 100).roundToInt()}%",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (color.value > 0.6f && color.saturation < 0.5f) Color.Black.copy(alpha = 0.7f)
-                        else Color.White.copy(alpha = 0.85f),
-                    modifier = Modifier.padding(GAP),
-                )
-            }
-        }
-    }
-}
 
 /** 3. A hue ring around the saturation-value square, with the numbers to type. */
 @Composable
@@ -962,65 +860,15 @@ private fun RingPicker(color: PenColorState) {
                 topLeft.y + trackPosition(1f - color.value, box.height, thumb),
             ), thumb)
         }
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(GAP)) {
-            NumberField("H", color.hue.roundToInt(), 0..360, "°", Modifier.fillMaxWidth()) { color.hue = it.toFloat() % 360f }
-            NumberField("S", (color.saturation * 100).roundToInt(), 0..100, "%", Modifier.fillMaxWidth()) { color.saturation = it / 100f }
-            NumberField("V", (color.value * 100).roundToInt(), 0..100, "%", Modifier.fillMaxWidth()) { color.value = it / 100f }
+        // Three boxes of one size, as tall as the eyedropper, centred on the ring.
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(GAP, Alignment.CenterVertically)) {
+            CompactNumber("H", color.hue.roundToInt(), 0..360, "°", Modifier.fillMaxWidth()) { color.hue = it.toFloat() % 360f }
+            CompactNumber("S", (color.saturation * 100).roundToInt(), 0..100, "%", Modifier.fillMaxWidth()) { color.saturation = it / 100f }
+            CompactNumber("V", (color.value * 100).roundToInt(), 0..100, "%", Modifier.fillMaxWidth()) { color.value = it / 100f }
         }
     }
 }
 
-/** 4. Red, green and blue, each on a strip that shows where it would go. */
-@Composable
-private fun RgbPicker(color: PenColorState, joined: Boolean) {
-    val rgb = color.rgb()
-    val red = android.graphics.Color.red(rgb)
-    val green = android.graphics.Color.green(rgb)
-    val blue = android.graphics.Color.blue(rgb)
-    val channels = listOf(
-        Triple("R", red, listOf(Color(0, green, blue), Color(255, green, blue))),
-        Triple("G", green, listOf(Color(red, 0, blue), Color(red, 255, blue))),
-        Triple("B", blue, listOf(Color(red, green, 0), Color(red, green, 255))),
-    )
-    fun set(label: String, next: Int) = when (label) {
-        "R" -> color.setRgb(next, green, blue)
-        "G" -> color.setRgb(red, next, blue)
-        else -> color.setRgb(red, green, next)
-    }
-    Row(Modifier.fillMaxWidth().height(PICKER_HEIGHT), horizontalArrangement = Arrangement.spacedBy(GAP)) {
-        Column(
-            Modifier.weight(1f).fillMaxHeight().then(if (joined) Modifier.clip(pickerShape) else Modifier),
-            verticalArrangement = Arrangement.spacedBy(if (joined) 0.dp else GAP),
-        ) {
-            channels.forEach { (label, channel, ramp) ->
-                Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.CenterStart) {
-                    GradientStrip(
-                        colors = ramp,
-                        position = channel / 255f,
-                        modifier = Modifier.fillMaxSize(),
-                        shape = if (joined) RectangleShape else pickerShape,
-                    ) { set(label, (it * 255f).roundToInt()) }
-                    Text(
-                        label,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = Color.White.copy(alpha = 0.9f),
-                        modifier = Modifier.padding(start = GAP),
-                    )
-                }
-            }
-        }
-        Column(
-            Modifier.width(84.dp).fillMaxHeight(),
-            verticalArrangement = Arrangement.spacedBy(if (joined) 0.dp else GAP),
-        ) {
-            channels.forEach { (label, channel, _) ->
-                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                    NumberField(null, channel, 0..255, null, Modifier.fillMaxWidth()) { set(label, it) }
-                }
-            }
-        }
-    }
-}
 
 /** 5. A colour disc - hue around, saturation outward - and brightness beside it. */
 @Composable
@@ -1061,22 +909,27 @@ private fun DiscPicker(color: PenColorState, joined: Boolean) {
                 thumb,
             )
         }
-        Column(Modifier.weight(1f).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("Brightness ${(color.value * 100).roundToInt()}%", style = MaterialTheme.typography.labelMedium,
-                modifier = Modifier.height(LABEL_HEIGHT))
-            Box(Modifier.weight(1f)) {
-                VerticalStrip(
-                    listOf(Color.Black, Color.hsv(color.hue, color.saturation, 1f)),
-                    color.value, null, joined = false,
-                ) { color.value = it }
-            }
+        // Brightness beside the disc, and the colour's red, green and blue to
+        // type, in boxes of the one size the panel uses.
+        VerticalStrip(
+            listOf(Color.Black, Color.hsv(color.hue, color.saturation, 1f)),
+            color.value, null, joined = false,
+        ) { color.value = it }
+        val rgb = color.rgb()
+        val red = android.graphics.Color.red(rgb)
+        val green = android.graphics.Color.green(rgb)
+        val blue = android.graphics.Color.blue(rgb)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(GAP, Alignment.CenterVertically)) {
+            CompactNumber("R", red, 0..255, null, Modifier.fillMaxWidth()) { color.setRgb(it, green, blue) }
+            CompactNumber("G", green, 0..255, null, Modifier.fillMaxWidth()) { color.setRgb(red, it, blue) }
+            CompactNumber("B", blue, 0..255, null, Modifier.fillMaxWidth()) { color.setRgb(red, green, it) }
         }
     }
 }
 
 /** The palette beside the picker: the built-in and saved colour sets, a tap each. */
 @Composable
-private fun PalettePanel(color: PenColorState, opacity: Boolean) {
+private fun PalettePanel(color: PenColorState, opacity: Boolean, perRow: Int = 3) {
     val context = LocalContext.current
     val store = remember { PenStore(context) }
     var custom by remember { mutableStateOf(store.colorTemplates()) }
@@ -1098,11 +951,11 @@ private fun PalettePanel(color: PenColorState, opacity: Boolean) {
         Text("Palette", style = MaterialTheme.typography.labelMedium)
         for ((name, colors) in COLOR_TEMPLATES + custom) {
             Text(name, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
-            colors.chunked(3).forEach { row ->
-                // Three to a row, spread edge to edge, so every row shares
-                // the same columns whether it is full or not.
+            colors.chunked(perRow).forEach { row ->
+                // A fixed number to a row, spread edge to edge, so every row
+                // shares the same columns whether it is full or not.
                 Row(Modifier.fillMaxWidth()) {
-                    for (index in 0 until 3) {
+                    for (index in 0 until perRow) {
                         val argb = row.getOrNull(index)
                         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                             if (argb != null) Box(
@@ -1134,9 +987,9 @@ private fun HexField(color: PenColorState, opacity: Boolean, modifier: Modifier)
     var draft by remember { mutableStateOf<String?>(null) }
     var focused by remember { mutableStateOf(false) }
     LaunchedEffect(shown) { if (!focused) draft = null }
-    OutlinedTextField(
-        value = draft ?: shown,
-        onValueChange = { typed ->
+    CompactField(
+        text = draft ?: shown,
+        onText = { typed ->
             val clean = typed.removePrefix("#").filter { it.isLetterOrDigit() }.take(if (opacity) 8 else 6)
             draft = clean
             val parsed = clean.toLongOrNull(16)
@@ -1145,39 +998,11 @@ private fun HexField(color: PenColorState, opacity: Boolean, modifier: Modifier)
                 color.set(argb, keepAlpha = clean.length == 6)
             }
         },
-        prefix = { Text("#") },
-        singleLine = true,
+        label = "#", suffix = null, keyboard = KeyboardType.Ascii,
         modifier = modifier.onFocusChanged { focused = it.isFocused; if (!it.isFocused) draft = null },
     )
 }
 
-/** A small number box that applies whatever it holds once it is a number in [range]. */
-@Composable
-private fun NumberField(
-    label: String?,
-    value: Int,
-    range: IntRange,
-    suffix: String?,
-    modifier: Modifier = Modifier.width(96.dp),
-    onValue: (Int) -> Unit,
-) {
-    var draft by remember { mutableStateOf<String?>(null) }
-    var focused by remember { mutableStateOf(false) }
-    LaunchedEffect(value) { if (!focused) draft = null }
-    OutlinedTextField(
-        value = draft ?: value.toString(),
-        onValueChange = { typed ->
-            val digits = typed.filter { it.isDigit() }.take(3)
-            draft = digits
-            digits.toIntOrNull()?.takeIf { it in range }?.let(onValue)
-        },
-        label = if (label != null) { { Text(label) } } else null,
-        suffix = if (suffix != null) { { Text(suffix) } } else null,
-        singleLine = true,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-        modifier = modifier.onFocusChanged { focused = it.isFocused; if (!it.isFocused) draft = null },
-    )
-}
 
 /**
  * An upright ramp with a handle: the top is 1, the bottom 0. Apart, it is a
@@ -1240,105 +1065,7 @@ private fun angleOf(d: Offset): Float {
 
 // ---- thickness ---------------------------------------------------------------
 
-@Composable
-private fun WidthSection(
-    mode: EditMode,
-    width: Float,
-    range: ClosedFloatingPointRange<Float>,
-    onWidth: (Float) -> Unit,
-    preview: Color?,
-    linePattern: Int,
-) {
-    val context = LocalContext.current
-    val store = remember { PenStore(context) }
-    var favorites by remember(mode) { mutableStateOf(store.favoriteWidths(mode)) }
-    val shown = width.coerceIn(range)
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(GAP)) {
-        Column(Modifier.weight(1f)) {
-            SkinSlider(value = shown, onValueChange = onWidth, valueRange = range, step = WIDTH_SLIDER_STEP)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = { onWidth((shown - WIDTH_STEP).coerceIn(range)) }) { Text("−") }
-                // Typed as well as slid, for a width known to the hundredth. The box
-                // follows the slider and the buttons; what it holds is applied as
-                // soon as it reads as a width in range.
-                var typed by remember { mutableStateOf(widthLabel(shown)) }
-                LaunchedEffect(shown) { if (parseWidth(typed, range) != shown) typed = widthLabel(shown) }
-                OutlinedTextField(
-                    value = typed,
-                    onValueChange = { text -> typed = text; parseWidth(text, range)?.let(onWidth) },
-                    singleLine = true,
-                    isError = parseWidth(typed, range) == null,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    textStyle = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.width(88.dp),
-                )
-                TextButton(onClick = { onWidth((shown + WIDTH_STEP).coerceIn(range)) }) { Text("+") }
-                val starred = favorites.any { kotlin.math.abs(it - shown) < 0.005f }
-                TextButton(onClick = {
-                    favorites = if (starred) favorites.filterNot { kotlin.math.abs(it - shown) < 0.005f }
-                        else (favorites + shown).sorted()
-                    store.saveFavoriteWidths(mode, favorites)
-                }) { Text(if (starred) "★" else "☆") }
-            }
-            // In millimetres on an A4 page as well, a size people know; not
-            // for the eraser, whose size is on the screen, not the page.
-            if (mode != EditMode.ERASE) Text("${widthLabel(shown)} · ${millimetreLabel(shown)}",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
-            if (favorites.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState())) {
-                favorites.forEach { favorite ->
-                    SettingsChoiceChip(
-                        selected = kotlin.math.abs(favorite - shown) < 0.005f,
-                        onClick = { onWidth(favorite.coerceIn(range)) },
-                        label = widthLabel(favorite),
-                        modifier = Modifier.padding(end = Ui.Space.s),
-                    )
-                }
-            }
-        }
-        StrokePreview(width = shown, color = preview, linePattern = linePattern,
-            modifier = Modifier.width(150.dp).height(72.dp))
-    }
-}
 
-/** The line as it will draw - colour, see-through, thickness and pattern - or the eraser's reach. */
-@Composable
-private fun StrokePreview(width: Float, color: Color?, linePattern: Int, modifier: Modifier) {
-    val outline = MaterialTheme.colorScheme.outline
-    Canvas(
-        modifier
-            .clip(pickerShape)
-            .background(Color.White)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, pickerShape),
-    ) {
-        val stroke = width.dp.toPx().coerceIn(1f, size.height * 0.45f)
-        if (color == null) {
-            drawCircle(outline, stroke / 2f, center, style = Stroke(2.dp.toPx()))
-            return@Canvas
-        }
-        val pad = stroke / 2f + 8.dp.toPx()
-        val path = Path().apply {
-            val left = pad
-            val right = size.width - pad
-            val mid = size.height / 2f
-            val swing = (size.height / 2f - pad).coerceAtLeast(0f)
-            moveTo(left, mid + swing * 0.4f)
-            cubicTo(
-                left + (right - left) * 0.3f, mid - swing,
-                left + (right - left) * 0.55f, mid - swing,
-                left + (right - left) * 0.7f, mid + swing * 0.3f,
-            )
-            quadraticTo(left + (right - left) * 0.85f, mid + swing, right, mid)
-        }
-        val dash = stroke.coerceAtLeast(2f)
-        val effect = when (linePattern) {
-            1 -> PathEffect.dashPathEffect(floatArrayOf(0.1f, dash * 2f))
-            2 -> PathEffect.dashPathEffect(floatArrayOf(dash * 3f, dash * 2f))
-            3 -> PathEffect.dashPathEffect(floatArrayOf(dash * 3f, dash * 1.5f, 0.1f, dash * 1.5f))
-            else -> null
-        }
-        drawPath(path, color, style = Stroke(width = stroke, cap = StrokeCap.Round, pathEffect = effect))
-    }
-}
 
 /** Where the thickness slider tops out: Thin, Medium or the tool's own Max. */
 @Composable
@@ -1515,3 +1242,568 @@ internal object LastTouch {
     fun recent(): Offset? =
         if (atMs != 0L && android.os.SystemClock.uptimeMillis() - atMs <= 1500L) Offset(x, y) else null
 }
+
+// ---- the pen panel's parts: tabs, live stroke, segments, width, colour views ----
+
+/** The two faces of a pen's panel: how it draws, and its colour. */
+internal enum class PenPanelTab(val label: String) { SETTING("Setting"), COLOR("Color") }
+
+/** The pens the pen tool offers, as four segments; the speed fountain pen shows as the fountain pen. */
+internal val PEN_TYPES = listOf(
+    Tool.PEN to "Ballpoint", Tool.FOUNTAIN to "Fountain", Tool.CALLIGRAPHY to "Calligraphy", Tool.VANISHING_PEN to "Vanishing",
+)
+
+/** The segment a pen's [nib] shows as chosen. */
+internal fun penTypeShown(nib: Tool): Tool = if (nib == Tool.SPEED_FOUNTAIN) Tool.FOUNTAIN else nib
+
+/** Which extra row a pen's panel shows under its type: the line type, the nib's angle, the graphite's density, or none. */
+internal enum class PenExtraRow { LINE_TYPE, NIB_ANGLE, DENSITY, NONE }
+
+/** The extra row for [mode]'s pen drawing as [drawing] with [nib]: line types for the ballpoint and the vanishing pen, the angle for a cut nib. */
+internal fun penExtraRow(mode: EditMode, nib: Tool, drawing: Tool): PenExtraRow = when {
+    mode == EditMode.PEN && (nib == Tool.PEN || nib == Tool.VANISHING_PEN) -> PenExtraRow.LINE_TYPE
+    drawing.hasNib() -> PenExtraRow.NIB_ANGLE
+    drawing == Tool.PENCIL -> PenExtraRow.DENSITY
+    else -> PenExtraRow.NONE
+}
+
+/** A width as the panel shows it: to a tenth. */
+internal fun widthTenths(width: Float): String = String.format(java.util.Locale.US, "%.1f", width)
+
+/** [width] to the nearest tenth. */
+internal fun roundTenth(width: Float): Float = kotlin.math.round(width * 10f) / 10f
+
+/** One tenth thinner ([direction] -1) or thicker (+1), on the tenth, within [range]. */
+internal fun stepWidth(width: Float, direction: Int, range: ClosedFloatingPointRange<Float>): Float =
+    roundTenth(width + 0.1f * direction).coerceIn(range)
+
+/** The widths offered as presets until the reader keeps their own: the usual ones in [range], six at most. */
+internal fun defaultWidthPresets(range: ClosedFloatingPointRange<Float>): List<Float> =
+    listOf(0.5f, 1f, 2f, 3f, 5f, 8f, 12f, 20f, 30f, 50f).filter { it in range }.take(6)
+
+/**
+ * The colours of the grid view, [columns] across and [rows] down, row by
+ * row: greys from white to black on top, then each hue from dark through
+ * full to pale.
+ */
+internal fun gridColors(columns: Int, rows: Int): List<Int> {
+    val out = ArrayList<Int>(columns * rows)
+    for (c in 0 until columns) {
+        val v = 1f - c / (columns - 1).coerceAtLeast(1).toFloat()
+        out += android.graphics.Color.HSVToColor(floatArrayOf(0f, 0f, v))
+    }
+    for (r in 1 until rows) {
+        val t = (r - 1) / (rows - 2).coerceAtLeast(1).toFloat()
+        val value = (0.35f + 1.3f * t).coerceAtMost(1f)
+        val saturation = if (t <= 0.5f) 1f else 1f - 1.5f * (t - 0.5f)
+        for (c in 0 until columns) {
+            out += android.graphics.Color.HSVToColor(floatArrayOf(c * 360f / columns, saturation, value))
+        }
+    }
+    return out
+}
+
+/** The colour views the Color tab offers, in its order; the older HSV bars and RGB strips open as the ring and the disc. */
+internal val COLOR_VIEWS = listOf(ColorPickerMode.GRID, ColorPickerMode.SQUARE, ColorPickerMode.RING, ColorPickerMode.DISC)
+
+/** The view a stored picker choice opens on. */
+internal fun colorViewOf(stored: Int): ColorPickerMode = when (ColorPickerMode.entries.getOrNull(stored)) {
+    ColorPickerMode.BARS -> ColorPickerMode.RING
+    ColorPickerMode.RGB -> ColorPickerMode.DISC
+    null -> ColorPickerMode.SQUARE
+    else -> ColorPickerMode.entries[stored]
+}
+
+/**
+ * A row of choices on one capsule, the chosen one on a pill that slides to
+ * it. Given [icon], each choice shows its name at rest and turns into a
+ * picture of itself while a pointer hovers over the row or a finger is on
+ * it, and back to its name a moment after.
+ */
+@Composable
+private fun <T> MorphSegments(
+    options: List<T>,
+    selected: T?,
+    label: (T) -> String,
+    onSelect: (T) -> Unit,
+    modifier: Modifier = Modifier,
+    icon: (@Composable (T, Color) -> Unit)? = null,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val index = options.indexOf(selected)
+    val slide = remember { androidx.compose.animation.core.Animatable(index.coerceAtLeast(0).toFloat()) }
+    LaunchedEffect(index) { if (index >= 0) slide.animateTo(index.toFloat(), SEGMENT_SPRING.paced()) }
+    val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+    var touched by remember { mutableStateOf(false) }
+    var showIcons by remember { mutableStateOf(false) }
+    LaunchedEffect(hovered, touched) {
+        if (icon == null) return@LaunchedEffect
+        if (hovered || touched) showIcons = true
+        else {
+            delay(ICON_LINGER_MS)
+            showIcons = false
+        }
+    }
+    androidx.compose.foundation.layout.BoxWithConstraints(
+        modifier
+            .fillMaxWidth()
+            .height(SEGMENT_HEIGHT)
+            .clip(CircleShape)
+            .background(scheme.onSurface.copy(alpha = 0.06f))
+            .hoverable(interaction)
+            // Watched, not taken: the segments under it still get the tap.
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false, pass = androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                    touched = true
+                    do {
+                        val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                    } while (event.changes.any { it.pressed })
+                    touched = false
+                }
+            },
+    ) {
+        val cell = maxWidth / options.size.coerceAtLeast(1)
+        if (index >= 0) Box(
+            Modifier
+                .width(cell)
+                .fillMaxHeight()
+                .graphicsLayer { translationX = cell.toPx() * slide.value }
+                .padding(3.dp)
+                .clip(CircleShape)
+                .background(scheme.primary.copy(alpha = 0.16f)),
+        )
+        Row(Modifier.fillMaxSize()) {
+            options.forEach { option ->
+                val chosen = option == selected
+                val tint = if (chosen) scheme.primary else scheme.onSurface
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clip(CircleShape)
+                        .clickable(
+                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                            indication = null,
+                            role = androidx.compose.ui.semantics.Role.Tab,
+                        ) { onSelect(option) }
+                        .segmentSemantics(label(option), chosen),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (icon == null) {
+                        SegmentLabel(label(option), tint)
+                    } else {
+                        androidx.compose.animation.AnimatedContent(
+                            targetState = showIcons,
+                            transitionSpec = {
+                                val enter = fadeIn(tween(160)) + androidx.compose.animation.scaleIn(tween(200), initialScale = 0.7f)
+                                val exit = fadeOut(tween(120)) + androidx.compose.animation.scaleOut(tween(160), targetScale = 1.15f)
+                                enter togetherWith exit
+                            },
+                            label = "segment face",
+                        ) { asIcon -> if (asIcon) icon(option, tint) else SegmentLabel(label(option), tint) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SegmentLabel(text: String, tint: Color) {
+    Text(text, style = MaterialTheme.typography.labelLarge, color = tint, maxLines = 1,
+        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 4.dp))
+}
+
+/** A choice's name and whether it is the chosen one, for a screen reader. */
+private fun Modifier.segmentSemantics(name: String, chosen: Boolean): Modifier =
+    this.then(Modifier.semantics {
+        contentDescription = name
+        selected = chosen
+    })
+
+/** A picture of a pen or pencil kind, drawn as a short stroke the way that kind draws it. */
+@Composable
+private fun PenGlyph(tool: Tool, tint: Color) {
+    Canvas(Modifier.size(width = 44.dp, height = 22.dp)) {
+        val steps = 28
+        fun at(t: Float) = Offset(size.width * (0.08f + 0.84f * t),
+            size.height * (0.5f - 0.3f * kotlin.math.sin(t * 2f * kotlin.math.PI.toFloat())))
+        when (tool) {
+            Tool.FOUNTAIN, Tool.SPEED_FOUNTAIN, Tool.CALLIGRAPHY -> {
+                val flat = if (tool == Tool.CALLIGRAPHY) 0.18f else 0.55f
+                val nib = (if (tool == Tool.CALLIGRAPHY) 8.dp else 5.dp).toPx()
+                for (i in 0..steps * 2) {
+                    val p = at(i / (steps * 2f))
+                    rotate(45f, pivot = p) {
+                        drawOval(tint, topLeft = Offset(p.x - nib / 2f, p.y - nib * flat / 2f), size = Size(nib, nib * flat))
+                    }
+                }
+            }
+            Tool.VANISHING_PEN -> for (i in 0 until steps) {
+                drawLine(tint.copy(alpha = tint.alpha * (1f - i / steps.toFloat() * 0.85f)), at(i / steps.toFloat()),
+                    at((i + 1) / steps.toFloat()), strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
+            }
+            Tool.PENCIL -> for (i in 0..steps * 3) {
+                val p = at(i / (steps * 3f))
+                val jitter = ((i * 37) % 7 - 3) * 0.3f
+                drawCircle(tint.copy(alpha = 0.75f), 0.9.dp.toPx(), Offset(p.x, p.y + jitter))
+            }
+            Tool.SOFT_PENCIL -> for (i in 0 until steps) {
+                drawLine(tint.copy(alpha = 0.5f), at(i / steps.toFloat()), at((i + 1) / steps.toFloat()),
+                    strokeWidth = 4.dp.toPx(), cap = StrokeCap.Round)
+            }
+            Tool.STAMP -> for (i in 0..6) drawCircle(tint, 2.dp.toPx(), at(i / 6f))
+            Tool.SPRAY -> for (i in 0..40) {
+                val p = at(((i * 13) % 41) / 40f)
+                drawCircle(tint.copy(alpha = 0.7f), 0.7.dp.toPx(),
+                    Offset(p.x + ((i * 7) % 9 - 4) * 0.6f, p.y + ((i * 11) % 9 - 4) * 0.6f))
+            }
+            else -> for (i in 0 until steps) {
+                drawLine(tint, at(i / steps.toFloat()), at((i + 1) / steps.toFloat()), strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
+            }
+        }
+    }
+}
+
+/** A line type drawn as the line itself: solid, dotted or dashed. */
+@Composable
+private fun LineGlyph(pattern: Int, tint: Color) {
+    Canvas(Modifier.size(width = 40.dp, height = 16.dp)) {
+        val w = 2.5.dp.toPx()
+        val effect = when (pattern) {
+            1 -> PathEffect.dashPathEffect(floatArrayOf(0.1f, w * 2.2f))
+            2 -> PathEffect.dashPathEffect(floatArrayOf(w * 3f, w * 2f))
+            else -> null
+        }
+        drawLine(tint, Offset(w, size.height / 2f), Offset(size.width - w, size.height / 2f),
+            strokeWidth = w, cap = StrokeCap.Round, pathEffect = effect)
+    }
+}
+
+/**
+ * The pen as it will draw, across the top of its panel: its colour,
+ * thickness and line type, the shape of a cut nib at its angle, the taper of
+ * pressure and the fade of the vanishing pen. The eraser shows its reach.
+ */
+@Composable
+private fun PenStrokePreview(
+    width: Float, color: Color?, linePattern: Int, tool: Tool, nibAngle: Int?, pressure: Boolean, modifier: Modifier,
+) {
+    val outline = MaterialTheme.colorScheme.outline
+    Canvas(
+        modifier
+            .clip(pickerShape)
+            .background(Color.White)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, pickerShape),
+    ) {
+        val stroke = width.dp.toPx().coerceIn(1f, size.height * 0.4f)
+        if (color == null) {
+            drawCircle(outline, stroke / 2f, center, style = Stroke(2.dp.toPx()))
+            return@Canvas
+        }
+        val pad = stroke / 2f + 12.dp.toPx()
+        val swing = (size.height / 2f - pad).coerceAtLeast(0f)
+        fun at(t: Float) = Offset(pad + (size.width - 2 * pad) * t,
+            size.height / 2f - swing * kotlin.math.sin(t * 2f * kotlin.math.PI.toFloat() * 1.25f))
+        val steps = 96
+        when {
+            tool.hasNib() -> {
+                val angle = (nibAngle ?: tool.defaultNibAngle()).toFloat()
+                val flat = if (tool == Tool.CALLIGRAPHY) 0.18f else 0.55f
+                val nib = stroke * 1.8f
+                for (i in 0..steps * 2) {
+                    val p = at(i / (steps * 2f))
+                    rotate(angle, pivot = p) {
+                        drawOval(color, topLeft = Offset(p.x - nib / 2f, p.y - nib * flat / 2f), size = Size(nib, nib * flat))
+                    }
+                }
+            }
+            tool == Tool.VANISHING_PEN || pressure || tool == Tool.PRESSURE_PEN -> for (i in 0 until steps) {
+                val t = i / steps.toFloat()
+                val fade = if (tool == Tool.VANISHING_PEN) 1f - t * 0.85f else 1f
+                val taper = if (pressure || tool == Tool.PRESSURE_PEN) 0.35f + 0.65f * kotlin.math.sin(t * kotlin.math.PI.toFloat()) else 1f
+                drawLine(color.copy(alpha = color.alpha * fade), at(t), at((i + 1) / steps.toFloat()),
+                    strokeWidth = stroke * taper, cap = StrokeCap.Round)
+            }
+            else -> {
+                val path = Path().apply {
+                    moveTo(at(0f).x, at(0f).y)
+                    for (i in 1..steps) at(i / steps.toFloat()).let { lineTo(it.x, it.y) }
+                }
+                val dash = stroke.coerceAtLeast(2f)
+                val effect = when (linePattern) {
+                    1 -> PathEffect.dashPathEffect(floatArrayOf(0.1f, dash * 2f))
+                    2 -> PathEffect.dashPathEffect(floatArrayOf(dash * 3f, dash * 2f))
+                    3 -> PathEffect.dashPathEffect(floatArrayOf(dash * 3f, dash * 1.5f, 0.1f, dash * 1.5f))
+                    else -> null
+                }
+                drawPath(path, color, style = Stroke(width = stroke, cap = StrokeCap.Round, pathEffect = effect))
+            }
+        }
+    }
+}
+
+/**
+ * The panel's tabs, drawn over each other in one box as tall as the tallest
+ * of them, so changing tab never changes the panel's size; the one shown
+ * slides and fades in over the one it replaces. A tab out of sight takes no
+ * touches and says nothing to a screen reader.
+ */
+@Composable
+private fun EqualTabs(selected: Int, animate: Boolean, pages: List<@Composable () -> Unit>) {
+    val position = remember { androidx.compose.animation.core.Animatable(selected.toFloat()) }
+    LaunchedEffect(selected) {
+        if (animate) position.animateTo(selected.toFloat(), TAB_SPRING.paced()) else position.snapTo(selected.toFloat())
+    }
+    val shift = with(LocalDensity.current) { TAB_SHIFT.toPx() }
+    Layout(content = {
+        pages.forEachIndexed { index, page ->
+            val shown = index == selected
+            Box(
+                if (shown) Modifier else Modifier
+                    .clearAndSetSemantics {}
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                                .changes.forEach { it.consume() }
+                        }
+                    },
+            ) { page() }
+        }
+    }) { measurables, constraints ->
+        val placeables = measurables.map { it.measure(constraints.copy(minHeight = 0)) }
+        val height = placeables.maxOfOrNull { it.height } ?: 0
+        layout(constraints.maxWidth, height) {
+            placeables.forEachIndexed { index, placeable ->
+                placeable.placeWithLayer(0, 0, zIndex = if (index == selected) 1f else 0f) {
+                    val d = index - position.value
+                    alpha = (1f - kotlin.math.abs(d)).coerceIn(0f, 1f)
+                    translationX = d * shift
+                }
+            }
+        }
+    }
+}
+
+/** A round − or + beside the width slider: a tenth at a tap. */
+@Composable
+private fun StepButton(symbol: String, description: String, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .size(STEP_BUTTON)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
+            .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onClick)
+            .semantics { contentDescription = description },
+        contentAlignment = Alignment.Center,
+    ) { Text(symbol, style = MaterialTheme.typography.titleMedium) }
+}
+
+/**
+ * The width: its value to a tenth in a box to type in, a − and + a tenth
+ * each either side of the slider, and the presets under them - the widths
+ * kept with the star, or the usual ones until there are any.
+ */
+@Composable
+private fun WidthBlock(mode: EditMode, width: Float, range: ClosedFloatingPointRange<Float>, onWidth: (Float) -> Unit) {
+    val context = LocalContext.current
+    val store = remember { PenStore(context) }
+    var favorites by remember(mode) { mutableStateOf(store.favoriteWidths(mode)) }
+    val shown = width.coerceIn(range)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Width", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+        // In millimetres on an A4 page as well; not for the eraser, whose size is on the screen.
+        if (mode != EditMode.ERASE) Text(millimetreLabel(shown), style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(end = Ui.Space.s))
+        var typed by remember { mutableStateOf(widthTenths(shown)) }
+        var focused by remember { mutableStateOf(false) }
+        LaunchedEffect(shown) { if (!focused) typed = widthTenths(shown) }
+        CompactField(
+            text = typed,
+            onText = { text -> typed = text; parseWidth(text, range)?.let { onWidth(roundTenth(it).coerceIn(range)) } },
+            label = null, suffix = null, keyboard = KeyboardType.Decimal,
+            isError = parseWidth(typed, range) == null,
+            modifier = Modifier.width(WIDTH_BOX).onFocusChanged {
+                focused = it.isFocused
+                if (!it.isFocused) typed = widthTenths(shown)
+            },
+        )
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+        StepButton("−", "Thinner") { onWidth(stepWidth(shown, -1, range)) }
+        SkinSlider(value = shown, onValueChange = { onWidth(roundTenth(it).coerceIn(range)) }, valueRange = range,
+            step = WIDTH_SLIDER_STEP, modifier = Modifier.weight(1f))
+        StepButton("+", "Thicker") { onWidth(stepWidth(shown, 1, range)) }
+    }
+    val presets = favorites.ifEmpty { defaultWidthPresets(range) }
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s),
+        verticalAlignment = Alignment.CenterVertically) {
+        presets.forEach { preset ->
+            SettingsChoiceChip(selected = kotlin.math.abs(preset - shown) < 0.05f,
+                onClick = { onWidth(preset.coerceIn(range)) }, label = widthTenths(preset))
+        }
+        val starred = favorites.any { kotlin.math.abs(it - shown) < 0.05f }
+        TextButton(onClick = {
+            favorites = if (starred) favorites.filterNot { kotlin.math.abs(it - shown) < 0.05f }
+                else (favorites + roundTenth(shown)).distinct().sorted()
+            store.saveFavoriteWidths(mode, favorites)
+        }) { Text(if (starred) "★" else "☆ Keep") }
+    }
+}
+
+/**
+ * A text box one size everywhere in the panel - the width, H, S, V, R, G,
+ * B and the hex code alike - as tall as the eyedropper beside them, with its
+ * letter inside it rather than floating over its edge.
+ */
+@Composable
+private fun CompactField(
+    text: String,
+    onText: (String) -> Unit,
+    label: String?,
+    suffix: String?,
+    keyboard: KeyboardType,
+    modifier: Modifier = Modifier,
+    isError: Boolean = false,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val shape = pickerShape
+    androidx.compose.foundation.text.BasicTextField(
+        value = text,
+        onValueChange = onText,
+        singleLine = true,
+        textStyle = MaterialTheme.typography.bodyLarge.copy(color = scheme.onSurface),
+        cursorBrush = androidx.compose.ui.graphics.SolidColor(scheme.primary),
+        keyboardOptions = KeyboardOptions(keyboardType = keyboard),
+        modifier = modifier
+            .height(FIELD_COMPACT)
+            .clip(shape)
+            .border(1.dp, if (isError) scheme.error else scheme.outlineVariant, shape),
+        decorationBox = { inner ->
+            Row(Modifier.fillMaxSize().padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (label != null) {
+                    Text(label, style = MaterialTheme.typography.labelLarge, color = scheme.outline)
+                    Spacer(Modifier.width(6.dp))
+                }
+                Box(Modifier.weight(1f)) { inner() }
+                if (suffix != null) Text(suffix, style = MaterialTheme.typography.labelMedium, color = scheme.outline)
+            }
+        },
+    )
+}
+
+/** A whole number in a [CompactField], applied once it is a number in [range]. */
+@Composable
+private fun CompactNumber(label: String, value: Int, range: IntRange, suffix: String?, modifier: Modifier, onValue: (Int) -> Unit) {
+    var draft by remember { mutableStateOf<String?>(null) }
+    var focused by remember { mutableStateOf(false) }
+    LaunchedEffect(value) { if (!focused) draft = null }
+    CompactField(
+        text = draft ?: value.toString(),
+        onText = { typed ->
+            val digits = typed.filter { it.isDigit() }.take(3)
+            draft = digits
+            digits.toIntOrNull()?.takeIf { it in range }?.let(onValue)
+        },
+        label = label, suffix = suffix, keyboard = KeyboardType.Number,
+        modifier = modifier.onFocusChanged { focused = it.isFocused; if (!it.isFocused) draft = null },
+    )
+}
+
+/** Every colour at a tap: greys along the top, then each hue from dark to pale. A drag runs over them. */
+@Composable
+private fun ColorGrid(color: PenColorState) {
+    val columns = GRID_COLUMNS
+    val rows = GRID_ROWS
+    val cells = remember { gridColors(columns, rows) }
+    val current = color.rgb()
+    Canvas(
+        Modifier
+            .fillMaxWidth()
+            .height(PICKER_HEIGHT)
+            .clip(pickerShape)
+            .pointerInput(color) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    down.consume()
+                    fun take(at: Offset) {
+                        val c = (at.x / size.width * columns).toInt().coerceIn(0, columns - 1)
+                        val r = (at.y / size.height * rows).toInt().coerceIn(0, rows - 1)
+                        color.set(cells[r * columns + c], keepAlpha = true)
+                    }
+                    take(down.position)
+                    drag(down.id) { change -> change.consume(); take(change.position) }
+                }
+            },
+    ) {
+        val cw = size.width / columns
+        val ch = size.height / rows
+        for (r in 0 until rows) for (c in 0 until columns) {
+            drawRect(Color(cells[r * columns + c]), Offset(c * cw, r * ch), Size(cw + 0.5f, ch + 0.5f))
+        }
+        val chosen = cells.indexOf(current)
+        if (chosen >= 0) {
+            val topLeft = Offset((chosen % columns) * cw, (chosen / columns) * ch)
+            drawRect(Color.White, topLeft, Size(cw, ch), style = Stroke(3.dp.toPx()))
+            drawRect(Color.Black.copy(alpha = 0.5f), topLeft, Size(cw, ch), style = Stroke(1.dp.toPx()))
+        }
+    }
+}
+
+/**
+ * The colour view, which changes shape rather than being swapped: behind it
+ * a pane that runs the width of the panel for the grid and the square and
+ * draws in to the circle of the ring and the disc, on a spring, while the
+ * views cross over it, the new one growing out of the old one's place.
+ */
+@Composable
+private fun MorphingPicker(view: ColorPickerMode, animate: Boolean, content: @Composable (ColorPickerMode) -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val corner = with(LocalDensity.current) { nestedCorner(Ui.Corner.control).toPx() }
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth().height(PICKER_HEIGHT)) {
+        val full = constraints.maxWidth.toFloat()
+        val tall = constraints.maxHeight.toFloat()
+        val round = view == ColorPickerMode.RING || view == ColorPickerMode.DISC
+        val spec = if (animate) MORPH_SPRING.paced() else androidx.compose.animation.core.snap()
+        val paneWidth by androidx.compose.animation.core.animateFloatAsState(if (round) tall else full, spec, label = "pane width")
+        val paneCorner by androidx.compose.animation.core.animateFloatAsState(if (round) tall / 2f else corner, spec, label = "pane corner")
+        Canvas(Modifier.matchParentSize()) {
+            drawRoundRect(scheme.onSurface.copy(alpha = 0.06f), Offset.Zero, Size(paneWidth, size.height),
+                androidx.compose.ui.geometry.CornerRadius(paneCorner))
+        }
+        androidx.compose.animation.AnimatedContent(
+            targetState = view,
+            transitionSpec = {
+                val enter = if (!animate) androidx.compose.animation.EnterTransition.None
+                    else fadeIn(tween(220, delayMillis = 40)) + androidx.compose.animation.scaleIn(MORPH_SPRING,
+                        initialScale = 0.86f, transformOrigin = TransformOrigin(0f, 0.5f))
+                val exit = if (!animate) androidx.compose.animation.ExitTransition.None
+                    else fadeOut(tween(140)) + androidx.compose.animation.scaleOut(tween(180), targetScale = 1.05f,
+                        transformOrigin = TransformOrigin(0f, 0.5f))
+                enter togetherWith exit
+            },
+            contentAlignment = Alignment.CenterStart,
+            label = "colour view",
+        ) { shownView -> content(shownView) }
+    }
+}
+
+private val SEGMENT_HEIGHT = 40.dp
+private val STEP_BUTTON = 40.dp
+private val WIDTH_BOX = 76.dp
+/** Every box in the panel - fields, hex, eyedropper - is this tall. */
+private val FIELD_COMPACT = 44.dp
+private val TAB_SHIFT = 28.dp
+private val PEN_PANEL_WIDTH = 480.dp
+private val PREVIEW_HEIGHT = 64.dp
+private val LINE_TYPE_LABEL = 88.dp
+private val PALETTE_BELOW_HEIGHT = 132.dp
+private const val GRID_COLUMNS = 12
+private const val GRID_ROWS = 9
+/** How long a row of segments keeps its pictures after the pointer or finger leaves it. */
+private const val ICON_LINGER_MS = 700L
+private val SEGMENT_SPRING = androidx.compose.animation.core.spring<Float>(dampingRatio = 0.8f, stiffness = 520f)
+private val TAB_SPRING = androidx.compose.animation.core.spring<Float>(dampingRatio = 0.9f, stiffness = 420f)
+private val MORPH_SPRING = androidx.compose.animation.core.spring<Float>(dampingRatio = 0.78f, stiffness = 300f)

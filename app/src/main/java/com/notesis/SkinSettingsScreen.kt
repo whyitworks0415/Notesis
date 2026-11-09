@@ -398,7 +398,7 @@ private suspend fun copyPreviewPhoto(context: Context, uri: Uri): Boolean = with
 }
 
 private enum class AppearanceGroup(val label: String) {
-    STYLE("Style"), PANELS("Panels"), GLASS("Glass"), COLORS("Colors"), ICONS("Icons"), MOTION("Motion"),
+    DISPLAY("Display"), STYLE("Style"), PANELS("Panels"), GLASS("Glass"), COLORS("Colors"), ICONS("Icons"), MOTION("Motion"),
 }
 
 /**
@@ -465,7 +465,7 @@ internal fun AppearanceSettings(
         }
     }
     fun launchPicker() = pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-    var group by remember { mutableStateOf(AppearanceGroup.STYLE) }
+    var group by remember { mutableStateOf(AppearanceGroup.DISPLAY) }
 
     // The preview and the choice of group stay in view; the group's own
     // controls get the rest of the screen to themselves.
@@ -494,6 +494,7 @@ internal fun AppearanceSettings(
                         background, hasPhoto, ::choose, ::launchPicker,
                     )
                 }
+                AppearanceGroup.DISPLAY -> DisplayGroup()
                 AppearanceGroup.ICONS -> IconsGroup()
                 AppearanceGroup.MOTION -> MotionGroup()
                 AppearanceGroup.PANELS -> PanelsGroup(skin, settings, onChange)
@@ -616,6 +617,43 @@ private fun StyleGroup(
         }
     }
 }
+
+/**
+ * What the app is shown in and how big: its language, its brightness and the
+ * size of everything it draws. The first two were on the settings' first
+ * screen; they live here with the rest of how the app looks.
+ */
+@Composable
+private fun DisplayGroup() {
+    val context = LocalContext.current
+    // Named in both languages, so it can be found whichever one is showing.
+    SettingsSectionHeader("Language · 언어")
+    Row(horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+        AppLanguage.entries.forEach { language ->
+            SettingsChoiceChip(selected = L10n.language == language, onClick = { L10n.choose(context, language) },
+                label = language.label)
+        }
+    }
+    SettingsSectionHeader("Brightness")
+    AppBrightnessSetting()
+    SettingsSectionHeader("Interface size")
+    // Every step resizes the whole app, so the size is taken once the hand
+    // rests, not on every frame of the drag.
+    var draft by remember { mutableStateOf<Float?>(null) }
+    LaunchedEffect(draft) {
+        val pending = draft ?: return@LaunchedEffect
+        delay(UI_SCALE_COMMIT_MS)
+        UiScale.choose(pending)
+        draft = null
+    }
+    val shown = draft ?: UiScale.scale
+    AppearanceSlider("Size", "%.0f%%".format(shown * 100), shown, UiScale.MIN..UiScale.MAX,
+        step = UiScale.STEP, default = UiScale.DEFAULT,
+        note = "Everything the app draws, its words included, from 50% to 150%. 100% is the system's own size; the page keeps its own zoom.",
+    ) { draft = it }
+}
+
+private const val UI_SCALE_COMMIT_MS = 450L
 
 /** How the chrome moves: its speed, the light taps under the finger and the blur along fast motion. */
 @Composable

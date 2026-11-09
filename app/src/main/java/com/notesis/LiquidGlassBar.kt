@@ -187,7 +187,9 @@ fun LiquidGlassBar(
     val barHeight = (if (compact) 40.dp else if (withIcons && showLabels) 64.dp else 48.dp) * chromeScale
     val padding = 6.dp
     val cellHeight = barHeight - padding * 2
-    val fill = scheme.onSurface.copy(alpha = if (dark) 0.12f else 0.08f)
+    // A wash of the accent, as the other looks' highlight is: a grey pill
+    // stayed grey whatever accent was picked.
+    val fill = scheme.primary.copy(alpha = if (dark) 0.22f else 0.16f)
     // The pill sits [padding] inside the capsule, so its curve is the
     // capsule's moved in by that much - measured from the radius the capsule
     // can actually draw at this height, not from the setting.
@@ -282,12 +284,14 @@ fun LiquidGlassBar(
                     }
                 }
                 if (vertical) {
-                    Column(shellModifier.fillMaxHeight().width(cellHeight).align(Alignment.Center).padding(vertical = padding)) {
-                        items.forEachIndexed { index, item -> Cell(index, item, Modifier.weight(1f).fillMaxSize()) }
+                    EvenCells(vertical = true,
+                        modifier = shellModifier.fillMaxHeight().width(cellHeight).align(Alignment.Center).padding(vertical = padding)) {
+                        items.forEachIndexed { index, item -> Cell(index, item, Modifier) }
                     }
                 } else {
-                    Row(shellModifier.fillMaxWidth().height(cellHeight).align(Alignment.Center).padding(horizontal = padding)) {
-                        items.forEachIndexed { index, item -> Cell(index, item, Modifier.weight(1f).fillMaxSize()) }
+                    EvenCells(vertical = false,
+                        modifier = shellModifier.fillMaxWidth().height(cellHeight).align(Alignment.Center).padding(horizontal = padding)) {
+                        items.forEachIndexed { index, item -> Cell(index, item, Modifier) }
                     }
                 }
             }
@@ -423,3 +427,38 @@ private val VERTICAL_CELL_COMPACT = 44.dp
  */
 internal fun toolPillRadius(corner: Dp, barHeight: Dp, inset: Dp): Dp =
     toolPillRadius(corner.value, barHeight.value, inset.value, Ui.Corner.nestedMin.value).dp
+
+/**
+ * Equal cells along a bar, each placed to the fraction of a pixel. A row of
+ * weights rounds every cell to whole pixels and hands the spare pixels to
+ * the first cells; while the bar's width springs, which cells get them
+ * changes from frame to frame, and the icons shook back and forth by a pixel
+ * as the bar grew. Here each cell's middle is exactly where it belongs.
+ */
+@Composable
+internal fun EvenCells(vertical: Boolean, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    androidx.compose.ui.layout.Layout(content, modifier) { measurables, constraints ->
+        val width = constraints.maxWidth
+        val height = constraints.maxHeight
+        val along = (if (vertical) height else width).toFloat()
+        val across = if (vertical) width else height
+        val cell = along / measurables.size.coerceAtLeast(1)
+        val size = kotlin.math.ceil(cell).toInt().coerceAtLeast(0)
+        val placeables = measurables.map {
+            it.measure(if (vertical) androidx.compose.ui.unit.Constraints.fixed(across, size)
+                else androidx.compose.ui.unit.Constraints.fixed(size, across))
+        }
+        layout(width, height) {
+            placeables.forEachIndexed { index, placeable ->
+                val start = evenCellStart(index, cell, size)
+                val whole = kotlin.math.floor(start).toInt()
+                val part = start - whole
+                if (vertical) placeable.placeWithLayer(0, whole) { translationY = part }
+                else placeable.placeRelativeWithLayer(whole, 0) { translationX = part }
+            }
+        }
+    }
+}
+
+/** Where cell [index] of cells [cell] long starts, drawn [size] long about the same middle. */
+internal fun evenCellStart(index: Int, cell: Float, size: Int): Float = index * cell + (cell - size) / 2f

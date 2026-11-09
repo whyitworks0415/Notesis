@@ -32,6 +32,25 @@ internal data class RecognizedShape(
 )
 
 /**
+ * [shape] moved so that a line, an arrow or a curve starts exactly where the
+ * pen landed, at ([x], [y]), keeping its length and its (perhaps snapped)
+ * direction. The fit is made from the cleaned stroke, whose start is the
+ * middle of where the pen settled, so the shape began a little away from the
+ * point it was started on. Other shapes are as they are.
+ */
+internal fun startingAt(shape: RecognizedShape, x: Float, y: Float): RecognizedShape {
+    if (shape.outline != null || shape.kind !in START_ANCHORED) return shape
+    // The fit may run the other way round: the pen's start is its nearer end.
+    val reversed = hypot(x - shape.toX, y - shape.toY) < hypot(x - shape.fromX, y - shape.fromY)
+    val oriented = if (reversed) shape.copy(fromX = shape.toX, fromY = shape.toY, toX = shape.fromX, toY = shape.fromY) else shape
+    val dx = x - oriented.fromX
+    val dy = y - oriented.fromY
+    return oriented.copy(fromX = x, fromY = y, toX = oriented.toX + dx, toY = oriented.toY + dy)
+}
+
+private val START_ANCHORED = setOf(ShapeKind.LINE, ShapeKind.ARROW, ShapeKind.DOUBLE_ARROW, ShapeKind.CURVE)
+
+/**
  * The shape [points] were meant to be, or null to keep the stroke as written.
  *
  * Unheld - recognition left on for every stroke - only clean, large lines,

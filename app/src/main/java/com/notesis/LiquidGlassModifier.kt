@@ -373,50 +373,6 @@ internal fun Modifier.glassHairline(shape: Shape, dark: Boolean): Modifier = dra
 }
 
 /**
- * Apple's glass answers a touch with light: a glow that spreads from under
- * the finger across the pane while it is held, and fades when it lets go.
- * [interaction] is the control's own; [shape] keeps the glow inside it.
- */
-@Composable
-internal fun Modifier.glassPressGlow(interaction: androidx.compose.foundation.interaction.InteractionSource, shape: Shape): Modifier {
-    val at = remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
-    val glow = remember { androidx.compose.animation.core.Animatable(0f) }
-    androidx.compose.runtime.LaunchedEffect(interaction) {
-        kotlinx.coroutines.coroutineScope {
-            interaction.interactions.collect { event ->
-                when (event) {
-                    is androidx.compose.foundation.interaction.PressInteraction.Press -> {
-                        at.value = event.pressPosition
-                        launch { glow.animateTo(1f, Ui.Motion.tween()) }
-                    }
-                    is androidx.compose.foundation.interaction.PressInteraction.Release,
-                    is androidx.compose.foundation.interaction.PressInteraction.Cancel ->
-                        launch { glow.animateTo(0f, Ui.Motion.tween()) }
-                }
-            }
-        }
-    }
-    return drawWithContent {
-        drawContent()
-        val center = at.value ?: return@drawWithContent
-        val a = glow.value
-        if (a <= 0.001f) return@drawWithContent
-        val reach = maxOf(size.width, size.height) * (0.6f + 0.4f * a)
-        val outline = shape.createOutline(size, layoutDirection, this)
-        val clip = androidx.compose.ui.graphics.Path().apply { addOutline(outline) }
-        clipPath(clip) {
-            drawCircle(
-                Brush.radialGradient(
-                    listOf(Color.White.copy(alpha = 0.32f * a), Color.White.copy(alpha = 0.08f * a), Color.Transparent),
-                    center = center, radius = reach,
-                ),
-                radius = reach, center = center,
-            )
-        }
-    }
-}
-
-/**
  * Liquid glass's own material, the one the toolbar, its tool strip, its
  * button and the popups opened from it are all made of: the page behind,
  * blurred and bent at the edge by the lens, under a thin coat of the surface

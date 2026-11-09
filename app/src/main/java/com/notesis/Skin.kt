@@ -132,56 +132,27 @@ fun ProvideSkin(skin: Skin, settings: SkinSettings, content: @Composable () -> U
         // plain Box otherwise inherit the default black even in dark mode.
         LocalContentColor provides MaterialTheme.colorScheme.onSurface,
         LocalLiquidGlassEffectsAllowed provides effectsAllowed,
-        // Material owns a quiet state layer. Glass keeps its own press motion.
-        LocalRippleConfiguration provides if (skin == Skin.MATERIAL) RippleConfiguration() else null,
-        LocalIndication provides if (skin == Skin.MATERIAL) ripple() else FocusOnlyIndication,
+        // No grey wash under a hovering pointer and no grey flash on a press,
+        // in Material's own components (the ripple) and in every plain
+        // clickable (the indication), in every look: the controls answer a
+        // touch with their own motion.
+        LocalRippleConfiguration provides null,
+        LocalIndication provides FocusOnlyIndication,
     )
     CompositionLocalProvider(*values.toTypedArray(), content = content)
 }
 
 /**
- * An indication that answers focus and nothing else: no ripple on a press,
- * no wash on hover. A quiet veil while the element holds keyboard focus.
+ * An indication that draws nothing: no ripple on a press, no wash on hover,
+ * and no veil on focus either - with a mouse a click moves the focus, and
+ * the veil stayed on whatever was clicked as a grey highlight.
  */
 private object FocusOnlyIndication : IndicationNodeFactory {
-    override fun create(interactionSource: InteractionSource): DelegatableNode =
-        FocusOnlyIndicationNode(interactionSource)
+    override fun create(interactionSource: InteractionSource): DelegatableNode = object : Modifier.Node() {}
 
     override fun equals(other: Any?): Boolean = other === this
     override fun hashCode(): Int = System.identityHashCode(this)
 }
-
-private class FocusOnlyIndicationNode(
-    private val source: InteractionSource,
-) : Modifier.Node(), DrawModifierNode, CompositionLocalConsumerModifierNode {
-    private var focused = false
-
-    override fun onAttach() {
-        // Undispatched: a clickable may create this only as focus arrives,
-        // and a collector that starts a frame later would miss that focus.
-        coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
-            val held = mutableListOf<FocusInteraction.Focus>()
-            source.interactions.collect { interaction ->
-                when (interaction) {
-                    is FocusInteraction.Focus -> held += interaction
-                    is FocusInteraction.Unfocus -> held -= interaction.focus
-                }
-                val now = held.isNotEmpty()
-                if (now != focused) {
-                    focused = now
-                    invalidateDraw()
-                }
-            }
-        }
-    }
-
-    override fun ContentDrawScope.draw() {
-        drawContent()
-        if (focused) drawRect(currentValueOf(LocalContentColor).copy(alpha = FOCUS_VEIL_ALPHA))
-    }
-}
-
-private const val FOCUS_VEIL_ALPHA = 0.12f
 
 @Composable
 fun Skin.tokens(): SkinTokens = when (this) {

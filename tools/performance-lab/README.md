@@ -1,6 +1,6 @@
 # Notesis Lab performance experiment
 
-This branch produces `com.notesis.lab`, installed beside the original app. It is
+Based on the standard 0.90.20 release, this branch produces `com.notesis.lab`, installed beside the original app. It is
 not a replacement package and must not be merged into the standard app as-is.
 Export a copy of a note or backup from Notesis and import it into Lab for a fair
 comparison. Keep display rate, brightness, pen, paper, and Light mode the same.
