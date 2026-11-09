@@ -5,6 +5,22 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class LabPerformanceTest {
+    @Test fun `growing append tails switch back to the grid instead of scanning indefinitely`() {
+        assertTrue(nativeBoundsUseful(10128, 10000, 128))
+        assertTrue(nativeBoundsUseful(10256, 10000, 256))
+        assertFalse(nativeBoundsUseful(10257, 10000, 257))
+        assertTrue(nativeBoundsUseful(640, 512, 128))
+        assertFalse(nativeBoundsUseful(641, 512, 129))
+        assertFalse(nativeBoundsUseful(70000, 10000, 60000))
+    }
+
+    @Test fun `erased tree entries and document order slots are accounted independently`() {
+        assertFalse(nativeBoundsUseful(1000, 10000, 0))
+        assertTrue(nativeBoundsUseful(1000, 1000, 0))
+        assertFalse(nativeBoundsUseful(511, 1000, 0))
+        assertFalse(nativeBoundsUseful(1000, 1000, -1))
+    }
+
     @Test fun `experimental tags cannot be parsed as original app releases`() {
         val lab = "lab-v0.90.20-lab.1-211-preview"
         assertTrue(isLabReleaseTag(lab))

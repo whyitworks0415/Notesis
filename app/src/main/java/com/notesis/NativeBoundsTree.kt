@@ -4,6 +4,12 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.IntBuffer
 
+/** Avoid turning long sessions or large erases into linear scans of an old tree's tail. */
+internal fun nativeBoundsUseful(live: Int, base: Int, appended: Int): Boolean =
+    live in NativeBoundsTree.MIN_STROKES..NativeBoundsTree.MAX_STROKES &&
+        base >= NativeBoundsTree.MIN_STROKES && live * 2 >= base &&
+        appended in 0..(base / 4).coerceIn(64, 256)
+
 /** Load away from pen-down. A missing backend leaves the existing grid in charge. */
 internal object SpatialNative {
     @Volatile var ready = false

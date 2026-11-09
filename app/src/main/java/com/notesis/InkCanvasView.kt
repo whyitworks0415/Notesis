@@ -194,6 +194,7 @@ internal class StrokeGrid(private val boundedPage: Boolean = true) {
 
     private var tree: NativeBoundsTree? = null
     private var treeOrders = 0
+    private var treeEntries = 0
     private var queryValid = false
     private val lastQuery = FloatArray(4)
 
@@ -208,7 +209,7 @@ internal class StrokeGrid(private val boundedPage: Boolean = true) {
         }
         included.clear()
         prepareTree()
-        val native = tree
+        val native = tree?.takeIf { nativeBoundsUseful(entries.size, treeEntries, ordered.size - treeOrders) }
         val found = native?.query(left, top, right, bottom) ?: -1
         if (found >= 0 && native != null) {
             for (i in 0 until found) included.set(native.ids.get(i))
@@ -244,17 +245,19 @@ internal class StrokeGrid(private val boundedPage: Boolean = true) {
     private fun prepareTree(offThread: Boolean = false) {
         // A dense tree can take longer than a display frame to build. The page
         // loader builds it; a UI query only builds small trees and uses the grid otherwise.
-        if (entries.size < NativeBoundsTree.MIN_STROKES) { tree = null; treeOrders = 0; return }
+        if (entries.size !in NativeBoundsTree.MIN_STROKES..NativeBoundsTree.MAX_STROKES) {
+            tree = null; treeOrders = 0; treeEntries = 0; return
+        }
         if (!offThread && entries.size > 2048) return
         if (!SpatialNative.ready) return
-        if (tree != null && ordered.size - treeOrders < maxOf(256, treeOrders / 4) && entries.size * 2 >= treeOrders) return
+        if (tree != null && nativeBoundsUseful(entries.size, treeEntries, ordered.size - treeOrders)) return
         val built = NativeBoundsTree.build(entries.size) { buffer ->
             for (entry in ordered) if (entry != null) {
                 buffer.putFloat(entry.bounds.left).putFloat(entry.bounds.top)
                     .putFloat(entry.bounds.right).putFloat(entry.bounds.bottom).putInt(entry.order)
             }
         }
-        if (built != null) { tree = built; treeOrders = ordered.size }
+        if (built != null) { tree = built; treeOrders = ordered.size; treeEntries = entries.size }
     }
 
     private fun include(entry: Entry, left: Float, top: Float, right: Float, bottom: Float) {
@@ -280,6 +283,7 @@ internal class StrokeGrid(private val boundedPage: Boolean = true) {
         if (!appendOnly) {
             tree = null
             treeOrders = 0
+            treeEntries = 0
             cells.clear()
             spanning.clear()
             entries.clear()
