@@ -1,5 +1,6 @@
 package com.notesis
 
+import kotlinx.coroutines.launch
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
@@ -40,6 +41,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -53,6 +55,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -93,7 +96,7 @@ internal fun settingsSidebarWidth(requested: Float, screen: Float): Float {
 internal enum class SettingsPage(val title: String, val subtitle: String, val scrolls: Boolean = true) {
     ROOT("Settings", ""),
     PEN("Pen settings", "Smoothing mode, latency, pressure and pen gestures for every pen"),
-    APPEARANCE("Appearance", "Light or dark, UI style, icons, glass and colors", scrolls = false),
+    APPEARANCE("Appearance", "Language, brightness, size, light or dark, UI style, icons, glass and colors", scrolls = false),
     TOUCH("Touch & gestures", "Fingers, taps, palm rejection and three-finger gestures"),
     TOOLBAR("Customize toolbar", "Tools and their order for each toolbar size", scrolls = false),
     NOTE_VIEW("Note & view", "Page layout, page tone and this note"),
@@ -163,8 +166,12 @@ internal fun SettingsSidebarFrame(
         var reach by remember { mutableStateOf<Float?>(null) }
         var past by remember { mutableFloatStateOf(0f) }
         val latestClose by rememberUpdatedState(onClose)
+        // Let go stretched past its widest, it springs back to it with a
+        // little give, rather than jumping back the moment the finger lifts.
+        val springBack = remember { androidx.compose.animation.core.Animatable(0f) }
+        val springScope = androidx.compose.runtime.rememberCoroutineScope()
         // The draft as the drag left it, stretched past its widest included.
-        val shown = draft ?: settingsSidebarWidth(widthDp, screen)
+        val shown = draft ?: (settingsSidebarWidth(widthDp, screen) + springBack.value)
         val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
         val latestShown by rememberUpdatedState(shown)
         val latestScreen by rememberUpdatedState(screen)
@@ -194,13 +201,23 @@ internal fun SettingsSidebarFrame(
                                 // Kept at the width it was pulled to: put back to its own
                                 // width first, it grew for a moment on the way out.
                                 if (pulledToClose(past)) { latestClose(); return }
-                                draft?.let { latestCommit(settingsSidebarWidth(it, latestScreen)) }
+                                val stretched = draft
+                                val kept = stretched?.let { settingsSidebarWidth(it, latestScreen) }
+                                if (kept != null) latestCommit(kept)
                                 past = 0f
                                 draft = null
                                 reach = null
+                                val over = if (stretched != null && kept != null) stretched - kept else 0f
+                                if (over > 0.5f) springScope.launch {
+                                    springBack.snapTo(over)
+                                    ChromeMotion.during { springBack.animateTo(0f, SIDEBAR_SPRING_BACK.paced()) }
+                                }
                             }
                             detectHorizontalDragGestures(
-                                onDragStart = { draft = latestShown; reach = latestShown },
+                                onDragStart = {
+                                    draft = latestShown; reach = latestShown
+                                    springScope.launch { springBack.snapTo(0f) }
+                                },
                                 onDragEnd = { letGo() },
                                 onDragCancel = { letGo() },
                             ) { change, dragAmount ->
@@ -372,6 +389,9 @@ internal fun AnimatedSettingsSidebar(
 /** How far past its widest the sidebar can be stretched at most, in dp; it gives far less. */
 private const val SIDEBAR_STRETCH_DP = 120f
 
+/** Back from a stretch: underdamped, so it settles past its widest and back, as a rubber band lets go. */
+private val SIDEBAR_SPRING_BACK = androidx.compose.animation.core.spring<Float>(dampingRatio = 0.55f, stiffness = 420f)
+
 /** How much further than the panel its content travels as it comes in. */
 private val SIDEBAR_CONTENT_LEAD = 24.dp
 
@@ -459,30 +479,66 @@ internal fun NoteSettingsSidebar(
     }
 }
 
+/**
+ * The first screen: the quick actions and the sections, all of it in view
+ * without scrolling on a tablet. Every entry is one size and one spacing,
+ * an icon and a name with no tile, border or circle behind the icon. The
+ * language and the brightness moved into Appearance; Diagnostics is shown
+ * to beta testers only, who are the ones asked to read it.
+ */
 @Composable
 private fun SettingsRoot(quickActions: List<GlassToolbarAction>, onOpen: (SettingsPage) -> Unit) {
-    // Named in both languages, so it can be found whichever one is showing.
-    SettingsSectionHeader("Language · 언어")
     val context = androidx.compose.ui.platform.LocalContext.current
-    Row(horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
-        AppLanguage.entries.forEach { language ->
-            SettingsChoiceChip(selected = L10n.language == language, onClick = { L10n.choose(context, language) },
-                label = language.label)
-        }
-    }
-    SettingsSectionHeader("Brightness")
-    AppBrightnessSetting()
+    val beta = remember { AppUpdate.isBeta(context) }
     if (quickActions.isNotEmpty()) {
         SettingsSectionHeader("Quick actions")
-        BoxWithConstraints(Modifier.fillMaxWidth()) {
-            GlassMenuGrid(quickActions, columns = if (maxWidth >= 420.dp) 3 else 2)
-        }
+        QuickActionGrid(quickActions)
     }
     SettingsSectionHeader("Sections")
-    Column(verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
-        SECTIONS.forEach { page -> SettingsNavRow(page) { onOpen(page) } }
+    Column {
+        settingsSections(beta).forEach { page -> SettingsNavRow(page) { onOpen(page) } }
     }
 }
+
+/** The sections the root lists: Diagnostics only on a beta tester's copy. */
+internal fun settingsSections(beta: Boolean): List<SettingsPage> =
+    SECTIONS.filter { beta || it != SettingsPage.DIAGNOSTICS }
+
+/** Quick actions three across: an icon over its name, nothing behind either. */
+@Composable
+private fun QuickActionGrid(actions: List<GlassToolbarAction>) {
+    val scheme = MaterialTheme.colorScheme
+    Column {
+        actions.chunked(3).forEach { row ->
+            Row(Modifier.fillMaxWidth()) {
+                row.forEach { action ->
+                    val tint = when {
+                        !action.enabled -> scheme.onSurface.copy(alpha = 0.38f)
+                        action.selected -> scheme.primary
+                        else -> scheme.onSurface
+                    }
+                    Column(
+                        Modifier
+                            .weight(1f)
+                            .height(QUICK_ACTION_HEIGHT)
+                            .clickable(enabled = action.enabled, role = Role.Button) { action.onClick() }
+                            .semantics(mergeDescendants = true) { if (action.selected) selected = true },
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(Ui.Space.xs, Alignment.CenterVertically),
+                    ) {
+                        AppIcon(action.icon, null, Modifier.size(Ui.Icon.regular), tint = tint)
+                        Text(action.label, style = MaterialTheme.typography.labelLarge, color = tint,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(horizontal = Ui.Space.xs))
+                    }
+                }
+                repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+            }
+        }
+    }
+}
+
+private val QUICK_ACTION_HEIGHT = 72.dp
 
 private fun SettingsPage.icon(): ImageVector = when (this) {
     SettingsPage.ROOT -> AppIcons.settings
@@ -499,27 +555,25 @@ private fun SettingsPage.icon(): ImageVector = when (this) {
 @Composable
 private fun SettingsNavRow(page: SettingsPage, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
+    // One height and one gap for every row, no tile or border behind it.
     Row(
         Modifier
             .fillMaxWidth()
-            .heightIn(min = 60.dp)
-            .clip(RoundedCornerShape(nestedCorner(Ui.Corner.control)))
-            .background(scheme.onSurface.copy(alpha = 0.05f))
+            .height(SETTINGS_ROW_HEIGHT)
             .clickable(role = Role.Button, onClick = onClick)
-            .semantics(mergeDescendants = true) {}
-            .padding(horizontal = Ui.Space.l, vertical = Ui.Space.m),
+            .semantics(mergeDescendants = true) { contentDescription = page.title }
+            .padding(horizontal = Ui.Space.xs),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AppIcon(page.icon(), null, Modifier.size(Ui.Icon.regular))
-        Spacer(Modifier.width(Ui.Space.m))
-        Column(Modifier.weight(1f)) {
-            Text(page.title, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            if (page.subtitle.isNotEmpty()) Text(page.subtitle, style = MaterialTheme.typography.bodySmall,
-                color = scheme.outline, maxLines = 3, overflow = TextOverflow.Ellipsis)
-        }
+        AppIcon(page.icon(), null, Modifier.size(Ui.Icon.regular), tint = scheme.onSurface)
+        Spacer(Modifier.width(Ui.Space.l))
+        Text(page.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f))
         Icon(Reicons.ChevronRight, contentDescription = null, modifier = Modifier.size(Ui.Icon.small), tint = scheme.outline)
     }
 }
+
+private val SETTINGS_ROW_HEIGHT = 52.dp
 
 // ---- shared pieces for the sidebar's screens ---------------------------------
 

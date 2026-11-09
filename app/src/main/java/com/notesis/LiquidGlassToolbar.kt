@@ -69,7 +69,6 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.window.PopupPositionProvider
 import kotlin.math.PI
@@ -110,7 +109,8 @@ internal val LocalChromeScale = staticCompositionLocalOf { 1f }
 internal object ToolbarScale {
     private var prefs: android.content.SharedPreferences? = null
 
-    const val MIN = 0.9f
+    /** Down to half: on a large screen the bar can be kept small out of the way. */
+    const val MIN = 0.5f
     const val MAX = 1.4f
     const val STEP = 0.05f
 
@@ -538,8 +538,8 @@ private fun GlassActionButton(
         contentAlignment = Alignment.Center) {
         val body = Modifier.matchParentSize().graphicsLayer { scaleX = grow; scaleY = grow }
         val pane = if (persistentGlass) body.skinMaterial(CircleShape, role = ChromeRole.TOOLBAR) else body.background(fill, shape)
-        // Liquid glass lights up under the finger, as Apple's does.
-        Box(if (glass) pane.glassPressGlow(interaction, if (persistentGlass) CircleShape else shape) else pane)
+        // No glow under the finger: a white wash on every press read as a grey flash.
+        Box(pane)
         Column(Modifier.padding(horizontal = Ui.Space.s, vertical = Ui.Space.xs),
             horizontalAlignment = Alignment.CenterHorizontally) {
             // On its own, a round button's glyph grows with it.
@@ -1096,13 +1096,28 @@ internal fun Modifier.toolbarTurnMorph(key: Any, enabled: Boolean): Modifier {
  */
 @Composable
 internal fun Modifier.awayUpwards(away: () -> Float): Modifier {
-    val bottom = remember { floatArrayOf(0f) }
-    return onGloballyPositioned { bottom[0] = it.boundsInRoot().bottom }.graphicsLayer {
+    // Its top, its bottom and the window's height: a bar in the lower half
+    // goes away past the bottom edge, the nearer one, not up across the page.
+    val at = remember { floatArrayOf(0f, 0f, 0f) }
+    return onGloballyPositioned {
+        val bounds = it.boundsInRoot()
+        at[0] = bounds.top
+        at[1] = bounds.bottom
+        at[2] = it.findRootCoordinates().size.height.toFloat()
+    }.graphicsLayer {
         val amount = away().coerceIn(0f, 1f)
         if (amount <= 0f) return@graphicsLayer
-        translationY = -(bottom[0] + 24.dp.toPx()) * amount
+        translationY = awayShift(at[0], at[1], at[2], 24.dp.toPx()) * amount
     }
 }
+
+/**
+ * How far a bar from [top] to [bottom] in a window [height] tall moves to be
+ * gone, plus [margin]: up past the top edge, or down past the bottom one if
+ * it sits in the lower half.
+ */
+internal fun awayShift(top: Float, bottom: Float, height: Float, margin: Float): Float =
+    if (height > 0f && (top + bottom) / 2f > height / 2f) height - top + margin else -(bottom + margin)
 
 /** Where a bar down the side lands when its Functions button is let go [x] across a window [width] wide. */
 internal enum class FunctionsDropZone { LEFT, MIDDLE, RIGHT }
@@ -1549,14 +1564,10 @@ private fun ToolStrip(
             }
         }
         // The whole thickness of the strip is the target, not just the pill.
-        if (vertical) {
-            Column(Modifier.matchParentSize().padding(vertical = padding)) {
-                tools.forEachIndexed { index, tool -> Cell(index, tool, Modifier.weight(1f).fillMaxWidth()) }
-            }
-        } else {
-            Row(Modifier.matchParentSize().padding(horizontal = padding)) {
-                tools.forEachIndexed { index, tool -> Cell(index, tool, Modifier.weight(1f).fillMaxHeight()) }
-            }
+        // Placed to the fraction of a pixel, so the icons do not shake while the bar springs (see EvenCells).
+        EvenCells(vertical, Modifier.matchParentSize().then(
+            if (vertical) Modifier.padding(vertical = padding) else Modifier.padding(horizontal = padding))) {
+            tools.forEachIndexed { index, tool -> Cell(index, tool, Modifier) }
         }
     }
 }

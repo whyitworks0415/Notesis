@@ -147,9 +147,7 @@ fun LiquidGlassButton(
                         surfaceColor = Color.White.copy(alpha = 0.20f),
                         shadowElevation = glassShadowElevation,
                         drawBorder = drawBorder,
-                    )
-                    // Lit from under the finger while it is held, as Apple's glass is.
-                    .glassPressGlow(interaction, shape),
+                    ),
             )
         }
 

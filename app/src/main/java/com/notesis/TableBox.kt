@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
@@ -195,7 +194,7 @@ internal fun TableEditorDialog(initial: TextBoxContent?, onDismiss: () -> Unit, 
         else if (selRow < grid.lastIndex) select(selRow + 1, 0)
         else { grid.add(mutableStateListOf(*Array(cols()) { "" })); revision++; selRow += 1; selCol = 0 }
     val scheme = MaterialTheme.colorScheme
-    androidx.compose.ui.window.Dialog(
+    Dialog(
         onDismissRequest = onDismiss,
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
     ) {

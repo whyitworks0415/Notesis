@@ -2216,7 +2216,7 @@ class InkCanvasView @JvmOverloads constructor(
             RecognizedShape(ShapeKind.LINE, a[0], a[1], b[0], b[1])
         } else {
             recognizeShape(points, held = true, axisSnap = axisSnapEnabled) ?: return false
-        }
+        }.let { startingAt(it, holdXs[0], holdYs[0]) }
         val base = shape.outline
             ?: shapePoints(shape.kind, floatArrayOf(shape.fromX, shape.fromY), floatArrayOf(shape.toX, shape.toY))
         if (base.size < 2) return false
@@ -4189,7 +4189,11 @@ class InkCanvasView @JvmOverloads constructor(
                 event.getPressure(event.actionIndex),
             )
         }
-        val flat = !strokePressureReal
+        // A pen whose pressure switch is off draws every sample at one
+        // pressure: the fountain, calligraphy and vanishing nibs read the
+        // pen's pressure in their own brushes, so the switch did nothing for
+        // them. The barrel button's eraser keeps its pressure.
+        val flat = !strokePressureReal || (flatPressure && !samsungSideButton && !event.isEraserGesture())
         if (!flat && (pressureResponse == PRESSURE_RESPONSE_DEFAULT ||
             event.getToolType(event.actionIndex) != MotionEvent.TOOL_TYPE_STYLUS)
         ) return onStylusEvent(event)
@@ -4203,6 +4207,9 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** Whether the stroke in progress has real pen pressure; see [reportsRealPressure]. */
     private var strokePressureReal = true
+
+    /** The pen in hand has its pressure switched off: every sample is drawn at one pressure. */
+    var flatPressure = false
     private var pressureAxisDevice = Int.MIN_VALUE
     private var pressureAxisKnown: Boolean? = null
 
@@ -9132,7 +9139,10 @@ class InkCanvasView @JvmOverloads constructor(
                     // Unheld, only the few shapes writing is unlikely to look
                     // like; held, every shape the recogniser knows.
                     (autoShapeRecognitionEnabled || recognize) &&
-                        Tool.ofBrushFamily(stroke.brush.family).isFreehandPen() -> recognizeStroke(stroke, held = recognize)
+                        Tool.ofBrushFamily(stroke.brush.family).isFreehandPen() ->
+                        recognizeStroke(stroke, held = recognize)?.let { fit ->
+                            stroke.inputs.get(0).let { first -> startingAt(fit, first.x, first.y) }
+                        }
                     else -> null
                 }
                 if (shape != null) {

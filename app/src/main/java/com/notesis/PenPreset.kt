@@ -84,7 +84,8 @@ val PEN_NIBS = listOf(
 
 /** The looks the pencil tool can draw with, in the order the settings offer them. */
 val PENCIL_NIBS = listOf(
-    Tool.PENCIL to "Graphite", Tool.SOFT_PENCIL to "Soft", Tool.STAMP to "Stamp", Tool.BUBBLE to "Bubble", Tool.SPRAY to "Spray",
+    // Bubble is no longer offered; a pencil left on it draws as graphite.
+    Tool.PENCIL to "Graphite", Tool.SOFT_PENCIL to "Soft", Tool.STAMP to "Stamp", Tool.SPRAY to "Spray",
 )
 
 /** The kinds offered for a tool, or none when it has only the one. */
@@ -381,6 +382,24 @@ class PenStore(context: Context) {
     var foldersHidden: Boolean
         get() = prefs.getBoolean("libraryFoldersHidden", false)
         set(value) = prefs.edit().putBoolean("libraryFoldersHidden", value).apply()
+
+    /**
+     * What [mode]'s pen was last set to while it was [nib]: each kind of pen
+     * keeps its own width, angle, colour and options, so going from the
+     * ballpoint to the fountain pen and back finds each as it was left.
+     * Null until that kind has been used.
+     */
+    fun nibPreset(mode: EditMode, nib: Tool, fallback: PenPreset): PenPreset? =
+        prefs.getString(nibKey(mode, nib), null)?.let { text ->
+            runCatching { penFromJson(JSONObject(text), fallback, mode).copy(nib = nib) }.getOrNull()
+        }
+
+    /** Keeps [pen] as what its own kind of pen ([PenPreset.nib]) was last set to. */
+    fun saveNibPreset(mode: EditMode, pen: PenPreset) {
+        prefs.edit().putString(nibKey(mode, pen.nib), penToJson(pen).toString()).apply()
+    }
+
+    private fun nibKey(mode: EditMode, nib: Tool) = "nib:$mode:${nib.name}"
 
     fun favoriteWidths(mode: EditMode): List<Float> = runCatching {
         val array = JSONArray(prefs.getString("widths:$mode", "[]"))

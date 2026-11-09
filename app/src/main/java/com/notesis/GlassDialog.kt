@@ -95,7 +95,8 @@ fun AlertDialog(
         onDismissRequest = dismiss,
         // The window is only reachable from inside the dialog's own content, and
         // confirmButton is the one slot every call site fills.
-        confirmButton = { BlurBehind(); confirmButton() },
+        // Each slot at the app's own size: the dialog is a window of its own (see ProvideAppDensity).
+        confirmButton = { BlurBehind(); ProvideAppDensity(confirmButton) },
         // Colour and shape a dialog takes from the theme; the lit edge it has
         // to be given. Without it a glass dialog was a Material panel that
         // happened to be translucent.
@@ -111,12 +112,12 @@ fun AlertDialog(
                 }
             })
             .then(skinEdge(shape)),
-        dismissButton = dismissButton,
-        icon = icon,
-        title = title,
+        dismissButton = if (dismissButton == null) null else { { ProvideAppDensity(dismissButton) } },
+        icon = if (icon == null) null else { { ProvideAppDensity(icon) } },
+        title = if (title == null) null else { { ProvideAppDensity(title) } },
         // A dialog's fields and cards sit one dialog padding in from its
         // corner, so their corners are the dialog's moved in by that.
-        text = if (text == null) null else { { NestedCorners(Ui.Corner.sheet, DIALOG_INSET) { text() } } },
+        text = if (text == null) null else { { ProvideAppDensity { NestedCorners(Ui.Corner.sheet, DIALOG_INSET) { text() } } } },
         shape = shape,
         containerColor = containerColor,
         tonalElevation = tonalElevation,
@@ -153,7 +154,8 @@ fun DropdownMenu(
         },
     ) {
         BlurBehind()
-        content()
+        val column = this
+        ProvideAppDensity { column.content() }
     }
 }
 

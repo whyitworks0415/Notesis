@@ -202,7 +202,6 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -276,6 +275,7 @@ class MainActivity : ComponentActivity() {
         ToolbarOrientation.init(applicationContext)
         WebSites.init(applicationContext)
         ToolbarScale.init(applicationContext)
+        UiScale.init(applicationContext)
         // A real start, not a rotation: first-run mode shows the welcome and the tutorial again.
         if (savedInstanceState == null) Onboarding.startAsFirstRunIfAsked(applicationContext)
         val store = NoteStore(this)
@@ -350,7 +350,7 @@ class MainActivity : ComponentActivity() {
             CompositionLocalProvider(LocalLiquidStyleChange provides { style ->
                 look = look.copy(liquidStyle = style)
                 lookStore.save(look)
-            }, LocalDensity provides remember(systemDensity) { cappedFontScale(systemDensity) }) {
+            }, LocalDensity provides remember(systemDensity, UiScale.scale) { scaledDensity(systemDensity, UiScale.scale) }) {
                 var openNote by remember { mutableStateOf<NoteMeta?>(null) }
                 // Lives here rather than in the list, which leaves composition
                 // while a note is open and used to come back at the top level.
@@ -4410,6 +4410,11 @@ private fun NoteScreen(
     // Null until it is dragged: the bar sits centred at the top by default, and
     // there is no sensible centre to store before anything has been measured.
     var barOffset by remember { mutableStateOf<Offset?>(null) }
+    // The bar's size when it was last moved: a bar left in the lower half (or
+    // the right half) keeps that edge where it was as it changes size, rather
+    // than growing down off the screen and being pushed back. Not state; read
+    // where the bar is placed.
+    val barMovedSize = remember { arrayOf(IntSize.Zero) }
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
     // Where the note area is in the window, and a note being dragged over it from the list.
     var containerOrigin by remember { mutableStateOf(Offset.Zero) }
@@ -4698,6 +4703,12 @@ private fun NoteScreen(
         delay(BACK_OFFER_MS)
         canvas?.dismissBack()
     }
+    // The AI site last opened in the web panel, kept so a capture sent to
+    // the chat goes to that one.
+    LaunchedEffect(webUrl) {
+        val url = webUrl ?: return@LaunchedEffect
+        if (isAiAddress(url, aiSites())) rememberAiSite(context, url)
+    }
     // A capture headed straight for the chat in the web panel, not the capture dialog.
     var captureToAi by remember { mutableStateOf(false) }
     var modeBeforeAiCapture by remember { mutableStateOf<EditMode?>(null) }
@@ -4715,7 +4726,9 @@ private fun NoteScreen(
      * takes it gets it the old way, waiting for its "+ › Files".
      */
     fun sendToAi(bitmap: Bitmap) {
-        if (webUrl == null) webUrl = AI_SITES.first().second
+        // Into the chat already open beside the note; otherwise the one used
+        // last, not always the first in the list.
+        if (webUrl?.let { isAiAddress(it, aiSites()) } != true) webUrl = lastAiSite(context) ?: AI_SITES.first().second
         scope.launch {
             val encoded = withContext(Dispatchers.Default) { runCatching { AiAttach.encode(bitmap) }.getOrNull() }
             if (encoded == null) {
@@ -5090,9 +5103,10 @@ private fun NoteScreen(
             docked = barDocked && previewLevel == null,
             onSettings = { openSettings(it) },
             onDragBar = { delta ->
-                val at = barPlacement(barOffset, barSize, containerSize, barVertical, barRight, barClearStartPx)
+                val at = barPlacement(barOffset, barSize, containerSize, barVertical, barRight, barClearStartPx, barMovedSize[0])
                 if (docked) { docked = false; penStore.docked = false }
                 barOffset = Offset(at.x + delta.x, at.y + delta.y)
+                barMovedSize[0] = barSize
             },
             layerChip = { LayerTargetChip(canvas) { showLayers = true } },
             preview = previewLevel != null,
@@ -5427,6 +5441,7 @@ private fun NoteScreen(
                     view.pencilDensity = pen.density
                     view.setPageLayout(pageLayout)
                     view.tool = tool
+                    view.flatPressure = mode == EditMode.PEN && !pen.pressure
                     view.readMode = mode == EditMode.READ
                     view.shapeKind = when {
                         mode == EditMode.SHAPE -> shapeKind
@@ -5874,6 +5889,13 @@ private fun NoteScreen(
         if (chromeHide.hidden) ChromePullTab(chromeHide,
             Modifier.align(Alignment.TopCenter).windowInsetsPadding(ChromeInsets))
 
+        // The same gap above the bar at the top as below it at the bottom: the
+        // larger of the two system bars', where it was the status bar's at the
+        // top and the navigation bar's at the bottom, and the bar sat at a
+        // different height at each end.
+        val barEdgeGap = with(density) {
+            maxOf(ChromeInsets.getTop(this), ChromeInsets.getBottom(this)).toDp()
+        }
         if (!barDocked && !collapsed) {
             toolbar(
                 Modifier
@@ -5892,9 +5914,19 @@ private fun NoteScreen(
                     // Placed and clamped together: the folded handle can be
                     // dragged anywhere, and unfolding measures the wide bar and
                     // pulls it back inside rather than letting it hang off.
-                    .offset { barPlacement(barOffset, barSize, containerSize, barVertical, barRight, barClearStartPx) }
+                    // Placed from the size measured in this same pass: the size
+                    // reported afterwards lags a frame, and a bar kept to the
+                    // bottom edge would shake as it grew.
+                    .layout { measurable, constraints ->
+                        val placeable = measurable.measure(constraints)
+                        layout(placeable.width, placeable.height) {
+                            placeable.place(barPlacement(barOffset, IntSize(placeable.width, placeable.height), containerSize,
+                                barVertical, barRight, barClearStartPx, barMovedSize[0]))
+                        }
+                    }
                     .onSizeChanged { barSize = it }
-                    .windowInsetsPadding(ChromeInsets)
+                    .windowInsetsPadding(ChromeInsets.only(WindowInsetsSides.Horizontal))
+                    .padding(vertical = barEdgeGap)
                     .padding(12.dp),
                 null,
             )
@@ -5906,7 +5938,8 @@ private fun NoteScreen(
                     .align(Alignment.TopStart)
                     .offset { barPlacement(barOffset, barSize, containerSize) }
                     .onSizeChanged { barSize = it }
-                    .windowInsetsPadding(ChromeInsets)
+                    .windowInsetsPadding(ChromeInsets.only(WindowInsetsSides.Horizontal))
+                    .padding(vertical = barEdgeGap)
                     .padding(12.dp),
             ) {
                 CollapsedToolbar(
@@ -5914,6 +5947,7 @@ private fun NoteScreen(
                     onDrag = { delta ->
                         val at = barPlacement(barOffset, barSize, containerSize)
                         barOffset = Offset(at.x + delta.x, at.y + delta.y)
+                        barMovedSize[0] = barSize
                     },
                 )
             }
@@ -5979,13 +6013,11 @@ private fun NoteScreen(
                     },
                     GlassToolbarAction("Zoom · ${(zoom * 100).roundToInt()}%", AppIcons.zoom) { zoomMenu = true },
                     GlassToolbarAction("Pages & search", AppIcons.search, selected = showPages) { showPages = !showPages },
-                    GlassToolbarAction("Pen in hand", AppIcons.penSettings) {
-                        if (mode !in PenStore.DEFAULTS) mode = EditMode.PEN
-                        editingPen = true
-                    },
-                    GlassToolbarAction("Back to notes", AppIcons.back) {
+                    // The calculator, the clock, the calendar and the to-do list, one panel.
+                    GlassToolbarAction("Tools", AppIcons.tools) { Planner.show(Planner.lastPanel) },
+                    GlassToolbarAction("Split notes", AppIcons.split, selected = split != null) {
                         settingsNav = null
-                        onBack()
+                        choosingSplit = true
                     },
                 ),
                 webActions = listOf(GlassToolbarAction("Search the web", AppIcons.web) { webUrl = SEARCH_HOME }) +
@@ -7956,11 +7988,42 @@ private fun barPlacement(
     offset: Offset?, bar: IntSize, container: IntSize, vertical: Boolean = false, right: Boolean = false,
     /** Across the top, how far in from the left it must start to keep clear of the way back. */
     clearStart: Float = 0f,
+    /** The bar's size when [offset] was set; see [anchoredBarOffset]. */
+    movedSize: IntSize = IntSize.Zero,
 ): IntOffset {
     // Not moved yet: across the top in the middle, or down the chosen side in the middle.
-    val start = offset ?: if (vertical) Offset(if (right) (container.width - bar.width).toFloat() else 0f, (container.height - bar.height) / 2f)
+    val start = offset?.let { anchoredBarOffset(it, movedSize, bar, container) }
+        ?: if (vertical) Offset(if (right) (container.width - bar.width).toFloat() else 0f, (container.height - bar.height) / 2f)
         else Offset(maxOf((container.width - bar.width) / 2f, clearStart), 0f)
     return barPlacement(start, bar, container)
+}
+
+/**
+ * Where a bar moved to [offset] at [movedSize] goes now that it is [size]:
+ * in the lower third of [container] its bottom edge stays where it was, in
+ * the right third its right edge, in the middle its middle, so it grows away
+ * from the edge it is kept to - as a bar at the top grows down from it -
+ * instead of into the edge.
+ */
+internal fun anchoredBarOffset(offset: Offset, movedSize: IntSize, size: IntSize, container: IntSize): Offset {
+    if (movedSize.width <= 0 || movedSize.height <= 0 || container.width <= 0 || container.height <= 0) return offset
+    // Where it actually sat when it was moved, clamped as it was drawn.
+    val x = offset.x.coerceIn(0f, (container.width - movedSize.width).coerceAtLeast(0).toFloat())
+    val y = offset.y.coerceIn(0f, (container.height - movedSize.height).coerceAtLeast(0).toFloat())
+    return Offset(
+        anchoredAxis(offset.x, x, movedSize.width, size.width, container.width),
+        anchoredAxis(offset.y, y, movedSize.height, size.height, container.height),
+    )
+}
+
+/** One axis of [anchoredBarOffset]: the far edge kept past two thirds, the middle kept in the middle third. */
+private fun anchoredAxis(asSet: Float, placed: Float, moved: Int, now: Int, room: Int): Float {
+    val centre = placed + moved / 2f
+    return when {
+        centre > room * 2f / 3f -> placed + moved - now
+        centre >= room / 3f -> centre - now / 2f
+        else -> asSet
+    }
 }
 
 /**
@@ -8520,6 +8583,7 @@ private fun ReferencePanel(
                         },
                         update = { v ->
                             v.tool = tool
+                            v.flatPressure = mode == EditMode.PEN && !pen.pressure
                             v.viewRotation = rotation
                             // A part of a split captures as the note's own part does; a floating panel does not.
                             v.captureMode = pinned && onCaptured != null && mode == EditMode.CAPTURE
@@ -9506,6 +9570,26 @@ internal const val SEARCH_HOME = "https://www.google.com/"
 
 /** The AI sites the app comes with, then the ones added in Web & AI. Read in composition, it follows changes. */
 internal fun aiSites(): List<Pair<String, String>> = AI_SITES + WebSites.added.map { it.name to it.url }
+
+/** Whether [url] is on one of [sites]' hosts, "www." aside. */
+internal fun isAiAddress(url: String, sites: List<Pair<String, String>>): Boolean {
+    val host = siteHost(url) ?: return false
+    return sites.any { siteHost(it.second) == host }
+}
+
+/** [url]'s host in lower case without a leading "www.", or null when it has none. */
+internal fun siteHost(url: String): String? {
+    val rest = url.substringAfter("://", url)
+    val host = rest.substringBefore('/').substringBefore('?').substringBefore('#').substringAfterLast('@').substringBefore(':')
+    return host.lowercase().removePrefix("www.").takeIf { it.isNotEmpty() }
+}
+
+private fun lastAiSite(context: android.content.Context): String? =
+    context.getSharedPreferences("pens", android.content.Context.MODE_PRIVATE).getString("lastAiSite", null)
+
+private fun rememberAiSite(context: android.content.Context, url: String) {
+    context.getSharedPreferences("pens", android.content.Context.MODE_PRIVATE).edit().putString("lastAiSite", url).apply()
+}
 
 private val AI_SITES = listOf(
     "Gemini" to "https://gemini.google.com/",
