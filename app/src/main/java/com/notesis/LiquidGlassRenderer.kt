@@ -237,7 +237,7 @@ internal fun Modifier.liquidGlassSurface(
     // Round the glass, never under it (see [glassShadow]), and only where shadows are on.
     var result = if (settings.shadows) this.glassShadow(shape, elevation, dark) else this
     result = if (useBlur) result.drawBackdrop(backdrop!!, shape = { shape }, effects = {
-        blur(sigma * density)
+        blur(labBlurDp(sigma, LabPerformance.efficientGlass) * density)
         if (dark) colorFilter(dimFilter)
     }, highlight = null, shadow = null, exportedBackdrop = exportedBackdrop, onDrawSurface = { drawRect(tint) })
     else result.background(tint, shape)

@@ -1582,3 +1582,5 @@ iOS together with Mornye: iOS's glass, with Mornye's colours, its continuous cor
 Layered tonal surfaces, crisp typography and responsive Material controls.	층위가 있는 표면, 또렷한 글자와 반응하는 Material 컨트롤.
 Material Symbols	Material Symbols
 Static icons in every look. Motion belongs to controls and panels.	모든 룩에서 정적 아이콘을 사용합니다. 움직임은 컨트롤과 패널에 적용됩니다.
+Efficient glass	가벼운 유리 효과
+Uses one iOS glass pass and less surface blur. Off keeps the original glass.	iOS 유리 효과를 한 겹으로 처리하고 표면 블러를 줄입니다. 끄면 기존 유리 효과를 사용합니다.

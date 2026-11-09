@@ -19,3 +19,6 @@
 # render them, so the absent classes are safe to leave out of this small APK.
 -dontwarn com.gemalto.jp2.**
 
+
+# The JNI entry points use this stable class name.
+-keep class com.notesis.SpatialNative { *; }

@@ -107,3 +107,16 @@ S6 Lite, SM-P61x/P62x). Kotlin, Jetpack Compose for the chrome, a custom
 | Folders, smart folders, templates | `FolderPaths.kt` (paths `School/Maths`), `SmartFolders.kt`, `PaperPicker.kt` |
 | Backup, widget, updates | `AutoBackup.kt` (off by default), `NotesWidget.kt`, `AppUpdate.kt` (beta code) |
 | Liquid glass | `LiquidGlass*.kt`, `GlassPopupBackdrop.kt`; saved keys still say `spotiglass…` |
+
+## Performance experiment branch
+
+This branch builds **Notesis Lab** (`com.notesis.lab`), installed beside Notesis.
+This branch has a Lab-only `apk.yml` workflow. Never publish a Lab
+APK under a normal `v<version>-<code>` tag. Lab tags end in `-preview`, which
+normal Notesis update parsing rejects. Source remains private. The original
+app data is never opened directly: copy notes using an exported backup or file.
+
+For Lab JVM tests, run `bash tools/performance-lab/check-native.sh` first, then
+`./gradlew testDebugUnitTest -Pnotesis.hostNativeDir="$PWD/build/host-native"`.
+The host script checks the same C++ kernel with address/undefined sanitizers and
+compiles a JNI bridge for tests. Host benchmark results are not device results.

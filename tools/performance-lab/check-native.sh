@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+OUTPUT="$ROOT/build/host-native"
+mkdir -p "$OUTPUT"
+SOURCE="$ROOT/app/src/main/cpp"
+CXX="${CXX:-g++}"
+COMMON=(-std=c++17 -Wall -Wextra -Werror -I"$SOURCE")
+"$CXX" "${COMMON[@]}" -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
+  "$SOURCE/spatial_index.cpp" "$ROOT/tools/performance-lab/spatial_test.cpp" -o "$OUTPUT/spatial-sanitized"
+"$OUTPUT/spatial-sanitized" > "$OUTPUT/sanitized.txt"
+"$CXX" "${COMMON[@]}" -O3 "$SOURCE/spatial_index.cpp" "$ROOT/tools/performance-lab/spatial_test.cpp" -o "$OUTPUT/spatial-bench"
+"$OUTPUT/spatial-bench" | tee "$OUTPUT/benchmark.txt"
+JNI_INCLUDE="${JAVA_HOME:-/usr/lib/jvm/java-17-openjdk-amd64}/include"
+if [[ ! -f "$JNI_INCLUDE/jni.h" ]]; then
+  JNI_INCLUDE="$OUTPUT/jni"
+  mkdir -p "$JNI_INCLUDE"
+  cp "${ANDROID_HOME:?}/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/jni.h" "$JNI_INCLUDE/jni.h"
+fi
+"$CXX" "${COMMON[@]}" -O3 -fPIC -shared -I"$JNI_INCLUDE" -I"$JNI_INCLUDE/linux" \
+  "$SOURCE/spatial_index.cpp" "$SOURCE/spatial_jni.cpp" -o "$OUTPUT/libnotesis_spatial.so"

@@ -172,7 +172,7 @@ private class InkNode(val node: android.graphics.RenderNode) {
 private class HighlightState(val revision: Long, val meshRevision: Long, val size: Int, val has: Boolean)
 
 /** A page-local spatial index used by both dense-page drawing and culling. */
-internal class StrokeGrid {
+internal class StrokeGrid(private val boundedPage: Boolean = true) {
     private class Entry(
         val stroke: Stroke,
         val bounds: RectF,
@@ -192,30 +192,69 @@ internal class StrokeGrid {
     private var firstStroke: Stroke? = null
     private var lastStroke: Stroke? = null
 
+    private var tree: NativeBoundsTree? = null
+    private var treeOrders = 0
+    private var queryValid = false
+    private val lastQuery = FloatArray(4)
+
     fun visible(page: Page, left: Float, top: Float, right: Float, bottom: Float): List<Stroke> {
         sync(page)
+        if (queryValid && lastQuery[0] == left && lastQuery[1] == top && lastQuery[2] == right && lastQuery[3] == bottom) return result
         result.clear()
-        if (right < left || bottom < top) return result
-        if (left <= 0f && top <= 0f && right >= page.width && bottom >= page.height) {
+        queryValid = false
+        if (!left.isFinite() || !top.isFinite() || !right.isFinite() || !bottom.isFinite() || right < left || bottom < top) return result
+        if (boundedPage && left <= 0f && top <= 0f && right >= page.width && bottom >= page.height) {
             return page.strokes
         }
         included.clear()
-        val firstX = cell(left)
-        val lastX = cell(right)
-        val firstY = cell(top)
-        val lastY = cell(bottom)
-        for (y in firstY..lastY) {
-            for (x in firstX..lastX) {
-                cells[key(x, y)]?.forEach { entry -> include(entry, left, top, right, bottom) }
+        prepareTree()
+        val native = tree
+        val found = native?.query(left, top, right, bottom) ?: -1
+        if (found >= 0 && native != null) {
+            for (i in 0 until found) included.set(native.ids.get(i))
+            // New strokes remain a cheap tail until there is enough work to rebuild.
+            for (i in treeOrders until ordered.size) ordered[i]?.let { include(it, left, top, right, bottom) }
+        } else {
+            val firstX = cell(left)
+            val lastX = cell(right)
+            val firstY = cell(top)
+            val lastY = cell(bottom)
+            val cellCount = (lastX.toLong() - firstX + 1).toDouble() * (lastY.toLong() - firstY + 1)
+            if (cellCount > 4096) {
+                // An unbounded board can span billions of empty cells when zoomed out.
+                for (entry in ordered) entry?.let { include(it, left, top, right, bottom) }
+            } else {
+                for (y in firstY..lastY) for (x in firstX..lastX) {
+                    cells[key(x, y)]?.forEach { entry -> include(entry, left, top, right, bottom) }
+                }
+                spanning.forEach { entry -> include(entry, left, top, right, bottom) }
             }
         }
-        spanning.forEach { entry -> include(entry, left, top, right, bottom) }
         var order = included.nextSetBit(0)
         while (order >= 0) {
             ordered.getOrNull(order)?.let { result += it.stroke }
             order = included.nextSetBit(order + 1)
         }
+        lastQuery[0] = left; lastQuery[1] = top; lastQuery[2] = right; lastQuery[3] = bottom
+        queryValid = true
         return result
+    }
+
+    /** The initial load builds this on its worker; later appends are amortised. */
+    private fun prepareTree(offThread: Boolean = false) {
+        // A dense tree can take longer than a display frame to build. The page
+        // loader builds it; a UI query only builds small trees and uses the grid otherwise.
+        if (entries.size < NativeBoundsTree.MIN_STROKES) { tree = null; treeOrders = 0; return }
+        if (!offThread && entries.size > 2048) return
+        if (!SpatialNative.ready) return
+        if (tree != null && ordered.size - treeOrders < maxOf(256, treeOrders / 4) && entries.size * 2 >= treeOrders) return
+        val built = NativeBoundsTree.build(entries.size) { buffer ->
+            for (entry in ordered) if (entry != null) {
+                buffer.putFloat(entry.bounds.left).putFloat(entry.bounds.top)
+                    .putFloat(entry.bounds.right).putFloat(entry.bounds.bottom).putInt(entry.order)
+            }
+        }
+        if (built != null) { tree = built; treeOrders = ordered.size }
     }
 
     private fun include(entry: Entry, left: Float, top: Float, right: Float, bottom: Float) {
@@ -233,11 +272,14 @@ internal class StrokeGrid {
         if (revision == page.revision && meshRevision == page.meshRevision &&
             indexedSize == strokes.size && endpointsMatch) return
 
+        queryValid = false
         // The dominant edit is one stroke appended at pen-up. Index just that
         // suffix; erase, lasso, load-at-front, and retessellation rebuild once.
         val appendOnly = meshRevision == page.meshRevision && strokes.size > indexedSize &&
             (indexedSize == 0 || strokes.getOrNull(indexedSize - 1) === lastStroke)
         if (!appendOnly) {
+            tree = null
+            treeOrders = 0
             cells.clear()
             spanning.clear()
             entries.clear()
@@ -265,6 +307,7 @@ internal class StrokeGrid {
         indexedSize = strokes.size
         firstStroke = strokes.firstOrNull()
         lastStroke = strokes.lastOrNull()
+        prepareTree(offThread = true)
     }
 
     /** True, and current for [page], if [page] holds exactly what was [prebuild]-indexed. */
@@ -279,6 +322,7 @@ internal class StrokeGrid {
     }
 
     fun remove(page: Page, removed: Collection<Stroke>) {
+        queryValid = false
         for (stroke in removed) {
             val entry = entries.remove(stroke) ?: continue
             if (entry.cellKeys.isEmpty()) {
@@ -2630,6 +2674,7 @@ class InkCanvasView @JvmOverloads constructor(
         document.latency = latency
         prefetchedPending.clear()
         dry.clearStrokeIndexes()
+        prebuildBoardIndex(document)
         pdfPriorityInitialized = false
         document.invalidateLayout()
         for (page in document.pages) {
@@ -5912,11 +5957,24 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     /** The whiteboard's strokes whose box meets the given one, in document units. */
+    private var boardIndex = StrokeGrid(boundedPage = false)
+
+    private fun prebuildBoardIndex(expected: Document) {
+        val board = expected.board
+        if (board.strokes.size < NativeBoundsTree.MIN_STROKES) return
+        val revision = board.revision
+        val snapshot = board.strokes.toList()
+        runCatching { refiner.execute {
+            if (disposed) return@execute
+            val grid = StrokeGrid(boundedPage = false).also { it.prebuild(snapshot) }
+            post {
+                if (!disposed && document === expected && board.revision == revision && grid.adopt(board)) boardIndex = grid
+            }
+        } }
+    }
+
     private fun boardStrokesIn(left: Float, top: Float, right: Float, bottom: Float): List<Stroke> =
-        document.board.strokes.filter { stroke ->
-            val box = stroke.shape.computeBoundingBox() ?: return@filter false
-            box.xMax >= left && box.xMin <= right && box.yMax >= top && box.yMin <= bottom
-        }
+        boardIndex.visible(document.board, left, top, right, bottom)
 
     /** Index of the page under a pointer, or -1 in the gap between pages. */
     private fun pageUnder(event: MotionEvent, pointerIndex: Int): Int {
@@ -9567,6 +9625,8 @@ class InkCanvasView @JvmOverloads constructor(
         private var inkBitmapGeneration = 0
 
         fun clearStrokeIndexes() {
+            boardIndex = StrokeGrid(boundedPage = false)
+            boardDrawn.clear()
             strokeIndexes.clear()
             highlightStates.clear()
             discardInkNodes()
@@ -9907,10 +9967,8 @@ class InkCanvasView @JvmOverloads constructor(
                     scoped.concat(documentToScreen)
                     val boardEpsilon = epsilonFor(tessellationBucket(currentScale()))
                     val rebuilds = intArrayOf(BOARD_REBUILDS_PER_FRAME)
-                    for (stroke in board) {
-                        val box = stroke.shape.computeBoundingBox() ?: continue
-                        if (box.xMax < viewport[0] || box.xMin > viewport[2] ||
-                            box.yMax < viewport[1] || box.yMin > viewport[3]) continue
+                    val visibleBoard = boardStrokesIn(viewport[0], viewport[1], viewport[2], viewport[3])
+                    for (stroke in visibleBoard) {
                         val drawn = boardStroke(stroke, boardEpsilon, rebuilds)
                         if (drawn == null) {
                             scope.drawStroke(onScreen(stroke))
@@ -9926,7 +9984,7 @@ class InkCanvasView @JvmOverloads constructor(
                         boardDrawn.keys.retainAll(kept)
                     }
                     scoped.restore()
-                    visibleCount += board.size
+                    visibleCount += visibleBoard.size
                 }
             }
             if (tileFrame) {
