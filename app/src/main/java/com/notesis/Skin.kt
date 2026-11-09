@@ -80,6 +80,8 @@ import androidx.compose.foundation.interaction.InteractionSource
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LocalRippleConfiguration
+import androidx.compose.material3.RippleConfiguration
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.ProvidedValue
 import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.ui.layout.LayoutCoordinates
@@ -126,6 +128,9 @@ fun ProvideSkin(skin: Skin, settings: SkinSettings, content: @Composable () -> U
     val values = mutableListOf<ProvidedValue<*>>(
         LocalSkin provides skin,
         LocalSkinSettings provides settings,
+        // MaterialTheme alone does not provide this local. Text/icons in a
+        // plain Box otherwise inherit the default black even in dark mode.
+        LocalContentColor provides MaterialTheme.colorScheme.onSurface,
         LocalLiquidGlassEffectsAllowed provides effectsAllowed,
         // No grey wash under a hovering pointer and no grey flash on a press,
         // in Material's own components (the ripple) and in every plain
@@ -358,10 +363,14 @@ fun SkinSurface(
     val radius = if (flush) 0.dp else (corner ?: tokens.corner)
     val shape = RoundedCornerShape(radius)
     if (skin == Skin.MATERIAL) {
+        val scheme = MaterialTheme.colorScheme
         Surface(
             modifier = modifier,
             shape = shape,
-            tonalElevation = tokens.tonalElevation,
+            color = if (role == ChromeRole.TOOLBAR) scheme.surfaceContainerLow else scheme.surfaceContainer,
+            contentColor = scheme.onSurface,
+            border = BorderStroke(0.75.dp, scheme.outlineVariant.copy(alpha = 0.6f)),
+            tonalElevation = 0.dp,
             shadowElevation = if (LocalSkinSettings.current.shadows) tokens.shadow else 0.dp,
             content = content,
         )
@@ -418,7 +427,8 @@ internal fun Modifier.skinMaterial(
             this
                 .then(if (shadow) Modifier.skinShadow(shape, panel) else Modifier)
                 .clip(shape)
-                .background(if (panel) scheme.surfaceContainerHigh else scheme.surfaceContainer)
+                .background(if (panel) scheme.surfaceContainerHigh else scheme.surfaceContainerLow)
+                .border(0.75.dp, scheme.outlineVariant.copy(alpha = 0.6f), shape)
         }
         Skin.GLASSMORPHISM -> this
             .frostedGlass(tokens, shape, shadow = shadow,
@@ -1029,13 +1039,16 @@ private const val POPUP_ALPHA = 0.86f
 fun skinColors(base: ColorScheme, skin: Skin, look: SkinSettings): ColorScheme {
     // 다크 모드에서 라이트 모드용 사용자 잉크색을 그대로 쓰면 검은 글씨가 됩니다.
     // 이 경우 생성한 다크 팔레트의 대비 보장 색을 사용합니다.
-    val ink = if (look.themeMode == AppThemeMode.DARK) base.onSurface else Color(look.content)
+    val ink = readableChrome(
+        if (look.themeMode == AppThemeMode.DARK) base.onSurface else Color(look.content),
+        base.surfaceContainerHighest,
+    )
     val inked = base.copy(
         onSurface = ink,
         onBackground = ink,
         // The quieter ink: labels, hints, and every icon that is not the tool
         // in hand. Turned up it stops being quieter.
-        onSurfaceVariant = if (look.highContrast) ink else ink.copy(alpha = 0.72f),
+        onSurfaceVariant = if (look.highContrast) ink else readableChrome(base.onSurfaceVariant, base.surfaceContainerHighest),
     )
     if (skin == Skin.MATERIAL) return inked
     // Popups live in their own window and are blurred by the platform rather
@@ -1043,10 +1056,13 @@ fun skinColors(base: ColorScheme, skin: Skin, look: SkinSettings): ColorScheme {
     // chrome without looking like a Material slab dropped in.
     val alpha = when {
         look.highContrast -> 0.98f
+        skin.isRefractive && look.themeMode == AppThemeMode.DARK -> 0.96f
         skin.isRefractive -> REFRACTIVE_POPUP_ALPHA
         else -> POPUP_ALPHA
     }
-    val tint = darkAwareTint(Color(look.tint), look.themeMode == AppThemeMode.DARK)
+    val tint = if (look.themeMode == AppThemeMode.DARK && skin.isRefractive && look.liquidStyle == LiquidStyle.IOS) {
+        Color.Transparent
+    } else darkAwareTint(Color(look.tint), look.themeMode == AppThemeMode.DARK)
     fun glassy(container: Color): Color =
         tint.compositeOver(container).copy(alpha = alpha)
     return inked.copy(

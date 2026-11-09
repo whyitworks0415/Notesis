@@ -55,7 +55,7 @@ internal fun OcrResultDialog(
                         Text(
                             "Picking one replaces that line; it starts the text again from the readings chosen",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.outline,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         alternatives.forEach { (index, line) ->
                             FlowRow(

@@ -722,9 +722,9 @@ private fun LibraryPicture() {
         }
         IconGrid(
             listOf(
-                AppIconStyle.pick(Lucide.Folder, Reicons.Folder), AppIconStyle.pick(Lucide.Tag, Reicons.Category),
-                AppIcons.search, AppIconStyle.pick(Lucide.Download, Reicons.Archive),
-                AppIconStyle.pick(Lucide.Upload, Reicons.Restore), AppIconStyle.pick(Lucide.Trash, Reicons.Delete),
+                Reicons.Folder, Reicons.Category,
+                AppIcons.search, Reicons.Archive,
+                Reicons.Restore, Reicons.Delete,
             ),
             columns = 3,
         )

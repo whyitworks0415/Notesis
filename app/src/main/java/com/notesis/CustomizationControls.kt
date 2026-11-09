@@ -171,7 +171,7 @@ internal fun ColorInput(color: Int, onColor: (Int) -> Unit) {
         }) { Text("+ Save this colour") }
     }
     if (saved.isNotEmpty()) Text("Hold a saved colour to remove it.", style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.outline)
+        color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 /** Below this saturation a colour reads as grey, with no hue worth keeping. */

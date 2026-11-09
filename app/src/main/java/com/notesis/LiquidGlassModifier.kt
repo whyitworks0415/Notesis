@@ -548,7 +548,8 @@ internal fun Modifier.cardGlass(shape: Shape): Modifier {
     val scheme = MaterialTheme.colorScheme
     val dark = scheme.surface.luminance() < 0.5f
     val shine = (settings.reflection.coerceIn(0f, 1f) / SkinSettings.LEGACY_REFLECTION).coerceIn(0f, 2f)
-    val body = scheme.surface.copy(alpha = if (dark) 0.46f else 0.56f)
+    // A title must stay readable over a bright custom wallpaper too.
+    val body = scheme.surface.copy(alpha = if (dark) 0.92f else 0.90f)
     val sheen = Brush.verticalGradient(listOf(
         Color.White.copy(alpha = (0.16f * shine).coerceAtMost(0.4f)), Color.Transparent, Color.Black.copy(alpha = 0.03f),
     ))

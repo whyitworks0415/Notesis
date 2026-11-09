@@ -79,6 +79,9 @@ S6 Lite, SM-P61x/P62x). Kotlin, Jetpack Compose for the chrome, a custom
   `skinMaterial`, liquid glass via `LocalLiquidGlassBackdrop`). Glass cannot
   sample a backdrop it is itself inside of (`NoBackdrop`); floating chrome is
   placed outside the recorded content.
+- Icons are static Material Symbols by default in every skin, with Reicons
+  available as a saved choice. Keep the animated glyph player removed; motion
+  belongs to controls, selection and navigation instead.
 - Removed features stay removed: no ruler/set square/protractor, laser
   pointer, Claude handwriting reading or agent runtime. Do not bring their
   code or strings back.

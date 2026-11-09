@@ -96,14 +96,7 @@ internal val OPEN_SOURCE_COMPONENTS = listOf(
         listOf("liquidglass/upstream/SpotiFLAC.LICENSE"),
     ),
     OpenSourceComponent(
-        "AnimateIcons 0.12.1 icons (ported to Kotlin) · Lucide",
-        "Avijit Dey · Lucide Icons and Contributors · Cole Bemis",
-        "MIT · ISC",
-        "https://animateicons.in",
-        listOf("animateicons/LICENSE", "animateicons/THIRD_PARTY_NOTICES.md"),
-    ),
-    OpenSourceComponent(
-        "Material Symbols Rounded (icons of the Material look)",
+        "Material Symbols Rounded",
         "Google LLC",
         "Apache License 2.0",
         "https://github.com/google/material-design-icons",

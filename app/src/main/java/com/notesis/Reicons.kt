@@ -439,7 +439,7 @@ internal object Reicons {
         }.build()
     }
 
-    // Under Material each name is its Material Symbol instead (see [AppIconStyle.materialSymbols]).
+    // The selected static family applies in every skin; Reicons remain available.
     val Add: ImageVector get() = if (AppIconStyle.materialSymbols) MaterialSymbols.Add else reAdd
     val AddPhotoAlternate: ImageVector get() = if (AppIconStyle.materialSymbols) MaterialSymbols.AddPhotoAlternate else reAddPhotoAlternate
     val Archive: ImageVector get() = if (AppIconStyle.materialSymbols) MaterialSymbols.Archive else reArchive
@@ -511,4 +511,7 @@ internal object Reicons {
     val TouchApp: ImageVector get() = if (AppIconStyle.materialSymbols) MaterialSymbols.TouchApp else reTouchApp
     val Eraser: ImageVector get() = if (AppIconStyle.materialSymbols) MaterialSymbols.Eraser else reEraser
     val Help: ImageVector get() = if (AppIconStyle.materialSymbols) MaterialSymbols.Help else reHelp
+    // Lock previously had no Reicon counterpart in this app.
+    val Lock: ImageVector get() = MaterialSymbols.Lock
+    val Bookmark: ImageVector get() = MaterialSymbols.Bookmark
 }

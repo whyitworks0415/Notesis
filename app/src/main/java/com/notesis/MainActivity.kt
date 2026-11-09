@@ -2,7 +2,6 @@ package com.notesis
 
 import android.graphics.Bitmap
 import android.net.Uri
-import android.util.LruCache
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -94,16 +93,12 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.runtime.produceState
 import androidx.compose.material3.Checkbox
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.material3.SuggestionChip
-import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LocalContentColor
@@ -292,10 +287,8 @@ class MainActivity : ComponentActivity() {
             // Hoisted to the top so a change repaints every bar at once rather
             // than whichever screen happened to be looking.
             var skin by remember {
-                // Set before anything draws an icon, so Material's first frame has its symbols.
-                mutableStateOf(prefs.skin).also { AppIconStyle.materialSymbols = it.value == Skin.MATERIAL }
+                mutableStateOf(prefs.skin)
             }
-            SideEffect { AppIconStyle.materialSymbols = skin == Skin.MATERIAL }
             var look by remember { mutableStateOf(lookStore.load()) }
             var settingsOpen by remember { mutableStateOf(false) }
             // The fastest refresh rate the panel has, unless turned off or saving power.
@@ -339,6 +332,7 @@ class MainActivity : ComponentActivity() {
             // knowing a skin exists.
             MaterialTheme(
                 colorScheme = skinColors(scheme, skin, look),
+                typography = remember { chromeTypography() },
                 shapes = skinShapes(skin),
             ) {
             ProvideSkin(skin, look) {
@@ -1608,21 +1602,21 @@ private fun HomeScreen(
                 Box(Modifier.coachTarget(coachTargets, CoachTarget.NEW_NOTE)) {
                 NewNoteDial(
                     listOf(
-                        DialOption("New note from web page", AppIconStyle.pick(Lucide.Globe, Reicons.Language)) { askingUrl = true },
-                        DialOption("New note from images", AppIconStyle.pick(Lucide.Image, Reicons.AddPhotoAlternate)) {
+                        DialOption("New note from web page", Reicons.Language) { askingUrl = true },
+                        DialOption("New note from images", Reicons.AddPhotoAlternate) {
                             pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                         },
-                        DialOption("Import Markdown", AppIconStyle.pick(Lucide.FileText, Reicons.Description)) {
+                        DialOption("Import Markdown", Reicons.Description) {
                             importMarkdown.launch(arrayOf("text/markdown", "text/plain", "application/octet-stream"))
                         },
-                        DialOption("Open document · Drive · OneDrive", AppIconStyle.pick(Lucide.FolderOpen, Reicons.FolderOpen)) {
+                        DialOption("Open document · Drive · OneDrive", Reicons.FolderOpen) {
                             openDocument.launch(SUPPORTED_DOCUMENT_MIME_TYPES)
                         },
-                        DialOption("Import PDF", AppIconStyle.pick(Lucide.File, Reicons.PictureAsPdf)) {
+                        DialOption("Import PDF", Reicons.PictureAsPdf) {
                             pickPdf.launch(arrayOf("application/pdf"))
                         },
-                        DialOption("Markdown folder (vault)", AppIconStyle.pick(Lucide.FolderOpen, Reicons.FolderOpen)) { onOpenVault() },
-                        DialOption("New note", AppIconStyle.pick(Lucide.NotebookPen, Reicons.Edit)) { naming = true },
+                        DialOption("Markdown folder (vault)", Reicons.FolderOpen) { onOpenVault() },
+                        DialOption("New note", Reicons.Edit) { naming = true },
                     ),
                 )
                 }
@@ -2510,7 +2504,7 @@ private fun SearchHitRow(note: NoteMeta, hit: PageHit, onOpen: () -> Unit) {
             Text(
                 hit.snippet,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -2821,7 +2815,7 @@ private fun TrashDialog(store: NoteStore, onChanged: () -> Unit, onDismiss: () -
         title = { Text("Trash") },
         text = {
             if (trashed.isEmpty()) {
-                Text("Trash is empty", color = MaterialTheme.colorScheme.outline)
+                Text("Trash is empty", color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else LazyColumn(Modifier.heightIn(max = 420.dp)) {
                 items(trashed, key = { it.id }) { note ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2830,7 +2824,7 @@ private fun TrashDialog(store: NoteStore, onChanged: () -> Unit, onDismiss: () -
                             Text(
                                 "Deleted ${dateFormat.format(Date(note.trashedAt))} · ${countNoun(note.pageCount, "page")}",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.outline,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                         TextButton(onClick = {
@@ -2918,7 +2912,9 @@ private fun NoteCard(
         modifier = Modifier
             .graphicsLayer { scaleX = sink; scaleY = sink }
             .then(if (glass) Modifier.cardGlass(cardShape) else Modifier)
-            .then(if (selected) Modifier.border(2.5.dp, MaterialTheme.colorScheme.primary, cardShape) else Modifier),
+            .then(if (selected) Modifier.border(2.5.dp, MaterialTheme.colorScheme.primary, cardShape)
+                else if (skin == Skin.MATERIAL) Modifier.border(0.75.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f), cardShape)
+                else Modifier),
         onClick = onOpen,
         shape = cardShape,
         // No shadow on glass. A shadow is drawn under the whole card, not only
@@ -2933,7 +2929,8 @@ private fun NoteCard(
         elevation = if (skin == Skin.MATERIAL) CardDefaults.cardElevation(defaultElevation = 1.dp)
             else CardDefaults.cardElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
         colors = if (skin == Skin.MATERIAL) {
-            CardDefaults.cardColors()
+            CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                contentColor = MaterialTheme.colorScheme.onSurface)
         } else if (glass) {
             CardDefaults.cardColors(containerColor = Color.Transparent)
         } else if (skin.isRefractive) {
@@ -3007,7 +3004,7 @@ private fun NoteCard(
                     modifier = Modifier.align(Alignment.TopStart).padding(10.dp),
                 )
                 if (note.locked) Icon(
-                    Icons.Filled.Lock,
+                    Reicons.Lock,
                     contentDescription = "Locked note",
                     tint = MaterialTheme.colorScheme.outline,
                     modifier = Modifier.size(36.dp),
@@ -3116,7 +3113,7 @@ private fun NoteCard(
                         )
                         GlassMenuItem(
                             text = { Text(if (note.locked) "Unlock" else "Lock with password") },
-                            leadingIcon = { Icon(Icons.Filled.Lock, contentDescription = null) },
+                            leadingIcon = { Icon(Reicons.Lock, contentDescription = null) },
                             onClick = { menuOpen = false; onLock() },
                         )
                         GlassMenuItem(
@@ -3289,11 +3286,11 @@ private fun GlassFab(
     if (LocalSkin.current == Skin.MATERIAL) {
         if (small) {
             SmallFloatingActionButton(onClick = onClick, modifier = modifier) {
-                AppIcon(icon, contentDescription = contentDescription, modifier = iconModifier, play = iconRotation > 0f)
+                AppIcon(icon, contentDescription = contentDescription, modifier = iconModifier)
             }
         } else {
             FloatingActionButton(onClick = onClick, modifier = modifier) {
-                AppIcon(icon, contentDescription = contentDescription, modifier = iconModifier, play = iconRotation > 0f)
+                AppIcon(icon, contentDescription = contentDescription, modifier = iconModifier)
             }
         }
         return
@@ -3308,7 +3305,7 @@ private fun GlassFab(
             drawBorder = false,
             glassShadowElevation = 3.dp,
         ) {
-            AppIcon(icon, contentDescription = contentDescription, modifier = iconModifier, play = iconRotation > 0f)
+            AppIcon(icon, contentDescription = contentDescription, modifier = iconModifier)
         }
     } else {
         // The theme's FAB corners: card for the big one, control for the
@@ -3319,7 +3316,7 @@ private fun GlassFab(
                 Modifier.fillMaxSize().clickable(onClick = onClick),
                 contentAlignment = Alignment.Center,
             ) {
-                AppIcon(icon, contentDescription = contentDescription, modifier = iconModifier, play = iconRotation > 0f)
+                AppIcon(icon, contentDescription = contentDescription, modifier = iconModifier)
             }
         }
     }
@@ -3364,7 +3361,7 @@ private fun NewNoteDial(options: List<DialOption>) {
         }
         GlassFab(
             onClick = { open = !open },
-            icon = AppIconStyle.pick(Lucide.Plus, Reicons.Add),
+            icon = Reicons.Add,
             contentDescription = if (open) "Close" else "New note · Import",
             iconRotation = turn,
         )
@@ -3884,7 +3881,7 @@ private fun CaptureDialog(
                     )
                     captureLimitMessage(it.limit, BitmapBudget.MAX_SIDE, PdfSource.cropSideLimit())?.let { note ->
                         Text(note, style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.outline)
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
                 if (busy) {
@@ -4008,7 +4005,7 @@ private fun NameDialog(
                 Text(
                     if (kind == NoteKind.MARKDOWN) "Saved as a note.md file that Obsidian can open." else "A paper notebook for pens and text boxes.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.outline,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (kind == NoteKind.INK) {
                     Spacer(Modifier.height(12.dp))
@@ -4328,18 +4325,6 @@ private fun NoteScreen(
         }
         lifecycleOwner?.lifecycle?.addObserver(observer)
         onDispose { lifecycleOwner?.lifecycle?.removeObserver(observer) }
-    }
-    // Every page redraw asks for the pictures on it, so decoding has to happen
-    // once rather than once a frame.
-    val imageCache = remember(note.id) {
-        // Bounded by bytes, not by count: a handful of large pictures is what
-        // would run the heap out, and counting entries cannot see that.
-        object : LruCache<String, Bitmap>(IMAGE_CACHE_BYTES) {
-            override fun sizeOf(key: String, value: Bitmap) = value.byteCount
-        }
-    }
-    DisposableEffect(imageCache) {
-        onDispose { imageCache.evictAll() }
     }
     // Folded away, the bar becomes a handle that can be dragged; unfolding puts
     // it back wherever that handle was left, which is the point of moving it.
@@ -4687,6 +4672,15 @@ private fun NoteScreen(
     val liveZoom = remember { floatArrayOf(1f) }
     var zoomMenu by remember { mutableStateOf(false) }
     var canvas by remember { mutableStateOf<InkCanvasView?>(null) }
+    val imagePreviews = remember(note.id, store) {
+        CanvasImagePreviews(IMAGE_CACHE_BYTES,
+            file = { key ->
+                if (key.startsWith("t:")) store.templateFile(key.substring(2))
+                else store.imageFile(note.id, key.substring(2))
+            },
+            onReady = { canvas?.imagePreviewReady() })
+    }
+    DisposableEffect(imagePreviews) { onDispose { imagePreviews.close() } }
     // Whether undo and redo have anything, each its own state: read as the
     // edit counter, every stroke recomposed the whole toolbar on the UI thread
     // at the pen-up, as the next stroke was starting. Derived, the toolbar
@@ -5333,24 +5327,11 @@ private fun NoteScreen(
                         onTextRequested = { page, x, y -> textAt(page, x, y) }
                         onLassoSelected = { lassoCount = it; lassoMoves++ }
                         onLassoScreenMoved = { lassoMoves++ }
-                        // A file that cannot be read is remembered as such: it was
-                        // read and failed again on every frame that drew its page.
-                        val unreadable = HashSet<String>()
-                        imageLoader = { imageId ->
-                            imageCache.get(imageId) ?: if (imageId in unreadable) null else runCatching {
-                                android.graphics.BitmapFactory
-                                    .decodeFile(store.imageFile(note.id, imageId).path)
-                            }.getOrNull().also { if (it != null) imageCache.put(imageId, it) else unreadable += imageId }
-                        }
+                        imageLoader = imagePreviews::originalImage
+                        imagePreviewLoader = imagePreviews::image
                         imageAdder = { bitmap -> store.addImage(note.id, bitmap)?.first }
-                        // Cached like the pictures: a custom paper was decoded
-                        // from disk on every frame, and uploaded as a new texture.
-                        templateLoader = { templateId ->
-                            val key = "t:$templateId"
-                            imageCache.get(key) ?: if (key in unreadable) null else runCatching {
-                                android.graphics.BitmapFactory.decodeFile(store.templateFile(templateId).path)
-                            }.getOrNull().also { if (it != null) imageCache.put(key, it) else unreadable += key }
-                        }
+                        templateLoader = imagePreviews::originalTemplate
+                        templatePreviewLoader = imagePreviews::template
                         // Rendered on a worker; the dialog is a UI thing.
                         onCaptured = { bitmap -> post { if (captureToAi) sendCaptureToAi() else captured = bitmap } }
                         canvas = this
@@ -6272,7 +6253,7 @@ private fun NoteScreen(
                 PanelSectionHeader("Recordings")
                 if (recordings.isEmpty()) {
                     Text("None yet. What you record is kept with this note.",
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 for (file in recordings) Row(verticalAlignment = Alignment.CenterVertically) {
                     val label = runCatching {
@@ -7722,7 +7703,7 @@ private fun StudyBar(
                     TextButton(onClick = onShow) { Text("Show answer") }
                 } else {
                     TextButton(onClick = { onAnswer(true) }) {
-                        Text("Correct", color = Color(0xFF2E7D32))
+                        Text("Correct", color = MaterialTheme.colorScheme.primary)
                     }
                     TextButton(onClick = { onAnswer(false) }) {
                         Text("Wrong", color = MaterialTheme.colorScheme.error)
@@ -8229,10 +8210,17 @@ private fun ReferencePanel(
         if (sharedDocument != null) onSharedOpen()
         onDispose { if (sharedDocument != null) latestSharedChanged() }
     }
-    // A pane holds half what a floating panel does: up to four of them share the screen.
-    val imageCache = remember { object : LruCache<String, Bitmap>((if (pinned) 8 else 16) * 1024 * 1024) {
-        override fun sizeOf(key: String, value: Bitmap) = value.byteCount
-    } }
+    // Each note has its own lifetime; a late decode from a switched note
+    // cannot populate the new panel or notify its canvas.
+    val imagePreviews = remember(noteId, pinned, store) {
+        CanvasImagePreviews((if (pinned) 8 else 16) * 1024 * 1024,
+            file = { key ->
+                if (key.startsWith("t:")) store.templateFile(key.substring(2))
+                else store.imageFile(noteId, key.substring(2))
+            },
+            onReady = { view?.imagePreviewReady() })
+    }
+    DisposableEffect(imagePreviews) { onDispose { imagePreviews.close() } }
     var popupEdits by remember { mutableIntStateOf(0) }
     var popupLassoCount by remember { mutableIntStateOf(0) }
     var noteMenu by remember { mutableStateOf(false) }
@@ -8280,7 +8268,6 @@ private fun ReferencePanel(
             lifecycleOwner?.lifecycle?.removeObserver(observer)
             flushLatest()
             if (view == null) opened?.second?.close()
-            imageCache.evictAll()
         }
     }
     // A note or a page change refits the page to the panel, when that is asked
@@ -8547,16 +8534,10 @@ private fun ReferencePanel(
                                 keepPageAcross = !pinned
                                 pageLoader = { p, epsilon -> store.loadPage(noteId, p, epsilon) }
                                 maskLoader = { p, epsilon -> store.loadMasks(noteId, p, epsilon) }
-                                imageLoader = { imageId ->
-                                    imageCache.get("i:$imageId") ?: runCatching {
-                                        android.graphics.BitmapFactory
-                                            .decodeFile(store.imageFile(noteId, imageId).path)
-                                    }.getOrNull()?.also { imageCache.put("i:$imageId", it) }
-                                }
-                                templateLoader = { templateId ->
-                                    imageCache.get("t:$templateId") ?: runCatching { android.graphics.BitmapFactory.decodeFile(
-                                        store.templateFile(templateId).path) }.getOrNull()?.also { imageCache.put("t:$templateId", it) }
-                                }
+                                imageLoader = imagePreviews::originalImage
+                                imagePreviewLoader = imagePreviews::image
+                                templateLoader = imagePreviews::originalTemplate
+                                templatePreviewLoader = imagePreviews::template
                                 open(ready.first, ready.second, initialPage = page)
                                 onStrokesChanged = {
                                     popupEdits++
@@ -9359,9 +9340,8 @@ private fun Toolbar(
                         }
                         PenRowItem.QUICK_COLORS -> if (mode.tints) QuickColors(pen.colorArgb, onQuickColor, onEditPen)
                         PenRowItem.PALETTE -> if (mode.tints) {
-                            var paletteTaps by remember { mutableIntStateOf(0) }
-                            IconButton(onClick = { paletteTaps++; onPalette() }, modifier = Modifier.size(32.dp)) {
-                                AppIcon(AppIcons.palette, "Color templates", Modifier.size(20.dp), play = paletteTaps)
+                            IconButton(onClick = onPalette, modifier = Modifier.size(32.dp)) {
+                                AppIcon(AppIcons.palette, "Color templates", Modifier.size(20.dp))
                             }
                         }
                         PenRowItem.STRAIGHT_LINE -> if (mode in STRAIGHT_LINE_MODES) {
@@ -9443,7 +9423,7 @@ private fun ToolButton(
 ) {
     val shape = CircleShape
     val contentColor = when {
-        selected && tint != null -> tint
+        selected && tint != null -> readableChrome(tint, MaterialTheme.colorScheme.surfaceContainerHighest)
         selected -> MaterialTheme.colorScheme.primary
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }

@@ -687,25 +687,13 @@ private fun MotionGroup() {
 private fun IconsGroup() {
     val context = LocalContext.current
     SettingsSectionHeader("Icon set")
-    if (LocalSkin.current == Skin.MATERIAL) {
-        SettingsNote("Material draws Material Symbols Rounded, as Android does; the set below is for the other looks.")
-    }
+    SettingsNote("Static icons in every look. Motion belongs to controls and panels.")
     LiquidSegmentedControl(
-        segments = listOf("Reicons", "AnimateIcons"),
-        selectedIndex = if (AppIconStyle.animated) 1 else 0,
-        onSelected = { index -> AppIconStyle.setAnimated(context, index == 1) },
+        segments = StaticIconSet.entries.map { it.label },
+        selectedIndex = AppIconStyle.selected.ordinal,
+        onSelected = { index -> AppIconStyle.select(context, StaticIconSet.entries[index]) },
         modifier = Modifier.fillMaxWidth(),
         useLiquidGlass = false,
-    )
-    val skin = LocalSkin.current
-    SettingsToggle(
-        "Icon animation", AppIconStyle.animate, { AppIconStyle.setAnimate(context, it) },
-        hint = "Icons move once when tapped or chosen. Off keeps them still.",
-        disabledReason = when {
-            AppIconStyle.materialSymbols -> "Material Symbols stay still"
-            AppIconStyle.animated -> null
-            else -> "Only the AnimateIcons set moves"
-        },
     )
 }
 

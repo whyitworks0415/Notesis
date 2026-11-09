@@ -31,7 +31,9 @@ internal fun SlideInPanel(
     content: @Composable () -> Unit,
 ) {
     val animate = rememberLiquidGlassEffectsAllowed()
+    val skin = LocalSkin.current
     val progress = remember { Animatable(if (visible) 1f else 0f) }
+    val velocity = remember { floatArrayOf(0f) }
     var present by remember { mutableStateOf(visible) }
     LaunchedEffect(visible, animate) {
         if (visible) {
@@ -40,13 +42,14 @@ internal fun SlideInPanel(
                 // The first frame with the panel in it is the slow one; the
                 // slide starts after it, not on it.
                 if (progress.value == 0f) awaitFirstFrames()
-                ChromeMotion.during { progress.animateTo(1f, sidebarOpenSpring()) }
+                ChromeMotion.during { progress.animateTo(1f, sidebarOpenFor(skin), initialVelocity = velocity[0]) { velocity[0] = this.velocity }; velocity[0] = 0f }
             } else {
+                velocity[0] = 0f
                 progress.snapTo(1f)
             }
         } else {
-            if (animate && !instantExit) ChromeMotion.during { progress.animateTo(0f, sidebarCloseSpring()) }
-            else progress.snapTo(0f)
+            if (animate && !instantExit) ChromeMotion.during { progress.animateTo(0f, sidebarCloseFor(skin), initialVelocity = velocity[0]) { velocity[0] = this.velocity }; velocity[0] = 0f }
+            else { velocity[0] = 0f; progress.snapTo(0f) }
             present = false
         }
     }

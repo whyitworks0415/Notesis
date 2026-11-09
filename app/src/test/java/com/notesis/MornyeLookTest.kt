@@ -65,21 +65,16 @@ class MornyeLookTest {
         assertEquals(Color(0xFF2A2A2A), scheme.surfaceContainerHighest)
     }
 
-    @Test fun `a dialog arrives from 0_85 under Material and 0_96 under glass`() {
-        assertEquals(0.85f, dialogArrivalScale(0f, material = true), 0f)
+    @Test fun `Material dialogs share the menu scale and glass keeps its own`() {
+        assertEquals(MaterialMotion.START_SCALE, dialogArrivalScale(0f, material = true), 0f)
         assertEquals(0.96f, dialogArrivalScale(0f, material = false), 0f)
         assertEquals(1f, dialogArrivalScale(1f, material = true), 0f)
     }
 
     @Test fun `every Reicons name has a Material Symbol`() {
-        AppIconStyle.materialSymbols = true
-        try {
-            assertEquals(MaterialSymbols.Add, Reicons.Add)
-            assertEquals(MaterialSymbols.Eraser, Reicons.Eraser)
-        } finally {
-            AppIconStyle.materialSymbols = false
-        }
-        assertTrue(Reicons.Add !== MaterialSymbols.Add)
+        assertEquals(StaticIconSet.MATERIAL, StaticIconSet.fromName(null))
+        assertEquals(MaterialSymbols.Add, Reicons.Add)
+        assertEquals(MaterialSymbols.Eraser, Reicons.Eraser)
     }
 
     @Test fun `the squircle reaches 1_528 r and meets the circle at 45 degrees`() {
@@ -126,12 +121,15 @@ class MornyeLookTest {
         val ios = SkinSettings(liquidStyle = LiquidStyle.IOS)
         assertEquals(MornyeAccent.BLUE, ios.ios.accent)
         val scheme = lookScheme(null, Skin.LIQUID_GLASS, ios)
-        assertEquals(MornyeAccent.BLUE.light, scheme.primary.toArgb())
+        assertTrue(chromeContrast(scheme.primary, scheme.surfaceContainerHighest) >= 5.49f)
+        assertTrue(scheme.primary.blue > scheme.primary.red)
         assertEquals(Color(0xFFF2F2F7), scheme.surfaceContainer)
         assertEquals(true, ios.smoothCorners)
         assertEquals(false, SkinSettings().smoothCorners)
         val green = ios.copy(ios = ios.ios.copy(accent = MornyeAccent.GREEN))
-        assertEquals(MornyeAccent.GREEN.light, lookScheme(null, Skin.LIQUID_GLASS, green).primary.toArgb())
+        val greenScheme = lookScheme(null, Skin.LIQUID_GLASS, green)
+        assertTrue(chromeContrast(greenScheme.primary, greenScheme.surfaceContainerHighest) >= 5.49f)
+        assertTrue(greenScheme.primary.green > greenScheme.primary.red)
         assertEquals(green.ios, IosGlass.fromJson(green.ios.toJson()))
     }
 

@@ -1,5 +1,7 @@
 package com.notesis
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.unit.Density
 
 /**

@@ -91,7 +91,7 @@ private fun AttachChoice(title: String, hint: String, onClick: () -> Unit) {
             .padding(horizontal = Ui.Space.s, vertical = Ui.Space.s),
     ) {
         Text(title, style = MaterialTheme.typography.titleSmall)
-        Text(hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+        Text(hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

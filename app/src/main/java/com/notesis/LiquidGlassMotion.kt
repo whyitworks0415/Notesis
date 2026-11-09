@@ -65,10 +65,16 @@ internal class LiquidGlassMotion(
     }
     fun grab(index: Float) {
         dragging = true; followTarget = index.toDouble()
+        if (control) travel.x = followTarget
         lifted = lifts; running = true
         travel.velocity = 0.0; travelSign = 0.0
     }
-    fun follow(index: Float) { followTarget = index.toDouble() }
+    fun follow(index: Float) {
+        followTarget = index.toDouble()
+        // The thumb belongs to the pointer, not to the next spring tick.
+        // Decorative lift and refraction still animate independently.
+        if (control && dragging) travel.x = followTarget
+    }
     fun release(index: Float) {
         dragging = false; from = travel.x; target = index.toDouble()
         travel.velocity = 0.0; travelSign = sign(target - from)

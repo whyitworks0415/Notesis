@@ -93,16 +93,12 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.runtime.produceState
 import androidx.compose.material3.Checkbox
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.material3.SuggestionChip
-import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LocalContentColor
@@ -390,7 +386,7 @@ internal fun WebPanel(
             ) {
                 AppIconButton(onClick = { web?.let { if (it.canGoBack()) it.goBack() } }, icon = AppIcons.back,
                     contentDescription = "Back")
-                AppIconButton(onClick = { web?.reload() }, icon = AppIconStyle.pick(Lucide.RotateCcw, Reicons.Refresh),
+                AppIconButton(onClick = { web?.reload() }, icon = Reicons.Refresh,
                     contentDescription = "Reload")
                 OutlinedTextField(
                     value = address,
@@ -409,8 +405,8 @@ internal fun WebPanel(
                 if (onCaptureToChat != null) AppIconButton(onClick = onCaptureToChat, icon = AppIcons.capture,
                     contentDescription = "Capture to the chat")
                 AppIconButton(onClick = onTogglePopup,
-                    icon = if (popup) AppIconStyle.pick(Lucide.PanelLeft, Reicons.CloseFullscreen)
-                        else AppIconStyle.pick(Lucide.PictureInPicture, Reicons.OpenInFull),
+                    icon = if (popup) Reicons.CloseFullscreen
+                        else Reicons.OpenInFull,
                     contentDescription = if (popup) "Dock" else "Pop out")
                 Box {
                     AppIconButton(onClick = { more = true }, icon = AppIcons.noteMenu, contentDescription = "More",

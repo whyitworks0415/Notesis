@@ -309,7 +309,8 @@ internal fun lookScheme(context: Context?, skin: Skin, look: SkinSettings): Colo
     if (skin == Skin.LIQUID_GLASS && look.liquidStyle != LiquidStyle.NOTESIS) {
         val chosen = if (look.liquidStyle == LiquidStyle.IOS) look.ios.accent else look.mornye.accent
         val accent = chosen.argb(dark, look.accent)
-        return mornyeScheme(schemeFrom(accent, look.highContrast, dark), accent, dark)
+        val grouped = mornyeScheme(schemeFrom(accent, look.highContrast, dark), accent, dark)
+        return if (look.liquidStyle == LiquidStyle.IOS) iosChromeScheme(grouped, dark) else grouped
     }
     val wallpaper = skin == Skin.MATERIAL && look.dynamicColor && !look.highContrast &&
         context != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
@@ -318,7 +319,15 @@ internal fun lookScheme(context: Context?, skin: Skin, look: SkinSettings): Colo
     } else {
         schemeFrom(look.accent, look.highContrast, dark)
     }
-    if (skin == Skin.MATERIAL && look.amoled && dark) scheme = amoledScheme(scheme)
+    if (skin == Skin.MATERIAL) {
+        scheme = materialStudioScheme(scheme, dark)
+        if (look.highContrast) scheme = scheme.copy(
+            onSurface = if (dark) Color.White else Color.Black,
+            onBackground = if (dark) Color.White else Color.Black,
+            onSurfaceVariant = if (dark) Color.White else Color.Black,
+        )
+        if (look.amoled && dark) scheme = amoledScheme(scheme)
+    }
     return scheme
 }
 

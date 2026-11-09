@@ -578,12 +578,12 @@ private val ROW_GAP = Ui.Space.s
 private val LIST_PADDING = Ui.Space.m
 private const val DELETE_UNDO_MS = 8_000L
 
-/** The eye, open: Lucide has no open eye among this app's icons, so both sets use Reicon's. */
+/** Layer actions use the same static icon family as the rest of the app. */
 private val shownIcon get() = Reicons.Visibility
-private val hiddenIcon get() = AppIconStyle.pick(Lucide.EyeOff, Reicons.VisibilityOff)
-private val moreIcon get() = AppIconStyle.pick(Lucide.Ellipsis, Reicons.MoreVert)
-private val addIcon get() = AppIconStyle.pick(Lucide.Plus, Reicons.Add)
-private val gripIcon get() = AppIconStyle.pick(Lucide.Menu, Reicons.Menu)
+private val hiddenIcon get() = Reicons.VisibilityOff
+private val moreIcon get() = Reicons.MoreVert
+private val addIcon get() = Reicons.Add
+private val gripIcon get() = Reicons.Menu
 
 /**
  * The current write-target layer as a small toolbar chip: its name, and a
@@ -621,7 +621,7 @@ internal fun LayerTargetChip(view: InkCanvasView?, onClick: () -> Unit) {
         )
         if (locked) {
             Spacer(Modifier.width(4.dp))
-            AppIcon(Lucide.Lock.vector, null, Modifier.size(16.dp), tint = scheme.error)
+            AppIcon(Reicons.Lock, null, Modifier.size(16.dp), tint = scheme.error)
         }
     }
 }
@@ -1046,7 +1046,7 @@ private fun LayerRow(
             )
             AppIconButton(
                 onClick = { onLocked(!layer.locked) },
-                icon = Lucide.Lock.vector,
+                icon = Reicons.Lock,
                 contentDescription = if (layer.locked) "Unlock ${layer.name}" else "Lock ${layer.name}",
                 // No open padlock among the icons: unlocked is the same lock, faint.
                 tint = if (layer.locked) scheme.error else onBackground.copy(alpha = 0.3f),

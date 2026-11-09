@@ -6,6 +6,21 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class InteractionTrackerTest {
+    @Test fun `a contact owns the budget until cancel lift or detach without disturbing another canvas`() {
+        val tracker = InteractionTracker(settleMs = 700)
+        val note = Any()
+        val reference = Any()
+        tracker.begin(note, writing = false)
+        assertEquals(Interaction.MOVING, tracker.state(0))
+        tracker.begin(note, writing = false) // First move after down is idempotent.
+        tracker.begin(reference, writing = false)
+        tracker.end(note, writing = false, now = 10)
+        assertEquals(Interaction.MOVING, tracker.state(20))
+        tracker.forget(reference, now = 30)
+        assertEquals(Interaction.SETTLING, tracker.state(31))
+        assertEquals(Interaction.IDLE, tracker.state(730))
+    }
+
     @Test
     fun `one canvas lifting its pen does not end another canvas's stroke`() {
         val tracker = InteractionTracker(settleMs = 300)

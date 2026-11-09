@@ -62,18 +62,15 @@ jobs:
         run: ./gradlew assembleRelease -Dorg.gradle.java.home="$JAVA_HOME" --no-daemon --stacktrace
 
       - name: Unit tests
-        # Reported, not gating: a failing JVM test shows up red here without
-        # holding back the APK the tablet is waiting for. A check run fails on it.
-        continue-on-error: ${{ github.event.inputs.update != 'check' }}
+        # Never sign or publish an update whose regression tests failed.
         run: ./gradlew testReleaseUnitTest -Dorg.gradle.java.home="$JAVA_HOME" --no-daemon
 
-      # A check run also draws the library's pieces under Robolectric and keeps
-      # the pictures, since there is no device here to look at them on.
+      # Check and manual builds also verify chrome under Robolectric before
+      # signing. The manual APK must contain the UI that passed these tests.
       - name: Screenshots
-        if: ${{ github.event.inputs.update == 'check' }}
-        continue-on-error: true
+        if: ${{ github.event.inputs.update == 'check' || github.event.inputs.update == 'manual' }}
         # Robolectric and Roborazzi are built for Java 21; the runner has one beside the 17 the app builds with.
-        run: ./gradlew testDebugUnitTest --tests 'com.notesis.LibraryScreenshotTest' -Dorg.gradle.java.home="${JAVA_HOME_21_X64:-$JAVA_HOME}" --no-daemon
+        run: ./gradlew testDebugUnitTest --tests 'com.notesis.LibraryScreenshotTest' --tests 'com.notesis.CanvasImagePreviewsTest' --tests 'com.notesis.DarkChromeScreenshotTest' --tests 'com.notesis.MaterialMotionUiTest' -Dorg.gradle.java.home="${JAVA_HOME_21_X64:-$JAVA_HOME}" --no-daemon
 
       - uses: actions/upload-artifact@v4
         if: ${{ github.event.inputs.update == 'check' }}
