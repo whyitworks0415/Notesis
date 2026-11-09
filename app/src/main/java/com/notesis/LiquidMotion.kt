@@ -215,17 +215,12 @@ internal val PourOpen = OpenProfile(
 /** A 44-point drop against a panel of about 360: where a poured menu starts. */
 private const val POUR_START = 0.12f
 
-/**
- * Material's: out of the button from 0.8, as its menus grow, on Material 3
- * Expressive's slow spatial spring with no overshoot - Mornye keeps a sheet or
- * menu from overshooting its own size - and fading in on the way; back in
- * 200 ms on the emphasised accelerate curve.
- */
+/** Material surfaces share one restrained, source-anchored spatial spring. */
 internal val MaterialOpen = OpenProfile(
-    open = spring(dampingRatio = 1f, stiffness = 200f),
-    close = tween(200, easing = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)),
-    startScale = 0.8f,
-    closeScale = 0.8f,
+    open = MaterialMotion.rawContainer(),
+    close = MaterialMotion.rawExit(),
+    startScale = MaterialMotion.START_SCALE,
+    closeScale = MaterialMotion.START_SCALE,
     alpha = { p -> (p / 0.45f).coerceIn(0f, 1f) },
     // Under the spring's own 14 rad/s, so it still lands without overshoot.
     openVelocity = 3f,

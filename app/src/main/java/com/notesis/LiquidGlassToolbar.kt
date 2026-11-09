@@ -1,6 +1,7 @@
 package com.notesis
 
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.fadeIn
@@ -407,13 +408,13 @@ internal fun GlassToolbarTool.icon(): ImageVector = when (this) {
     GlassToolbarTool.PEN -> AppIcons.penTool
     GlassToolbarTool.PENCIL -> AppIcons.pencilTool
     GlassToolbarTool.HIGHLIGHTER -> AppIcons.highlighterTool
-    GlassToolbarTool.MASK -> AppIconStyle.pick(Lucide.EyeOff, Reicons.VisibilityOff)
-    GlassToolbarTool.ERASE -> AppIconStyle.pick(Lucide.Eraser, Reicons.Eraser)
-    GlassToolbarTool.SHAPE -> AppIconStyle.pick(Lucide.Shapes, Reicons.Category)
-    GlassToolbarTool.TEXT -> AppIconStyle.pick(Lucide.Type, Reicons.TextFields)
-    GlassToolbarTool.LASSO -> AppIconStyle.pick(Lucide.CircleDashed, Reicons.Gesture)
-    GlassToolbarTool.CAPTURE -> AppIconStyle.pick(Lucide.SquareDashed, Reicons.CropFree)
-    GlassToolbarTool.AI -> AppIconStyle.pick(Lucide.Zap, Reicons.AutoAwesome)
+    GlassToolbarTool.MASK -> Reicons.VisibilityOff
+    GlassToolbarTool.ERASE -> Reicons.Eraser
+    GlassToolbarTool.SHAPE -> Reicons.Category
+    GlassToolbarTool.TEXT -> Reicons.TextFields
+    GlassToolbarTool.LASSO -> Reicons.Gesture
+    GlassToolbarTool.CAPTURE -> Reicons.CropFree
+    GlassToolbarTool.AI -> Reicons.AutoAwesome
 }
 
 internal data class GlassToolbarAction(
@@ -478,9 +479,6 @@ private fun GlassActionButton(
     corner: Dp? = null,
     onClick: () -> Unit,
 ) {
-    // Each tap plays the icon once, where the icon set and the skin have motion.
-    var taps by remember { mutableIntStateOf(0) }
-    val tapped = { taps++; onClick() }
     val reason = subtitle.takeIf { !enabled }
     val described = Modifier.semantics {
         contentDescription = label
@@ -528,24 +526,28 @@ private fun GlassActionButton(
         selected -> scheme.onPrimaryContainer
         else -> scheme.onSurface
     }.copy(alpha = if (enabled) 1f else 0.38f)
+    val materialEffects = skin == Skin.MATERIAL && rememberLiquidGlassEffectsAllowed() && !look.highContrast
+    val visibleFill by animateColorAsState(fill, if (materialEffects) MaterialMotion.effects() else snap(), label = "Action selection fill")
+    val visibleContent by animateColorAsState(content, if (materialEffects) MaterialMotion.effects() else snap(), label = "Action selection ink")
     Box(modifier.sizeIn(minWidth = Ui.Size.touchCompact, minHeight = Ui.Size.touchCompact)
+        .materialPressFeedback(interaction, enabled)
         .onSizeChanged { buttonSize = it }
         .then(described)
         .clickable(enabled = enabled, role = Role.Button, interactionSource = interaction,
             // Glass answers a press with the lift; the still skins with the
-            // skin's own indication, which shows focus and nothing else.
-            indication = if (glass) null else LocalIndication.current, onClick = tapped),
+            // skin's native state feedback, alongside the control's contact motion.
+            indication = if (glass) null else LocalIndication.current, onClick = onClick),
         contentAlignment = Alignment.Center) {
         val body = Modifier.matchParentSize().graphicsLayer { scaleX = grow; scaleY = grow }
-        val pane = if (persistentGlass) body.skinMaterial(CircleShape, role = ChromeRole.TOOLBAR) else body.background(fill, shape)
+        val pane = if (persistentGlass) body.skinMaterial(CircleShape, role = ChromeRole.TOOLBAR) else body.background(visibleFill, shape)
         // Liquid glass lights up under the finger, as Apple's does.
         Box(if (glass) pane.glassPressGlow(interaction, if (persistentGlass) CircleShape else shape) else pane)
         Column(Modifier.padding(horizontal = Ui.Space.s, vertical = Ui.Space.xs),
             horizontalAlignment = Alignment.CenterHorizontally) {
             // On its own, a round button's glyph grows with it.
             icon?.let { AppIcon(it, null, Modifier.size(if (iconOnly) Ui.Icon.small * LocalChromeScale.current else Ui.Icon.small),
-                tint = content, play = taps) }
-            if (!iconOnly) ActionLabels(label, reason, content)
+                tint = visibleContent) }
+            if (!iconOnly) ActionLabels(label, reason, visibleContent)
         }
     }
 }
@@ -1265,6 +1267,9 @@ internal suspend fun awaitFirstFrames() {
 internal class PopupGrowth(shown: Boolean) {
     val width = Animatable(if (shown) 1f else 0f)
     val height = Animatable(if (shown) 1f else 0f)
+    // Animatable clears velocity when its coroutine is cancelled. Keep the
+    // last frame's sample so a reversal starts with the motion it interrupted.
+    private val velocities = floatArrayOf(0f, 0f)
 
     /**
      * Read in a draw: the glass inside the popup redraws, and looks at the
@@ -1317,6 +1322,7 @@ internal class PopupGrowth(shown: Boolean) {
         widthDelayMs: Int = 0,
     ) {
         if (!animate) {
+            velocities.fill(0f)
             width.snapTo(target)
             height.snapTo(target)
             return
@@ -1324,15 +1330,19 @@ internal class PopupGrowth(shown: Boolean) {
         // The same curve on both unless the opening pours, so the shape keeps
         // its proportion on the way; a poured one runs down, then spreads.
         // NaN velocity: each axis keeps the speed it is already moving at.
-        val widthStart = if (velocity.isNaN()) width.velocity else velocity
-        val heightStart = if (velocity.isNaN()) height.velocity else velocity
+        val widthStart = if (velocity.isNaN()) velocities[0] else velocity
+        val heightStart = if (velocity.isNaN()) velocities[1] else velocity
         ChromeMotion.during {
             coroutineScope {
                 launch {
                     if (widthDelayMs > 0) kotlinx.coroutines.delay((widthDelayMs * MotionPrefs.responseScale).toLong())
-                    width.animateTo(target, widthSpec.paced(), initialVelocity = widthStart)
+                    width.animateTo(target, widthSpec.paced(), initialVelocity = widthStart) { velocities[0] = this.velocity }
+                    velocities[0] = 0f
                 }
-                launch { height.animateTo(target, heightSpec.paced(), initialVelocity = heightStart) }
+                launch {
+                    height.animateTo(target, heightSpec.paced(), initialVelocity = heightStart) { velocities[1] = this.velocity }
+                    velocities[1] = 0f
+                }
             }
         }
     }
@@ -1494,21 +1504,27 @@ private fun ToolStrip(
     val highlight = if (skin == Skin.MATERIAL) scheme.primaryContainer else scheme.primary.copy(alpha = 0.16f)
     val selected = selectedIndex.takeIf { it in tools.indices }
     val slide = remember { Animatable((selected ?: 0).toFloat()) }
+    val slideVelocity = remember { floatArrayOf(0f) }
     val showing = remember { booleanArrayOf(selected != null) }
-    LaunchedEffect(selected) {
+    val animateSelection = rememberLiquidGlassEffectsAllowed() && !LocalSkinSettings.current.highContrast
+    LaunchedEffect(selected, animateSelection, skin) {
         if (selected == null) {
             showing[0] = false
+            slideVelocity[0] = 0f
             return@LaunchedEffect
         }
         // Arriving from no selection there is nothing to slide from.
-        if (!showing[0]) {
+        if (!showing[0] || !animateSelection) {
             showing[0] = true
+            slideVelocity[0] = 0f
             slide.snapTo(selected.toFloat())
         } else {
             // The lens's travel spring, so a tap moves the selection as fast
             // here as it does under Liquid glass; a new tap mid-slide keeps
             // the velocity it has, as the lens does.
-            slide.animateTo(selected.toFloat(), TOOL_HIGHLIGHT_SPRING)
+            slide.animateTo(selected.toFloat(), if (skin == Skin.MATERIAL) MaterialMotion.selection() else TOOL_HIGHLIGHT_SPRING,
+                initialVelocity = slideVelocity[0]) { slideVelocity[0] = velocity }
+            slideVelocity[0] = 0f
         }
     }
     val frame = if (vertical) Modifier.width(barHeight + 16.dp).height(verticalBarLength(tools.size, compact, padding, chromeScale))

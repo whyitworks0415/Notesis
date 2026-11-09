@@ -97,7 +97,7 @@ class LiquidMotionTest {
         val iosOff = ios.copy(ios = ios.ios.copy(motion = ProjectMotion(open = false)))
         assertEquals(PourOpen, popupOpening(Skin.LIQUID_GLASS, iosOff))
         // Material grows from 0.8 and fades in; it never overshoots.
-        assertEquals(0.8f, MaterialOpen.startScale, 0f)
+        assertEquals(MaterialMotion.START_SCALE, MaterialOpen.startScale, 0f)
         assertEquals(0f, MaterialOpen.alpha(0f), 0f)
         assertEquals(1f, MaterialOpen.alpha(0.6f), 0f)
     }

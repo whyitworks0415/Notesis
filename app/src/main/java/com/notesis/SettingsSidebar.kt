@@ -1,9 +1,16 @@
 package com.notesis
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.Crossfade
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -336,11 +343,13 @@ internal fun AnimatedSettingsSidebar(
 ) {
     val animate = rememberLiquidGlassEffectsAllowed() &&
         !LocalSkinSettings.current.highContrast
+    val skin = LocalSkin.current
     // The screen it was on, kept for the slide out; not state, since [nav]
     // itself is what recomposes this.
     val last = remember { arrayOfNulls<SidebarNav>(1) }
     if (nav != null) last[0] = nav
     val progress = remember { Animatable(if (nav != null) 1f else 0f) }
+    val velocity = remember { floatArrayOf(0f) }
     var present by remember { mutableStateOf(nav != null) }
     val open = nav != null
     LaunchedEffect(open, animate) {
@@ -349,17 +358,17 @@ internal fun AnimatedSettingsSidebar(
             // The first frame with the sidebar in it is the slow one; the slide
             // starts after it (see PopupGrowth.open), not on it.
             if (animate && progress.value == 0f) awaitFirstFrames()
-            if (animate) ChromeMotion.during { progress.animateTo(1f, SIDEBAR_OPEN) } else progress.snapTo(1f)
+            if (animate) ChromeMotion.during { progress.animateTo(1f, sidebarOpenFor(skin), initialVelocity = velocity[0]) { velocity[0] = this.velocity }; velocity[0] = 0f } else { velocity[0] = 0f; progress.snapTo(1f) }
         } else {
-            if (animate) ChromeMotion.during { progress.animateTo(0f, SIDEBAR_CLOSE) } else progress.snapTo(0f)
+            if (animate) ChromeMotion.during { progress.animateTo(0f, sidebarCloseFor(skin), initialVelocity = velocity[0]) { velocity[0] = this.velocity }; velocity[0] = 0f } else { velocity[0] = 0f; progress.snapTo(0f) }
             present = false
         }
     }
     // One reader, whichever skin is on, so switching skin with the sidebar
-    // open keeps its screens as they are; Material always reads it as in.
+    // open keeps its screens and their scroll positions intact.
     val moving by rememberUpdatedState(animate)
     val appear = remember { { if (moving) progress.value else 1f } }
-    // Material takes it away the moment it closes; the others once it is out.
+    // Keep the last screen until its closing motion has completed.
     if (!open && !(animate && present)) return
     val shown = nav ?: last[0] ?: return
     // The glass in it looks at the page where it comes to rest, so it is drawn
@@ -375,14 +384,6 @@ private const val SIDEBAR_STRETCH_DP = 120f
 
 /** How much further than the panel its content travels as it comes in. */
 private val SIDEBAR_CONTENT_LEAD = 24.dp
-
-// In on the slow spatial spring, critically damped: a panel against the
-// screen's edge that springs past its place opens a gap along that edge.
-// A spring rather than a curve, so a sidebar sent back while it is still
-// coming turns round at the speed it has.
-private val SIDEBAR_OPEN: AnimationSpec<Float> get() = sidebarOpenSpring()
-// Out a little quicker, still without passing its edge.
-private val SIDEBAR_CLOSE: AnimationSpec<Float> get() = sidebarCloseSpring()
 
 /**
  * The note's settings sidebar. Each screen's content comes from the note,
@@ -416,6 +417,8 @@ internal fun NoteSettingsSidebar(
     closing: Boolean = false,
 ) {
     val latestNav by rememberUpdatedState(nav)
+    val moves = rememberLiquidGlassEffectsAllowed() && !LocalSkinSettings.current.highContrast
+    val material = LocalSkin.current == Skin.MATERIAL
     BackHandler(enabled = !closing) { if (latestNav.canGoBack) onNav(latestNav.back()) else onClose() }
     SettingsSidebarFrame(
         title = nav.current.title,
@@ -427,10 +430,20 @@ internal fun NoteSettingsSidebar(
         modifier = modifier,
         appear = appear,
     ) {
-        // Material and Glassmorphism turn the page at once; their chrome does not move.
-        Crossfade(targetState = nav.current,
-            animationSpec = Ui.Motion.tween(),
-            label = "settings page") { page ->
+        AnimatedContent(targetState = nav, contentKey = { it.current },
+            transitionSpec = {
+                if (!moves) EnterTransition.None togetherWith ExitTransition.None
+                else if (material) {
+                    val direction = materialPageDirection(initialState.stack.size, targetState.stack.size)
+                    (slideInHorizontally(sidebarOpenFor<androidx.compose.ui.unit.IntOffset>(Skin.MATERIAL)) {
+                        (it * 0.06f * direction).toInt()
+                    } + fadeIn(MaterialMotion.effects())) togetherWith
+                        (slideOutHorizontally(sidebarCloseFor<androidx.compose.ui.unit.IntOffset>(Skin.MATERIAL)) {
+                            (-it * 0.04f * direction).toInt()
+                        } + fadeOut(MaterialMotion.effects()))
+                } else fadeIn(Ui.Motion.tween()) togetherWith fadeOut(Ui.Motion.tween())
+            }, label = "settings page") { target ->
+            val page = target.current
             val content: @Composable () -> Unit = {
                 when (page) {
                     SettingsPage.ROOT -> SettingsRoot(quickActions) { onNav(latestNav.open(it)) }
@@ -500,6 +513,7 @@ private fun SettingsPage.icon(): ImageVector = when (this) {
 @Composable
 internal fun SettingsNavRow(page: SettingsPage, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
+    val interaction = remember { MutableInteractionSource() }
     Row(
         Modifier
             .fillMaxWidth()
@@ -507,7 +521,8 @@ internal fun SettingsNavRow(page: SettingsPage, onClick: () -> Unit) {
             .clip(RoundedCornerShape(nestedCorner(Ui.Corner.control)))
             .background(scheme.surfaceContainerHigh)
             .border(0.75.dp, scheme.outlineVariant.copy(alpha = 0.5f), RoundedCornerShape(nestedCorner(Ui.Corner.control)))
-            .clickable(role = Role.Button, onClick = onClick)
+            .clickable(role = Role.Button, interactionSource = interaction, indication = androidx.compose.foundation.LocalIndication.current, onClick = onClick)
+            .materialPressFeedback(interaction)
             .semantics(mergeDescendants = true) {}
             .padding(horizontal = Ui.Space.l, vertical = Ui.Space.m),
         verticalAlignment = Alignment.CenterVertically,

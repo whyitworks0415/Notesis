@@ -13,6 +13,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -21,6 +23,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -72,6 +76,7 @@ fun AlertDialog(
     val growth = rememberPopupGrowth(shown = !moves)
     val pours = moves && growth.profile?.reveal == true
     val opener = remember { LastTouch.recent() }
+    var origin by remember { mutableStateOf(TransformOrigin.Center) }
     LaunchedEffect(Unit) { if (pours) growth.open(true) }
     // Sent away by a tap past it or by Back, it goes back the way it came
     // before it is gone: into the touch under the glass looks, a quick shrink
@@ -86,7 +91,8 @@ fun AlertDialog(
             leaving[0] = true
             scope.launch {
                 if (pours) growth.close(true)
-                else arrival.animateTo(0f, tween(DIALOG_LEAVE_MS, easing = CubicBezierEasing(0.32f, 0f, 0.67f, 0f)))
+                else arrival.animateTo(0f, if (material) MaterialMotion.rawExit<Float>().paced()
+                    else tween(DIALOG_LEAVE_MS, easing = CubicBezierEasing(0.32f, 0f, 0.67f, 0f)))
                 latestDismiss()
             }
         }
@@ -103,7 +109,13 @@ fun AlertDialog(
             .then(if (pours) {
                 Modifier.revealOutOf(growth, Ui.Corner.sheet) { c -> opener?.let { c.screenToLocal(it) } }
             } else {
-                Modifier.graphicsLayer {
+                Modifier.onGloballyPositioned { c ->
+                    if (material && opener != null && c.size.width > 0 && c.size.height > 0) {
+                        val at = c.screenToLocal(opener)
+                        origin = TransformOrigin((at.x / c.size.width).coerceIn(0f, 1f), (at.y / c.size.height).coerceIn(0f, 1f))
+                    }
+                }.graphicsLayer {
+                    transformOrigin = origin
                     val scale = dialogArrivalScale(arrival.value, material)
                     scaleX = scale
                     scaleY = scale
@@ -209,12 +221,12 @@ private const val DIALOG_LEAVE_MS = 160
 
 /** The spring or curve a dialog arrives on; see [AlertDialog]. */
 internal fun dialogArrival(material: Boolean): androidx.compose.animation.core.AnimationSpec<Float> =
-    if (material) spring(dampingRatio = 0.8f, stiffness = 380f)
+    if (material) MaterialMotion.rawContainer()
     else tween(220, easing = CubicBezierEasing(0.33f, 1f, 0.68f, 1f))
 
 /** The scale a dialog is drawn at as it arrives, [progress] 0 to 1 (a spring may run past). */
 internal fun dialogArrivalScale(progress: Float, material: Boolean): Float {
-    val start = if (material) 0.85f else 0.96f
+    val start = if (material) MaterialMotion.START_SCALE else 0.96f
     return start + (1f - start) * progress
 }
 

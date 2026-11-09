@@ -9,8 +9,7 @@ import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.unit.dp
 
 /**
- * The Material look's icons: Material Symbols Rounded at weight 400, unfilled,
- * as Mornye's Material draws them. One for each Reicons name (see [Reicons]).
+ * The default icons in every look: Material Symbols Rounded at weight 400, unfilled. One for each Reicons name (see [Reicons]).
  * The symbols are drawn on a 960 grid whose top is at -960, so each is moved down by it.
  */
 internal object MaterialSymbols {
@@ -508,6 +507,22 @@ internal object MaterialSymbols {
         ImageVector.Builder(name = "Symbols.help", defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 960f, viewportHeight = 960f, autoMirror = false).apply {
             addGroup(translationY = 960f)
             addPath(pathData = PathParser().parsePathString("M511-258.03q11-11.03 11-27T510.97-312q-11.03-11-27-11T457-311.97q-11 11.03-11 27T457.03-258q11.03 11 27 11T511-258.03ZM480.27-80q-82.74 0-155.5-31.5Q252-143 197.5-197.5t-86-127.34Q80-397.68 80-480.5t31.5-155.66Q143-709 197.5-763t127.34-85.5Q397.68-880 480.5-880t155.66 31.5Q709-817 763-763t85.5 127Q880-563 880-480.27q0 82.74-31.5 155.5Q817-252 763-197.68q-54 54.31-127 86Q563-80 480.27-80Zm.23-60Q622-140 721-239.5t99-241Q820-622 721.19-721T480-820q-141 0-240.5 98.81T140-480q0 141 99.5 240.5t241 99.5Zm-.5-340Zm2.77-180Q513-660 536-641.5q23 18.5 23 47.2 0 26.3-15.65 45.73Q527.7-529.14 508-512q-23 19-40 42.38-17 23.39-17 52.62 0 11 8.4 17.5T479-393q12 0 19.88-8 7.87-8 10.12-20 3-21 16-38t30.23-30.78Q580-510 596-537q16-27 16-58.61 0-50.39-37.5-83.89T485.55-713Q450-713 417-698t-54 44q-7 10-6.5 21.5t9.47 18.5q11.41 8 23.65 5 12.23-3 20.38-14 12.75-17.9 31.88-27.45Q461-660 482.77-660Z").toNodes(), fill = SolidColor(Color.Black))
+            clearGroup()
+        }.build()
+    }
+    val Lock: ImageVector by lazy {
+        ImageVector.Builder(name = "Symbols.lock", defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 960f, viewportHeight = 960f).apply {
+            addGroup(translationY = 960f)
+            addPath(pathData = PathParser().parsePathString("M240-80q-33 0-56.5-23.5T160-160v-400q0-33 23.5-56.5T240-640h40v-80q0-83 58.5-141.5T480-920q83 0 141.5 58.5T680-720v80h40q33 0 56.5 23.5T800-560v400q0 33-23.5 56.5T720-80H240Zm0-80h480v-400H240v400Zm240-120q33 0 56.5-23.5T560-360q0-33-23.5-56.5T480-440q-33 0-56.5 23.5T400-360q0 33 23.5 56.5T480-280ZM360-640h240v-80q0-50-35-85t-85-35q-50 0-85 35t-35 85v80ZM240-160v-400 400Z").toNodes(), fill = SolidColor(Color.Black))
+            clearGroup()
+        }.build()
+    }
+    val Bookmark: ImageVector by lazy {
+        ImageVector.Builder(name = "Symbols.bookmark", defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 960f, viewportHeight = 960f).apply {
+            addGroup(translationY = 960f)
+            addPath(pathData = PathParser().parsePathString("m480-240-168 72q-40 17-76-6.5T200-241v-519q0-33 23.5-56.5T280-840h400q33 0 56.5 23.5T760-760v519q0 43-36 66.5t-76 6.5l-168-72Zm0-88 200 86v-518H280v518l200-86Zm0-432H280h400-200Z").toNodes(), fill = SolidColor(Color.Black))
             clearGroup()
         }.build()
     }

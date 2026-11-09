@@ -8,7 +8,7 @@ package com.notesis
  * is the material. Material is solid, Glassmorphism is frosted glass, and
  * Liquid glass is a refractive lens, drawn by one of its recipes - its own,
  * iOS's or Mornye's (see [LiquidStyle]). Every one of them moves: popups grow
- * out of their button, buttons answer a press, icons play.
+ * out of their button, buttons answer a press, and selection follows the hand.
  *
  * Saved by [name], so a constant is never renamed: Liquid glass is still
  * LIQUID_GLASS on disk, from when it was called the glass bar.

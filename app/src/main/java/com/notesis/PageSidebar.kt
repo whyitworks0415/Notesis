@@ -93,16 +93,12 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.runtime.produceState
 import androidx.compose.material3.Checkbox
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.material3.SuggestionChip
-import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LocalContentColor
@@ -1238,7 +1234,7 @@ private fun PageCard(
                     Modifier.border(if (selected) 2.dp else 0.dp, if (selected) scheme.primary else Color.Transparent, Ui.Shape.preview),
                 )
                 if (page.bookmarked) Icon(
-                    Icons.Filled.Bookmark, contentDescription = "Bookmarked", tint = scheme.primary,
+                    Reicons.Bookmark, contentDescription = "Bookmarked", tint = scheme.primary,
                     modifier = Modifier.align(Alignment.TopEnd).padding(2.dp).size(16.dp),
                 )
                 if (choosing) Checkbox(checked = chosen, onCheckedChange = null, modifier = Modifier.align(Alignment.TopStart))

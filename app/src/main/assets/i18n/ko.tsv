@@ -971,9 +971,6 @@ Battery saver changes nothing here: the glass, its motion and reading ahead stay
 Preview on	미리보기 배경
 Change photo	사진 바꾸기
 Icon set	아이콘 세트
-Icon animation	아이콘 애니메이션
-Icons move once when tapped or chosen. Off keeps them still.	아이콘을 누르거나 고르면 한 번 움직입니다. 끄면 움직이지 않습니다.
-Only the AnimateIcons set moves	AnimateIcons 세트만 움직입니다
 Panels, menus and the toolbar	패널, 메뉴, 툴바
 {0} sets its corner, blur, surface, rim and motion in Glass, with the numbers its project uses.	{0}은(는) 모서리, 블러, 표면, 가장자리, 움직임을 유리 탭에서 그 프로젝트의 값으로 정합니다.
 Corner radius	모서리 둥글기
@@ -1566,8 +1563,6 @@ High contrast uses the accent	고대비에서는 강조색을 씁니다
 AMOLED black	AMOLED 검정
 In dark mode, a black page with near-black panels.	다크 모드에서 바탕은 검정, 패널은 거의 검정으로 그립니다.
 Used in dark mode	다크 모드에서 쓰입니다
-Material draws Material Symbols Rounded, as Android does; the set below is for the other looks.	Material은 Android처럼 Material Symbols Rounded 아이콘을 씁니다. 아래 아이콘 세트는 다른 룩에 적용됩니다.
-Material Symbols stay still	Material Symbols 아이콘은 움직이지 않습니다
 Smooth corners	부드러운 모서리
 Mornye's squircle: the corner eases out of the straight edge instead of turning on a circle.	Mornye의 스쿼클: 모서리가 원을 따라 꺾이지 않고 직선에서 부드럽게 이어집니다.
 Speed	속도
@@ -1585,3 +1580,5 @@ A trace of blur along a popup's fastest moment, so it reads as motion rather tha
 iOS's glass as liquid_glass_widgets measured it, with Mornye's colours, continuous corners and pouring menus.	liquid_glass_widgets가 측정한 iOS 유리에, Mornye의 색과 부드러운 모서리, 쏟아지듯 열리는 메뉴를 더했습니다.
 iOS together with Mornye: iOS's glass, with Mornye's colours, its continuous corners and its menus that pour out of their button.	iOS와 Mornye를 합쳤습니다: iOS의 유리에 Mornye의 색, 부드러운 모서리, 버튼에서 쏟아지듯 열리는 메뉴를 씁니다.
 Layered tonal surfaces, crisp typography and responsive Material controls.	층위가 있는 표면, 또렷한 글자와 반응하는 Material 컨트롤.
+Material Symbols	Material Symbols
+Static icons in every look. Motion belongs to controls and panels.	모든 룩에서 정적 아이콘을 사용합니다. 움직임은 컨트롤과 패널에 적용됩니다.

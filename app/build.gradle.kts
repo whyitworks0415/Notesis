@@ -14,8 +14,8 @@ android {
         // dependable from Q onward, even though ink itself declares minSdk 23.
         minSdk = 29
         targetSdk = 36
-        versionCode = 209
-        versionName = "0.90.18"
+        versionCode = 210
+        versionName = "0.90.19"
         testInstrumentationRunner = "com.notesis.CustomizationInstrumentation"
         // Ship arm64 for the tablet; opt into x86_64 for emulator GPU checks.
         ndk { abiFilters += providers.gradleProperty("notesis.testAbi").getOrElse("arm64-v8a") }
@@ -81,7 +81,6 @@ dependencies {
     implementation("androidx.work:work-runtime:2.10.0")
     implementation(platform("androidx.compose:compose-bom:2026.06.01"))
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.ui:ui-tooling-preview")
     // Backdrop 2.x supplies the API 33+ AGSL refraction path used by the
     // reusable Liquid Glass controls. Older Android releases use our opaque

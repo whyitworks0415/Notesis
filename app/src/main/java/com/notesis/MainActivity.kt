@@ -93,16 +93,12 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.runtime.produceState
 import androidx.compose.material3.Checkbox
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.material3.SuggestionChip
-import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LocalContentColor
@@ -291,10 +287,8 @@ class MainActivity : ComponentActivity() {
             // Hoisted to the top so a change repaints every bar at once rather
             // than whichever screen happened to be looking.
             var skin by remember {
-                // Set before anything draws an icon, so Material's first frame has its symbols.
-                mutableStateOf(prefs.skin).also { AppIconStyle.materialSymbols = it.value == Skin.MATERIAL }
+                mutableStateOf(prefs.skin)
             }
-            SideEffect { AppIconStyle.materialSymbols = skin == Skin.MATERIAL }
             var look by remember { mutableStateOf(lookStore.load()) }
             var settingsOpen by remember { mutableStateOf(false) }
             // The fastest refresh rate the panel has, unless turned off or saving power.
@@ -1608,21 +1602,21 @@ private fun HomeScreen(
                 Box(Modifier.coachTarget(coachTargets, CoachTarget.NEW_NOTE)) {
                 NewNoteDial(
                     listOf(
-                        DialOption("New note from web page", AppIconStyle.pick(Lucide.Globe, Reicons.Language)) { askingUrl = true },
-                        DialOption("New note from images", AppIconStyle.pick(Lucide.Image, Reicons.AddPhotoAlternate)) {
+                        DialOption("New note from web page", Reicons.Language) { askingUrl = true },
+                        DialOption("New note from images", Reicons.AddPhotoAlternate) {
                             pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                         },
-                        DialOption("Import Markdown", AppIconStyle.pick(Lucide.FileText, Reicons.Description)) {
+                        DialOption("Import Markdown", Reicons.Description) {
                             importMarkdown.launch(arrayOf("text/markdown", "text/plain", "application/octet-stream"))
                         },
-                        DialOption("Open document · Drive · OneDrive", AppIconStyle.pick(Lucide.FolderOpen, Reicons.FolderOpen)) {
+                        DialOption("Open document · Drive · OneDrive", Reicons.FolderOpen) {
                             openDocument.launch(SUPPORTED_DOCUMENT_MIME_TYPES)
                         },
-                        DialOption("Import PDF", AppIconStyle.pick(Lucide.File, Reicons.PictureAsPdf)) {
+                        DialOption("Import PDF", Reicons.PictureAsPdf) {
                             pickPdf.launch(arrayOf("application/pdf"))
                         },
-                        DialOption("Markdown folder (vault)", AppIconStyle.pick(Lucide.FolderOpen, Reicons.FolderOpen)) { onOpenVault() },
-                        DialOption("New note", AppIconStyle.pick(Lucide.NotebookPen, Reicons.Edit)) { naming = true },
+                        DialOption("Markdown folder (vault)", Reicons.FolderOpen) { onOpenVault() },
+                        DialOption("New note", Reicons.Edit) { naming = true },
                     ),
                 )
                 }
@@ -3010,7 +3004,7 @@ private fun NoteCard(
                     modifier = Modifier.align(Alignment.TopStart).padding(10.dp),
                 )
                 if (note.locked) Icon(
-                    Icons.Filled.Lock,
+                    Reicons.Lock,
                     contentDescription = "Locked note",
                     tint = MaterialTheme.colorScheme.outline,
                     modifier = Modifier.size(36.dp),
@@ -3119,7 +3113,7 @@ private fun NoteCard(
                         )
                         GlassMenuItem(
                             text = { Text(if (note.locked) "Unlock" else "Lock with password") },
-                            leadingIcon = { Icon(Icons.Filled.Lock, contentDescription = null) },
+                            leadingIcon = { Icon(Reicons.Lock, contentDescription = null) },
                             onClick = { menuOpen = false; onLock() },
                         )
                         GlassMenuItem(
@@ -3292,11 +3286,11 @@ private fun GlassFab(
     if (LocalSkin.current == Skin.MATERIAL) {
         if (small) {
             SmallFloatingActionButton(onClick = onClick, modifier = modifier) {
-                AppIcon(icon, contentDescription = contentDescription, modifier = iconModifier, play = iconRotation > 0f)
+                AppIcon(icon, contentDescription = contentDescription, modifier = iconModifier)
             }
         } else {
             FloatingActionButton(onClick = onClick, modifier = modifier) {
-                AppIcon(icon, contentDescription = contentDescription, modifier = iconModifier, play = iconRotation > 0f)
+                AppIcon(icon, contentDescription = contentDescription, modifier = iconModifier)
             }
         }
         return
@@ -3311,7 +3305,7 @@ private fun GlassFab(
             drawBorder = false,
             glassShadowElevation = 3.dp,
         ) {
-            AppIcon(icon, contentDescription = contentDescription, modifier = iconModifier, play = iconRotation > 0f)
+            AppIcon(icon, contentDescription = contentDescription, modifier = iconModifier)
         }
     } else {
         // The theme's FAB corners: card for the big one, control for the
@@ -3322,7 +3316,7 @@ private fun GlassFab(
                 Modifier.fillMaxSize().clickable(onClick = onClick),
                 contentAlignment = Alignment.Center,
             ) {
-                AppIcon(icon, contentDescription = contentDescription, modifier = iconModifier, play = iconRotation > 0f)
+                AppIcon(icon, contentDescription = contentDescription, modifier = iconModifier)
             }
         }
     }
@@ -3367,7 +3361,7 @@ private fun NewNoteDial(options: List<DialOption>) {
         }
         GlassFab(
             onClick = { open = !open },
-            icon = AppIconStyle.pick(Lucide.Plus, Reicons.Add),
+            icon = Reicons.Add,
             contentDescription = if (open) "Close" else "New note · Import",
             iconRotation = turn,
         )
@@ -9282,9 +9276,8 @@ private fun Toolbar(
                         }
                         PenRowItem.QUICK_COLORS -> if (mode.tints) QuickColors(pen.colorArgb, onQuickColor, onEditPen)
                         PenRowItem.PALETTE -> if (mode.tints) {
-                            var paletteTaps by remember { mutableIntStateOf(0) }
-                            IconButton(onClick = { paletteTaps++; onPalette() }, modifier = Modifier.size(32.dp)) {
-                                AppIcon(AppIcons.palette, "Color templates", Modifier.size(20.dp), play = paletteTaps)
+                            IconButton(onClick = onPalette, modifier = Modifier.size(32.dp)) {
+                                AppIcon(AppIcons.palette, "Color templates", Modifier.size(20.dp))
                             }
                         }
                         PenRowItem.STRAIGHT_LINE -> if (mode in STRAIGHT_LINE_MODES) {
