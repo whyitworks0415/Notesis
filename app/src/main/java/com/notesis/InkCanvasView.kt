@@ -4,6 +4,7 @@ package com.notesis
 
 import android.os.Build
 import android.os.Debug
+import android.os.Process
 import android.os.Trace
 import android.os.SystemClock
 import android.content.Context
@@ -1670,7 +1671,7 @@ class InkCanvasView @JvmOverloads constructor(
         get() = when {
             viewRotation != 0f && compatWetInk -> "rotation fallback (compat ink in window)"
             viewRotation != 0f -> "rotation fallback (front buffer, turned)"
-            compatWetInk && compatWet.surfaceAllowed -> "front buffer + compat surface"
+            compatWetInk && compatWet.surfaceAllowed -> "front buffer + compat surface" + compatWet.presentLabel
             compatWetInk -> "front buffer + compat in window"
             else -> "front buffer"
         }
@@ -2780,11 +2781,41 @@ class InkCanvasView @JvmOverloads constructor(
         InteractionGovernor.noteRefreshRate(hz)
     }
 
+    private val boost = WritingBoost()
+    private val boostIdle = Runnable { boost.end() }
+
+    /** What the diagnostics say about showing wet ink through buffers of our own. */
+    internal val nativePresentStatus: String get() = compatWet.ownBufferStatus
+
+    /** What the diagnostics say about the performance hint for the pen's threads. */
+    internal val writingBoostStatus: String get() = boost.status
+
+    /**
+     * The pen is here - hovering over the page or down on it: the system is
+     * told which threads work for it. Opened at the hover, not at the touch,
+     * since opening a session is a call to another process and the first ink
+     * should not wait for it.
+     */
+    private fun boostPen() {
+        removeCallbacks(boostIdle)
+        if (boost.active) return
+        val presenter = compatWet.presenterThreadId()
+        val threads = if (presenter > 0) intArrayOf(Process.myTid(), presenter) else intArrayOf(Process.myTid())
+        boost.begin(context, threads, hintTargetNanos(displayHz))
+    }
+
+    /** Let go a little after the pen leaves, so a pause between words does not close and reopen it. */
+    private fun boostPenIdleSoon() {
+        removeCallbacks(boostIdle)
+        postDelayed(boostIdle, BOOST_IDLE_MS)
+    }
+
     /**
      * The pen is down (or has just lifted). Work the pen does not need gives
      * way while it writes: PDF prefetch is put aside, page loads use fewer cores.
      */
     private fun penWorking(active: Boolean) {
+        if (active) boostPen() else boostPenIdleSoon()
         pdf?.penActive = active
         // Counted per canvas: the reference panel lifting its pen, or being
         // closed, no longer ends the note's own stroke for the background work.
@@ -2806,6 +2837,8 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     override fun onDetachedFromWindow() {
+        removeCallbacks(boostIdle)
+        boost.end()
         if (erasing) finishEraseGesture()
         cancelEraseFrame()
         super.onDetachedFromWindow()
@@ -4195,7 +4228,13 @@ class InkCanvasView @JvmOverloads constructor(
         if (fingerDrawing && (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL)) {
             fingerDrawing = false
         }
-        if (!latencyMonitoringEnabled) return onStylus(event)
+        // The pen's frame for the system's performance hint: one move's handling.
+        val timed = boost.active && event.actionMasked == MotionEvent.ACTION_MOVE
+        val startedNanos = if (timed) System.nanoTime() else 0L
+        if (!latencyMonitoringEnabled) {
+            if (!timed) return onStylus(event)
+            return try { onStylus(event) } finally { boost.report(System.nanoTime() - startedNanos) }
+        }
         Trace.beginSection(when (event.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> TRACE_STYLUS_DOWN
             MotionEvent.ACTION_MOVE -> TRACE_STYLUS_MOVE
@@ -4204,6 +4243,7 @@ class InkCanvasView @JvmOverloads constructor(
         })
         return try { onStylus(event) } finally {
             Trace.endSection()
+            if (timed) boost.report(System.nanoTime() - startedNanos)
             // Every pen move - ink, eraser, lasso - from its newest sample's
             // timestamp, so a queue backing up behind a long frame shows too.
             if (event.actionMasked == MotionEvent.ACTION_MOVE) {
@@ -4219,6 +4259,10 @@ class InkCanvasView @JvmOverloads constructor(
         if (!stylus) return super.onHoverEvent(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE -> {
+                if (event.actionMasked == MotionEvent.ACTION_HOVER_ENTER) {
+                    boostPen()
+                    boostPenIdleSoon()
+                }
                 // The pen hovers before it lands: the brush its first point needs
                 // - new after a zoom or a tool's first use - is made now, not then.
                 if (event.actionMasked == MotionEvent.ACTION_HOVER_ENTER && !readMode &&
@@ -4268,7 +4312,11 @@ class InkCanvasView @JvmOverloads constructor(
         // stabilizer, the predictor and the saved stroke all see one pressure.
         // Input without real pressure gets one steady value the same way, so
         // a pressure brush under a finger or a mouse does not throb.
+        // Timed while the diagnostics are on: a pen with its pressure switched
+        // off copies every sample here, and the Lab wants to know what that costs.
+        val copyStarted = if (latency.enabled) System.nanoTime() else 0L
         val curved = withPressureCurve(event, flat)
+        if (copyStarted != 0L) latency.record(PerformanceMetric.PRESSURE_CURVE, System.nanoTime() - copyStarted)
         return try { onStylusEvent(curved) } finally { curved.recycle() }
     }
 
@@ -10788,6 +10836,8 @@ class InkCanvasView @JvmOverloads constructor(
         const val LASSO_SAMPLE_DISTANCE_PX = 2f
         /** How long the pen rests at the end of a loop before it becomes a lasso. */
         const val CIRCLE_HOLD_MS = 500L
+        /** How long the pen's performance hint outlasts the pen. */
+        const val BOOST_IDLE_MS = 2500L
         /** Room for a held stroke's samples before the buffer doubles: a few seconds of 240 Hz. */
         const val HOLD_POINTS_INITIAL = 1024
         /** Of touch slop: a resting pen still shakes this much. */

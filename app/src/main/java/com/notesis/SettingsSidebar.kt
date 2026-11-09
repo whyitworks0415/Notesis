@@ -503,7 +503,7 @@ internal fun NoteSettingsSidebar(
 @Composable
 private fun SettingsRoot(quickActions: List<GlassToolbarAction>, onOpen: (SettingsPage) -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val beta = remember { AppUpdate.isBeta(context) }
+    val beta = remember { AppUpdate.isBeta(context) || isLabInstall(context) }
     if (quickActions.isNotEmpty()) {
         SettingsSectionHeader("Quick actions")
         QuickActionGrid(quickActions)

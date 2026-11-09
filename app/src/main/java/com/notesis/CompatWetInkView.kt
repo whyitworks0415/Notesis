@@ -198,6 +198,28 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
     @Volatile private var presentHolder: SurfaceHolder? = null
     // Started and stopped on the UI thread; the presenter only posts to it.
     private var presenterThread: HandlerThread? = null
+
+    /** The presenter thread's id, for the system's performance hint; 0 before it has started. */
+    fun presenterThreadId(): Int = presenterThread?.threadId ?: 0
+
+    // The Lab's experiment: frames written into buffers of our own (see PresentNative).
+    // Chosen when the surface is created; touched only under [presentLock].
+    @Volatile private var wantOwnBuffers = false
+    private var ownHandle = 0L
+    private var ownWidth = 0
+    private var ownHeight = 0
+    @Volatile private var ownState = OwnBufferState.OFF
+
+    /** What the diagnostics say about it. */
+    val ownBufferStatus: String get() = ownState.label
+
+    /** Added to the diagnostics' ink path: how the surface is being presented. */
+    val presentLabel: String
+        get() = when (ownState) {
+            OwnBufferState.ACTIVE -> " (own buffers)"
+            OwnBufferState.FELL_BACK -> " (own buffers failed)"
+            else -> ""
+        }
     @Volatile private var presenter: Handler? = null
     private val presentScheduled = AtomicBoolean(false)
     private val presentRunnable = Runnable { present() }
@@ -355,7 +377,9 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
         // the wait is bounded; the presenter checks the holder again anyway.
         val locked = runCatching { presentLock.tryLock(SURFACE_RELEASE_WAIT_MS, TimeUnit.MILLISECONDS) }
             .getOrDefault(false)
-        if (locked) presentLock.unlock()
+        if (locked) {
+            try { destroyOwnBuffers() } finally { presentLock.unlock() }
+        }
     }
 
     /** Sizes [picture] to the surface; a new one starts clear and is copied across whole. */
@@ -411,6 +435,10 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
                 rect.inset(-LATE_MARGIN_PX, -LATE_MARGIN_PX)
                 if (!rect.intersect(0, 0, bitmap.width, bitmap.height)) return
             }
+            if (wantOwnBuffers) {
+                // It reschedules itself where a frame is left over or not yet taken.
+                if (presentOwnBuffers(holder, rect) != OwnFrame.FAILED) return
+            }
             val lockStarted = System.nanoTime()
             // The rectangle may grow, to the whole surface for one; all of
             // what comes back is copied.
@@ -462,9 +490,119 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
         }
     }
 
+    private enum class OwnFrame { POSTED, RETRY, FAILED }
+
+    /** Decided once per surface: the switch is on, the library loads and the display has surface transactions. */
+    private fun chooseOwnBuffers() {
+        wantOwnBuffers = LabPerformance.nativePresent && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q
+        ownState = when {
+            !LabPerformance.nativePresent -> OwnBufferState.OFF
+            !wantOwnBuffers || !PresentNative.available() -> OwnBufferState.UNAVAILABLE
+            else -> OwnBufferState.ACTIVE
+        }
+        if (ownState == OwnBufferState.UNAVAILABLE) wantOwnBuffers = false
+    }
+
+    /** Under [presentLock]. */
+    private fun destroyOwnBuffers() {
+        if (ownHandle != 0L) runCatching { PresentNative.destroy(ownHandle) }
+        ownHandle = 0L
+        ownWidth = 0
+        ownHeight = 0
+    }
+
+    /** Gives the own-buffer path up for good on this surface and has the whole picture drawn the old way. */
+    private fun ownBuffersFailed() {
+        destroyOwnBuffers()
+        wantOwnBuffers = false
+        ownState = OwnBufferState.FELL_BACK
+        synchronized(bitmapLock) { picture?.let { unposted.set(0, 0, it.width, it.height) } }
+    }
+
+    private fun scheduleAgain() {
+        if (presentScheduled.compareAndSet(false, true) && presenter?.post(presentRunnable) != true) {
+            presentScheduled.set(false)
+        }
+    }
+
+    /**
+     * On the presenter thread, under [presentLock]: writes the changed part of
+     * [picture] into a buffer of our own and hands it to the screen, without
+     * waiting for a surface's canvas. [OwnFrame.FAILED] says nothing was done
+     * and the surface's canvas has to draw this frame.
+     */
+    private fun presentOwnBuffers(holder: SurfaceHolder, rect: Rect): OwnFrame {
+        val size = synchronized(bitmapLock) { picture?.let { it.width to it.height } } ?: return OwnFrame.FAILED
+        if (ownHandle == 0L || ownWidth != size.first || ownHeight != size.second) {
+            destroyOwnBuffers()
+            ownHandle = runCatching { PresentNative.create(holder.surface, size.first, size.second) }.getOrDefault(0L)
+            if (ownHandle == 0L) {
+                ownBuffersFailed()
+                return OwnFrame.FAILED
+            }
+            ownWidth = size.first
+            ownHeight = size.second
+        }
+        val waitStarted = System.nanoTime()
+        val index = runCatching { PresentNative.acquire(ownHandle) }.getOrDefault(-2)
+        if (index == -1) {
+            // The display has not let a buffer go yet: the same frame, a moment later.
+            scheduleAgain()
+            return OwnFrame.RETRY
+        }
+        if (index < 0) {
+            ownBuffersFailed()
+            return OwnFrame.FAILED
+        }
+        val copyStarted = System.nanoTime()
+        var newest = Long.MIN_VALUE
+        var geometry = 0L
+        var drawing = 0L
+        var firstShown = 0
+        var area = 0L
+        var more = false
+        var failed = false
+        synchronized(bitmapLock) {
+            val bitmap = picture
+            val result = if (bitmap == null) -2 else runCatching {
+                PresentNative.post(ownHandle, index, bitmap, rect.left, rect.top, rect.right, rect.bottom)
+            }.getOrDefault(-2)
+            if (result != 0) {
+                failed = true
+            } else {
+                area = rect.width().toLong() * rect.height().toLong()
+                if (rect.contains(unposted)) {
+                    unposted.setEmpty()
+                    newest = unpostedNewestEventMillis
+                    unpostedNewestEventMillis = Long.MIN_VALUE
+                    firstShown = unpostedFirstShownCount
+                    unpostedFirstShown.copyInto(presentFirstShown, 0, 0, firstShown)
+                    unpostedFirstShownCount = 0
+                } else {
+                    more = true
+                }
+                geometry = unpostedGeometryNanos
+                drawing = unpostedDrawNanos
+                unpostedGeometryNanos = 0L
+                unpostedDrawNanos = 0L
+            }
+        }
+        if (failed) {
+            ownBuffersFailed()
+            return OwnFrame.FAILED
+        }
+        val posted = System.nanoTime()
+        stageListener?.onStages(geometry, copyStarted - waitStarted, drawing + (posted - copyStarted), area)
+        if (newest != Long.MIN_VALUE) onFramePosted?.invoke(posted - newest * 1_000_000L)
+        for (i in 0 until firstShown) onFirstShown?.invoke(presentFirstShown[i])
+        if (more) scheduleAgain()
+        return OwnFrame.POSTED
+    }
+
     override fun surfaceCreated(holder: SurfaceHolder) {
         val frame = holder.surfaceFrame
         preparePicture(frame.width(), frame.height())
+        chooseOwnBuffers()
         presentHolder = holder
         everDrawn.setEmpty()
         surfaceReady = true

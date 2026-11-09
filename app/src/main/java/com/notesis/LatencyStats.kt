@@ -32,6 +32,8 @@ internal enum class PerformanceMetric {
     WET_SURFACE_LOCK,
     /** Compatible wet ink: clearing, drawing and posting the changed area. */
     WET_SURFACE_DRAW,
+    /** A pen event copied with its pressure rewritten (curve, or off); once per such event. */
+    PRESSURE_CURVE,
 }
 
 internal data class Percentiles(
@@ -260,6 +262,7 @@ class LatencyStats(private val capacity: Int = 512) {
             metricLine("pen start handled", PerformanceMetric.PEN_START_HANDLED),
             metricLine("first ink (render/post)", PerformanceMetric.FIRST_INK),
             metricLine("input handled", PerformanceMetric.INPUT_HANDLED),
+            metricLine("pressure rewrite (per event)", PerformanceMetric.PRESSURE_CURVE),
             metricLine("wet ink (render/post)", PerformanceMetric.WET_INK),
             metricLine("compat geometry", PerformanceMetric.WET_GEOMETRY),
             metricLine("compat surface lock", PerformanceMetric.WET_SURFACE_LOCK),

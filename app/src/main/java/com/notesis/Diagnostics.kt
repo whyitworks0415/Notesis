@@ -240,6 +240,7 @@ private val METRIC_LABELS = listOf(
     PerformanceMetric.PEN_COMMIT_WORK to "Pen-up commit work (per batch)",
     PerformanceMetric.FIRST_INK to "First ink (render complete / surface posted)",
     PerformanceMetric.INPUT_HANDLED to "Input handled (event to end of handling)",
+    PerformanceMetric.PRESSURE_CURVE to "Pressure rewrite (per pen event)",
     PerformanceMetric.WET_INK to "Wet ink (render complete / surface posted)",
     PerformanceMetric.WET_GEOMETRY to "Compatible ink: geometry update",
     PerformanceMetric.WET_SURFACE_LOCK to "Compatible ink: waiting for the surface",
@@ -360,6 +361,25 @@ internal fun DiagnosticsSettings(
             hint = "Shows live timings over the page and collects the numbers below. " +
                 "Measuring costs a little work, so leave it off when you are not looking.",
         )
+    }
+    SettingsCard {
+        SettingsSectionHeader("Write path (Lab)")
+        SettingsNote("Switches to compare with the timings below. Turn one at a time, write the same lines, " +
+            "and read the ink timings again. Nothing here changes what is drawn.")
+        SettingsToggle(
+            "Performance hint while writing", LabPerformance.writingBoost,
+            { LabPerformance.setWritingBoost(context, it) },
+            hint = "Tells the system which threads work for the pen, so it can raise the CPU's speed ahead of the work.",
+        )
+        DiagnosticRow("Performance hint status", view?.writingBoostStatus ?: "No note open")
+        SettingsToggle(
+            "Show wet ink through buffers of our own", LabPerformance.nativePresent,
+            { LabPerformance.setNativePresent(context, it) },
+            hint = "Experimental. Draws the stroke into buffers the app owns and hands them to the screen directly, " +
+                "instead of waiting for the surface's canvas. If anything fails it goes back by itself. " +
+                "Takes effect for the next note you open.",
+        )
+        DiagnosticRow("Own buffers status", view?.nativePresentStatus ?: "No note open")
     }
     SettingsCard {
         SettingsSectionHeader("Ink timings")

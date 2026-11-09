@@ -1604,3 +1604,12 @@ First ink (render complete / surface posted)	첫 잉크(렌더 완료/표면 제
 Wet ink (render complete / surface posted)	실시간 잉크(렌더 완료/표면 제출)
 Partial erase work (frame)	부분 지우개 작업(프레임당)
 Partial erase applied (not pixels)	부분 지우개 반영(화면 표시 전)
+Write path (Lab)	쓰기 경로 (Lab)
+Switches to compare with the timings below. Turn one at a time, write the same lines, and read the ink timings again. Nothing here changes what is drawn.	아래 시간과 비교하기 위한 스위치입니다. 하나씩 바꾸고 같은 글씨를 쓴 뒤 잉크 시간을 다시 읽어 주세요. 여기 있는 것은 화면에 그려지는 모양을 바꾸지 않습니다.
+Performance hint while writing	쓰는 동안 성능 힌트
+Tells the system which threads work for the pen, so it can raise the CPU's speed ahead of the work.	펜을 위해 일하는 스레드를 시스템에 알려, 일이 시작되기 전에 CPU 속도를 올릴 수 있게 합니다.
+Performance hint status	성능 힌트 상태
+Show wet ink through buffers of our own	쓰는 중인 잉크를 앱이 가진 버퍼로 표시
+Experimental. Draws the stroke into buffers the app owns and hands them to the screen directly, instead of waiting for the surface's canvas. If anything fails it goes back by itself. Takes effect for the next note you open.	실험 기능입니다. 서피스의 캔버스를 기다리지 않고, 앱이 가진 버퍼에 획을 그려 화면에 바로 넘깁니다. 하나라도 실패하면 스스로 원래 방식으로 돌아갑니다. 다음에 여는 노트부터 적용됩니다.
+Own buffers status	자체 버퍼 상태
+Pressure rewrite (per pen event)	필압 다시 쓰기 (펜 이벤트당)
