@@ -723,6 +723,33 @@ class NoteStore(context: Context) {
      * still needs to outlive that composable's cancelled coroutine scope.
      */
     private val saveWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
+    // Pictures of pages for the next opening (see PagePictures.kt): drawn on a
+    // thread of their own, at the lowest priority, so a save never waits on one.
+    private val pictureWorker = java.util.concurrent.Executors.newSingleThreadExecutor { task ->
+        Thread({ android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND); task.run() },
+            "notesis-page-pictures").apply { isDaemon = true }
+    }
+    private val pagePictures = PagePictureStore(appContext.cacheDir,
+        pageFile = { noteId, pageId -> File(root, "$noteId/pages/$pageId.bin") },
+        maskFile = { noteId, pageId -> File(root, "$noteId/pages/$pageId.mask") })
+
+    /** The kept picture of a page's ink, if it still shows the page as saved; called off the UI thread. */
+    internal fun pagePicture(id: String, pageId: String): Bitmap? = pagePictures.read(id, pageId)
+
+    /**
+     * Keeps pictures of [requests] for the next time note [id] is opened. They
+     * are drawn after every save already queued has been written, so each is
+     * checked against the page's file as it then is.
+     */
+    internal fun keepPagePictures(id: String, requests: List<PagePictureRequest>) {
+        if (requests.isEmpty()) return
+        runCatching {
+            saveWorker.execute {
+                val stamps = pagePictures.stamps(id, requests.map { it.pageId })
+                runCatching { pictureWorker.execute { pagePictures.keep(id, requests, stamps) } }
+            }
+        }
+    }
     private val saveQueueLock = Any()
     private val pendingInkSaves = mutableMapOf<String, PendingSave>()
     private val drainingInkSaves = mutableSetOf<String>()
@@ -1668,6 +1695,8 @@ class NoteStore(context: Context) {
             // The vanishing pen's strokes live only in memory: leave the note and they are gone.
             val kept = page.allStrokes.filterNot { Tool.isVanishing(it.brush.family) }
             appendOrWriteStrokes(File(dir, "${page.id}.bin"), kept, page.savedOnDisk)
+            // The page has changed: its kept picture no longer shows it.
+            pagePictures.drop(id, page.id)
             page.savedOnDisk = kept.size
             // A page is dirty for any ink edit, but its tape rarely changes with
             // it. The canvas edits page.masks in too many places to flag them,

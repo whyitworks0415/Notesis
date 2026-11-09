@@ -207,6 +207,7 @@ internal object Measurements {
                 appendLine(view.latency.render(view.strokeCount()))
             }
             appendLine(WorkStats.render())
+            appendLine(NoteOpenClock.render())
             appendLine(MemoryTrim.report())
             appendLine("Light mode: ${if (InteractionGovernor.lightMode) "on" else "off"} · slower device: ${if (InteractionGovernor.slowDevice) "yes" else "no"}")
             appendLine("memory ${(runtime.totalMemory() - runtime.freeMemory()) / mib} of ${runtime.maxMemory() / mib} MB" +
@@ -336,6 +337,9 @@ internal fun DiagnosticsSettings(
     overlay: Boolean,
     onOverlay: (Boolean) -> Unit,
     zoomPercent: Int,
+    /** The Lab's benchmark is running; and how to start it, or null where there is none to run. */
+    benchmarkRunning: Boolean = false,
+    onBenchmark: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -380,6 +384,43 @@ internal fun DiagnosticsSettings(
                 "Takes effect for the next note you open.",
         )
         DiagnosticRow("Own buffers status", view?.nativePresentStatus ?: "No note open")
+    }
+    SettingsCard {
+        SettingsSectionHeader("Benchmark (Lab)")
+        SettingsNote("Writes 30 lines of loops on the page in view with a scripted pen and takes them back, " +
+            "then lets the page glide down and up, and reports the timings. Use a note you do not mind it " +
+            "writing on: if it is interrupted, Undo removes what is left. Run it the same way on each build " +
+            "or switch you want to compare.")
+        TextButton(
+            onClick = { onBenchmark?.invoke() },
+            enabled = onBenchmark != null && view != null && !benchmarkRunning,
+            modifier = Modifier.heightIn(min = Ui.Size.touchCompact),
+        ) { Text(if (benchmarkRunning) "Running…" else "Run benchmark") }
+        SettingsSectionHeader("Notes opened")
+        SettingsNote("From the tap on a note to its first frame, to ink on the page (a picture kept from last " +
+            "time, or the real ink), and to the real ink being built. To the draw call, not to light.")
+        val openings = remember(tick) { NoteOpenClock.recent() }
+        if (openings.isEmpty()) DiagnosticRow("Since the app started", "None yet")
+        else DiagnosticRow("", "first frame · ink shown · ink built", header = true)
+        openings.takeLast(5).forEach { opening ->
+            DiagnosticRow(
+                if (opening.pictureUsed) "Opened with a kept picture" else "Opened",
+                "${opening.firstFrameMs} · ${opening.inkShownMs} · ${opening.geometryMs} ms  (${opening.strokes})",
+            )
+        }
+    }
+    SettingsCard {
+        SettingsSectionHeader("Native code (Lab)")
+        if (LabGuard.nativeOff) {
+            SettingsNote("Left out for this run: the app did not close cleanly several times in a row. " +
+                "The Kotlin paths are doing the work. Switch it back on to load it at the next start.")
+            DiagnosticRow("Runs that did not close cleanly", LabGuard.uncleanRuns.toString())
+            TextButton(onClick = { LabGuard.reset(context); tick++ },
+                modifier = Modifier.heightIn(min = Ui.Size.touchCompact)) { Text("Use native code again") }
+        } else {
+            DiagnosticRow("Search tree and erase geometry", if (SpatialNative.ready) "Loaded" else "Not loaded")
+            DiagnosticRow("Runs that did not close cleanly", LabGuard.uncleanRuns.toString())
+        }
     }
     SettingsCard {
         SettingsSectionHeader("Ink timings")

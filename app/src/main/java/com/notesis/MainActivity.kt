@@ -256,7 +256,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         recordCrashes()
-        SpatialNative.prepare()
+        // Before any native library: after runs that did not end cleanly it is left out (see LabGuard).
+        LabGuard.load(this)
+        if (!LabGuard.nativeOff) SpatialNative.prepare()
         LabPerformance.load(this)
         // Android 15+ draws behind the system bars whether or not you ask, so
         // opt in properly and let the insets be dispatched instead of guessed.
@@ -385,7 +387,11 @@ class MainActivity : ComponentActivity() {
                 var unlocking by remember { mutableStateOf<NoteMeta?>(null) }
                 fun requestOpen(meta: NoteMeta?) {
                     if (meta != null && store.isLocked(meta.id) && meta.id !in unlocked) unlocking = meta
-                    else openNote = meta
+                    else {
+                        // The clock for how long the note takes to open starts at the tap.
+                        if (meta != null) NoteOpenClock.tapped()
+                        openNote = meta
+                    }
                 }
                 unlocking?.let { target ->
                     UnlockDialog(
@@ -600,9 +606,11 @@ class MainActivity : ComponentActivity() {
         DisplayRate.apply(this)
         JankWatch.start(this)
         MotionPrefs.refreshHz = display?.refreshRate ?: 60f
+        LabGuard.entered(this)
     }
 
     override fun onPause() {
+        LabGuard.left(this)
         JankWatch.stop(this)
         MotionStats.stop(this)
         // The widget shows the library as it is now.
@@ -4628,6 +4636,9 @@ private fun NoteScreen(
         onWidth = { liveBarWidth = it },
     )
     var showLatency by remember { mutableStateOf(false) }
+    // The Lab's benchmark: running, and the report it ends with.
+    var benchRunning by remember { mutableStateOf(false) }
+    var benchReport by remember { mutableStateOf<String?>(null) }
     var confirmClearAll by remember { mutableStateOf(false) }
     var showPages by remember { mutableStateOf(false) }
     // The bar and the rest of the chrome over the note, put away upwards by
@@ -4692,6 +4703,24 @@ private fun NoteScreen(
         (paneViews[activePane]?.takeIf { activePane != 0 } ?: canvas)?.canUndo() == true
     } }
     val canRedoNow by remember { derivedStateOf { edits; canvas?.canRedo() == true } }
+    benchReport?.let { report ->
+        val clipboardForReport = LocalClipboardManager.current
+        AlertDialog(
+            onDismissRequest = { benchReport = null },
+            title = { Text("Benchmark") },
+            text = {
+                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                    // Numbers and fixed labels, for pasting beside another run: shown as they are.
+                    androidx.compose.material3.Text(report, style = MaterialTheme.typography.bodySmall,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { clipboardForReport.setText(AnnotatedString(report)) }) { Text("Copy") }
+            },
+            dismissButton = { TextButton(onClick = { benchReport = null }) { Text("Close") } },
+        )
+    }
     // The way back after a jump is offered for a while, then let go: it used to stay until
     // gone back through, however far the page had been left behind.
     LaunchedEffect(backTick) {
@@ -5296,6 +5325,8 @@ private fun NoteScreen(
                         pageLoader = { page, epsilon ->
                             store.loadPage(note.id, page, epsilon)
                         }
+                        // The page as it was left, shown until its ink has been rebuilt.
+                        pagePictureLoader = { page -> store.pagePicture(note.id, page.id) }
                         maskLoader = { page, epsilon ->
                             store.loadMasks(note.id, page, epsilon)
                         }
@@ -5352,7 +5383,7 @@ private fun NoteScreen(
                     }
                     view.predictionEnabled = prediction
                     view.predictionLeadMs = predictionLeadMs
-                    view.latencyMonitoringEnabled = showLatency
+                    view.latencyMonitoringEnabled = showLatency || benchRunning
                     view.deferDetail = deferDetail
                     view.stabilizer = stabilizer
                     view.highlighterAboveInk = highlighterAboveInk
@@ -5751,6 +5782,9 @@ private fun NoteScreen(
                 val view = canvas ?: return
                 penStore.setLastPage(note.id, view.currentPageIndex())
                 store.flushSave(note.id, note.title, view.document)
+                // After that save: a picture of the page in view, for the next opening.
+                // Not for a locked note: its pages are not to be lying about as pictures.
+                if (!store.isLocked(note.id)) store.keepPagePictures(note.id, view.pagePictureRequests())
             }
             val observer = LifecycleEventObserver { _, event ->
                 if (event == Lifecycle.Event.ON_STOP) flushLatest()
@@ -6156,6 +6190,26 @@ private fun NoteScreen(
                         overlay = showLatency,
                         onOverlay = { showLatency = it },
                         zoomPercent = (zoom * 100).roundToInt(),
+                        benchmarkRunning = benchRunning,
+                        onBenchmark = {
+                            val view = canvas
+                            if (view != null && !benchRunning) {
+                                // With a pen in hand and the panel out of the way, as when writing.
+                                if (mode !in setOf(EditMode.PEN, EditMode.PENCIL, EditMode.HIGHLIGHTER)) mode = EditMode.PEN
+                                settingsNav = null
+                                benchRunning = true
+                                scope.launch {
+                                    // The panel slides away and the tool reaches the canvas first.
+                                    delay(900)
+                                    LabBenchmark(view).run((zoom * 100).roundToInt()) { report ->
+                                        benchRunning = false
+                                        benchReport = report
+                                        // Strokes were written and taken back: the note is saved as it now is.
+                                        edits++
+                                    }
+                                }
+                            }
+                        },
                     )
                 },
                 onResetToolbar = {

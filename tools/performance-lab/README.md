@@ -83,3 +83,20 @@ returned. Lab 2 calls that metric `pen start handled`; render/post measurements
 require a renderer callback or a compatible surface post. Missing renderer data
 stays missing. Finalization wait and callback work have separate measurements.
 Do not compare the renamed handler measurement with actual first rendering.
+
+## Measuring on the tablet
+
+Settings → Diagnostics has a **Benchmark (Lab)** card. It replays a fixed script
+on the page in view - 30 strokes sent as stylus events at 250 Hz, taken back by
+undo, then a glide down and up - and reports the canvas's own timings with the
+device, the build and the Lab's switches. The pen is the script's: the touch
+pipeline before the app and the time from a posted frame to light are not in
+the numbers. Note-opening times (tap to first frame, to ink shown, to ink
+built) are recorded for every note opened and listed on the same card.
+
+A page's ink is pictured when a note is left and shown the next time it opens
+until the real ink has been rebuilt (`PagePictures.kt`). No picture is kept for
+a page with tape, pencil or particle ink, translucent layers, or a locked note.
+
+After two runs in a row that did not close cleanly the native libraries are
+left unloaded (`LabGuard`) until switched back on in Diagnostics.

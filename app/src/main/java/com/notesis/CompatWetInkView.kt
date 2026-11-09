@@ -494,7 +494,8 @@ internal class CompatWetInkView(context: Context) : FrameLayout(context), Surfac
 
     /** Decided once per surface: the switch is on, the library loads and the display has surface transactions. */
     private fun chooseOwnBuffers() {
-        wantOwnBuffers = LabPerformance.nativePresent && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q
+        wantOwnBuffers = LabPerformance.nativePresent && !LabGuard.nativeOff &&
+            android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q
         ownState = when {
             !LabPerformance.nativePresent -> OwnBufferState.OFF
             !wantOwnBuffers || !PresentNative.available() -> OwnBufferState.UNAVAILABLE

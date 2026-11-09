@@ -1629,6 +1629,64 @@ class InkCanvasView @JvmOverloads constructor(
      */
     var pageLoader: ((Page, Float) -> List<Stroke>)? = null
 
+    /**
+     * Reads the picture kept of a page's ink the last time the note was left,
+     * or null (see PagePictures.kt). Called on a worker.
+     */
+    internal var pagePictureLoader: ((Page) -> Bitmap?)? = null
+
+    /** Pictures standing in for pages whose ink is still being built; UI thread only. */
+    private val pagePictures = HashMap<String, PageStandIn>()
+    private class PageStandIn(val bitmap: Bitmap) {
+        /** When the page's real ink was first seen to be in, and its revision then; 0 until it is. */
+        var loadedAt = 0L
+        var revision = 0L
+    }
+    private var opening: NoteOpenClock.Opening? = null
+
+    /** Asks for the kept pictures of the pages a note opens on, off the UI thread. */
+    private fun requestPagePictures(document: Document, around: Int) {
+        pagePictures.clear()
+        val loader = pagePictureLoader ?: return
+        // The page the note opens on, and no other: its neighbours are read in
+        // behind it, and a picture is the size of a screen in memory.
+        val wanted = listOfNotNull(document.pages.getOrNull(around)).filter { !it.loaded }
+        if (wanted.isEmpty()) return
+        // Whatever becomes of the page, a stand-in is not kept past the opening.
+        postDelayed({ if (this.document === document) pagePictures.clear() }, PAGE_PICTURE_LIFETIME_MS)
+        Thread({
+            for (page in wanted) {
+                val bitmap = runCatching { loader(page) }.getOrNull() ?: continue
+                post {
+                    // The real ink got there first, or this is no longer the note on screen.
+                    if (disposed || this.document !== document || page.loaded) return@post
+                    pagePictures[page.id] = PageStandIn(bitmap)
+                    dry.invalidate()
+                }
+            }
+        }, "notesis-page-picture").apply { isDaemon = true; priority = Thread.NORM_PRIORITY - 1 }.start()
+    }
+
+    /**
+     * The page worth a picture for the next opening - the one in view, which
+     * the note opens on again - with its ink as drawn now. Called on the UI
+     * thread as the note is left; the drawing itself is the store's, on a worker.
+     */
+    internal fun pagePictureRequests(): List<PagePictureRequest> {
+        if (width <= 0) return emptyList()
+        val translucent = document.layers.translucentLook() != null
+        return (currentPage..currentPage).mapNotNull { index ->
+            val page = document.pages.getOrNull(index) ?: return@mapNotNull null
+            if (!page.loaded || page.width <= 0f || page.height <= 0f) return@mapNotNull null
+            // The vanishing pen's ink is never saved, so it is not in the picture either.
+            val strokes = page.strokes.filterNot { Tool.isVanishing(it.brush.family) }
+            if (!pagePictureWanted(strokes.size, page.masks.size, strokes.any(::needsGpuPicture), translucent)) {
+                return@mapNotNull null
+            }
+            PagePictureRequest(page.id, page.width, page.height, strokes, pagePictureWidth(width, page.width, page.height))
+        }
+    }
+
     /** Kept from the P0 spike: the project's own latency instrument. */
     val latency = LatencyStats()
 
@@ -2706,6 +2764,8 @@ class InkCanvasView @JvmOverloads constructor(
         layersRevision.intValue++
         fitted = false
         pageToRestore = initialPage.coerceIn(document.pages.indices)
+        opening = NoteOpenClock.begin()
+        requestPagePictures(document, initialPage.coerceIn(document.pages.indices))
         requestLayout()
         dry.invalidate()
     }
@@ -2865,6 +2925,8 @@ class InkCanvasView @JvmOverloads constructor(
         prefetchedPending.clear()
         removeCallbacks(inkCacheRunnable)
         dry.discardInkNodes()
+        pagePictures.clear()
+        opening = null
         disposed = true
         refineRequestSerial++
         viewportRenderGeneration++
@@ -4415,7 +4477,8 @@ class InkCanvasView @JvmOverloads constructor(
                 // times, per frame anyone sees.
                 if (!compatWetInk) requestUnbufferedDispatch(event)
                 // A tab on a page's edge opens what is kept there, in any tool.
-                if (!contactErases && openAttachmentAt(event.getX(event.actionIndex), event.getY(event.actionIndex))) return true
+                if (!contactErases && !benchWriting &&
+                    openAttachmentAt(event.getX(event.actionIndex), event.getY(event.actionIndex))) return true
                 val pageIndex = pageUnder(event, event.actionIndex)
                 // Off the pages: the whiteboard takes ink and the eraser, when it is on.
                 val onBoard = pageIndex < 0
@@ -4495,7 +4558,7 @@ class InkCanvasView @JvmOverloads constructor(
                     return true
                 }
                 if (!onBoard && !contactErases && tool != Tool.ERASER &&
-                    toggleCheckboxAt(event.getX(event.actionIndex), event.getY(event.actionIndex), index)
+                    !benchWriting && toggleCheckboxAt(event.getX(event.actionIndex), event.getY(event.actionIndex), index)
                 ) return true
                 // Ink - pen, shape, polygon - on a locked or hidden
                 // layer is refused before any of it is drawn. Tape is not on a
@@ -4644,8 +4707,10 @@ class InkCanvasView @JvmOverloads constructor(
                     stationaryStartX = event.getX(event.actionIndex)
                     stationaryStartY = event.getY(event.actionIndex)
                     stationaryStartTime = event.eventTime
-                    circleTracking = !onBoard && circleToLasso && tool.isFreehandPen() && !strokeIsMask
-                    holdTracking = !onBoard && holdToDraw && (tool.isFreehandPen() || tool == Tool.HIGHLIGHTER || strokeIsMask)
+                    // The Lab's replayed strokes are ink and nothing else: never a gesture.
+                    circleTracking = !benchWriting && !onBoard && circleToLasso && tool.isFreehandPen() && !strokeIsMask
+                    holdTracking = !benchWriting && !onBoard && holdToDraw &&
+                        (tool.isFreehandPen() || tool == Tool.HIGHLIGHTER || strokeIsMask)
                     recognizeOnFinish = false
                     if (holdTracking) {
                         holdX = stationaryStartX
@@ -5800,6 +5865,33 @@ class InkCanvasView @JvmOverloads constructor(
     private fun releaseVelocity() {
         velocityTracker?.recycle()
         velocityTracker = null
+    }
+
+    // ---- the Lab's benchmark (see LabBenchmark.kt) ------------------------------
+
+    /**
+     * Set while the Lab's benchmark replays strokes: they are kept from being
+     * read as a hold, a circle to select with, a scribble to erase with or a
+     * shape, so the page gets the ink it was sent and loses none of its own.
+     */
+    internal var benchWriting = false
+
+    /** How many edits there are to undo; the benchmark takes back exactly what it wrote. */
+    internal val undoDepth: Int get() = undoStack.size
+
+    /** Whether the page is still gliding. */
+    internal val gliding: Boolean get() = flinging
+
+    /** Lets the page go at [velocityY] pixels a second, exactly as a flick does. */
+    internal fun benchFling(velocityY: Float) {
+        stopFling(resumeDetail = false)
+        flingVx = 0f
+        flingVy = velocityY
+        flingLastNanos = 0L
+        onViewportInteractionChanged?.invoke(true)
+        flinging = true
+        holdMoving()
+        Choreographer.getInstance().postFrameCallback(flingStep)
     }
 
     private fun startFling() {
@@ -9338,7 +9430,7 @@ class InkCanvasView @JvmOverloads constructor(
                 val mask = PageMask(stroke)
                 page.masks += mask
                 undoStack += Edit.MaskAdded(page, mask, group)
-            } else if (page !== document.board && scribbleErase && finishedTool.isFreehandPen() &&
+            } else if (page !== document.board && scribbleErase && !benchWriting && finishedTool.isFreehandPen() &&
                 scribbleOut(page, stroke, group)) {
                 // The scribble took the ink under it and is not kept itself.
             } else {
@@ -9351,7 +9443,7 @@ class InkCanvasView @JvmOverloads constructor(
                     }
                     // Unheld, only the few shapes writing is unlikely to look
                     // like; held, every shape the recogniser knows.
-                    (autoShapeRecognitionEnabled || recognize) &&
+                    (autoShapeRecognitionEnabled || recognize) && !benchWriting &&
                         Tool.ofBrushFamily(stroke.brush.family).isFreehandPen() ->
                         recognizeStroke(stroke, held = recognize)?.let { fit ->
                             stroke.inputs.get(0).let { first -> startingAt(fit, first.x, first.y) }
@@ -9860,6 +9952,47 @@ class InkCanvasView @JvmOverloads constructor(
             strokeIndexes[page]?.remove(page, strokes)
         }
 
+        /**
+         * The picture kept of [page]'s ink, drawn until the real ink is in and
+         * for a moment after - under it, while its tiles are still being
+         * recorded - so the page never blinks to bare paper in between.
+         */
+        private fun drawPageStandIn(canvas: Canvas, page: Page) {
+            val standIn = pagePictures[page.id] ?: return
+            if (page.loaded) {
+                val now = SystemClock.uptimeMillis()
+                if (standIn.loadedAt == 0L) {
+                    standIn.loadedAt = now
+                    standIn.revision = page.revision
+                    // Let go of the picture once the moment has passed, drawn again or not.
+                    postDelayed({ pagePictures.remove(page.id) }, PAGE_PICTURE_GRACE_MS + 50L)
+                }
+                // Changed since, or see-through ink that a copy underneath would darken: gone at once.
+                if (now - standIn.loadedAt > PAGE_PICTURE_GRACE_MS || page.revision != standIn.revision ||
+                    pageHasHighlighter(page)) {
+                    pagePictures.remove(page.id)
+                    return
+                }
+            }
+            pageRect.set(0f, 0f, page.width, page.height)
+            canvas.drawBitmap(standIn.bitmap, null, pageRect, bitmapPaint)
+            opening?.let { if (it.inkShownMs < 0L) { it.inkShownMs = SystemClock.uptimeMillis() - it.startedAt; it.pictureUsed = true } }
+        }
+
+        /** Notes how far the opening of a note has come as of this frame; see [NoteOpenClock]. */
+        private fun noteOpenFrame(open: NoteOpenClock.Opening) {
+            if (!fitted || width <= 0) return
+            val elapsed = SystemClock.uptimeMillis() - open.startedAt
+            if (open.firstFrameMs < 0L) open.firstFrameMs = elapsed
+            val page = document.pages.getOrNull(currentPage) ?: return
+            if (!page.loaded) return
+            if (open.inkShownMs < 0L) open.inkShownMs = elapsed
+            open.geometryMs = elapsed
+            open.strokes = page.strokes.size
+            NoteOpenClock.finished(open)
+            opening = null
+        }
+
         private fun cachedInk(page: Page, visibleCount: Int): CachedInk? {
             if (!page.loaded || visibleCount < 250 || page.strokes.size < 300 || movingLasso ||
                 currentScale() < 1f) return null
@@ -10007,6 +10140,7 @@ class InkCanvasView @JvmOverloads constructor(
                     scoped.translate(left, top)
                     drawPaper(scoped, page, i)
                     drawImages(scoped, page)
+                    if (pagePictures.isNotEmpty()) drawPageStandIn(scoped, page)
                     if (playbackHighlights.isNotEmpty()) drawPlaybackHighlights(scoped, page)
                     val lifted = i == lassoPage && movingLasso
                     val visibleLeft = cullLeft.coerceAtLeast(0f)
@@ -10150,6 +10284,7 @@ class InkCanvasView @JvmOverloads constructor(
                 // Ends by itself: once every tile on screen is recorded, nothing asks again.
                 if (inkTiles.backlog) postInvalidateOnAnimation()
             }
+            opening?.let { noteOpenFrame(it) }
             if (started != 0L) {
                 lastVisibleStrokes = visibleCount
                 lastDrawMs = (System.nanoTime() - started) / 1e6
@@ -10838,6 +10973,8 @@ class InkCanvasView @JvmOverloads constructor(
         const val CIRCLE_HOLD_MS = 500L
         /** How long the pen's performance hint outlasts the pen. */
         const val BOOST_IDLE_MS = 2500L
+        /** A page's stand-in picture is dropped this long after the note was opened, used or not. */
+        const val PAGE_PICTURE_LIFETIME_MS = 10_000L
         /** Room for a held stroke's samples before the buffer doubles: a few seconds of 240 Hz. */
         const val HOLD_POINTS_INITIAL = 1024
         /** Of touch slop: a resting pen still shakes this much. */
