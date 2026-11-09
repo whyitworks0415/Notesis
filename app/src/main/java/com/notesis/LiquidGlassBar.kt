@@ -187,9 +187,9 @@ fun LiquidGlassBar(
     val barHeight = (if (compact) 40.dp else if (withIcons && showLabels) 64.dp else 48.dp) * chromeScale
     val padding = 6.dp
     val cellHeight = barHeight - padding * 2
-    // A wash of the accent, as the other looks' highlight is: a grey pill
-    // stayed grey whatever accent was picked.
-    val fill = scheme.primary.copy(alpha = if (dark) 0.22f else 0.16f)
+    // A neutral wash, not the accent: the selected tool's pill stays the same
+    // grey whatever accent is picked.
+    val fill = selectionPillFill(scheme.onSurface, dark)
     // The pill sits [padding] inside the capsule, so its curve is the
     // capsule's moved in by that much - measured from the radius the capsule
     // can actually draw at this height, not from the setting.
