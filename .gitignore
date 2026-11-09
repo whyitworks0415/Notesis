@@ -17,3 +17,6 @@ tools/document-viewer/test-output/
 *.p12
 *.pfx
 /keystore/
+
+# CMake generates machine-local native build metadata here.
+.cxx/
