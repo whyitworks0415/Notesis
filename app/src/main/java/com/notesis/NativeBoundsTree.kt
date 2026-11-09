@@ -26,6 +26,8 @@ internal object SpatialNative {
     external fun build(records: ByteBuffer, count: Int, tree: ByteBuffer): Int
     external fun query(records: ByteBuffer, count: Int, tree: ByteBuffer, nodes: Int,
         left: Float, top: Float, right: Float, bottom: Float, result: ByteBuffer): Int
+    external fun cutRuns(points: ByteBuffer, count: Int, ax: Float, ay: Float, bx: Float, by: Float,
+        reach: Float, output: ByteBuffer): Int
 }
 
 /** Packed, GC-owned storage. JNI retains no handles and copies no coordinate arrays per query. */

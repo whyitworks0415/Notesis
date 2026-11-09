@@ -793,17 +793,25 @@ private fun resample(points: List<FloatArray>, count: Int): List<FloatArray> {
 }
 
 /** [points] softened by a 1-2-1 average, [passes] times, the ends left where they are. */
-private fun smoothed(points: List<FloatArray>, passes: Int): List<FloatArray> {
-    var current = points
+internal fun smoothed(points: List<FloatArray>, passes: Int): List<FloatArray> {
+    if (passes <= 0 || points.size < 3) return points
+    var source = FloatArray(points.size * 2)
+    var target = FloatArray(source.size)
+    for (i in points.indices) { source[i * 2] = points[i][0]; source[i * 2 + 1] = points[i][1] }
+    target[0] = source[0]; target[1] = source[1]
+    target[target.lastIndex - 1] = source[source.lastIndex - 1]
+    target[target.lastIndex] = source[source.lastIndex]
     repeat(passes) {
-        current = current.indices.map { i ->
-            if (i == 0 || i == current.size - 1) current[i] else floatArrayOf(
-                (current[i - 1][0] + 2 * current[i][0] + current[i + 1][0]) / 4f,
-                (current[i - 1][1] + 2 * current[i][1] + current[i + 1][1]) / 4f,
-            )
+        for (i in 1 until points.lastIndex) {
+            val p = i * 2
+            target[p] = (source[p - 2] + 2 * source[p] + source[p + 2]) / 4f
+            target[p + 1] = (source[p - 1] + 2 * source[p + 1] + source[p + 3]) / 4f
         }
+        val old = source; source = target; target = old
     }
-    return current
+    return List(points.size) { i ->
+        if (i == 0 || i == points.lastIndex) points[i] else floatArrayOf(source[i * 2], source[i * 2 + 1])
+    }
 }
 
 private fun bounds(points: List<FloatArray>): FloatArray {

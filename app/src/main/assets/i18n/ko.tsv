@@ -1597,3 +1597,8 @@ Material Symbols	Material Symbols
 Static icons in every look. Motion belongs to controls and panels.	모든 룩에서 정적 아이콘을 사용합니다. 움직임은 컨트롤과 패널에 적용됩니다.
 Efficient glass	가벼운 유리 효과
 Uses one iOS glass pass and less surface blur. Off keeps the original glass.	iOS 유리 효과를 한 겹으로 처리하고 표면 블러를 줄입니다. 끄면 기존 유리 효과를 사용합니다.
+Pen start handled (not rendered)	펜 시작 처리 완료(렌더링 아님)
+Pen-up callback wait	펜 종료 콜백 대기
+Pen-up commit work (per batch)	펜 종료 반영 작업(배치당)
+First ink (render complete / surface posted)	첫 잉크(렌더 완료/표면 제출)
+Wet ink (render complete / surface posted)	실시간 잉크(렌더 완료/표면 제출)

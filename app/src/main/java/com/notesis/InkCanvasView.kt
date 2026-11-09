@@ -2592,20 +2592,13 @@ class InkCanvasView @JvmOverloads constructor(
                 // The front buffer is not what this panel shows; the compatible
                 // surface reports its own frames instead.
                 if (compatWetInk) return
-                if (latencyData.eventAction != LatencyData.EventAction.MOVE) return
-                if (!latencyData.isOsDetectsEventSet) return
-                // Unset fields carry Long.MIN_VALUE, and subtracting a real
-                // timestamp from that overflows into a huge positive number -
-                // which is how the HUD came to report latencies of 9.2e12ms.
-                // This panel never estimates a presentation time, so the span
-                // that can actually be measured is the one this app is
-                // responsible for: the event arriving to the draw calls for it
-                // being finished.
-                val end = latencyData.estimatedPixelPresentationTime
-                    .takeIf { it != LATENCY_UNSET }
-                    ?: latencyData.strokesViewFinishesDrawCalls
-                if (end == LATENCY_UNSET) return
-                latency.add(end - latencyData.osDetectsEvent)
+                val span = inkRenderLatencyNanos(latencyData.osDetectsEvent, latencyData.strokesViewFinishesDrawCalls)
+                    ?: return
+                if (latencyData.strokeAction == LatencyData.StrokeAction.START) {
+                    latency.record(PerformanceMetric.FIRST_INK, span)
+                } else if (latencyData.eventAction == LatencyData.EventAction.MOVE) {
+                    latency.add(span)
+                }
             }
         })
         // On an adaptive panel the system picks a refresh rate per window from
@@ -3929,7 +3922,7 @@ class InkCanvasView @JvmOverloads constructor(
         }
         val replacements = IdentityHashMap<Stroke, Stroke>()
         fun turned(stroke: Stroke): Stroke =
-            replacements.getOrPut(stroke) { mapInputs(stroke, ::turn).also { StrokeTags.carry(stroke, it) } }
+            replacements.getOrPut(stroke) { mapInputs(stroke, map = ::turn).also { StrokeTags.carry(stroke, it) } }
         for (i in page.strokes.indices) page.strokes[i] = turned(page.strokes[i])
         // Ink on hidden layers turns too, or showing the layer brings it back sideways.
         for (i in page.hiddenStrokes.indices) page.hiddenStrokes[i] = turned(page.hiddenStrokes[i])
@@ -4560,10 +4553,9 @@ class InkCanvasView @JvmOverloads constructor(
                         }
                         id
                     }
-                    // Front-buffer ink is drawn from here on its own thread; the
-                    // compatible ink reports its first frame itself.
+                    // This returns before asynchronous front-buffer rendering finishes.
                     if (latencyMonitoringEnabled && !compatWetInk) {
-                        latency.record(PerformanceMetric.FIRST_INK, System.nanoTime() - event.eventTime * 1_000_000L)
+                        latency.record(PerformanceMetric.PEN_START_HANDLED, System.nanoTime() - event.eventTime * 1_000_000L)
                     }
                     if (brush !== stored) activeStrokeId?.let { wetTrueColors[it] = stored.colorIntArgb }
                     activeStrokeId?.let { wetStarts[it] = WetStart(if (onBoard) document.board else document.pages[index], strokeIsMask, originX, originY) }
@@ -8081,7 +8073,8 @@ class InkCanvasView @JvmOverloads constructor(
      */
     fun transformLassoSelection(factor: Float, degrees: Float) {
         val page = document.pages.getOrNull(lassoPage) ?: return
-        if (!hasLassoSelection() || lassoBounds.isEmpty || factor <= 0f) return
+        if (!hasLassoSelection() || lassoBounds.isEmpty || factor <= 0f || !factor.isFinite() || !degrees.isFinite()) return
+        if (factor == 1f && degrees == 0f) return
         val cx = lassoBounds.centerX()
         val cy = lassoBounds.centerY()
         val radians = Math.toRadians(degrees.toDouble())
@@ -8089,14 +8082,13 @@ class InkCanvasView @JvmOverloads constructor(
         val sine = (sin(radians) * factor).toFloat()
         val before = lassoStrokes.toList()
         val after = before.map { stroke ->
-            val moved = mapInputs(stroke) { x, y, out ->
+            val brush = if (factor == 1f) stroke.brush else stroke.brush.copy(size = (stroke.brush.size * factor).coerceAtLeast(0.1f))
+            mapInputs(stroke, brush) { x, y, out ->
                 val dx = x - cx
                 val dy = y - cy
                 out[0] = cx + dx * cosine - dy * sine
                 out[1] = cy + dx * sine + dy * cosine
             }
-            if (factor == 1f) moved
-            else Stroke(stroke.brush.copy(size = (stroke.brush.size * factor).coerceAtLeast(0.1f)), moved.inputs)
         }
         val group = nextEditGroup++
         // Pictures turn about their own middles, which go round with the rest.
@@ -8237,7 +8229,7 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     /** Rebuilds [stroke] with every input position passed through [map]. */
-    private inline fun mapInputs(stroke: Stroke, map: (Float, Float, FloatArray) -> Unit): Stroke {
+    private inline fun mapInputs(stroke: Stroke, brush: Brush = stroke.brush, map: (Float, Float, FloatArray) -> Unit): Stroke {
         val inputs = MutableStrokeInputBatch()
         val scratch = StrokeInput()
         val point = FloatArray(2)
@@ -8254,7 +8246,7 @@ class InkCanvasView @JvmOverloads constructor(
                 orientationRadians = input.orientationRadians,
             )
         }
-        return Stroke(stroke.brush, inputs.toImmutable())
+        return Stroke(brush, inputs)
     }
 
     /** Throws away what the loop caught. */
@@ -9069,19 +9061,21 @@ class InkCanvasView @JvmOverloads constructor(
         if (isHighlighter(stroke)) eraseHighlighter else eraseInk
 
     /** The pieces of [stroke] the eraser swept a→b did not reach, or null if it reached none. */
+    private val partialEraseWorkspace = PartialEraseWorkspace()
+
     private fun splitStroke(stroke: Stroke, ax: Float, ay: Float, bx: Float, by: Float, reach: Float): List<Stroke>? {
         val inputs = stroke.inputs
         val count = inputs.size
         if (count == 0) return null
-        val xs = FloatArray(count)
-        val ys = FloatArray(count)
+        partialEraseWorkspace.prepare(count)
+        val xs = partialEraseWorkspace.xs
+        val ys = partialEraseWorkspace.ys
         val sample = StrokeInput()
         for (i in 0 until count) {
             inputs.populate(i, sample)
-            xs[i] = sample.x
-            ys[i] = sample.y
+            partialEraseWorkspace.put(i, sample.x, sample.y)
         }
-        val runs = keptRuns(xs, ys, count, ax, ay, bx, by, reach) ?: return null
+        val runs = partialEraseWorkspace.runs(count, ax, ay, bx, by, reach) ?: return null
         val other = StrokeInput()
         return runs.map { run ->
             val batch = MutableStrokeInputBatch()
@@ -9149,6 +9143,7 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     override fun onStrokesFinished(finished: Map<InProgressStrokeId, Stroke>) {
+        val commitStarted = if (latencyMonitoringEnabled) System.nanoTime() else 0L
         pendingStrokeCommits.removeAll(finished.keys)
         // Ink hands finished strokes back in batches: one lifted while the next
         // is already being written waits for that one. So each goes to the page
@@ -9156,11 +9151,14 @@ class InkCanvasView @JvmOverloads constructor(
         // mode of whichever stroke happens to be newest when the batch lands.
         val group = nextEditGroup++
         val committedByPage = LinkedHashMap<Page, ArrayList<Stroke>>(2)
-        val lifted = LongArray(finished.size)
+        val lifted = LongArray(if (commitStarted != 0L) finished.size else 0)
         var liftedCount = 0
         for ((wetId, wetStroke) in finished) {
             val start = wetStarts.remove(wetId)
-            if (start != null && start.liftedNanos != 0L) lifted[liftedCount++] = start.liftedNanos
+            if (commitStarted != 0L && start != null && start.liftedNanos != 0L) {
+                lifted[liftedCount++] = start.liftedNanos
+                latency.record(PerformanceMetric.PEN_FINALIZE_WAIT, commitStarted - start.liftedNanos)
+            }
             val page = start?.page ?: activePage ?: continue
             val asMask = start?.mask ?: strokeIsMask
             val recognize = start?.recognize ?: recognizeOnFinish
@@ -9254,6 +9252,7 @@ class InkCanvasView @JvmOverloads constructor(
             val now = System.nanoTime()
             for (i in 0 until liftedCount) latency.addPenFinalize(now - lifted[i])
         }
+        if (commitStarted != 0L) latency.record(PerformanceMetric.PEN_COMMIT_WORK, System.nanoTime() - commitStarted)
         if (pendingClose != null) completePendingClose()
     }
 

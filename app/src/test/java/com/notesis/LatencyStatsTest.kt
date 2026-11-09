@@ -94,12 +94,12 @@ class LatencyStatsTest {
     }
 
     @Test
-    fun `submission timings are labelled as submitted, never as photons`() {
+    fun `render timings and handler timings have distinct labels`() {
         val stats = LatencyStats()
         stats.setEnabled(true)
         val report = stats.render(0)
-        assertTrue(report.contains("first ink (submitted)"))
-        assertTrue(report.contains("wet ink (submitted)"))
+        assertTrue(report.contains("first ink (render/post)"))
+        assertTrue(report.contains("wet ink (render/post)"))
         assertTrue(report.contains("input handled"))
         assertTrue(report.contains("page apply"))
         assertTrue(report.contains("save snapshot"))

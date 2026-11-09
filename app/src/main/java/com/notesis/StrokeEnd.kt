@@ -516,14 +516,16 @@ private inline fun <R> withSamples(
 ): R {
     val count = inputs.size
     val sample = StrokeInput()
-    val xs = FloatArray(count)
-    val ys = FloatArray(count)
-    val ts = LongArray(count)
-    for (i in 0 until count) {
-        inputs.populate(i, sample)
-        xs[i] = sample.x
-        ys[i] = sample.y
-        ts[i] = sample.elapsedTimeMillis
+    val workspace = TidySamples.acquire(count)
+    try {
+        for (i in 0 until count) {
+            inputs.populate(i, sample)
+            workspace.xs[i] = sample.x
+            workspace.ys[i] = sample.y
+            workspace.times[i] = sample.elapsedTimeMillis
+        }
+        return block(count, workspace.xs, workspace.ys, workspace.times)
+    } finally {
+        TidySamples.release(workspace)
     }
-    return block(count, xs, ys, ts)
 }

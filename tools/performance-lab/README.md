@@ -63,3 +63,23 @@ the existing deployment signing workflow and verifies the isolated application
 ID before signing. The public pre-release includes its host benchmark output.
 Actual device installation, stylus/rendering fidelity, 60/120Hz frame times,
 AGSL appearance, sustained heat and battery use still require tablet comparison.
+
+## Lab 2 processing paths
+
+Lab 2 adds a C++ capsule-sweep classifier for partial erasing. A canvas owns
+reusable coordinate and result buffers. Inputs under 128 points use the reference
+Kotlin path, as do numerically ambiguous boundary cases. Endpoint interpolation
+remains on the reference path. Host JNI tests compare 1,000 random sweeps with the
+Kotlin results; the native sanitizer script also exercises the new kernel.
+
+Stroke finalization reuses bounded per-thread coordinate/time workspaces, with
+separate storage for nested calls. Shape smoothing ping-pongs between packed
+coordinate arrays, retaining the exact original Float operation order. Selection
+scaling constructs its mesh once under the final brush rather than tessellating
+once for coordinates and again for brush size.
+
+In Lab 1 the front-buffer first-ink metric actually ended when startStroke
+returned. Lab 2 calls that metric `pen start handled`; render/post measurements
+require a renderer callback or a compatible surface post. Missing renderer data
+stays missing. Finalization wait and callback work have separate measurements.
+Do not compare the renamed handler measurement with actual first rendering.
