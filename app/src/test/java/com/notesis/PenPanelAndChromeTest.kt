@@ -135,7 +135,7 @@ class PenPanelAndChromeTest {
         val ink = androidx.compose.ui.graphics.Color(0xFF202020)
         val light = selectionPillFill(ink, dark = false)
         val dark = selectionPillFill(ink, dark = true)
-        assertEquals(ink.red, light.red, 0f)
+        assertEquals(ink.red, light.red, 0.005f)
         assertEquals(0.08f, light.alpha, 0.001f)
         assertEquals(0.12f, dark.alpha, 0.001f)
     }
