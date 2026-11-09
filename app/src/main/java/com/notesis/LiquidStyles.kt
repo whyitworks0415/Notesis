@@ -304,7 +304,7 @@ private fun Modifier.iosGlass(
     val frostOpacity = ((if (dark) g.frostOpacity * IosGlass.DARK_FROST else g.frostOpacity) * amount).coerceIn(0f, 1f)
     // A white-only dark preset washed out over white paper. Keep a charcoal
     // reading floor; the existing optical passes still draw the curved rim.
-    val body = if (dark) iosDarkReadingMaterial(panel, amount)
+    val body = if (dark) iosDarkReadingMaterial(panel, amount, g.bodyOpacity)
         else Color(0xFFF8F8F8).copy(alpha = (g.bodyOpacity * amount).coerceIn(0f, 1f))
     val rimLight = if (rim) (if (dark) g.rimLight * IosGlass.DARK_RIM_LIGHT else g.rimLight) * amount else 0f
     // ios27Light lights from the top (pi / 2), ios27Dark from the bottom; the

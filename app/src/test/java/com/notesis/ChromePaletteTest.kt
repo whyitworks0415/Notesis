@@ -60,6 +60,14 @@ class ChromePaletteTest {
         assertEquals(before, look.toJson())
     }
 
+    @Test fun `iOS body slider still responds above the reading floor and motion can fade it out`() {
+        for (panel in listOf(false, true)) {
+            assertTrue(iosDarkReadingMaterial(panel, bodyOpacity = 1f).alpha > iosDarkReadingMaterial(panel).alpha)
+            assertEquals(1f, iosDarkReadingMaterial(panel, bodyOpacity = 1f).alpha, 0f)
+            assertEquals(0f, iosDarkReadingMaterial(panel, amount = 0f).alpha, 0f)
+        }
+    }
+
     @Test fun `unreadable user chrome ink is corrected without changing the saved ink colour`() {
         val look = SkinSettings(content = Color.White.toArgb())
         val scheme = skinColors(lookScheme(null, Skin.MATERIAL, look), Skin.MATERIAL, look)

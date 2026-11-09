@@ -93,8 +93,11 @@ internal fun iosChromeScheme(base: ColorScheme, dark: Boolean): ColorScheme = re
 )
 
 /** A dark reading floor, including over white paper; rim and refraction stay independent. */
-internal fun iosDarkReadingMaterial(panel: Boolean, amount: Float = 1f): Color =
-    Color(0xFF15161B).copy(alpha = (if (panel) 0.92f else 0.84f) * amount.coerceIn(0f, 1f))
+internal fun iosDarkReadingMaterial(panel: Boolean, amount: Float = 1f, bodyOpacity: Float = 0f): Color {
+    val floor = if (panel) 0.92f else 0.84f
+    return Color(0xFF15161B).copy(alpha =
+        (floor + (1f - floor) * bodyOpacity.coerceIn(0f, 1f)) * amount.coerceIn(0f, 1f))
+}
 
 internal fun chromeTypography(): Typography = Typography().let { base -> base.copy(
     headlineLarge = base.headlineLarge.copy(fontWeight = FontWeight.SemiBold, letterSpacing = (-0.5).sp),
