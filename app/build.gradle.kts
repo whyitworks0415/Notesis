@@ -7,15 +7,17 @@ plugins {
 android {
     namespace = "com.notesis"
     compileSdk = 36
+    ndkVersion = "28.2.13676358"
+    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
 
     defaultConfig {
-        applicationId = "com.notesis"
+        applicationId = "com.notesis.lab"
         // Front-buffered rendering (the low-latency wet-ink path) is only
         // dependable from Q onward, even though ink itself declares minSdk 23.
         minSdk = 29
         targetSdk = 36
-        versionCode = 211
-        versionName = "0.90.20"
+        versionCode = 214
+        versionName = "0.90.21-lab.3"
         testInstrumentationRunner = "com.notesis.CustomizationInstrumentation"
         // Ship arm64 for the tablet; opt into x86_64 for emulator GPU checks.
         ndk { abiFilters += providers.gradleProperty("notesis.testAbi").getOrElse("arm64-v8a") }
@@ -52,6 +54,9 @@ android {
             all {
                 it.systemProperty("roborazzi.test.record", "true")
                 it.systemProperty("robolectric.pixelCopyRenderMode", "hardware")
+                providers.gradleProperty("notesis.hostNativeDir").orNull?.let { dir ->
+                    it.systemProperty("java.library.path", dir)
+                }
             }
         }
     }

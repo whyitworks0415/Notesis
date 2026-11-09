@@ -1,26 +1,18 @@
-# Builds the APK on GitHub's runners, because the tablet is the only machine
-# around and it cannot build itself. Runs on a push to a work branch or on
-# demand from the Actions tab, and leaves the APK in two places: a build
-# artifact, and a release, which is the one a tablet browser can install from
-# in a single tap.
-name: APK
+# This branch builds a separate application and publishes preview tags only.
+# Do not merge its package or release routing into the standard application.
+name: Notesis Lab APK
 
 on:
-  push:
-    branches: ["main", "claude/**"]
   workflow_dispatch:
     inputs:
       update:
-        # automatic: the app tells everyone about it as it opens.
-        # manual: it is installed only from About · Help, with nothing said.
-        # A release can also be marked manual in its notes file, with the
-        # line `<!-- update: manual -->`, which is how a push releases one.
+        # Lab releases are manual, pre-release, and excluded from the normal feed.
         # check: builds and runs the tests only - nothing is signed or
         # released - so a change can be tried without spending a version.
         description: "How the app offers this release (check: build and test only)"
         type: choice
-        options: ["automatic", "manual", "check"]
-        default: "automatic"
+        options: ["manual", "check"]
+        default: "manual"
 
 permissions:
   contents: write
@@ -40,6 +32,11 @@ jobs:
           # old key, which is only there (see docs/signing.md).
           fetch-depth: 0
 
+      - name: Verify isolated Lab package
+        run: |
+          grep -q 'applicationId = "com.notesis.lab"' app/build.gradle.kts
+          grep -q 'lab-' .github/workflows/apk.yml
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -49,10 +46,13 @@ jobs:
         with:
           # SDK Tools (`tools`) was replaced by cmdline-tools and is no longer
           # installable. The action's default still asks sdkmanager for it.
-          packages: platform-tools
+          packages: "platform-tools ndk;28.2.13676358 cmake;3.22.1"
           log-accepted-android-sdk-licenses: false
 
       - uses: gradle/actions/setup-gradle@v4
+
+      - name: Native correctness and host benchmark
+        run: bash tools/performance-lab/check-native.sh
 
       - name: Build release APK
         # gradle.properties pins org.gradle.java.home to a path on the author's
@@ -63,14 +63,14 @@ jobs:
 
       - name: Unit tests
         # Never sign or publish an update whose regression tests failed.
-        run: ./gradlew testReleaseUnitTest -Dorg.gradle.java.home="$JAVA_HOME" --no-daemon
+        run: ./gradlew testReleaseUnitTest -Pnotesis.hostNativeDir="$PWD/build/host-native" -Dorg.gradle.java.home="$JAVA_HOME" --no-daemon
 
       # Check and manual builds also verify chrome under Robolectric before
       # signing. The manual APK must contain the UI that passed these tests.
       - name: Screenshots
         if: ${{ github.event.inputs.update == 'check' || github.event.inputs.update == 'manual' }}
         # Robolectric and Roborazzi are built for Java 21; the runner has one beside the 17 the app builds with.
-        run: ./gradlew testDebugUnitTest --tests 'com.notesis.LibraryScreenshotTest' --tests 'com.notesis.CanvasImagePreviewsTest' --tests 'com.notesis.DarkChromeScreenshotTest' --tests 'com.notesis.MaterialMotionUiTest' -Dorg.gradle.java.home="${JAVA_HOME_21_X64:-$JAVA_HOME}" --no-daemon
+        run: ./gradlew testDebugUnitTest --tests 'com.notesis.LibraryScreenshotTest' --tests 'com.notesis.CanvasImagePreviewsTest' --tests 'com.notesis.DarkChromeScreenshotTest' --tests 'com.notesis.MaterialMotionUiTest' --tests 'com.notesis.NativeBoundsTreeTest' --tests 'com.notesis.NativeEraseGeometryTest' --tests 'com.notesis.ContinuousEraseTest' --tests 'com.notesis.NativeContinuousEraseTest' --tests 'com.notesis.EraseTransactionTest' --tests 'com.notesis.LabStrokeProcessingTest' --tests 'com.notesis.LabPerformanceTest' -Pnotesis.hostNativeDir="$PWD/build/host-native" -Dorg.gradle.java.home="${JAVA_HOME_21_X64:-$JAVA_HOME}" --no-daemon
 
       - uses: actions/upload-artifact@v4
         if: ${{ github.event.inputs.update == 'check' }}
@@ -89,8 +89,11 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           CODE=$(grep -oP '^\s*versionCode = \K\d+' app/build.gradle.kts)
           echo "code=$CODE" >> "$GITHUB_OUTPUT"
-          echo "tag=v$VERSION-$CODE" >> "$GITHUB_OUTPUT"
+          echo "tag=lab-v$VERSION-$CODE-preview" >> "$GITHUB_OUTPUT"
           cp app/build/outputs/apk/release/app-release-unsigned.apk unsigned.apk
+          "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest application-id unsigned.apk | grep -Fx 'com.notesis.lab'
+          cp build/host-native/benchmark.txt Spatial-host-benchmark.txt
+          cp build/host-native/erase-comparison.txt Erase-host-comparison.txt
 
       - name: Sign the APK with the release key
         if: ${{ github.event.inputs.update != 'check' }}
@@ -136,9 +139,9 @@ jobs:
           "$BT/zipalign" -p -f 4 unsigned.apk "$KEYS/aligned.apk"
           "$BT/apksigner" sign "${FIRST[@]}" --v1-signing-enabled false --v2-signing-enabled false --v3-signing-enabled true \
             --next-signer "${NEW[@]}" --rotation-min-sdk-version 28 --lineage "$KEYS/lineage" \
-            --out "Notesis-${{ steps.name.outputs.version }}-${{ steps.name.outputs.code }}.apk" "$KEYS/aligned.apk"
+            --out "Notesis-Lab-${{ steps.name.outputs.version }}-${{ steps.name.outputs.code }}.apk" "$KEYS/aligned.apk"
           # It must be the key that was meant, and verify.
-          "$BT/apksigner" verify --verbose --print-certs Notesis-*.apk | tee "$KEYS/verify.txt"
+          "$BT/apksigner" verify --verbose --print-certs Notesis-Lab-*.apk | tee "$KEYS/verify.txt"
           WANT=$(tr -d ' \n:' < signing/CERT_SHA256 | tr 'A-F' 'a-f')
           grep -iq "certificate SHA-256 digest: $WANT" "$KEYS/verify.txt" || {
             echo "::error::The APK is signed by a different key than signing/CERT_SHA256 names."; exit 1; }
@@ -156,8 +159,8 @@ jobs:
         if: ${{ github.event.inputs.update != 'check' }}
         continue-on-error: true
         with:
-          name: Notesis-${{ steps.name.outputs.version }}-${{ steps.name.outputs.code }}
-          path: Notesis-*.apk
+          name: Notesis-Lab-${{ steps.name.outputs.version }}-${{ steps.name.outputs.code }}
+          path: Notesis-Lab-*.apk
           if-no-files-found: error
           retention-days: 3
 
@@ -170,9 +173,14 @@ jobs:
           # the default branch, and every release run from a work branch was
           # tagged at main instead of at its own code.
           target_commitish: ${{ github.sha }}
-          name: Notesis ${{ steps.name.outputs.version }} (${{ steps.name.outputs.code }})
+          name: Notesis Lab ${{ steps.name.outputs.version }} (${{ steps.name.outputs.code }})
+          prerelease: true
+          make_latest: false
           body_path: docs/releases/${{ steps.name.outputs.version }}.md
-          files: Notesis-*.apk
+          files: |
+            Notesis-Lab-*.apk
+            Spatial-host-benchmark.txt
+            Erase-host-comparison.txt
           fail_on_unmatched_files: true
 
       # The app looks for updates in a repository of its own that holds nothing
@@ -185,7 +193,12 @@ jobs:
           repository: whyitworks0415/Notesis-releases
           token: ${{ env.RELEASES_TOKEN }}
           tag_name: ${{ steps.name.outputs.tag }}
-          name: Notesis ${{ steps.name.outputs.version }} (${{ steps.name.outputs.code }})
+          name: Notesis Lab ${{ steps.name.outputs.version }} (${{ steps.name.outputs.code }})
+          prerelease: true
+          make_latest: false
           body_path: docs/releases/${{ steps.name.outputs.version }}.md
-          files: Notesis-*.apk
+          files: |
+            Notesis-Lab-*.apk
+            Spatial-host-benchmark.txt
+            Erase-host-comparison.txt
           fail_on_unmatched_files: true

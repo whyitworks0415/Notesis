@@ -5,13 +5,21 @@ import java.util.Locale
 /** Metrics collected only while the on-screen diagnostics panel is enabled. */
 internal enum class PerformanceMetric {
     WET_INK,
+    ERASE_WORK,
+    ERASE_APPLY,
     PEN_FINALIZE,
     MESH_REFINE,
     PDF_RENDER,
     CANVAS_DRAW,
     DENSE_DRAW,
-    /** Pen down to the first wet-ink frame handed to the display (submission, not photons). */
+    /** Pen down to first render completion (front buffer) or surface posting (compatibility path). */
     FIRST_INK,
+    /** Pen down to startStroke returning; not a rendering or presentation measurement. */
+    PEN_START_HANDLED,
+    /** Pen lift to the finished-stroke callback being entered. */
+    PEN_FINALIZE_WAIT,
+    /** Time inside a finished-stroke callback, once per batch. */
+    PEN_COMMIT_WORK,
     /** A pen MOVE event's timestamp to the end of its handling on the UI thread. */
     INPUT_HANDLED,
     /** A background page load or refine result being put into the UI, on the UI thread. */
@@ -249,14 +257,19 @@ class LatencyStats(private val capacity: Int = 512) {
         } ?: "allocation/GC -"
 
         return listOf(
-            metricLine("first ink (submitted)", PerformanceMetric.FIRST_INK),
+            metricLine("pen start handled", PerformanceMetric.PEN_START_HANDLED),
+            metricLine("first ink (render/post)", PerformanceMetric.FIRST_INK),
             metricLine("input handled", PerformanceMetric.INPUT_HANDLED),
-            metricLine("wet ink (submitted)", PerformanceMetric.WET_INK),
+            metricLine("wet ink (render/post)", PerformanceMetric.WET_INK),
             metricLine("compat geometry", PerformanceMetric.WET_GEOMETRY),
             metricLine("compat surface lock", PerformanceMetric.WET_SURFACE_LOCK),
             metricLine("compat draw+post", PerformanceMetric.WET_SURFACE_DRAW,
                 wetDirtyPixels.snapshot(1000.0)?.let { "area p50 %.0fk px p95 %.0fk px".format(it.p50, it.p95) }),
+            metricLine("partial erase work (frame)", PerformanceMetric.ERASE_WORK),
+            metricLine("partial erase applied (not pixels)", PerformanceMetric.ERASE_APPLY),
             metricLine("pen-up finalize", PerformanceMetric.PEN_FINALIZE),
+            metricLine("pen-up callback wait", PerformanceMetric.PEN_FINALIZE_WAIT),
+            metricLine("pen-up commit work (batch)", PerformanceMetric.PEN_COMMIT_WORK),
             "$frame   $missed",
             metricLine("page apply", PerformanceMetric.PAGE_APPLY),
             metricLine("save snapshot", PerformanceMetric.SAVE_SNAPSHOT),
@@ -391,3 +404,7 @@ private class LongRing(private val capacity: Int) {
         )
     }
 }
+
+/** Pooled Ink callbacks use Long.MIN_VALUE for unset fields. Never infer a missing render. */
+internal fun inkRenderLatencyNanos(event: Long, rendered: Long): Long? =
+    if (event < 0L || rendered <= event) null else rendered - event

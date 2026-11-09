@@ -200,7 +200,7 @@ internal object Measurements {
             if (view != null) sample(view)
             appendLine(conditions(view))
             appendLine("Thermal throttle on background work: ${if (StrokeBuilder.thermalThrottle) "yes" else "no"}")
-            appendLine("Times marked submitted end when the frame is handed to the display, not when it lights up.")
+            appendLine("Render/post timings end at draw completion or surface posting, not when pixels light up.")
             if (view == null || !view.latency.enabled) {
                 appendLine("Timings: not collected (turn on the latency overlay first)")
             } else {
@@ -233,9 +233,14 @@ private class DiagnosticSnapshot(
 )
 
 private val METRIC_LABELS = listOf(
-    PerformanceMetric.FIRST_INK to "First ink (pen down to frame submitted)",
+    PerformanceMetric.ERASE_WORK to "Partial erase work (frame)",
+    PerformanceMetric.ERASE_APPLY to "Partial erase applied (not pixels)",
+    PerformanceMetric.PEN_START_HANDLED to "Pen start handled (not rendered)",
+    PerformanceMetric.PEN_FINALIZE_WAIT to "Pen-up callback wait",
+    PerformanceMetric.PEN_COMMIT_WORK to "Pen-up commit work (per batch)",
+    PerformanceMetric.FIRST_INK to "First ink (render complete / surface posted)",
     PerformanceMetric.INPUT_HANDLED to "Input handled (event to end of handling)",
-    PerformanceMetric.WET_INK to "Wet ink (event to frame submitted)",
+    PerformanceMetric.WET_INK to "Wet ink (render complete / surface posted)",
     PerformanceMetric.WET_GEOMETRY to "Compatible ink: geometry update",
     PerformanceMetric.WET_SURFACE_LOCK to "Compatible ink: waiting for the surface",
     PerformanceMetric.WET_SURFACE_DRAW to "Compatible ink: draw and post",

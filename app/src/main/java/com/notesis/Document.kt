@@ -2827,10 +2827,12 @@ internal object StrokeBuilder {
         // two in battery saver, the lot when nothing is going on.
         val width = inkBuildWidth(threads, InteractionGovernor.budget(threads), onScreen.get() == true, INK_THROTTLED_SLICES)
         val slices = inkBuildSlices(width, records.size, penActive || thermalThrottle || width < threads)
-        if (slices <= 1) return records.mapNotNull(::build)
+        val cancelled = java.util.concurrent.atomic.AtomicBoolean(false)
+        val wanted = { !cancelled.get() && !Thread.currentThread().isInterrupted }
+        if (slices <= 1) return mapWhileWanted(records, wanted, ::build)
         val per = (records.size + slices - 1) / slices
         val futures = records.chunked(per).map { slice ->
-            pool.submit(java.util.concurrent.Callable { slice.mapNotNull(::build) })
+            pool.submit(java.util.concurrent.Callable { mapWhileWanted(slice, wanted, ::build) })
         }
         val built = ArrayList<Stroke>(records.size)
         for (future in futures) {
@@ -2841,9 +2843,12 @@ internal object StrokeBuilder {
             } catch (_: InterruptedException) {
                 // Keep the flag for the caller, which checks it to drop the load.
                 Thread.currentThread().interrupt()
+                cancelled.set(true)
                 futures.forEach { it.cancel(false) }
                 break
             } catch (_: Exception) {
+                cancelled.set(true)
+                futures.forEach { it.cancel(false) }
                 break
             }
             built += part

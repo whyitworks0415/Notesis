@@ -498,7 +498,12 @@ internal fun AppearanceSettings(
                 AppearanceGroup.ICONS -> IconsGroup()
                 AppearanceGroup.MOTION -> MotionGroup()
                 AppearanceGroup.PANELS -> PanelsGroup(skin, settings, onChange)
-                AppearanceGroup.GLASS -> GlassGroup(skin, settings, onChange, onSkin)
+                AppearanceGroup.GLASS -> {
+                    SettingsToggle("Efficient glass", LabPerformance.efficientGlass,
+                        { LabPerformance.setEfficientGlass(context, it) },
+                        hint = "Uses one iOS glass pass and less surface blur. Off keeps the original glass.")
+                    GlassGroup(skin, settings, onChange, onSkin)
+                }
                 AppearanceGroup.COLORS -> ColorsGroup(skin, settings, onChange)
             }
             HorizontalDivider(Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)

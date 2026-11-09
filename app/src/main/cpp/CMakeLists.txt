@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(notesis_spatial LANGUAGES CXX)
+add_library(notesis_spatial SHARED spatial_index.cpp erase_geometry.cpp continuous_erase.cpp spatial_jni.cpp)
+target_compile_features(notesis_spatial PRIVATE cxx_std_17)
+target_compile_options(notesis_spatial PRIVATE -O3 -Wall -Wextra -Werror -ffp-contract=off -fvisibility=hidden)
+target_link_options(notesis_spatial PRIVATE "-Wl,-z,max-page-size=16384")

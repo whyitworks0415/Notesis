@@ -330,6 +330,16 @@ private fun Modifier.iosGlass(
             opacity = opacity,
         ))
     }
+    if (LabPerformance.efficientGlass) {
+        // One sampling/lens pass instead of a clear pass followed by a frosted pass.
+        return drawBackdrop(backdrop = backdrop, shape = { shape }, effects = {
+            blur(labBlurDp(g.frost, true).dp.toPx() * amount)
+            glassLens(this, 1f, rimLight)
+        }, highlight = null, shadow = if (shadows && !dark) {
+            { Shadow(radius = 10.dp, offset = DpOffset(0.dp, 7.dp), color = Color.Black.copy(alpha = 4f / 255f), alpha = amount) }
+        } else null, exportedBackdrop = exportedBackdrop, onDrawSurface = { drawRect(body) })
+            .then(if (rim && g.rimShade > 0f) Modifier.rimShade(shape, g.rimShade * amount, dark) else Modifier)
+    }
     val base = drawBackdrop(
         backdrop = backdrop,
         shape = { shape },
