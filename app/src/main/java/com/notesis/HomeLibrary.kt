@@ -377,6 +377,9 @@ internal fun FolderTile(
         modifier
             .graphicsLayer { scaleX = press; scaleY = press }
             .then(if (glass) Modifier.cardGlass(Ui.Shape.card)
+                else if (LocalSkin.current == Skin.MATERIAL) Modifier
+                    .background(MaterialTheme.colorScheme.surfaceContainerLowest, Ui.Shape.card)
+                    .border(0.75.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f), Ui.Shape.card)
                 else Modifier.background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f), Ui.Shape.card))
             .clip(Ui.Shape.card)
             .then(if (selected) Modifier.border(2.5.dp, primary, Ui.Shape.card) else Modifier),

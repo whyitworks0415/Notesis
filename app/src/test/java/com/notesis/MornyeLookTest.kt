@@ -126,12 +126,15 @@ class MornyeLookTest {
         val ios = SkinSettings(liquidStyle = LiquidStyle.IOS)
         assertEquals(MornyeAccent.BLUE, ios.ios.accent)
         val scheme = lookScheme(null, Skin.LIQUID_GLASS, ios)
-        assertEquals(MornyeAccent.BLUE.light, scheme.primary.toArgb())
+        assertTrue(chromeContrast(scheme.primary, scheme.surfaceContainerHighest) >= 5.49f)
+        assertTrue(scheme.primary.blue > scheme.primary.red)
         assertEquals(Color(0xFFF2F2F7), scheme.surfaceContainer)
         assertEquals(true, ios.smoothCorners)
         assertEquals(false, SkinSettings().smoothCorners)
         val green = ios.copy(ios = ios.ios.copy(accent = MornyeAccent.GREEN))
-        assertEquals(MornyeAccent.GREEN.light, lookScheme(null, Skin.LIQUID_GLASS, green).primary.toArgb())
+        val greenScheme = lookScheme(null, Skin.LIQUID_GLASS, green)
+        assertTrue(chromeContrast(greenScheme.primary, greenScheme.surfaceContainerHighest) >= 5.49f)
+        assertTrue(greenScheme.primary.green > greenScheme.primary.red)
         assertEquals(green.ios, IosGlass.fromJson(green.ios.toJson()))
     }
 

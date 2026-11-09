@@ -365,7 +365,7 @@ private fun TimerTab() {
                     else -> " "
                 },
                 style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.outline,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
@@ -451,7 +451,7 @@ private fun StopwatchTab() {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Lap ${index + 1}", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                     Text(formatStopwatch(split), style = MaterialTheme.typography.bodyMedium.merge(TabularDigits),
-                        color = MaterialTheme.colorScheme.outline)
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.width(16.dp))
                     Text(formatStopwatch(laps[index]), style = MaterialTheme.typography.bodyMedium.merge(TabularDigits))
                 }
@@ -469,10 +469,10 @@ private fun AlarmTab() {
     Text(
         "Alarms make no sound. At the set time they show on screen and stay until you tap OK.",
         style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.outline,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     if (clock.alarms.isEmpty() && !adding) {
-        Text("No alarms", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
+        Text("No alarms", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     clock.alarms.forEach { alarm -> AlarmRow(alarm, clock.now) }
     if (adding) {
@@ -495,7 +495,7 @@ private fun AlarmRow(alarm: ClockAlarm, now: Long) {
                 (if (alarm.daily) "Daily" else "Once") +
                     if (alarm.enabled) " · " + untilText(alarm.nextAt - now) else "",
                 style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.outline,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         ClockChip("Daily", alarm.daily) { clock.setAlarmDaily(alarm.id, !alarm.daily) }
@@ -550,7 +550,7 @@ private fun StudyTab() {
         Text(
             if (clock.dailyReset) "Study time today" else "Total study time",
             style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.outline,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(formatElapsed(clock.studyShown(now)), style = MaterialTheme.typography.displayMedium.merge(TabularDigits))
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -570,7 +570,7 @@ private fun StudyTab() {
                     else -> "Stopped"
                 },
                 style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.outline,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
@@ -638,7 +638,7 @@ private fun WeekBars(days: Map<String, Long>, now: Long) {
                 Text(
                     if (value > 0) formatStudyShort(value) else "",
                     style = MaterialTheme.typography.labelSmall.merge(TabularDigits),
-                    color = MaterialTheme.colorScheme.outline,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(4.dp))
                 Box(
@@ -652,7 +652,7 @@ private fun WeekBars(days: Map<String, Long>, now: Long) {
                 Text(
                     day.dayOfWeek.getDisplayName(DateTextStyle.SHORT, Locale.ENGLISH),
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (day == today) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline,
+                    color = if (day == today) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
@@ -718,7 +718,7 @@ internal fun SettingRow(label: String, hint: String, checked: Boolean, onChange:
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(label, style = MaterialTheme.typography.bodyMedium)
-            Text(hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+            Text(hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Spacer(Modifier.width(10.dp))
         SkinSwitch(checked = checked, onCheckedChange = onChange)

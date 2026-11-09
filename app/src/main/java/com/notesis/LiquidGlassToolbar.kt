@@ -207,13 +207,13 @@ internal fun ToolbarOrientationChoice(sizeLevel: Int, inMenu: Boolean = false) {
     }
     if (sizeLevel == 0 && ToolbarOrientation.vertical) {
         Text("1/4 is the whole bar, with its top row and pen row, and always runs across. 2/4 to 4/4 run down the side.",
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     if (inMenu) {
         Text(
             if (ToolbarOrientation.vertical) "Drag the round button up or down for a shorter or longer bar. Let go across the screen to put the bar on that side, or in the middle to put it back across the top."
             else "Drag the round button left for a shorter bar, right for a longer one. Carry it to the screen's edge to stand the bar down that side.",
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         return
     }
     // How big the bars are drawn, with their buttons and the way back.

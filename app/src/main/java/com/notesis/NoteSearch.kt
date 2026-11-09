@@ -330,7 +330,7 @@ internal fun NoteSearchPanel(
                     else -> "$count match" + (if (count == 1) "" else "es") + if (count >= MAX_SEARCH_HITS) "+" else ""
                 },
                 style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.outline,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 2,
                 modifier = Modifier.weight(1f),
             )
@@ -366,7 +366,7 @@ internal fun NoteSearchPanel(
                     Text(
                         "Page ${hit.pageIndex + 1} · ${hit.source.label}",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.outline,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
                         emphasised(hit),

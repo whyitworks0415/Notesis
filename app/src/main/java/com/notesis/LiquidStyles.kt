@@ -260,7 +260,7 @@ internal fun Modifier.styledLiquidGlass(
     amount: Float = 1f,
 ): Modifier = when (style) {
     LiquidStyle.IOS -> iosGlass(settings.ios, if (settings.ios.smoothCorners) mornyeSquircle(shape) else shape,
-        backdrop, dark, shadows, rim, exportedBackdrop, amount)
+        backdrop, panel, dark, shadows, rim, exportedBackdrop, amount)
     LiquidStyle.MORNYE -> mornyeGlass(settings.mornye, shape, backdrop, panel, dark, shadows, rim, exportedBackdrop, amount)
     LiquidStyle.NOTESIS -> this
 }
@@ -293,6 +293,7 @@ private fun Modifier.iosGlass(
     g: IosGlass,
     shape: Shape,
     backdrop: Backdrop,
+    panel: Boolean,
     dark: Boolean,
     shadows: Boolean,
     rim: Boolean,
@@ -301,7 +302,9 @@ private fun Modifier.iosGlass(
 ): Modifier {
     val saturation = 1f + ((if (dark) g.saturation * IosGlass.DARK_SATURATION else g.saturation) - 1f) * amount
     val frostOpacity = ((if (dark) g.frostOpacity * IosGlass.DARK_FROST else g.frostOpacity) * amount).coerceIn(0f, 1f)
-    val body = if (dark) Color.White.copy(alpha = (g.bodyOpacity * IosGlass.DARK_BODY * amount).coerceIn(0f, 1f))
+    // A white-only dark preset washed out over white paper. Keep a charcoal
+    // reading floor; the existing optical passes still draw the curved rim.
+    val body = if (dark) iosDarkReadingMaterial(panel, amount)
         else Color(0xFFF8F8F8).copy(alpha = (g.bodyOpacity * amount).coerceIn(0f, 1f))
     val rimLight = if (rim) (if (dark) g.rimLight * IosGlass.DARK_RIM_LIGHT else g.rimLight) * amount else 0f
     // ios27Light lights from the top (pi / 2), ios27Dark from the bottom; the

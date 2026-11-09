@@ -7,6 +7,7 @@ import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
@@ -497,25 +498,29 @@ private fun SettingsPage.icon(): ImageVector = when (this) {
 }
 
 @Composable
-private fun SettingsNavRow(page: SettingsPage, onClick: () -> Unit) {
+internal fun SettingsNavRow(page: SettingsPage, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     Row(
         Modifier
             .fillMaxWidth()
             .heightIn(min = 60.dp)
             .clip(RoundedCornerShape(nestedCorner(Ui.Corner.control)))
-            .background(scheme.onSurface.copy(alpha = 0.05f))
+            .background(scheme.surfaceContainerHigh)
+            .border(0.75.dp, scheme.outlineVariant.copy(alpha = 0.5f), RoundedCornerShape(nestedCorner(Ui.Corner.control)))
             .clickable(role = Role.Button, onClick = onClick)
             .semantics(mergeDescendants = true) {}
             .padding(horizontal = Ui.Space.l, vertical = Ui.Space.m),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AppIcon(page.icon(), null, Modifier.size(Ui.Icon.regular))
+        Box(Modifier.size(40.dp).clip(Ui.Shape.chip).background(scheme.primary.copy(alpha = 0.10f)),
+            contentAlignment = Alignment.Center) {
+            AppIcon(page.icon(), null, Modifier.size(Ui.Icon.small), tint = scheme.primary)
+        }
         Spacer(Modifier.width(Ui.Space.m))
         Column(Modifier.weight(1f)) {
             Text(page.title, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (page.subtitle.isNotEmpty()) Text(page.subtitle, style = MaterialTheme.typography.bodySmall,
-                color = scheme.outline, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                color = scheme.onSurfaceVariant, maxLines = 3, overflow = TextOverflow.Ellipsis)
         }
         Icon(Reicons.ChevronRight, contentDescription = null, modifier = Modifier.size(Ui.Icon.small), tint = scheme.outline)
     }
@@ -535,7 +540,7 @@ internal fun SettingsSectionHeader(text: String, modifier: Modifier = Modifier) 
 
 @Composable
 internal fun SettingsNote(text: String, modifier: Modifier = Modifier) {
-    Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline, modifier = modifier)
+    Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = modifier)
 }
 
 /** A rounded block that groups related settings. */
@@ -548,7 +553,8 @@ internal fun SettingsCard(modifier: Modifier = Modifier, content: @Composable Co
         modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(corner))
-            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .border(0.75.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), RoundedCornerShape(corner))
             .padding(Ui.Space.l),
         verticalArrangement = Arrangement.spacedBy(Ui.Space.s),
     ) {

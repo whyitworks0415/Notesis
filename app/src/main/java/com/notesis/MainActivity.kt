@@ -338,6 +338,7 @@ class MainActivity : ComponentActivity() {
             // knowing a skin exists.
             MaterialTheme(
                 colorScheme = skinColors(scheme, skin, look),
+                typography = remember { chromeTypography() },
                 shapes = skinShapes(skin),
             ) {
             ProvideSkin(skin, look) {
@@ -2509,7 +2510,7 @@ private fun SearchHitRow(note: NoteMeta, hit: PageHit, onOpen: () -> Unit) {
             Text(
                 hit.snippet,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -2820,7 +2821,7 @@ private fun TrashDialog(store: NoteStore, onChanged: () -> Unit, onDismiss: () -
         title = { Text("Trash") },
         text = {
             if (trashed.isEmpty()) {
-                Text("Trash is empty", color = MaterialTheme.colorScheme.outline)
+                Text("Trash is empty", color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else LazyColumn(Modifier.heightIn(max = 420.dp)) {
                 items(trashed, key = { it.id }) { note ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2829,7 +2830,7 @@ private fun TrashDialog(store: NoteStore, onChanged: () -> Unit, onDismiss: () -
                             Text(
                                 "Deleted ${dateFormat.format(Date(note.trashedAt))} · ${countNoun(note.pageCount, "page")}",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.outline,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                         TextButton(onClick = {
@@ -2917,7 +2918,9 @@ private fun NoteCard(
         modifier = Modifier
             .graphicsLayer { scaleX = sink; scaleY = sink }
             .then(if (glass) Modifier.cardGlass(cardShape) else Modifier)
-            .then(if (selected) Modifier.border(2.5.dp, MaterialTheme.colorScheme.primary, cardShape) else Modifier),
+            .then(if (selected) Modifier.border(2.5.dp, MaterialTheme.colorScheme.primary, cardShape)
+                else if (skin == Skin.MATERIAL) Modifier.border(0.75.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f), cardShape)
+                else Modifier),
         onClick = onOpen,
         shape = cardShape,
         // No shadow on glass. A shadow is drawn under the whole card, not only
@@ -2932,7 +2935,8 @@ private fun NoteCard(
         elevation = if (skin == Skin.MATERIAL) CardDefaults.cardElevation(defaultElevation = 1.dp)
             else CardDefaults.cardElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
         colors = if (skin == Skin.MATERIAL) {
-            CardDefaults.cardColors()
+            CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                contentColor = MaterialTheme.colorScheme.onSurface)
         } else if (glass) {
             CardDefaults.cardColors(containerColor = Color.Transparent)
         } else if (skin.isRefractive) {
@@ -3883,7 +3887,7 @@ private fun CaptureDialog(
                     )
                     captureLimitMessage(it.limit, BitmapBudget.MAX_SIDE, PdfSource.cropSideLimit())?.let { note ->
                         Text(note, style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.outline)
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
                 if (busy) {
@@ -4007,7 +4011,7 @@ private fun NameDialog(
                 Text(
                     if (kind == NoteKind.MARKDOWN) "Saved as a note.md file that Obsidian can open." else "A paper notebook for pens and text boxes.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.outline,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (kind == NoteKind.INK) {
                     Spacer(Modifier.height(12.dp))
@@ -6223,7 +6227,7 @@ private fun NoteScreen(
                 PanelSectionHeader("Recordings")
                 if (recordings.isEmpty()) {
                     Text("None yet. What you record is kept with this note.",
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 for (file in recordings) Row(verticalAlignment = Alignment.CenterVertically) {
                     val label = runCatching {
@@ -7673,7 +7677,7 @@ private fun StudyBar(
                     TextButton(onClick = onShow) { Text("Show answer") }
                 } else {
                     TextButton(onClick = { onAnswer(true) }) {
-                        Text("Correct", color = Color(0xFF2E7D32))
+                        Text("Correct", color = MaterialTheme.colorScheme.primary)
                     }
                     TextButton(onClick = { onAnswer(false) }) {
                         Text("Wrong", color = MaterialTheme.colorScheme.error)
@@ -9362,7 +9366,7 @@ private fun ToolButton(
 ) {
     val shape = CircleShape
     val contentColor = when {
-        selected && tint != null -> tint
+        selected && tint != null -> readableChrome(tint, MaterialTheme.colorScheme.surfaceContainerHighest)
         selected -> MaterialTheme.colorScheme.primary
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }

@@ -388,7 +388,7 @@ internal fun UpdateDialog(
                     "Installed ${AppUpdate.installedName(context)} · New ${release.versionName} (${release.versionCode})" +
                         if (release.apkSize > 0) " · %.1fMB".format(release.apkSize / 1_048_576f) else "",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.outline,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (release.notes.isNotBlank()) {
                     Text(
@@ -413,7 +413,7 @@ internal fun UpdateDialog(
                 Text(
                     "Your notes and settings stay as they are. Tap Update once on the install screen.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.outline,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         },
@@ -496,14 +496,14 @@ internal fun AppVersionSection(onLicenses: () -> Unit) {
         Text(
             "Beta tester: test builds released as manual updates are never announced; they wait here until you update.",
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.outline,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         TextButton(onClick = { beta = false; AppUpdate.setBeta(context, false) }) { Text("Stop getting test builds") }
     } else {
         Text(
             "Updates are announced when the app opens. With a developer code this copy also gets the test builds released as manual updates.",
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.outline,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         TextButton(onClick = { askingCode = true }) { Text("Enter developer code") }
     }

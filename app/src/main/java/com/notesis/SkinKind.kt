@@ -14,7 +14,7 @@ package com.notesis
  * LIQUID_GLASS on disk, from when it was called the glass bar.
  */
 enum class Skin(val label: String, val blurb: String) {
-    MATERIAL("Material", "Material 3 as Mornye draws it: wallpaper colours, rounded symbols and springy motion."),
+    MATERIAL("Material", "Layered tonal surfaces, crisp typography and responsive Material controls."),
     GLASSMORPHISM("Glassmorphism", "Frosted glass. Blurs what is behind it, evenly translucent."),
     LIQUID_GLASS(
         "Liquid glass",
