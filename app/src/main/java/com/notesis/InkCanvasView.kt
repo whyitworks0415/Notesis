@@ -4229,7 +4229,8 @@ class InkCanvasView @JvmOverloads constructor(
             ?: run {
                 // Normally turned into standard actions by the activity
                 // already, which marks the gesture as the button's.
-                samsungSideButton = SamsungSidePen.gesture
+                // Replayed input has no hardware button; an earlier S Pen gesture can leave this mark set.
+                samsungSideButton = !dispatchingBenchmark && SamsungSidePen.gesture
                 return onTouch(event)
             }
         samsungSideButton = true
