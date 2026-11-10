@@ -14,8 +14,8 @@ import kotlin.math.sin
  * by feel.
  *
  * It writes [WRITE_STROKES] lines of loops on the page in view by sending the
- * canvas the pen events a hand would, at a pen's rate, and takes them all back
- * again; then lets the page glide down and up as a flick does. While it runs
+ * canvas the pen events a hand would, at a pen's rate, without saving them
+ * or editing the note's history; then lets the page glide down and up as a flick does. While it runs
  * the canvas's own timings are collected, and the report is those timings -
  * the stages of wet ink, the frames, the times notes took to open - with the
  * device and the Lab's switches.
@@ -32,6 +32,9 @@ internal class LabBenchmark(private val view: InkCanvasView) {
     })
     private val coordinates = arrayOf(MotionEvent.PointerCoords())
     private var cancelled = false
+    private var wasMeasuring = false
+    private var onDone: ((String) -> Unit)? = null
+    private var activeDown = 0L
 
     /** Runs the whole script and hands [onDone] the report. The UI thread only. */
     fun run(zoomPercent: Int, onDone: (String) -> Unit) {
@@ -39,51 +42,78 @@ internal class LabBenchmark(private val view: InkCanvasView) {
             onDone("The page is not laid out yet; open a note and try again.")
             return
         }
-        val wasMeasuring = view.latencyMonitoringEnabled
+        if (!view.beginBenchmarkInk()) {
+            onDone("The page is busy or not ready for pen input; wait for loading and try again.")
+            return
+        }
+        this.onDone = onDone
+        wasMeasuring = view.latencyMonitoringEnabled
         view.latencyMonitoringEnabled = true
         view.latency.reset()
-        // A selection left on the page would be picked up and moved by the first stroke.
-        view.clearLassoSelection()
-        val undoBefore = view.undoDepth
-        view.benchWriting = true
         writeStrokes(0) {
             // The last stroke is committed a moment after the pen lifts.
             main.postDelayed({
-                Measurements.sample(view)
-                val writing = view.latency.render(view.strokeCount())
-                val written = (view.undoDepth - undoBefore).coerceIn(0, WRITE_STROKES)
-                repeat(written) { if (view.canUndo()) view.undo() }
-                view.benchWriting = false
-                view.latency.reset()
-                glide(-GLIDE_PX_PER_S) {
-                    glide(GLIDE_PX_PER_S) {
-                        main.postDelayed({
-                            Measurements.sample(view)
-                            val scrolling = view.latency.render(view.strokeCount())
-                            val report = benchmarkReport(
-                                header = Measurements.conditions(view) + " · zoom $zoomPercent%",
-                                device = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} · Android " +
-                                    "${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})",
-                                app = appVersion(),
-                                switches = "performance hint ${view.writingBoostStatus} · own buffers ${view.nativePresentStatus} · " +
-                                    "efficient glass ${if (LabPerformance.efficientGlass) "on" else "off"}",
-                                written = written, writing = writing, scrolling = scrolling,
-                                opens = NoteOpenClock.render(),
-                            )
-                            view.latencyMonitoringEnabled = wasMeasuring
-                            if (!cancelled) onDone(report)
-                        }, SETTLE_MS)
+                awaitCommits {
+                    Measurements.sample(view)
+                    val writing = view.latency.render(view.strokeCount())
+                    val written = view.benchmarkStrokeCount
+                    view.endBenchmarkInk()
+                    view.latency.reset()
+                    glide(-GLIDE_PX_PER_S) {
+                        glide(GLIDE_PX_PER_S) {
+                            main.postDelayed({
+                                Measurements.sample(view)
+                                val scrolling = view.latency.render(view.strokeCount())
+                                val report = benchmarkReport(
+                                    header = Measurements.conditions(view) + " · zoom $zoomPercent%",
+                                    device = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} · Android " +
+                                        "${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})",
+                                    app = appVersion(),
+                                    switches = "performance hint ${view.writingBoostStatus} · own buffers ${view.nativePresentStatus} · " +
+                                        "efficient glass ${if (LabPerformance.efficientGlass) "on" else "off"}",
+                                    written = written, writing = writing, scrolling = scrolling,
+                                    opens = NoteOpenClock.render(),
+                                )
+                                finish(report)
+                            }, SETTLE_MS)
+                        }
                     }
                 }
             }, COMMIT_WAIT_MS)
         }
     }
 
-    /** Stops handing anything on; a stroke in flight still finishes and is taken back by the host's undo. */
+    /** Discards temporary ink, including any commits that arrive after cancellation. */
     fun cancel() {
+        if (cancelled || onDone == null) return
+        cancelled = true
+        if (activeDown != 0L) send(MotionEvent.ACTION_CANCEL, activeDown, SystemClock.uptimeMillis(),
+            coordinates[0].x, coordinates[0].y, 0f)
+        finish("Benchmark cancelled; temporary ink was discarded and the note's edit history was preserved.")
+    }
+
+    private fun finish(report: String) {
+        val done = onDone ?: return
+        onDone = null
         cancelled = true
         main.removeCallbacksAndMessages(null)
-        view.benchWriting = false
+        view.endBenchmarkInk()
+        view.stopBenchmarkGlide()
+        view.latencyMonitoringEnabled = wasMeasuring
+        done(report)
+    }
+
+    private fun awaitCommits(done: () -> Unit) {
+        val started = SystemClock.uptimeMillis()
+        val poll = object : Runnable {
+            override fun run() {
+                if (cancelled) return
+                if (view.benchmarkCommitsPending && SystemClock.uptimeMillis() - started < COMMIT_LIMIT_MS)
+                    main.postDelayed(this, 50L)
+                else done()
+            }
+        }
+        poll.run()
     }
 
     private fun appVersion(): String = runCatching {
@@ -126,6 +156,7 @@ internal class LabBenchmark(private val view: InkCanvasView) {
     }
 
     private fun send(action: Int, downTime: Long, eventTime: Long, x: Float, y: Float, t: Float) {
+        if (action == MotionEvent.ACTION_DOWN) activeDown = downTime
         coordinates[0].apply {
             this.x = x
             this.y = y
@@ -136,9 +167,10 @@ internal class LabBenchmark(private val view: InkCanvasView) {
         val event = MotionEvent.obtain(downTime, eventTime, action, 1, properties, coordinates, 0, 0, 1f, 1f,
             stylusDevice, 0, InputDevice.SOURCE_STYLUS or InputDevice.SOURCE_TOUCHSCREEN, 0)
         try {
-            view.dispatchTouchEvent(event)
+            if (!view.dispatchBenchmarkEvent(event) && !cancelled) cancel()
         } finally {
             event.recycle()
+            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) activeDown = 0L
         }
     }
 
@@ -166,6 +198,7 @@ internal class LabBenchmark(private val view: InkCanvasView) {
         private const val BETWEEN_STROKES_MS = 140L
         /** Past the pause after writing, so the stroke has been committed and the page drawn. */
         private const val COMMIT_WAIT_MS = 1500L
+        private const val COMMIT_LIMIT_MS = 5000L
         private const val SETTLE_MS = 600L
         private const val GLIDE_PX_PER_S = 9000f
         private const val GLIDE_LIMIT_MS = 4000L
@@ -203,7 +236,8 @@ internal fun benchmarkReport(
     appendLine(switches)
     appendLine("Scripted pen and glide, sent by the app: not the digitizer's path, and not time to light.")
     appendLine()
-    appendLine("== Writing: $written of ${LabBenchmark.WRITE_STROKES} strokes written and taken back")
+    appendLine("== Writing: $written of ${LabBenchmark.WRITE_STROKES} strokes rendered as temporary ink and discarded")
+    appendLine("Temporary ink bypasses document saving and undo history; their costs are not measured.")
     appendLine(writing)
     appendLine()
     appendLine("== Scrolling: one glide down, one up")

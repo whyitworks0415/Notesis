@@ -387,15 +387,14 @@ internal fun DiagnosticsSettings(
     }
     SettingsCard {
         SettingsSectionHeader("Benchmark (Lab)")
-        SettingsNote("Writes 30 lines of loops on the page in view with a scripted pen and takes them back, " +
-            "then lets the page glide down and up, and reports the timings. Use a note you do not mind it " +
-            "writing on: if it is interrupted, Undo removes what is left. Run it the same way on each build " +
-            "or switch you want to compare.")
+        SettingsNote("Shows 30 temporary lines with a scripted pen, clears them, then glides the page down and up. " +
+            "Your saved ink and undo history stay unchanged, including on cancellation. Saving and edit-history " +
+            "costs are excluded. Run it the same way on each build or switch you want to compare.")
         TextButton(
             onClick = { onBenchmark?.invoke() },
-            enabled = onBenchmark != null && view != null && !benchmarkRunning,
+            enabled = onBenchmark != null && view != null,
             modifier = Modifier.heightIn(min = Ui.Size.touchCompact),
-        ) { Text(if (benchmarkRunning) "Running…" else "Run benchmark") }
+        ) { Text(if (benchmarkRunning) "Stop benchmark" else "Run benchmark") }
         SettingsSectionHeader("Notes opened")
         SettingsNote("From the tap on a note to its first frame, to ink on the page (a picture kept from last " +
             "time, or the real ink), and to the real ink being built. To the draw call, not to light.")

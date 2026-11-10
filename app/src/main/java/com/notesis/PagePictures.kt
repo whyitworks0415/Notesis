@@ -35,18 +35,17 @@ internal fun pageFileStamp(length: Long, modified: Long): String = "$length:$mod
 
 /** A picture's width in pixels for a view [viewWidth] wide: the screen's, within a memory budget. */
 internal fun pagePictureWidth(viewWidth: Int, pageWidth: Float, pageHeight: Float): Int {
-    if (viewWidth <= 0 || pageWidth <= 0f || pageHeight <= 0f) return 0
-    var width = viewWidth.coerceAtMost(PAGE_PICTURE_MAX_WIDTH)
-    // Tall pages are held to the same number of pixels as an A4 page at full width.
-    val pixels = width.toLong() * (width * pageHeight / pageWidth).toLong()
-    if (pixels > PAGE_PICTURE_MAX_PIXELS) {
-        width = kotlin.math.sqrt(PAGE_PICTURE_MAX_PIXELS * pageWidth.toDouble() / pageHeight).toInt()
-    }
-    return width.coerceAtLeast(1)
+    if (viewWidth <= 0 || !pageWidth.isFinite() || !pageHeight.isFinite() || pageWidth <= 0f || pageHeight <= 0f) return 0
+    val ratio = pageHeight.toDouble() / pageWidth
+    // Double arithmetic avoids overflowing Float and Long for imported page dimensions.
+    val withinPixels = kotlin.math.sqrt(PAGE_PICTURE_MAX_PIXELS / ratio).toInt()
+    val withinHeight = (PAGE_PICTURE_MAX_HEIGHT / ratio).toInt()
+    return minOf(viewWidth, PAGE_PICTURE_MAX_WIDTH, withinPixels, withinHeight).coerceAtLeast(0)
 }
 
 internal const val PAGE_PICTURE_MIN_STROKES = 40
 internal const val PAGE_PICTURE_MAX_WIDTH = 1400
+internal const val PAGE_PICTURE_MAX_HEIGHT = 8192
 internal const val PAGE_PICTURE_MAX_PIXELS = 3_200_000L
 /** How long a picture stays under the real ink once that is in, while its tiles are still being recorded. */
 internal const val PAGE_PICTURE_GRACE_MS = 250L

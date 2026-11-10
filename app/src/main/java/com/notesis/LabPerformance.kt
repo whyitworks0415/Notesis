@@ -57,20 +57,36 @@ internal object LabPerformance {
  * A crash anywhere counts, native or not: this is a safe mode, not a verdict.
  */
 internal object LabGuard {
+    private val run = LabRunGuard()
+    val uncleanRuns: Int get() = run.uncleanRuns
+    val nativeOff: Boolean get() = run.nativeOff
+    fun load(context: Context) = run.load(context)
+    fun entered(context: Context) = run.entered(context)
+    fun left(context: Context) = run.left(context)
+    fun reset(context: Context) = run.reset(context)
+}
+
+/** One instance per process; recreating an Activity is not another process start. */
+internal class LabRunGuard {
+    private var loaded = false
     var uncleanRuns by mutableStateOf(0)
         private set
 
     /** Native code is left out for this run. */
-    val nativeOff: Boolean get() = nativeHeldBack(uncleanRuns)
+    private var heldForRun by mutableStateOf(false)
+    val nativeOff: Boolean get() = heldForRun
 
     private fun prefs(context: Context) = context.getSharedPreferences("lab", Context.MODE_PRIVATE)
 
     /** The app is starting: read how the last runs ended. Before any native library is loaded. */
     fun load(context: Context) {
+        if (loaded) return
+        loaded = true
         val p = prefs(context)
         uncleanRuns = nextUncleanRuns(p.getInt(KEY_UNCLEAN, 0), p.getBoolean(KEY_OPEN, false))
+        heldForRun = nativeHeldBack(uncleanRuns)
         // Written before anything else can go wrong; the count stands if this run dies too.
-        p.edit().putInt(KEY_UNCLEAN, uncleanRuns).putBoolean(KEY_OPEN, false).commit()
+        p.edit().putInt(KEY_UNCLEAN, uncleanRuns).putBoolean(KEY_OPEN, true).commit()
     }
 
     /** In front of the reader: a run that ends from here without [left] did not end cleanly. */
@@ -94,13 +110,15 @@ internal object LabGuard {
         prefs(context).edit().putInt(KEY_UNCLEAN, 0).putBoolean(KEY_OPEN, false).apply()
     }
 
-    private const val KEY_OPEN = "sessionOpen"
-    private const val KEY_UNCLEAN = "uncleanRuns"
+    private companion object {
+        const val KEY_OPEN = "sessionOpen"
+        const val KEY_UNCLEAN = "uncleanRuns"
+    }
 }
 
 /** How many runs in a row ended without leaving cleanly, given the count before and how the last one ended. */
 internal fun nextUncleanRuns(before: Int, lastRunLeftOpen: Boolean): Int =
-    if (lastRunLeftOpen) (before.coerceAtLeast(0) + 1).coerceAtMost(99) else before.coerceAtLeast(0)
+    if (lastRunLeftOpen) (before.coerceIn(0, 99) + 1).coerceAtMost(99) else before.coerceIn(0, 99)
 
 /** Whether native code stays unloaded after [uncleanRuns] such runs. */
 internal fun nativeHeldBack(uncleanRuns: Int): Boolean = uncleanRuns >= UNCLEAN_LIMIT

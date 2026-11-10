@@ -29,6 +29,8 @@ class LabOpenAndBenchTest {
         assertTrue(width.toLong() * (width * 8f).toLong() <= PAGE_PICTURE_MAX_PIXELS + width * 8L)
         assertEquals(0, pagePictureWidth(0, 1240f, 1754f))
         assertEquals(0, pagePictureWidth(1200, 0f, 1754f))
+        assertEquals(0, pagePictureWidth(1200, Float.NaN, 1754f))
+        assertEquals(0, pagePictureWidth(1200, 1240f, Float.POSITIVE_INFINITY))
     }
 
     @Test fun `a kept picture is refused once the page's file is not what it was`() {
@@ -56,6 +58,17 @@ class LabOpenAndBenchTest {
         }
     }
 
+    @Test fun `extreme page dimensions cannot request an unbounded bitmap`() {
+        assertEquals(0, pagePictureWidth(1400, Float.MIN_VALUE, Float.MAX_VALUE))
+        assertEquals(0, pagePictureWidth(1400, 1f, 1e20f))
+        for (ratio in listOf(0.01f, 1f, 8f, 100f, 8000f)) {
+            val width = pagePictureWidth(1400, 100f, 100f * ratio)
+            val height = (width * ratio).toInt()
+            assertTrue(width.toLong() * height <= PAGE_PICTURE_MAX_PIXELS)
+            assertTrue(height <= PAGE_PICTURE_MAX_HEIGHT)
+        }
+    }
+
     @Test fun `native code is held back after two runs in a row that did not close cleanly`() {
         assertEquals(0, nextUncleanRuns(0, lastRunLeftOpen = false))
         assertEquals(1, nextUncleanRuns(0, lastRunLeftOpen = true))
@@ -66,6 +79,7 @@ class LabOpenAndBenchTest {
         assertFalse(nativeHeldBack(0))
         assertFalse(nativeHeldBack(1))
         assertTrue(nativeHeldBack(UNCLEAN_LIMIT))
+        assertEquals(99, nextUncleanRuns(Int.MAX_VALUE, lastRunLeftOpen = true))
     }
 
     @Test fun `the benchmark's strokes stay inside the middle of the page`() {

@@ -1614,7 +1614,8 @@ Experimental. Draws the stroke into buffers the app owns and hands them to the s
 Own buffers status	자체 버퍼 상태
 Pressure rewrite (per pen event)	필압 다시 쓰기 (펜 이벤트당)
 Benchmark (Lab)	벤치마크 (Lab)
-Writes 30 lines of loops on the page in view with a scripted pen and takes them back, then lets the page glide down and up, and reports the timings. Use a note you do not mind it writing on: if it is interrupted, Undo removes what is left. Run it the same way on each build or switch you want to compare.	정해진 펜 동작으로 보이는 페이지에 고리 모양 줄 30개를 쓰고 다시 지운 뒤, 페이지를 아래위로 미끄러뜨리고 걸린 시간을 보고합니다. 써도 괜찮은 노트에서 실행해 주세요. 중간에 끊기면 실행 취소로 남은 획을 지울 수 있습니다. 비교하려는 빌드나 스위치마다 같은 방법으로 실행하세요.
+Shows 30 temporary lines with a scripted pen, clears them, then glides the page down and up. Your saved ink and undo history stay unchanged, including on cancellation. Saving and edit-history costs are excluded. Run it the same way on each build or switch you want to compare.	정해진 펜 동작으로 임시 획 30개를 표시하고 지운 뒤 페이지를 아래위로 미끄러뜨립니다. 취소해도 저장된 필기와 실행 취소 기록은 유지됩니다. 저장과 편집 기록의 처리 시간은 측정에서 제외됩니다. 비교하려는 빌드나 스위치마다 같은 방법으로 실행하세요.
+Stop benchmark	벤치마크 중지
 Run benchmark	벤치마크 실행
 Running…	실행 중…
 Notes opened	노트 열기

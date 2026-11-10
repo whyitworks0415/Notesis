@@ -209,6 +209,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -4639,6 +4640,9 @@ private fun NoteScreen(
     // The Lab's benchmark: running, and the report it ends with.
     var benchRunning by remember { mutableStateOf(false) }
     var benchReport by remember { mutableStateOf<String?>(null) }
+    var benchmark by remember { mutableStateOf<LabBenchmark?>(null) }
+    var benchmarkJob by remember { mutableStateOf<Job?>(null) }
+    var benchmarkOriginalMode by remember { mutableStateOf<EditMode?>(null) }
     var confirmClearAll by remember { mutableStateOf(false) }
     var showPages by remember { mutableStateOf(false) }
     // The bar and the rest of the chrome over the note, put away upwards by
@@ -4685,6 +4689,17 @@ private fun NoteScreen(
     val liveZoom = remember { floatArrayOf(1f) }
     var zoomMenu by remember { mutableStateOf(false) }
     var canvas by remember { mutableStateOf<InkCanvasView?>(null) }
+    fun stopBenchmark() {
+        benchmarkJob?.cancel()
+        benchmarkJob = null
+        val running = benchmark
+        benchmark = null
+        running?.cancel()
+        benchRunning = false
+        benchmarkOriginalMode?.let { mode = it }
+        benchmarkOriginalMode = null
+    }
+    BackHandler(enabled = benchRunning) { stopBenchmark() }
     val imagePreviews = remember(note.id, store) {
         CanvasImagePreviews(IMAGE_CACHE_BYTES,
             file = { key ->
@@ -5326,7 +5341,8 @@ private fun NoteScreen(
                             store.loadPage(note.id, page, epsilon)
                         }
                         // The page as it was left, shown until its ink has been rebuilt.
-                        pagePictureLoader = { page -> store.pagePicture(note.id, page.id) }
+                        pagePictureLoader = if (store.isLocked(note.id) || ready.first.layers.translucentLook() != null) null
+                            else { page -> store.pagePicture(note.id, page.id) }
                         maskLoader = { page, epsilon ->
                             store.loadMasks(note.id, page, epsilon)
                         }
@@ -5787,11 +5803,12 @@ private fun NoteScreen(
                 if (!store.isLocked(note.id)) store.keepPagePictures(note.id, view.pagePictureRequests())
             }
             val observer = LifecycleEventObserver { _, event ->
-                if (event == Lifecycle.Event.ON_STOP) flushLatest()
+                if (event == Lifecycle.Event.ON_STOP) { stopBenchmark(); flushLatest() }
             }
             lifecycleOwner?.lifecycle?.addObserver(observer)
             onDispose {
                 lifecycleOwner?.lifecycle?.removeObserver(observer)
+                stopBenchmark()
                 val view = canvas
                 if (view != null) {
                     flushLatest()
@@ -6193,19 +6210,26 @@ private fun NoteScreen(
                         benchmarkRunning = benchRunning,
                         onBenchmark = {
                             val view = canvas
-                            if (view != null && !benchRunning) {
+                            if (benchRunning) stopBenchmark()
+                            else if (view != null) {
                                 // With a pen in hand and the panel out of the way, as when writing.
-                                if (mode !in setOf(EditMode.PEN, EditMode.PENCIL, EditMode.HIGHLIGHTER)) mode = EditMode.PEN
+                                benchmarkOriginalMode = mode
+                                mode = EditMode.PEN
                                 settingsNav = null
                                 benchRunning = true
-                                scope.launch {
+                                benchmarkJob = scope.launch {
                                     // The panel slides away and the tool reaches the canvas first.
                                     delay(900)
-                                    LabBenchmark(view).run((zoom * 100).roundToInt()) { report ->
-                                        benchRunning = false
-                                        benchReport = report
-                                        // Strokes were written and taken back: the note is saved as it now is.
-                                        edits++
+                                    val runner = LabBenchmark(view)
+                                    benchmark = runner
+                                    runner.run((zoom * 100).roundToInt()) { report ->
+                                        if (benchmark === runner) {
+                                            benchmark = null
+                                            benchRunning = false
+                                            benchmarkOriginalMode?.let { mode = it }
+                                            benchmarkOriginalMode = null
+                                            benchReport = report
+                                        }
                                     }
                                 }
                             }

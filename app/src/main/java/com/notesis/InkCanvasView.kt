@@ -2730,6 +2730,7 @@ class InkCanvasView @JvmOverloads constructor(
     var releasePdf: (PdfSource) -> Unit = { it.close() }
 
     fun open(document: Document, pdf: PdfSource?, initialPage: Int = 0) {
+        endBenchmarkInk()
         if (erasing) { finishEraseGesture(); endStylus() }
         registeredDocument?.detachCanvas(sharedInkChanged)
         registeredDocument = document
@@ -2897,6 +2898,7 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     override fun onDetachedFromWindow() {
+        endBenchmarkInk()
         removeCallbacks(boostIdle)
         boost.end()
         if (erasing) finishEraseGesture()
@@ -3330,6 +3332,7 @@ class InkCanvasView @JvmOverloads constructor(
     fun canRedo(): Boolean = redoStack.isNotEmpty()
 
     fun undo() {
+        if (benchWriting) return
         flushPartialErase()
         sealEraseHistory()
         val edit = undoStack.removeLastOrNull() ?: return
@@ -3364,6 +3367,7 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     fun redo() {
+        if (benchWriting) return
         flushPartialErase()
         sealEraseHistory()
         val edit = redoStack.removeLastOrNull() ?: return
@@ -4693,7 +4697,7 @@ class InkCanvasView @JvmOverloads constructor(
                         latency.record(PerformanceMetric.PEN_START_HANDLED, System.nanoTime() - event.eventTime * 1_000_000L)
                     }
                     if (brush !== stored) activeStrokeId?.let { wetTrueColors[it] = stored.colorIntArgb }
-                    activeStrokeId?.let { wetStarts[it] = WetStart(if (onBoard) document.board else document.pages[index], strokeIsMask, originX, originY) }
+                    activeStrokeId?.let { wetStarts[it] = WetStart(if (onBoard) document.board else document.pages[index], strokeIsMask, originX, originY, benchmarkInk.session) }
                     // Everything below waits until the first mark is handed on.
                     onWritingStarted?.invoke()
                     // MotionEventPredictor is useful only for wet freehand ink.
@@ -5874,10 +5878,41 @@ class InkCanvasView @JvmOverloads constructor(
      * read as a hold, a circle to select with, a scribble to erase with or a
      * shape, so the page gets the ink it was sent and loses none of its own.
      */
-    internal var benchWriting = false
+    private val benchmarkInk = BenchmarkInk<Page, Stroke>()
+    internal val benchWriting: Boolean get() = benchmarkInk.active
+    internal val benchmarkStrokeCount: Int get() = benchmarkInk.size
+    internal val benchmarkCommitsPending: Boolean get() = wetStarts.values.any { it.benchmarkSession != 0L }
+    private var dispatchingBenchmark = false
 
-    /** How many edits there are to undo; the benchmark takes back exactly what it wrote. */
-    internal val undoDepth: Int get() = undoStack.size
+    internal fun beginBenchmarkInk(): Boolean {
+        if (disposed || benchWriting || activeStylusPointer != null || pendingStrokeCommits.isNotEmpty() ||
+            wet.hasUnfinishedStrokes() || document.pages.getOrNull(currentPage)?.loaded != true ||
+            readMode || lassoMode || captureMode || imageMode || maskMode || shapeKind != null ||
+            !(tool.isFreehandPen() || tool == Tool.HIGHLIGHTER)) return false
+        clearLassoSelection()
+        benchmarkInk.begin()
+        return true
+    }
+
+    internal fun endBenchmarkInk() {
+        benchmarkInk.end()
+        dry.invalidate()
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (benchWriting && !dispatchingBenchmark) return true
+        return super.dispatchTouchEvent(event)
+    }
+
+    internal fun dispatchBenchmarkEvent(event: MotionEvent): Boolean {
+        if (!benchWriting) return false
+        if (event.actionMasked == MotionEvent.ACTION_DOWN && (readMode || lassoMode || captureMode ||
+            imageMode || maskMode || shapeKind != null || !(tool.isFreehandPen() || tool == Tool.HIGHLIGHTER))) return false
+        dispatchingBenchmark = true
+        return try { dispatchTouchEvent(event) } finally { dispatchingBenchmark = false }
+    }
+
+    internal fun stopBenchmarkGlide() = stopFling(resumeDetail = false)
 
     /** Whether the page is still gliding. */
     internal val gliding: Boolean get() = flinging
@@ -9399,7 +9434,6 @@ class InkCanvasView @JvmOverloads constructor(
             val page = start?.page ?: activePage ?: continue
             val asMask = start?.mask ?: strokeIsMask
             val recognize = start?.recognize ?: recognizeOnFinish
-            val committed = committedByPage.getOrPut(page) { ArrayList(1) }
             // Back to the saved family and the stroke's own colour if it was
             // shown in another; the tip is unchanged, so the mesh is reused.
             val storedFamily = Tool.storedFamilyOf(wetStroke.brush.family)
@@ -9426,6 +9460,12 @@ class InkCanvasView @JvmOverloads constructor(
                 else -> finishedStroke
             }
 
+            if (start != null && start.benchmarkSession != 0L) {
+                // A late callback from a cancelled run must never become a real note edit.
+                benchmarkInk.add(start.benchmarkSession, page, stroke)
+                continue
+            }
+            val committed = committedByPage.getOrPut(page) { ArrayList(1) }
             if (asMask) {
                 val mask = PageMask(stroke)
                 page.masks += mask
@@ -9479,7 +9519,7 @@ class InkCanvasView @JvmOverloads constructor(
             }
         }
         // One edit for the batch, whatever pages it touched: one redraw, one save request.
-        if (committedByPage.isNotEmpty()) afterEdit(*committedByPage.keys.toTypedArray()) else afterEdit()
+        if (committedByPage.isNotEmpty()) afterEdit(*committedByPage.keys.toTypedArray()) else dry.invalidate()
         // After the page was invalidated: the compatible ink waits for the
         // frame that draws these strokes before it lets go of them.
         compatWet.handOff(finished.keys)
@@ -9500,6 +9540,7 @@ class InkCanvasView @JvmOverloads constructor(
         /** Where a board stroke was built from; it goes back by this at pen-up. */
         val originX: Float = 0f,
         val originY: Float = 0f,
+        val benchmarkSession: Long = 0L,
     ) {
         /** When its pen lifted, for PEN_FINALIZE; 0 when not measured. */
         var liftedNanos = 0L
@@ -10214,6 +10255,7 @@ class InkCanvasView @JvmOverloads constructor(
                         }) { scope.drawStroke(onScreen(it)) }
                         if (layer >= 0) scoped.restoreToCount(layer)
                     }
+                    for (stroke in benchmarkInk.onPage(page)) scope.drawStroke(onScreen(stroke))
                     if (lifted) {
                         scoped.save()
                         scoped.translate(lassoDx, lassoDy)
