@@ -141,7 +141,10 @@ internal fun rememberFileBitmap(file: File?, widthPx: Int): Bitmap? {
 
 /** Decoded pictures of files, by path, change time and width, kept for when a card scrolls back in. */
 internal object FileBitmaps {
-    private val cache = object : android.util.LruCache<String, Bitmap>(16 * 1024 * 1024) {
+    // A screen of cards and the rows either side of it, once each is no
+    // wider than asked (see [decode]).
+    private val cache = object : android.util.LruCache<String, Bitmap>(
+        (Runtime.getRuntime().maxMemory() / 8).coerceIn(16L * 1024 * 1024, 32L * 1024 * 1024).toInt()) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.allocationByteCount
     }
 
@@ -155,8 +158,28 @@ internal object FileBitmaps {
         val options = BitmapFactory.Options().apply {
             inSampleSize = sampleSizeFor(bounds.outWidth, widthPx)
         }
-        BitmapFactory.decodeFile(file.path, options)?.also { cache.put(keyOf(file, stamp, widthPx), it) }
+        val decoded = BitmapFactory.decodeFile(file.path, options) ?: return@runCatching null
+        // A power-of-two sample leaves it up to twice as wide as asked: a
+        // card's picture came out at up to 960 px, four times the pixels,
+        // each a texture to upload as the card scrolled in and a quarter as
+        // many kept in the cache. Scaled to the width here, off the main thread.
+        val fitted = fittedSize(decoded.width, decoded.height, widthPx)?.let { (w, h) ->
+            Bitmap.createScaledBitmap(decoded, w, h, true).also { if (it !== decoded) decoded.recycle() }
+        } ?: decoded
+        // Start the texture upload now, on the render thread, rather than on
+        // the frame the card first draws in.
+        fitted.prepareToDraw()
+        fitted.also { cache.put(keyOf(file, stamp, widthPx), it) }
     }.getOrNull()
+}
+
+/**
+ * The size a [width] by [height] picture is scaled to so it is [wanted] wide,
+ * or null when it is near enough already (within a tenth) or narrower.
+ */
+internal fun fittedSize(width: Int, height: Int, wanted: Int): Pair<Int, Int>? {
+    if (width <= 0 || height <= 0 || wanted <= 0 || width <= wanted * 11 / 10) return null
+    return wanted to (height.toLong() * wanted / width).toInt().coerceAtLeast(1)
 }
 
 /** The largest power of two that still leaves a picture [width] wide at least [wanted] wide. */

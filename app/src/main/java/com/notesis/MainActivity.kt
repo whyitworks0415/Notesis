@@ -1291,13 +1291,11 @@ private fun HomeScreen(
     var searchOpen by remember { mutableStateOf(false) }
     var searchFocused by remember { mutableStateOf(false) }
     val gridState = rememberLazyGridState()
-    // Pulled past either end the library gives and springs back, as Mornye's lists do.
-    val homeBounce = rememberEdgeBounce()
     // The frost under the glassmorphism look holds the library as it was while
     // the grid moves, as the liquid glass does: recorded again on every frame of
     // a fling, every pane over it was blurred again with it.
-    LaunchedEffect(backdrop, gridState, homeBounce) {
-        snapshotFlow { gridState.isScrollInProgress || homeBounce?.active == true }.collect { backdrop.paused = it }
+    LaunchedEffect(backdrop, gridState) {
+        snapshotFlow { gridState.isScrollInProgress }.collect { backdrop.paused = it }
     }
     val libraryTiles = remember { LibraryTiles() }
     var edgeSpeed by remember { mutableFloatStateOf(0f) }
@@ -1664,7 +1662,7 @@ private fun HomeScreen(
                         // every frame of a fling, for the glass at the top to
                         // blur, was most of what made it stutter. The glass
                         // keeps the last frame and catches up when it stops.
-                        Modifier.captureLiquidGlassBackdrop(liquidBackdrop, paused = { gridState.isScrollInProgress || ChromeMotion.busy || homeBounce?.active == true })
+                        Modifier.captureLiquidGlassBackdrop(liquidBackdrop, paused = { gridState.isScrollInProgress || ChromeMotion.busy })
                     } else {
                         Modifier
                     },
@@ -1696,6 +1694,8 @@ private fun HomeScreen(
         val side = librarySide
         LazyVerticalGrid(
             state = gridState,
+            // The library stops at its ends: no stretch, no bounce, as asked.
+            overscrollEffect = null,
             // Two notes across even on a small phone: at the tablet's width a
             // 360 dp screen had room for one, as wide as the screen.
             columns = GridCells.Adaptive(minSize = if (narrowLibrary) 148.dp else 176.dp),
@@ -1713,7 +1713,7 @@ private fun HomeScreen(
             ),
             horizontalArrangement = Arrangement.spacedBy(Ui.Space.m),
             verticalArrangement = Arrangement.spacedBy(Ui.Space.m),
-            modifier = Modifier.fillMaxSize().edgeBounce(homeBounce).dragToSelect(
+            modifier = Modifier.fillMaxSize().dragToSelect(
                 tiles = libraryTiles,
                 order = { (if (showFolders) subfolders.map(::folderKey) else emptyList()) + visibleNotes.map { it.id } },
                 selection = { selectionKeys() },

@@ -40,4 +40,15 @@ class EdgeBounceTest {
     }
 
     private fun abs(x: Float) = kotlin.math.abs(x)
+
+    @Test fun `card pictures are scaled to the width asked, not left up to twice it`() {
+        // 1600 px sampled by 2 is 800: brought down to the card's 480.
+        assertEquals(480 to 660, fittedSize(800, 1100, 480))
+        // Near enough, or narrower, is kept as it is.
+        assertEquals(null, fittedSize(520, 700, 480))
+        assertEquals(null, fittedSize(300, 400, 480))
+        assertEquals(null, fittedSize(0, 400, 480))
+        // A fling that dies out mid-list has nowhere near this much speed left.
+        assertTrue(EDGE_MIN_THROW_VELOCITY >= 200f)
+    }
 }

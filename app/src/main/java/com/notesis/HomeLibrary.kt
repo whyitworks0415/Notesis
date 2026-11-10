@@ -63,6 +63,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.constrainWidth
 import kotlin.math.roundToInt
@@ -82,7 +84,12 @@ internal fun folderOfKey(key: String): String = key.removePrefix("folder:")
  * state: they change on every frame of a scroll and nothing draws from them.
  */
 internal class LibraryTiles {
-    val bounds = HashMap<String, Rect>()
+    /**
+     * Where each tile is, as its coordinates: its bounds are worked out only
+     * when a finger asks. Worked out on every frame a tile moved, a screen
+     * of them was a bounds sum and a new rectangle each per scroll frame.
+     */
+    val placed = HashMap<String, LayoutCoordinates>()
     /** The grid's own top-left in the root, for its pointer positions. */
     var origin: Offset = Offset.Zero
     /** Set while a drag selects, to pick again where the finger is once the grid has scrolled under it. */
@@ -90,15 +97,15 @@ internal class LibraryTiles {
 
     fun keyAt(local: Offset): String? {
         val at = local + origin
-        return bounds.entries.firstOrNull { it.value.contains(at) }?.key
+        return placed.entries.firstOrNull { it.value.isAttached && it.value.boundsInRoot().contains(at) }?.key
     }
 }
 
 /** Reports this tile's bounds to [tiles] for as long as it is on screen. */
 @Composable
 internal fun Modifier.libraryTile(tiles: LibraryTiles, key: String): Modifier {
-    DisposableEffect(tiles, key) { onDispose { tiles.bounds.remove(key) } }
-    return onGloballyPositioned { tiles.bounds[key] = it.boundsInRoot() }
+    DisposableEffect(tiles, key) { onDispose { tiles.placed.remove(key) } }
+    return onPlaced { tiles.placed[key] = it }
 }
 
 /**

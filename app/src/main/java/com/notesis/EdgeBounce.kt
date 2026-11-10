@@ -95,7 +95,9 @@ internal class EdgeBounce(private val vertical: Boolean, private val maxThrowPx:
     override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
         val v = along(available)
         if (shown != 0f) settle(0f)
-        if (abs(v) < 1f) return Velocity.Zero
+        // A fling that dies out mid-list arrives here too, with the little
+        // speed it had left; only one cut off by the end still has real speed.
+        if (abs(v) < EDGE_MIN_THROW_VELOCITY) return Velocity.Zero
         // A fling that met the end: what speed it had left carries it past.
         settle(v.coerceIn(-maxThrowPx, maxThrowPx))
         return available
@@ -116,6 +118,9 @@ internal class EdgeBounce(private val vertical: Boolean, private val maxThrowPx:
 
 /** The spring an end comes back on: critically damped, about a third of a second, as iOS's does. */
 internal const val EDGE_BOUNCE_STIFFNESS = 220f
+
+/** The least speed, px a second, a fling must still have at the end to carry past it. */
+internal const val EDGE_MIN_THROW_VELOCITY = 400f
 
 /** How far a fling may carry the content past its end. */
 private val EDGE_THROW = 72.dp
