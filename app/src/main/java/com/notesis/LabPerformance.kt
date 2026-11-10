@@ -7,7 +7,7 @@ import androidx.compose.runtime.setValue
 
 /** A visible quality tradeoff, saved only inside this separate installation. */
 internal object LabPerformance {
-    var efficientGlass by mutableStateOf(true)
+    var efficientGlass by mutableStateOf(false)
         private set
 
     /** Hint the system about the pen's threads while writing (see [WritingBoost]); on until compared. */
@@ -24,7 +24,12 @@ internal object LabPerformance {
 
     fun load(context: Context) {
         val prefs = context.getSharedPreferences("lab", Context.MODE_PRIVATE)
-        efficientGlass = prefs.getBoolean("efficientGlass", true)
+        // Earlier Labs enabled simplified optics by default. Restore the standard appearance once;
+        // a reader can explicitly opt back into the cheaper renderer after this upgrade.
+        if (!prefs.getBoolean("originalChromeV1", false)) {
+            prefs.edit().putBoolean("efficientGlass", false).putBoolean("originalChromeV1", true).apply()
+        }
+        efficientGlass = prefs.getBoolean("efficientGlass", false)
         writingBoost = prefs.getBoolean("writingBoost", true)
         nativePresent = prefs.getBoolean("nativePresent", false)
     }

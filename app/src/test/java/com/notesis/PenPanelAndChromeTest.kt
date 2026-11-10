@@ -131,12 +131,5 @@ class PenPanelAndChromeTest {
         assertEquals(SettingsPage.PEN, settingsSections(false).first())
     }
 
-    @Test fun `the selected tool's pill is the same grey whatever the accent`() {
-        val ink = androidx.compose.ui.graphics.Color(0xFF202020)
-        val light = selectionPillFill(ink, dark = false)
-        val dark = selectionPillFill(ink, dark = true)
-        assertEquals(ink.red, light.red, 0.005f)
-        assertEquals(0.08f, light.alpha, 0.01f)
-        assertEquals(0.12f, dark.alpha, 0.01f)
-    }
+
 }

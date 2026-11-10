@@ -49,7 +49,6 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -1516,8 +1515,8 @@ private fun ToolStrip(
     val cellHeight = barHeight - padding * 2
     // Liquid glass's resting pill and lens radius, from the same function.
     val pill = RoundedCornerShape(toolPillRadius(corner, barHeight, padding))
-    // The same neutral wash in every skin, never the accent (see [selectionPillFill]).
-    val highlight = selectionPillFill(scheme.onSurface, scheme.surface.luminance() < 0.5f)
+    // Solid under Material, as every button there is; a wash of the accent on frost.
+    val highlight = if (skin == Skin.MATERIAL) scheme.primaryContainer else scheme.primary.copy(alpha = 0.16f)
     val selected = selectedIndex.takeIf { it in tools.indices }
     val slide = remember { Animatable((selected ?: 0).toFloat()) }
     val slideVelocity = remember { floatArrayOf(0f) }
@@ -1616,7 +1615,3 @@ internal fun GlassMenuGrid(
         }
     }
 }
-
-/** The selected tool's pill: [onSurface] at a low alpha, neutral whatever the accent is. */
-internal fun selectionPillFill(onSurface: Color, dark: Boolean): Color =
-    onSurface.copy(alpha = if (dark) 0.12f else 0.08f)
