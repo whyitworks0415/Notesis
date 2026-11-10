@@ -135,9 +135,7 @@ internal class OpenProfile(
     /** The width's own close, when it folds ahead of the height; null is [close]. */
     val closeWidth: AnimationSpec<Float>? = null,
     /**
-     * The glass grows and the content stays at its size, seen only where the
-     * glass has reached (see PopupReveal.kt), rather than the whole popup
-     * being scaled.
+     * The rounded window and its cached contents morph together (see PopupReveal.kt).
      */
     val reveal: Boolean = false,
 )
@@ -190,25 +188,15 @@ internal const val POUR_STIFFNESS = 19f * 19f
 
 private val EaseInCubic = CubicBezierEasing(0.32f, 0f, 0.67f, 0f)
 
-/**
- * Mornye's context menu, as the glass looks open every menu and panel: a drop
- * at the button that runs down - the height first, on an underdamped spring -
- * and spreads 50 ms later to its width, landing with a small wobble; it is
- * seen from the start, as glass is. It goes back into the button in 240 ms,
- * the width folding first.
- */
+/** A source-anchored window spring, with a synchronized rounded shrink on dismissal. */
 internal val PourOpen = OpenProfile(
-    open = spring(dampingRatio = POUR_DAMPING_RATIO, stiffness = POUR_STIFFNESS),
-    close = tween(240, easing = EaseInCubic),
+    open = spring(dampingRatio = 0.88f, stiffness = 500f),
+    close = tween(240, easing = CubicBezierEasing(0.4f, 0f, 0.2f, 1f)),
     startScale = POUR_START,
     closeScale = POUR_START,
-    alpha = { p -> (p / 0.3f).coerceIn(0f, 1f) },
-    scaleOf = ::pourScale,
-    // One frame behind the height: still runs down before it spreads, without
-    // three frames of a drop that has not begun to widen.
-    widthDelayMs = 16,
-    openVelocity = 5f,
-    closeWidth = tween(200, easing = EaseInCubic),
+    alpha = { p -> (p / 0.08f).coerceIn(0f, 1f) },
+    openVelocity = 3f,
+    // Both dimensions follow one progress so closing cannot turn into a thin trapezoid.
     reveal = true,
 )
 
@@ -224,4 +212,5 @@ internal val MaterialOpen = OpenProfile(
     alpha = { p -> (p / 0.45f).coerceIn(0f, 1f) },
     // Under the spring's own 14 rad/s, so it still lands without overshoot.
     openVelocity = 3f,
+    reveal = true,
 )

@@ -61,26 +61,26 @@ class LiquidMotionTest {
         assertEquals(420.0 to 24.0, m.liftX)
     }
 
-    @Test fun `iOS and Mornye pour their menus out, revealing content that keeps its size`() {
+    @Test fun `glass and Material use the rounded window transition`() {
         assertEquals(PourOpen, ios.openProfile())
         assertEquals(PourOpen, SkinSettings(liquidStyle = LiquidStyle.MORNYE).openProfile())
         assertTrue(PourOpen.reveal)
-        assertFalse(MaterialOpen.reveal)
+        assertTrue(MaterialOpen.reveal)
     }
 
-    @Test fun `a poured menu runs just past its size and the width follows the height`() {
+    @Test fun `legacy scale math stays bounded while window axes stay synchronized`() {
         // From the drop to full, then past full by only 0.35 of the overshoot.
         assertEquals(0.12f, pourScale(0f, 0.12f), 0f)
         assertEquals(0.56f, pourScale(0.5f, 0.12f), 0.0001f)
         assertEquals(1f, pourScale(1f, 0.12f), 0f)
         assertEquals(1f + 0.08f * 0.35f, pourScale(1.08f, 0.12f), 0.0001f)
-        // A frame behind, and leaving with speed so the first frames are seen to move.
-        assertEquals(16, PourOpen.widthDelayMs)
+        // The window axes move together, with an initial velocity.
+        assertEquals(0, PourOpen.widthDelayMs)
         assertTrue(PourOpen.openVelocity > 0f)
         // Material's kick stays under its spring's rate, so it never overshoots.
         assertTrue(MaterialOpen.openVelocity in 0.1f..14f)
-        assertNotNull(PourOpen.closeWidth)
-        // The spring: damping 0.62 at 19 rad/s, which overshoots by about 8%.
+        assertNull(PourOpen.closeWidth)
+        // Legacy scale coefficients remain stable for other motion helpers.
         assertEquals(361f, POUR_STIFFNESS, 0f)
         val zeta = POUR_DAMPING_RATIO.toDouble()
         assertEquals(0.084, Math.exp(-zeta * Math.PI / Math.sqrt(1 - zeta * zeta)), 0.002)

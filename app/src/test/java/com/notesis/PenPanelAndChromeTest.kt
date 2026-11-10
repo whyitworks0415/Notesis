@@ -43,9 +43,10 @@ class PenPanelAndChromeTest {
     }
 
     @Test fun `the colour views are four, and the old ones open as their nearest`() {
-        assertEquals(listOf(ColorPickerMode.GRID, ColorPickerMode.SQUARE, ColorPickerMode.RING, ColorPickerMode.DISC), COLOR_VIEWS)
-        assertEquals(ColorPickerMode.RING, colorViewOf(ColorPickerMode.BARS.ordinal))
-        assertEquals(ColorPickerMode.DISC, colorViewOf(ColorPickerMode.RGB.ordinal))
+        assertEquals(listOf(ColorPickerMode.GRID, ColorPickerMode.SQUARE, ColorPickerMode.BARS, ColorPickerMode.RING), COLOR_VIEWS)
+        assertEquals(ColorPickerMode.BARS, colorViewOf(ColorPickerMode.BARS.ordinal))
+        assertEquals(ColorPickerMode.BARS, colorViewOf(ColorPickerMode.RGB.ordinal))
+        assertEquals(ColorPickerMode.RING, colorViewOf(ColorPickerMode.DISC.ordinal))
         assertEquals(ColorPickerMode.GRID, colorViewOf(ColorPickerMode.GRID.ordinal))
         assertEquals(ColorPickerMode.SQUARE, colorViewOf(99))
         // The stored indices of the older views did not move.

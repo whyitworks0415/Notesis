@@ -67,14 +67,15 @@ fun AlertDialog(
     val material = LocalSkin.current == Skin.MATERIAL
     val moves = rememberLiquidGlassEffectsAllowed()
     val arrival = remember { Animatable(if (moves) 0f else 1f) }
-    LaunchedEffect(Unit) {
-        if (arrival.value < 1f) arrival.animateTo(1f, dialogArrival(material).paced())
-    }
+
     // Under the glass looks it comes out of the touch that opened it, as a
-    // popup comes out of its button: cut to a shape that runs out of that
-    // point, the dialog drawn once and never scaled (see PopupReveal.kt).
+    // popup comes out of its button: the rounded window and its contents
+    // grow together from a cached layer (see PopupReveal.kt).
     val growth = rememberPopupGrowth(shown = !moves)
     val pours = moves && growth.profile?.reveal == true
+    LaunchedEffect(Unit) {
+        if (!pours && arrival.value < 1f) arrival.animateTo(1f, dialogArrival(material).paced())
+    }
     val opener = remember { LastTouch.recent() }
     var origin by remember { mutableStateOf(TransformOrigin.Center) }
     LaunchedEffect(Unit) { if (pours) growth.open(true) }

@@ -1420,8 +1420,7 @@ internal fun Modifier.growOutOf(anchor: () -> Offset?, growth: PopupGrowth): Mod
             val h = growth.height.value
             val profile = growth.profile
             if (profile?.reveal == true) {
-                // Nothing scaled: the pane's glass grows itself and what is on
-                // it stays its size (see PopupReveal.kt).
+                // The rounded-window modifier owns both scale and clipping (see PopupReveal.kt).
                 return@graphicsLayer
             }
             if (profile == null) {

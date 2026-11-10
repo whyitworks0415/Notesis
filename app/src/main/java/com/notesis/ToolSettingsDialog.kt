@@ -85,6 +85,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.testTag
 import kotlinx.coroutines.delay
 import kotlin.math.atan2
 import kotlin.math.hypot
@@ -94,17 +95,16 @@ import kotlin.math.sqrt
 
 /**
  * The ways of picking a colour, by the index the choice is remembered by
- * across tools. The panel offers the grid, the square, the HSV ring and the
- * RGB disc (see [COLOR_VIEWS]); the HSV bars and RGB strips are no longer
- * offered and open as the ring and the disc.
+ * across tools. Grid, SV square, HSV bars and hue ring are offered.
+ * Legacy RGB and disc indices remain readable without moving saved ordinals.
  */
 internal enum class ColorPickerMode(val label: String) {
-    SQUARE("Square"),
-    BARS("HSV"),
+    SQUARE("SV square"),
+    BARS("HSV bars"),
     RING("HSV ring"),
     RGB("RGB"),
     DISC("RGB disc"),
-    GRID("Grid"),
+    GRID("Color grid"),
 }
 
 /**
@@ -269,7 +269,7 @@ internal fun PenDialog(
 
     // Open: grow from the bar. Close: fold back, and only then hand the
     // result over, since the host takes the panel away the moment it has it.
-    // Material has no motion: the panel is simply there, and simply gone.
+    // The rounded-window transition is shared across skins.
     val panel = rememberToolPanelState()
     val animate = panel.animate
     fun keep() = panel.close { onConfirm(current()) }
@@ -395,12 +395,7 @@ internal fun PenDialog(
                     store.colorPickerMode = it.ordinal
                 })
                 MorphingPicker(view, animate) { shownView ->
-                    when (shownView) {
-                        ColorPickerMode.GRID -> ColorGrid(color)
-                        ColorPickerMode.RING -> RingPicker(color)
-                        ColorPickerMode.DISC -> DiscPicker(color, joined)
-                        else -> SquarePicker(color, joined)
-                    }
+                    ColorPickerBody(shownView, color, joined, opacity)
                 }
                 if (opacity) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(GAP)) {
@@ -419,7 +414,8 @@ internal fun PenDialog(
                     // The colour itself, then its code, then the eyedropper: one height, one corner.
                     Box(Modifier.size(FIELD_COMPACT).clip(pickerShape).background(Color.White).background(Color(color.argb()))
                         .border(1.dp, MaterialTheme.colorScheme.outlineVariant, pickerShape))
-                    HexField(color, opacity, Modifier.weight(1f))
+                    if (view != ColorPickerMode.BARS) HexField(color, opacity, Modifier.weight(1f))
+                    else Spacer(Modifier.weight(1f))
                     if (onEyedropper != null) {
                         Box(
                             Modifier
@@ -779,6 +775,19 @@ private val pickerShape: androidx.compose.ui.graphics.Shape
 
 
 
+/** The four colour layouts share one HSVA state and never convert it on a view switch. */
+@Composable
+internal fun ColorPickerBody(view: ColorPickerMode, color: PenColorState, joined: Boolean, opacity: Boolean) {
+    Box(Modifier.fillMaxWidth().testTag("color-picker-${view.name}")) {
+        when (view) {
+            ColorPickerMode.GRID -> ColorGrid(color)
+            ColorPickerMode.BARS, ColorPickerMode.RGB -> BarsPicker(color, joined, opacity)
+            ColorPickerMode.RING, ColorPickerMode.DISC -> RingPicker(color)
+            else -> SquarePicker(color, joined)
+        }
+    }
+}
+
 /** 1. Saturation across, value down, hue on the strip below. */
 @Composable
 private fun SquarePicker(color: PenColorState, joined: Boolean) {
@@ -800,6 +809,41 @@ private fun SquarePicker(color: PenColorState, joined: Boolean) {
             modifier = Modifier.fillMaxWidth().height(STRIP_HEIGHT),
             shape = if (joined) RectangleShape else RoundedCornerShape(STRIP_HEIGHT / 2),
         ) { color.hue = it * 360f }
+    }
+}
+
+
+@Composable
+private fun BarsPicker(color: PenColorState, joined: Boolean, opacity: Boolean) {
+    Row(
+        Modifier.fillMaxWidth().height(PICKER_HEIGHT).then(if (joined) Modifier.clip(pickerShape) else Modifier),
+        horizontalArrangement = Arrangement.spacedBy(if (joined) 0.dp else GAP),
+    ) {
+        VerticalStrip(HUES, color.hue / 360f, "H", joined) { color.hue = it * 360f }
+        VerticalStrip(
+            listOf(Color.hsv(color.hue, 0f, color.value), Color.hsv(color.hue, 1f, color.value)),
+            color.saturation, "S", joined,
+        ) { color.saturation = it }
+        VerticalStrip(
+            listOf(Color.Black, Color.hsv(color.hue, color.saturation, 1f)),
+            color.value, "V", joined,
+        ) { color.value = it }
+        Column(Modifier.weight(1f).fillMaxHeight()) {
+            // Apart, the bars carry their letters above them; the colour
+            // starts on the same line as the bars rather than above them.
+            if (!joined) Spacer(Modifier.height(LABEL_HEIGHT))
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .then(if (joined) Modifier else Modifier.clip(pickerShape))
+                    .background(Color.White)
+                    .background(Color(color.argb())),
+            )
+            Spacer(Modifier.height(GAP))
+            HexField(color, opacity, Modifier.fillMaxWidth())
+
+        }
     }
 }
 
@@ -869,63 +913,6 @@ private fun RingPicker(color: PenColorState) {
     }
 }
 
-
-/** 5. A colour disc - hue around, saturation outward - and brightness beside it. */
-@Composable
-private fun DiscPicker(color: PenColorState, joined: Boolean) {
-    val thumb = with(LocalDensity.current) { PICKER_THUMB_RADIUS.toPx() }
-    Row(
-        Modifier.fillMaxWidth().height(PICKER_HEIGHT),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(GAP),
-    ) {
-        Canvas(
-            Modifier
-                .size(PICKER_HEIGHT)
-                .pointerInput(color) {
-                    awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
-                        down.consume()
-                        fun take(at: Offset) {
-                            val c = Offset(size.width / 2f, size.height / 2f)
-                            val reach = (min(size.width, size.height) / 2f - thumb).coerceAtLeast(1f)
-                            val d = at - c
-                            color.hue = angleOf(d)
-                            color.saturation = (hypot(d.x, d.y) / reach).coerceIn(0f, 1f)
-                        }
-                        take(down.position)
-                        drag(down.id) { change -> change.consume(); take(change.position) }
-                    }
-                },
-        ) {
-            val radius = size.minDimension / 2f
-            drawCircle(Brush.sweepGradient(HUES, center), radius)
-            drawCircle(Brush.radialGradient(listOf(Color.White, Color.White.copy(alpha = 0f)), center, radius), radius)
-            drawCircle(Color.Black.copy(alpha = 1f - color.value), radius)
-            val angle = Math.toRadians(color.hue.toDouble())
-            val r = color.saturation * (radius - thumb)
-            drawPickerThumb(
-                Offset(center.x + (r * kotlin.math.cos(angle)).toFloat(), center.y + (r * kotlin.math.sin(angle)).toFloat()),
-                thumb,
-            )
-        }
-        // Brightness beside the disc, and the colour's red, green and blue to
-        // type, in boxes of the one size the panel uses.
-        VerticalStrip(
-            listOf(Color.Black, Color.hsv(color.hue, color.saturation, 1f)),
-            color.value, null, joined = false,
-        ) { color.value = it }
-        val rgb = color.rgb()
-        val red = android.graphics.Color.red(rgb)
-        val green = android.graphics.Color.green(rgb)
-        val blue = android.graphics.Color.blue(rgb)
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(GAP, Alignment.CenterVertically)) {
-            CompactNumber("R", red, 0..255, null, Modifier.fillMaxWidth()) { color.setRgb(it, green, blue) }
-            CompactNumber("G", green, 0..255, null, Modifier.fillMaxWidth()) { color.setRgb(red, it, blue) }
-            CompactNumber("B", blue, 0..255, null, Modifier.fillMaxWidth()) { color.setRgb(red, green, it) }
-        }
-    }
-}
 
 /** The palette beside the picker: the built-in and saved colour sets, a tap each. */
 @Composable
@@ -1304,12 +1291,12 @@ internal fun gridColors(columns: Int, rows: Int): List<Int> {
 }
 
 /** The colour views the Color tab offers, in its order; the older HSV bars and RGB strips open as the ring and the disc. */
-internal val COLOR_VIEWS = listOf(ColorPickerMode.GRID, ColorPickerMode.SQUARE, ColorPickerMode.RING, ColorPickerMode.DISC)
+internal val COLOR_VIEWS = listOf(ColorPickerMode.GRID, ColorPickerMode.SQUARE, ColorPickerMode.BARS, ColorPickerMode.RING)
 
 /** The view a stored picker choice opens on. */
 internal fun colorViewOf(stored: Int): ColorPickerMode = when (ColorPickerMode.entries.getOrNull(stored)) {
-    ColorPickerMode.BARS -> ColorPickerMode.RING
-    ColorPickerMode.RGB -> ColorPickerMode.DISC
+    ColorPickerMode.DISC -> ColorPickerMode.RING
+    ColorPickerMode.RGB -> ColorPickerMode.BARS
     null -> ColorPickerMode.SQUARE
     else -> ColorPickerMode.entries[stored]
 }
@@ -1765,7 +1752,7 @@ private fun MorphingPicker(view: ColorPickerMode, animate: Boolean, content: @Co
     androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth().height(PICKER_HEIGHT)) {
         val full = constraints.maxWidth.toFloat()
         val tall = constraints.maxHeight.toFloat()
-        val round = view == ColorPickerMode.RING || view == ColorPickerMode.DISC
+        val round = view == ColorPickerMode.RING
         val spec = if (animate) MORPH_SPRING.paced() else androidx.compose.animation.core.snap()
         val paneWidth by androidx.compose.animation.core.animateFloatAsState(if (round) tall else full, spec, label = "pane width")
         val paneCorner by androidx.compose.animation.core.animateFloatAsState(if (round) tall / 2f else corner, spec, label = "pane corner")

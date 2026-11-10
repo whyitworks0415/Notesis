@@ -1634,3 +1634,6 @@ Loaded	불러옴
 Not loaded	불러오지 않음
 Runs that did not close cleanly	정상 종료되지 않은 실행 횟수
 Benchmark	벤치마크
+Color grid	색상 격자
+SV square	SV 사각형
+HSV bars	HSV 막대

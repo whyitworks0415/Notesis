@@ -140,8 +140,8 @@ internal fun ToolPanel(
                 .fillMaxWidth()
                 .heightIn(max = tallest)
                 // Out of the point it was opened from under the glass looks:
-                // cut to a shape that comes out of it, nothing scaled and the
-                // glass drawn once (see PopupReveal.kt).
+                // a rounded window and its contents scale together, with the
+                // glass recorded once while moving (see PopupReveal.kt).
                 .then(if (reveal) Modifier.revealOutOf(growth, corner) { c -> anchor?.let { c.screenToLocal(it) } } else Modifier)
                 // Liquid glass under the glass skin, the same lens as the bar
                 // it came from; frost or a solid panel under the others.
