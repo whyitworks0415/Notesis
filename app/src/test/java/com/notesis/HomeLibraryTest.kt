@@ -19,13 +19,14 @@ class HomeLibraryTest {
     }
 
     @Test fun `the tile under a finger is found in the grid's own coordinates`() {
-        val tiles = LibraryTiles()
-        tiles.origin = Offset(0f, 100f)
-        tiles.bounds["a"] = Rect(0f, 100f, 200f, 300f)
-        tiles.bounds[folderKey("b")] = Rect(220f, 100f, 420f, 300f)
-        assertEquals("a", tiles.keyAt(Offset(10f, 10f)))
-        assertEquals(folderKey("b"), tiles.keyAt(Offset(300f, 150f)))
-        assertNull(tiles.keyAt(Offset(210f, 10f)))
+        // The grid starts 100 px down the root; a finger's place is the grid's.
+        val origin = Offset(0f, 100f)
+        val tiles = sequenceOf("a" to Rect(0f, 100f, 200f, 300f), folderKey("b") to Rect(220f, 100f, 420f, 300f))
+        assertEquals("a", tileUnder(Offset(10f, 10f) + origin, tiles))
+        assertEquals(folderKey("b"), tileUnder(Offset(300f, 150f) + origin, tiles))
+        assertNull(tileUnder(Offset(210f, 10f) + origin, tiles))
+        // Nothing placed, nothing found.
+        assertNull(LibraryTiles().keyAt(Offset(10f, 10f)))
     }
 
     @Test fun `font scale is followed up to the cap and held there`() {

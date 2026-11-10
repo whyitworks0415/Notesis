@@ -95,11 +95,13 @@ internal class LibraryTiles {
     /** Set while a drag selects, to pick again where the finger is once the grid has scrolled under it. */
     var reselect: (() -> Unit)? = null
 
-    fun keyAt(local: Offset): String? {
-        val at = local + origin
-        return placed.entries.firstOrNull { it.value.isAttached && it.value.boundsInRoot().contains(at) }?.key
-    }
+    fun keyAt(local: Offset): String? =
+        tileUnder(local + origin, placed.entries.asSequence().filter { it.value.isAttached }.map { it.key to it.value.boundsInRoot() })
 }
+
+/** Which of [tiles] (each a key and its bounds in the root) is under the root point [at]. */
+internal fun tileUnder(at: Offset, tiles: Sequence<Pair<String, Rect>>): String? =
+    tiles.firstOrNull { it.second.contains(at) }?.first
 
 /** Reports this tile's bounds to [tiles] for as long as it is on screen. */
 @Composable
