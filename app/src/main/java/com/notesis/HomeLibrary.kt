@@ -39,6 +39,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -65,6 +66,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.constrainWidth
+import androidx.compose.ui.unit.offset
 import kotlin.math.roundToInt
 import kotlin.math.max
 import kotlin.math.min
@@ -75,6 +77,25 @@ internal fun folderKey(name: String): String = "folder:$name"
 internal fun isFolderKey(key: String): Boolean = key.startsWith("folder:")
 
 internal fun folderOfKey(key: String): String = key.removePrefix("folder:")
+
+/** Cache the held glass backdrop while scrolling, with room for its shadow. */
+internal fun Modifier.libraryHeaderLayer(glass: Boolean, scrolling: () -> Boolean): Modifier {
+    if (!glass) return this
+    // Offscreen layers clip at their own bounds. Extend only the backing
+    // layer below the header; report its original height to Scaffold so the
+    // list's inset and the controls' positions never change. The 48dp covers
+    // the toolbar's 3dp glass shadow and the iOS 10dp blur / 7dp drop.
+    val room = 48.dp
+    return this.layout { measurable, constraints ->
+        val extra = room.roundToPx()
+        val child = measurable.measure(constraints.offset(vertical = extra))
+        layout(child.width, (child.height - extra).coerceAtLeast(0)) { child.place(0, 0) }
+    }.graphicsLayer {
+        // This observes start/stop only, in the layer phase. Child animations
+        // still redraw; returning to Auto resumes the live backdrop at rest.
+        compositingStrategy = if (scrolling()) CompositingStrategy.Offscreen else CompositingStrategy.Auto
+    }.padding(bottom = room)
+}
 
 /**
  * Where each tile that can be selected sits on screen, so a finger dragging
@@ -374,7 +395,12 @@ internal fun FolderTile(
     val glass = LocalSkin.current.isRefractive
     Box(
         modifier
-            .graphicsLayer { scaleX = press; scaleY = press }
+            .graphicsLayer {
+                scaleX = press; scaleY = press
+                // As on note cards, retain the finished glass and picture
+                // while the grid moves, without simplifying their appearance.
+                compositingStrategy = if (glass) CompositingStrategy.Offscreen else CompositingStrategy.Auto
+            }
             .then(if (glass) Modifier.cardGlass(Ui.Shape.card)
                 else if (LocalSkin.current == Skin.MATERIAL) Modifier
                     .background(MaterialTheme.colorScheme.surfaceContainerLowest, Ui.Shape.card)

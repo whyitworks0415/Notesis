@@ -24,6 +24,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -126,11 +127,16 @@ internal fun rememberPageThumbnail(
 @Composable
 internal fun rememberFileBitmap(file: File?, widthPx: Int): Bitmap? {
     val stamp = file?.lastModified() ?: 0L
-    val picture by produceState<Bitmap?>(FileBitmaps.cached(file, stamp, widthPx), file?.path, stamp, widthPx) {
-        if (value != null || file == null) return@produceState
-        value = withContext(Dispatchers.IO) { FileBitmaps.decode(file, stamp, widthPx) }
+    // Lazy reuse may bind this slot to another file. Restart the state as
+    // well as the producer: produceState's keys alone keep the old value,
+    // which would skip decoding and leave the previous thumbnail in place.
+    return key(file?.path, stamp, widthPx) {
+        val picture by produceState<Bitmap?>(FileBitmaps.cached(file, stamp, widthPx)) {
+            if (value != null || file == null) return@produceState
+            value = withContext(Dispatchers.IO) { FileBitmaps.decode(file, stamp, widthPx) }
+        }
+        picture
     }
-    return picture
 }
 
 /** Decoded pictures of files, by path, change time and width, kept for when a card scrolls back in. */

@@ -163,6 +163,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -1402,7 +1403,12 @@ private fun HomeScreen(
             val capsule = RoundedCornerShape(50)
             val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
             val button = LIBRARY_SEARCH_HEIGHT
-            Box(Modifier.fillMaxWidth()) {
+            // The backdrop is held while the grid moves. Keep the header's
+            // lenses in one texture during that time, rather than running
+            // their blur and refraction passes on every scroll frame. Read
+            // only the scroll boundary in the layer phase; unfolding and
+            // button animations still invalidate their contents normally.
+            Box(Modifier.fillMaxWidth().libraryHeaderLayer(currentSkin.isRefractive) { gridState.isScrollInProgress }) {
                 // A quarter of the header's height of fade at the very top, over the status bar.
                 Box(Modifier.matchParentSize()) {
                     Box(Modifier.fillMaxWidth().fillMaxHeight(0.25f).graphicsLayer { alpha = scrollFold.value }
@@ -1754,7 +1760,7 @@ private fun HomeScreen(
                 }
             }
             if (showFolders) {
-                items(subfolders, key = { folderKey(it) }) { name ->
+                items(subfolders, key = { folderKey(it) }, contentType = { "folder" }) { name ->
                     val look = remember(name, folderLooks) { homeStore.folderLook(context, name) }
                     FolderTile(
                         name = folderLeaf(name),
@@ -1776,7 +1782,7 @@ private fun HomeScreen(
                         modifier = Modifier.libraryTile(libraryTiles, folderKey(name)),
                     )
                 }
-                if (smartHere) items(smartFolders, key = { "smart:${it.id}" }) { smart ->
+                if (smartHere) items(smartFolders, key = { "smart:${it.id}" }, contentType = { "folder" }) { smart ->
                     val now = remember(notes) { System.currentTimeMillis() }
                     FolderTile(
                         name = "✦ " + smart.name,
@@ -1860,7 +1866,7 @@ private fun HomeScreen(
                 }
             }
 
-            fun noteItems(list: List<NoteMeta>) = items(list, key = { it.id }) { note ->
+            fun noteItems(list: List<NoteMeta>) = items(list, key = { it.id }, contentType = { it.kind }) { note ->
                 // The guide's card is where the welcome folds into, and what its first mark points at.
                 Box((if (note.title == GuideNote.TITLE) Modifier.coachTarget(coachTargets, CoachTarget.GUIDE) else Modifier)
                     .libraryTile(libraryTiles, note.id)) {
@@ -2881,7 +2887,7 @@ private fun displayName(context: android.content.Context, uri: Uri): String {
 }
 
 @Composable
-private fun NoteCard(
+internal fun NoteCard(
     note: NoteMeta,
     selected: Boolean,
     selectionMode: Boolean,
@@ -2921,7 +2927,13 @@ private fun NoteCard(
     val glass = skin.isRefractive
     Card(
         modifier = Modifier
-            .graphicsLayer { scaleX = sink; scaleY = sink }
+            .graphicsLayer {
+                scaleX = sink; scaleY = sink
+                // Scrolling moves a texture instead of repainting the glass
+                // rim, continuous clips and thumbnail. Lazy disposal bounds
+                // its lifetime; thumbnail, theme and selection changes redraw.
+                compositingStrategy = if (glass) CompositingStrategy.Offscreen else CompositingStrategy.Auto
+            }
             .then(if (glass) Modifier.cardGlass(cardShape) else Modifier)
             .then(if (selected) Modifier.border(2.5.dp, MaterialTheme.colorScheme.primary, cardShape)
                 else if (skin == Skin.MATERIAL) Modifier.border(0.75.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f), cardShape)
