@@ -2661,7 +2661,11 @@ class InkCanvasView @JvmOverloads constructor(
                 // The front buffer is not what this panel shows; the compatible
                 // surface reports its own frames instead.
                 if (compatWetInk) return
-                val span = inkRenderLatencyNanos(latencyData.osDetectsEvent, latencyData.strokesViewFinishesDrawCalls)
+                val completion = inkDrawCompletion(latencyData.osDetectsEvent, latencyData.strokesViewFinishesDrawCalls,
+                    latencyData.canvasFrontBufferStrokesRenderHelperData.finishesDrawCalls,
+                    latencyData.hwuiInProgressStrokesRenderHelperData.finishesDrawCalls)
+                latency.inkCallback(completion != null)
+                val span = completion?.let { inkRenderLatencyNanos(latencyData.osDetectsEvent, it) }
                     ?: return
                 if (latencyData.strokeAction == LatencyData.StrokeAction.START) {
                     latency.record(PerformanceMetric.FIRST_INK, span)
@@ -6288,7 +6292,7 @@ class InkCanvasView @JvmOverloads constructor(
         val visible = visiblePages()
         // Read in already and waiting for its frame: no second read from disk.
         takePrefetched(visible)
-        val toLoad = visible.filter { !it.loaded }
+        val toLoad = openingLoads(visible.filter { !it.loaded }, document.pages.getOrNull(currentPage), opening != null)
 
         // At deep zoom only a fraction of a page is visible. Rebuilding the
         // whole page there produced enormous meshes that were immediately off
@@ -6298,7 +6302,7 @@ class InkCanvasView @JvmOverloads constructor(
         dry.visibleDocumentBounds(viewport)
         val margin = REFINE_MARGIN_PX / currentScale().coerceAtLeast(0.01f)
         val work = visible.mapIndexedNotNull { _, page ->
-            if (loadOnly) return@mapIndexedNotNull null
+            if (loadOnly || opening != null) return@mapIndexedNotNull null
             if (!page.loaded || page.strokes.isEmpty()) return@mapIndexedNotNull null
             val index = document.pages.indexOf(page)
             if (index < 0) return@mapIndexedNotNull null
@@ -6502,7 +6506,7 @@ class InkCanvasView @JvmOverloads constructor(
                 dry.postInvalidateOnAnimation()
                 // Read in at the zoom in use, a loaded page needs no second pass
                 // unless the zoom is finer than a page is first read at.
-                if (loaded.isNotEmpty() && target > LOAD_TESSELLATION_SCALE) scheduleRefine()
+                if (loaded.isNotEmpty() && (target > LOAD_TESSELLATION_SCALE || anyVisibleUnloaded())) scheduleRefine()
             }
         } }.getOrNull()
         if (future == null) {
@@ -10033,6 +10037,8 @@ class InkCanvasView @JvmOverloads constructor(
             open.strokes = page.strokes.size
             NoteOpenClock.finished(open)
             opening = null
+            // Opening prioritised the base page; resume missing neighbours and finer zoom detail.
+            if (anyVisibleUnloaded() || tessellationBucket(currentScale()) > LOAD_TESSELLATION_SCALE) scheduleRefine()
         }
 
         private fun cachedInk(page: Page, visibleCount: Int): CachedInk? {
@@ -10333,6 +10339,10 @@ class InkCanvasView @JvmOverloads constructor(
                 lastDrawMs = (System.nanoTime() - started) / 1e6
                 latency.addDraw((lastDrawMs * 1e6).toLong(), visibleCount)
                 latency.addInkCache(inkTiles.stats())
+                if (tileFrame) {
+                    latency.record(PerformanceMetric.TILE_RECORD, inkTiles.recordingNanos)
+                    latency.record(PerformanceMetric.TILE_CLEANUP, inkTiles.cleanupNanos)
+                }
             }
         }
 

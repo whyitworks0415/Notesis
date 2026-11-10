@@ -86,6 +86,11 @@ internal class InkTileCache(
     private var recordBudgetNanos = Long.MAX_VALUE
     private var recordSpentNanos = 0L
     private var recordedThisFrame = 0
+    private var frameStarted = 0L
+    private var previousRecordNanos = 0L
+    var cleanupNanos = 0L
+        private set
+    val recordingNanos: Long get() = recordSpentNanos
 
     /**
      * True after a frame left tiles unrecorded for want of budget: the caller
@@ -132,15 +137,19 @@ internal class InkTileCache(
         framePages.clear()
         staleDrawn.clear()
         recordBudgetNanos = recordBudget
+        frameStarted = System.nanoTime()
+        cleanupNanos = 0L
         recordSpentNanos = 0L
         recordedThisFrame = 0
         backlog = false
     }
 
-    private fun mayRecord(): Boolean = recordedThisFrame == 0 || recordSpentNanos < recordBudgetNanos
+    private fun mayRecord(): Boolean = optionalTileWork(recordedThisFrame,
+        System.nanoTime() - frameStarted, recordBudgetNanos, previousRecordNanos)
 
     /** Recorded canvas commands still reference these nodes until GPU playback. */
     fun endFrame() {
+        val cleanupStarted = System.nanoTime()
         // Stale tiles go once a frame has drawn without them: the page is
         // complete again, or no longer on screen. Never in a frame that drew
         // them - their nodes are in this frame's recording.
@@ -170,6 +179,7 @@ internal class InkTileCache(
         }
         // The visible frame wins over the cache budget. Only off-screen entries
         // may be discarded; deleting a queued node makes that ink disappear.
+        cleanupNanos = System.nanoTime() - cleanupStarted
     }
 
     private fun visibleTiles(viewport: RectF, scale: Float): Long {
@@ -444,7 +454,8 @@ internal class InkTileCache(
             val top = (key.y * TILE_PX - GUTTER_PX) / scale
             val strokes = query(key.page, left, top, left + EXTENT_PX / scale, top + EXTENT_PX / scale)
             val hasInk = record(tile.base, tile, strokes)
-            recordSpentNanos += System.nanoTime() - started
+            previousRecordNanos = System.nanoTime() - started
+            recordSpentNanos += previousRecordNanos
             recordedThisFrame++
             if (tile.hasInk != hasInk) layerBytes += if (hasInk) TILE_BYTES else -TILE_BYTES
             tile.hasInk = hasInk

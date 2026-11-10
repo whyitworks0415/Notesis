@@ -1616,6 +1616,8 @@ Pressure rewrite (per pen event)	필압 다시 쓰기 (펜 이벤트당)
 Benchmark (Lab)	벤치마크 (Lab)
 Shows 30 temporary lines with a scripted pen, clears them, then glides the page down and up. Your saved ink and undo history stay unchanged, including on cancellation. Saving and edit-history costs are excluded. Run it the same way on each build or switch you want to compare.	정해진 펜 동작으로 임시 획 30개를 표시하고 지운 뒤 페이지를 아래위로 미끄러뜨립니다. 취소해도 저장된 필기와 실행 취소 기록은 유지됩니다. 저장과 편집 기록의 처리 시간은 측정에서 제외됩니다. 비교하려는 빌드나 스위치마다 같은 방법으로 실행하세요.
 Stop benchmark	벤치마크 중지
+Tile query and record (frame)	타일 검색·기록 (프레임)
+Tile cleanup (frame)	타일 캐시 정리 (프레임)
 Run benchmark	벤치마크 실행
 Running…	실행 중…
 Notes opened	노트 열기

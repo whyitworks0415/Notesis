@@ -234,6 +234,8 @@ private class DiagnosticSnapshot(
 )
 
 private val METRIC_LABELS = listOf(
+    PerformanceMetric.TILE_RECORD to "Tile query and record (frame)",
+    PerformanceMetric.TILE_CLEANUP to "Tile cleanup (frame)",
     PerformanceMetric.ERASE_WORK to "Partial erase work (frame)",
     PerformanceMetric.ERASE_APPLY to "Partial erase applied (not pixels)",
     PerformanceMetric.PEN_START_HANDLED to "Pen start handled (not rendered)",

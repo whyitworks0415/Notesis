@@ -34,6 +34,8 @@ internal enum class PerformanceMetric {
     WET_SURFACE_DRAW,
     /** A pen event copied with its pressure rewritten (curve, or off); once per such event. */
     PRESSURE_CURVE,
+    TILE_RECORD,
+    TILE_CLEANUP,
 }
 
 internal data class Percentiles(
@@ -52,6 +54,13 @@ internal data class Percentiles(
  * volatile boolean read only when diagnostics are hidden.
  */
 class LatencyStats(private val capacity: Int = 512) {
+    private var inkCallbacks = 0L
+    private var inkMissing = 0L
+    @Synchronized internal fun inkCallback(valid: Boolean) {
+        if (!enabled) return
+        inkCallbacks++
+        if (!valid) inkMissing++
+    }
     @Volatile
     var enabled: Boolean = false
         private set
@@ -263,6 +272,9 @@ class LatencyStats(private val capacity: Int = 512) {
             metricLine("first ink (render/post)", PerformanceMetric.FIRST_INK),
             metricLine("input handled", PerformanceMetric.INPUT_HANDLED),
             metricLine("pressure rewrite (per event)", PerformanceMetric.PRESSURE_CURVE),
+            metricLine("tile query+record (frame)", PerformanceMetric.TILE_RECORD),
+            metricLine("tile cleanup (frame)", PerformanceMetric.TILE_CLEANUP),
+            "ink callbacks $inkCallbacks (missing draw/event timestamp $inkMissing)",
             metricLine("wet ink (render/post)", PerformanceMetric.WET_INK),
             metricLine("compat geometry", PerformanceMetric.WET_GEOMETRY),
             metricLine("compat surface lock", PerformanceMetric.WET_SURFACE_LOCK),
@@ -317,6 +329,8 @@ class LatencyStats(private val capacity: Int = 512) {
     }
 
     private fun resetLocked() {
+        inkCallbacks = 0L
+        inkMissing = 0L
         metrics.forEach(LongRing::clear)
         frames.clear()
         predictionLeads.clear()
