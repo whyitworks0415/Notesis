@@ -55,8 +55,7 @@ internal object AppUpdate {
      * and for as long as it is public; the newest of what is found counts.
      */
     private val REPOS = listOf("whyitworks0415/Notesis-releases")
-    private fun latestUrl(repo: String) = "https://api.github.com/repos/$repo/releases/latest"
-    private fun recentUrl(repo: String) = "https://api.github.com/repos/$repo/releases?per_page=20"
+    private fun recentUrl(repo: String, page: Int) = "https://api.github.com/repos/$repo/releases?per_page=100&page=$page"
 
     /**
      * How a release says it is a manual update: this line anywhere in its
@@ -152,19 +151,28 @@ internal object AppUpdate {
         .trim()
 
     /** The newest release, or null when it cannot be read or carries no APK. Network: call off the main thread. */
-    fun fetchLatest(): AppRelease? = mergeReleases(REPOS.map { repo ->
-        listOfNotNull(fetch(latestUrl(repo))?.let { runCatching { parseRelease(JSONObject(it)) }.getOrNull() })
-    }).firstOrNull()
+    fun fetchLatest(): AppRelease? = fetchRecent().firstOrNull()
 
     /** The newest releases, newest first, each that carries an APK. Network: call off the main thread. */
     fun fetchRecent(): List<AppRelease> = mergeReleases(REPOS.map { repo ->
-        fetch(recentUrl(repo))?.let { json ->
-            runCatching {
-                val array = org.json.JSONArray(json)
-                (0 until array.length()).mapNotNull { parseRelease(array.getJSONObject(it)) }
-            }.getOrNull()
-        }.orEmpty()
+        collectReleasePages { page -> fetch(recentUrl(repo, page)) }
     }).take(20)
+
+    /** GitHub's order can bury previews under normal releases; select by version only after filtering. */
+    internal fun collectReleasePages(read: (Int) -> String?): List<AppRelease> {
+        val found = ArrayList<AppRelease>()
+        // A bounded scan prevents one manual check from fetching an unlimited history.
+        for (page in 1..5) {
+            val json = read(page) ?: break
+            val array = runCatching { org.json.JSONArray(json) }.getOrNull() ?: break
+            for (i in 0 until array.length()) {
+                val release = array.optJSONObject(i) ?: continue
+                runCatching { parseRelease(release) }.getOrNull()?.let(found::add)
+            }
+            if (array.length() < 100) break
+        }
+        return mergeReleases(listOf(found))
+    }
 
     /**
      * What several repositories found as one list, newest first. A build in
