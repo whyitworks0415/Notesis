@@ -22,8 +22,8 @@ class NotesWidget : AppWidgetProvider() {
     }
 
     companion object {
-        const val ACTION_NEW = "com.notesis.lab.widget.NEW_NOTE"
-        const val ACTION_OPEN = "com.notesis.lab.widget.OPEN_NOTE"
+        const val ACTION_NEW = "com.notesis.widget.NEW_NOTE"
+        const val ACTION_OPEN = "com.notesis.widget.OPEN_NOTE"
         const val EXTRA_NOTE = "note"
         private val ROWS = intArrayOf(R.id.widget_note_1, R.id.widget_note_2, R.id.widget_note_3)
 

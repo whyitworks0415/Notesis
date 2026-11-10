@@ -31,8 +31,8 @@ S6 Lite, SM-P61x/P62x). Kotlin, Jetpack Compose for the chrome, a custom
 
    Then: what changed and why, how it was checked, what was not done, and a
    short list of what to try on the tablet.
-3. CI is `.github/workflows/apk.yml`. It runs on a push to `main` or
-   `claude/**`, or by hand (workflow_dispatch, input `update`:
+3. CI is `.github/workflows/apk.yml`. It runs by hand only
+   (workflow_dispatch, input `update`:
    `automatic`/`manual`/`check`). **Every successful `automatic` or `manual`
    run publishes a release** named after `versionName`, so do not run one
    twice for the same version, and bump the version before a build meant to
@@ -108,15 +108,21 @@ S6 Lite, SM-P61x/P62x). Kotlin, Jetpack Compose for the chrome, a custom
 | Backup, widget, updates | `AutoBackup.kt` (off by default), `NotesWidget.kt`, `AppUpdate.kt` (beta code) |
 | Liquid glass | `LiquidGlass*.kt`, `GlassPopupBackdrop.kt`; saved keys still say `spotiglass…` |
 
-## Performance experiment branch
+## Stable release and native checks
 
-This branch builds **Notesis Lab** (`com.notesis.lab`), installed beside Notesis.
-This branch has a Lab-only `apk.yml` workflow. Never publish a Lab
-APK under a normal `v<version>-<code>` tag. Lab tags end in `-preview`, which
-normal Notesis update parsing rejects. Source remains private. The original
-app data is never opened directly: copy notes using an exported backup or file.
+This branch builds the original **Notesis** (`com.notesis`), promoted from the
+validated Lab work at the owner's request. Keep its existing data directory,
+widget actions, signing lineage and ordinary update channel. Lab stays in the
+separate `com.notesis.lab` installation and its preview tags must remain excluded
+from the normal feed. Source stays private; only release assets are public.
 
-For Lab JVM tests, run `bash tools/performance-lab/check-native.sh` first, then
+Run `bash tools/performance-lab/check-native.sh` before
 `./gradlew testDebugUnitTest -Pnotesis.hostNativeDir="$PWD/build/host-native"`.
-The host script checks the same C++ kernel with address/undefined sanitizers and
+The script checks the same C++ kernel with address/undefined sanitizers and
 compiles a JNI bridge for tests. Host benchmark results are not device results.
+The own-buffer display remains experimental and disabled by default.
+
+Dispatch `apk.yml` with `update=automatic` once per new stable version to build,
+test, sign and publish a non-prerelease to the ordinary update feed. There is no
+push trigger: fast-forwarding the tested release commit to main does not produce
+a second release. Lab source branches keep their own Lab workflow.

@@ -29,14 +29,14 @@ class LabPerformanceTest {
         assertFalse(isLabReleaseTag("lab-v0.90.20-211"))
     }
 
-    @Test fun `Lab update feed ignores original APKs and accepts only its own channel`() {
+    @Test fun `stable update feed ignores the separate Lab channel`() {
         fun release(tag: String) = JSONObject().put("tag_name", tag).put("body", "<!-- update: manual -->")
-            .put("assets", org.json.JSONArray().put(JSONObject().put("name", "Notesis-Lab.apk")
-                .put("browser_download_url", "https://example.com/lab.apk").put("size", 123)))
-        assertNull(AppUpdate.parseRelease(release("v0.90.19-210")))
-        val found = AppUpdate.parseRelease(release("lab-v0.90.20-lab.1-211-preview"))!!
-        assertEquals("0.90.20-lab.1", found.versionName)
-        assertEquals(211L, found.versionCode)
+            .put("assets", org.json.JSONArray().put(JSONObject().put("name", "Notesis.apk")
+                .put("browser_download_url", "https://example.com/stable.apk").put("size", 123)))
+        assertNull(AppUpdate.parseRelease(release("lab-v0.90.20-lab.1-211-preview")))
+        val found = AppUpdate.parseRelease(release("v0.90.19-210"))!!
+        assertEquals("0.90.19", found.versionName)
+        assertEquals(210L, found.versionCode)
         assertTrue(found.manual)
     }
 

@@ -1,18 +1,19 @@
-# This branch builds a separate application and publishes preview tags only.
-# Do not merge its package or release routing into the standard application.
-name: Notesis Lab APK
+# Stable builds are dispatched explicitly so promoting a tested branch to
+# main cannot publish the same version twice.
+name: APK
 
 on:
   workflow_dispatch:
     inputs:
       update:
-        # Lab releases are manual, pre-release, and excluded from the normal feed.
+        # automatic: offer the stable update to ordinary installations.
+        # manual: only developer-enabled copies are offered the update.
         # check: builds and runs the tests only - nothing is signed or
         # released - so a change can be tried without spending a version.
         description: "How the app offers this release (check: build and test only)"
         type: choice
-        options: ["manual", "check"]
-        default: "manual"
+        options: ["automatic", "manual", "check"]
+        default: "automatic"
 
 permissions:
   contents: write
@@ -32,10 +33,10 @@ jobs:
           # old key, which is only there (see docs/signing.md).
           fetch-depth: 0
 
-      - name: Verify isolated Lab package
+      - name: Verify stable application package
         run: |
-          grep -q 'applicationId = "com.notesis.lab"' app/build.gradle.kts
-          grep -q 'lab-' .github/workflows/apk.yml
+          grep -q 'applicationId = "com.notesis"' app/build.gradle.kts
+          ! grep -q 'versionName = ".*lab' app/build.gradle.kts
 
       - uses: actions/setup-java@v4
         with:
@@ -65,12 +66,11 @@ jobs:
         # Never sign or publish an update whose regression tests failed.
         run: ./gradlew testReleaseUnitTest -Pnotesis.hostNativeDir="$PWD/build/host-native" -Dorg.gradle.java.home="$JAVA_HOME" --no-daemon
 
-      # Check and manual builds also verify chrome under Robolectric before
+      # Every stable build also verifies chrome under Robolectric before
       # signing. The manual APK must contain the UI that passed these tests.
       - name: Screenshots
-        if: ${{ github.event.inputs.update == 'check' || github.event.inputs.update == 'manual' }}
         # Robolectric and Roborazzi are built for Java 21; the runner has one beside the 17 the app builds with.
-        run: ./gradlew testDebugUnitTest --tests 'com.notesis.LibraryScreenshotTest' --tests 'com.notesis.CanvasImagePreviewsTest' --tests 'com.notesis.DarkChromeScreenshotTest' --tests 'com.notesis.MaterialMotionUiTest' --tests 'com.notesis.NativeBoundsTreeTest' --tests 'com.notesis.NativeEraseGeometryTest' --tests 'com.notesis.ContinuousEraseTest' --tests 'com.notesis.NativeContinuousEraseTest' --tests 'com.notesis.EraseTransactionTest' --tests 'com.notesis.LabStrokeProcessingTest' --tests 'com.notesis.LabPerformanceTest' --tests 'com.notesis.LabOpenAndBenchTest' --tests 'com.notesis.BenchmarkInkTest' --tests 'com.notesis.LabGuardLifecycleTest' --tests 'com.notesis.LabUpdateFeedTest' --tests 'com.notesis.LabChromeCompatibilityTest' --tests 'com.notesis.ColorPopupUiTest' --tests 'com.notesis.AppPopupFrameTest' -Pnotesis.hostNativeDir="$PWD/build/host-native" -Dorg.gradle.java.home="${JAVA_HOME_21_X64:-$JAVA_HOME}" --no-daemon
+        run: ./gradlew testDebugUnitTest --tests 'com.notesis.LibraryScreenshotTest' --tests 'com.notesis.CanvasImagePreviewsTest' --tests 'com.notesis.DarkChromeScreenshotTest' --tests 'com.notesis.MaterialMotionUiTest' --tests 'com.notesis.NativeBoundsTreeTest' --tests 'com.notesis.NativeEraseGeometryTest' --tests 'com.notesis.ContinuousEraseTest' --tests 'com.notesis.NativeContinuousEraseTest' --tests 'com.notesis.EraseTransactionTest' --tests 'com.notesis.LabStrokeProcessingTest' --tests 'com.notesis.LabPerformanceTest' --tests 'com.notesis.LabOpenAndBenchTest' --tests 'com.notesis.BenchmarkInkTest' --tests 'com.notesis.LabGuardLifecycleTest' --tests 'com.notesis.StableUpdateFeedTest' --tests 'com.notesis.StableInstallCompatibilityTest' --tests 'com.notesis.LabChromeCompatibilityTest' --tests 'com.notesis.ColorPopupUiTest' --tests 'com.notesis.AppPopupFrameTest' -Pnotesis.hostNativeDir="$PWD/build/host-native" -Dorg.gradle.java.home="${JAVA_HOME_21_X64:-$JAVA_HOME}" --no-daemon
 
       - uses: actions/upload-artifact@v4
         if: ${{ github.event.inputs.update == 'check' }}
@@ -89,9 +89,9 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           CODE=$(grep -oP '^\s*versionCode = \K\d+' app/build.gradle.kts)
           echo "code=$CODE" >> "$GITHUB_OUTPUT"
-          echo "tag=lab-v$VERSION-$CODE-preview" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION-$CODE" >> "$GITHUB_OUTPUT"
           cp app/build/outputs/apk/release/app-release-unsigned.apk unsigned.apk
-          "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest application-id unsigned.apk | grep -Fx 'com.notesis.lab'
+          "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest application-id unsigned.apk | grep -Fx 'com.notesis'
           cp build/host-native/benchmark.txt Spatial-host-benchmark.txt
           cp build/host-native/erase-comparison.txt Erase-host-comparison.txt
 
@@ -139,9 +139,9 @@ jobs:
           "$BT/zipalign" -p -f 4 unsigned.apk "$KEYS/aligned.apk"
           "$BT/apksigner" sign "${FIRST[@]}" --v1-signing-enabled false --v2-signing-enabled false --v3-signing-enabled true \
             --next-signer "${NEW[@]}" --rotation-min-sdk-version 28 --lineage "$KEYS/lineage" \
-            --out "Notesis-Lab-${{ steps.name.outputs.version }}-${{ steps.name.outputs.code }}.apk" "$KEYS/aligned.apk"
+            --out "Notesis-${{ steps.name.outputs.version }}-${{ steps.name.outputs.code }}.apk" "$KEYS/aligned.apk"
           # It must be the key that was meant, and verify.
-          "$BT/apksigner" verify --verbose --print-certs Notesis-Lab-*.apk | tee "$KEYS/verify.txt"
+          "$BT/apksigner" verify --verbose --print-certs Notesis-*.apk | tee "$KEYS/verify.txt"
           WANT=$(tr -d ' \n:' < signing/CERT_SHA256 | tr 'A-F' 'a-f')
           grep -iq "certificate SHA-256 digest: $WANT" "$KEYS/verify.txt" || {
             echo "::error::The APK is signed by a different key than signing/CERT_SHA256 names."; exit 1; }
@@ -159,8 +159,8 @@ jobs:
         if: ${{ github.event.inputs.update != 'check' }}
         continue-on-error: true
         with:
-          name: Notesis-Lab-${{ steps.name.outputs.version }}-${{ steps.name.outputs.code }}
-          path: Notesis-Lab-*.apk
+          name: Notesis-${{ steps.name.outputs.version }}-${{ steps.name.outputs.code }}
+          path: Notesis-*.apk
           if-no-files-found: error
           retention-days: 3
 
@@ -173,12 +173,12 @@ jobs:
           # the default branch, and every release run from a work branch was
           # tagged at main instead of at its own code.
           target_commitish: ${{ github.sha }}
-          name: Notesis Lab ${{ steps.name.outputs.version }} (${{ steps.name.outputs.code }})
-          prerelease: true
-          make_latest: false
+          name: Notesis ${{ steps.name.outputs.version }} (${{ steps.name.outputs.code }})
+          prerelease: false
+          make_latest: true
           body_path: docs/releases/${{ steps.name.outputs.version }}.md
           files: |
-            Notesis-Lab-*.apk
+            Notesis-*.apk
             Spatial-host-benchmark.txt
             Erase-host-comparison.txt
           fail_on_unmatched_files: true
@@ -193,12 +193,12 @@ jobs:
           repository: whyitworks0415/Notesis-releases
           token: ${{ env.RELEASES_TOKEN }}
           tag_name: ${{ steps.name.outputs.tag }}
-          name: Notesis Lab ${{ steps.name.outputs.version }} (${{ steps.name.outputs.code }})
-          prerelease: true
-          make_latest: false
+          name: Notesis ${{ steps.name.outputs.version }} (${{ steps.name.outputs.code }})
+          prerelease: false
+          make_latest: true
           body_path: docs/releases/${{ steps.name.outputs.version }}.md
           files: |
-            Notesis-Lab-*.apk
+            Notesis-*.apk
             Spatial-host-benchmark.txt
             Erase-host-comparison.txt
           fail_on_unmatched_files: true

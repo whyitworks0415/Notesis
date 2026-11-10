@@ -17,7 +17,7 @@
         </intent>
     </queries>
     <application
-        android:label="Notesis Lab"
+        android:label="Notesis"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
@@ -57,7 +57,7 @@
         <receiver
             android:name=".NotesWidget"
             android:exported="false"
-            android:label="Notesis Lab">
+            android:label="Notesis">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>

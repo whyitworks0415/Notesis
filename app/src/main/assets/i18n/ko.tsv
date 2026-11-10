@@ -1637,3 +1637,7 @@ Benchmark	벤치마크
 Color grid	색상 격자
 SV square	SV 사각형
 HSV bars	HSV 막대
+
+Experimental write path	실험용 쓰기 경로
+Scripted benchmark	자동 입력 벤치마크
+Native code	네이티브 코드

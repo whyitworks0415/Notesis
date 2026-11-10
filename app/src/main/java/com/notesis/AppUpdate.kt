@@ -49,10 +49,7 @@ internal data class AppRelease(
 internal object AppUpdate {
     /**
      * Where releases are looked for, in this order. The releases-only
-     * repository comes first: the source repository can be private, and then
-     * neither its API nor its downloads are open to the app. The source
-     * repository is still asked, for builds released before the other existed
-     * and for as long as it is public; the newest of what is found counts.
+     * repository holds the public APKs; the source repository stays private.
      */
     private val REPOS = listOf("whyitworks0415/Notesis-releases")
     private fun recentUrl(repo: String, page: Int) = "https://api.github.com/repos/$repo/releases?per_page=100&page=$page"
@@ -71,7 +68,7 @@ internal object AppUpdate {
 
     private fun prefs(context: Context) = context.getSharedPreferences("updates", Context.MODE_PRIVATE)
 
-    fun autoCheck(context: Context): Boolean = prefs(context).getBoolean("autoCheck", false)
+    fun autoCheck(context: Context): Boolean = prefs(context).getBoolean("autoCheck", true)
     fun setAutoCheck(context: Context, on: Boolean) = prefs(context).edit().putBoolean("autoCheck", on).apply()
 
     /**
@@ -79,7 +76,7 @@ internal object AppUpdate {
      * the ones still being tried; everyone else gets only the automatic
      * ones, announced as the app opens. Turned on with the developer code.
      */
-    fun isBeta(context: Context): Boolean = prefs(context).getBoolean("beta", true)
+    fun isBeta(context: Context): Boolean = prefs(context).getBoolean("beta", false)
     fun setBeta(context: Context, on: Boolean) = prefs(context).edit().putBoolean("beta", on).apply()
 
     /**
@@ -211,11 +208,15 @@ internal object AppUpdate {
     internal fun parseRelease(release: JSONObject): AppRelease? {
         if (release.optBoolean("draft")) return null
         val tag = release.optString("tag_name")
-        if (!isLabReleaseTag(tag)) return null
-        val (name, code) = parseTag(tag.removePrefix("lab-").removeSuffix("-preview")) ?: return null
+        // The separate Lab app must never be offered as an update to Notesis,
+        // even if a Lab release is accidentally given a numeric-only suffix.
+        if (tag.startsWith("lab-")) return null
+        val (name, code) = parseTag(tag) ?: return null
         val assets = release.optJSONArray("assets") ?: return null
         val apk = (0 until assets.length()).map { assets.getJSONObject(it) }
-            .firstOrNull { it.optString("name").endsWith(".apk") } ?: return null
+            .firstOrNull { it.optString("name").let { name ->
+                name.endsWith(".apk") && !name.startsWith("Notesis-Lab")
+            } } ?: return null
         return AppRelease(
             versionName = name,
             versionCode = code,
@@ -467,7 +468,7 @@ internal fun AppVersionSection(onLicenses: () -> Unit) {
     }
 
     Text(
-        "Notesis Lab ${AppUpdate.installedName(context)} (${AppUpdate.installedCode(context)})",
+        "Notesis ${AppUpdate.installedName(context)} (${AppUpdate.installedCode(context)})",
         style = MaterialTheme.typography.titleSmall,
     )
     waiting?.let { release ->

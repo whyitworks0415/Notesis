@@ -230,7 +230,7 @@ internal fun benchmarkReport(
     header: String, device: String, app: String, switches: String,
     written: Int, writing: String, scrolling: String, opens: String,
 ): String = buildString {
-    appendLine("Notesis Lab benchmark · $app")
+    appendLine("Notesis benchmark · $app")
     appendLine(device)
     appendLine(header)
     appendLine(switches)

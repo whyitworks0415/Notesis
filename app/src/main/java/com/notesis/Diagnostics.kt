@@ -369,7 +369,7 @@ internal fun DiagnosticsSettings(
         )
     }
     SettingsCard {
-        SettingsSectionHeader("Write path (Lab)")
+        SettingsSectionHeader("Experimental write path")
         SettingsNote("Switches to compare with the timings below. Turn one at a time, write the same lines, " +
             "and read the ink timings again. Nothing here changes what is drawn.")
         SettingsToggle(
@@ -388,7 +388,7 @@ internal fun DiagnosticsSettings(
         DiagnosticRow("Own buffers status", view?.nativePresentStatus ?: "No note open")
     }
     SettingsCard {
-        SettingsSectionHeader("Benchmark (Lab)")
+        SettingsSectionHeader("Scripted benchmark")
         SettingsNote("Shows 30 temporary lines with a scripted pen, clears them, then glides the page down and up. " +
             "Your saved ink and undo history stay unchanged, including on cancellation. Saving and edit-history " +
             "costs are excluded. Run it the same way on each build or switch you want to compare.")
@@ -411,7 +411,7 @@ internal fun DiagnosticsSettings(
         }
     }
     SettingsCard {
-        SettingsSectionHeader("Native code (Lab)")
+        SettingsSectionHeader("Native code")
         if (LabGuard.nativeOff) {
             SettingsNote("Left out for this run: the app did not close cleanly several times in a row. " +
                 "The Kotlin paths are doing the work. Switch it back on to load it at the next start.")
