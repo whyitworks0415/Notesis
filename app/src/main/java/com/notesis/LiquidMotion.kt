@@ -179,26 +179,39 @@ internal fun pourScale(progress: Float, start: Float): Float = when {
 internal const val POUR_OVERSHOOT_KEPT = 0.35f
 
 /**
- * The pouring spring: Mornye's damping ratio of 0.62, at 19 radians a second
- * rather than its 15, which on a 60 Hz screen took a frame or two longer to
- * be seen moving than a tap allows.
+ * The pouring spring: Mornye's own, a damping ratio of 0.62 at 15 radians a
+ * second. Paced by the motion speed (1.3 by default) it runs at about 19,
+ * which a 60 Hz screen shows moving on the first frame after the tap.
  */
 internal const val POUR_DAMPING_RATIO = 0.62f
-internal const val POUR_STIFFNESS = 19f * 19f
+internal const val POUR_STIFFNESS = 15f * 15f
 
 private val EaseInCubic = CubicBezierEasing(0.32f, 0f, 0.67f, 0f)
 
-/** A source-anchored window spring, with a synchronized rounded shrink on dismissal. */
+/**
+ * Mornye's context menu, as the glass looks open every menu and panel: a drop
+ * at the button runs down - the height first, on an underdamped spring - and
+ * spreads 50 ms later to its width, landing with a small wobble; the glass is
+ * seen from the start and the rows fade up on it (see PopupReveal.kt). It goes
+ * back into the button in 240 ms, the width folding first, in 200.
+ */
 internal val PourOpen = OpenProfile(
-    open = spring(dampingRatio = 0.88f, stiffness = 500f),
-    close = tween(240, easing = CubicBezierEasing(0.4f, 0f, 0.2f, 1f)),
+    open = spring(dampingRatio = POUR_DAMPING_RATIO, stiffness = POUR_STIFFNESS),
+    close = tween(240, easing = EaseInCubic),
     startScale = POUR_START,
     closeScale = POUR_START,
     alpha = { p -> (p / 0.08f).coerceIn(0f, 1f) },
-    openVelocity = 3f,
-    // Both dimensions follow one progress so closing cannot turn into a thin trapezoid.
+    scaleOf = ::pourScale,
+    widthDelayMs = POUR_WIDTH_DELAY_MS,
+    // From rest a spring's first frames hardly move; a little speed to start
+    // with, so the drop is seen leaving the button on the frame after the tap.
+    openVelocity = 4f,
+    closeWidth = tween(200, easing = EaseInCubic),
     reveal = true,
 )
+
+/** How long the width waits behind the height, as Mornye's does, before the global speed. */
+internal const val POUR_WIDTH_DELAY_MS = 50
 
 /** A 44-point drop against a panel of about 360: where a poured menu starts. */
 private const val POUR_START = 0.12f

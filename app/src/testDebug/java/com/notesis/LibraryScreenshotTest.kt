@@ -193,28 +193,4 @@ class LibraryScreenshotTest {
         }
     }
 
-    @Test
-    fun cachingTheHeaderDoesNotMoveItsControlsOrTheGridInset() {
-        var scrolling by mutableStateOf(false)
-        compose.setContent {
-            Column {
-                androidx.compose.foundation.layout.Box(
-                    Modifier.fillMaxWidth().testTag("header").libraryHeaderLayer(true) { scrolling },
-                ) {
-                    androidx.compose.foundation.layout.Box(
-                        Modifier.fillMaxWidth().height(80.dp).background(Color.Red).testTag("controls"),
-                    )
-                }
-                androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().height(30.dp).testTag("grid"))
-            }
-        }
-        val controls = compose.onNodeWithTag("controls").fetchSemanticsNode().boundsInRoot
-        val grid = compose.onNodeWithTag("grid").fetchSemanticsNode().boundsInRoot
-        for (moving in listOf(true, false, true, false)) {
-            compose.runOnIdle { scrolling = moving }
-            compose.onNodeWithTag("header").assertHeightIsEqualTo(80.dp)
-            assertEquals(controls, compose.onNodeWithTag("controls").fetchSemanticsNode().boundsInRoot)
-            assertEquals(grid, compose.onNodeWithTag("grid").fetchSemanticsNode().boundsInRoot)
-        }
-    }
 }

@@ -163,7 +163,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -1292,6 +1291,14 @@ private fun HomeScreen(
     var searchOpen by remember { mutableStateOf(false) }
     var searchFocused by remember { mutableStateOf(false) }
     val gridState = rememberLazyGridState()
+    // Pulled past either end the library gives and springs back, as Mornye's lists do.
+    val homeBounce = rememberEdgeBounce()
+    // The frost under the glassmorphism look holds the library as it was while
+    // the grid moves, as the liquid glass does: recorded again on every frame of
+    // a fling, every pane over it was blurred again with it.
+    LaunchedEffect(backdrop, gridState, homeBounce) {
+        snapshotFlow { gridState.isScrollInProgress || homeBounce?.active == true }.collect { backdrop.paused = it }
+    }
     val libraryTiles = remember { LibraryTiles() }
     var edgeSpeed by remember { mutableFloatStateOf(0f) }
     // Where the finger carrying selected notes is, in the grid's coordinates; null when nothing is carried.
@@ -1403,12 +1410,11 @@ private fun HomeScreen(
             val capsule = RoundedCornerShape(50)
             val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
             val button = LIBRARY_SEARCH_HEIGHT
-            // The backdrop is held while the grid moves. Keep the header's
-            // lenses in one texture during that time, rather than running
-            // their blur and refraction passes on every scroll frame. Read
-            // only the scroll boundary in the layer phase; unfolding and
-            // button animations still invalidate their contents normally.
-            Box(Modifier.fillMaxWidth().libraryHeaderLayer(currentSkin.isRefractive) { gridState.isScrollInProgress }) {
+            // No layer switched on as the grid starts to move: that was a
+            // header-sized texture allocated and filled on the first frame of
+            // every scroll. The backdrop it looks at is held while the grid
+            // moves, so the glass has nothing new to blur anyway.
+            Box(Modifier.fillMaxWidth()) {
                 // A quarter of the header's height of fade at the very top, over the status bar.
                 Box(Modifier.matchParentSize()) {
                     Box(Modifier.fillMaxWidth().fillMaxHeight(0.25f).graphicsLayer { alpha = scrollFold.value }
@@ -1658,7 +1664,7 @@ private fun HomeScreen(
                         // every frame of a fling, for the glass at the top to
                         // blur, was most of what made it stutter. The glass
                         // keeps the last frame and catches up when it stops.
-                        Modifier.captureLiquidGlassBackdrop(liquidBackdrop, paused = { gridState.isScrollInProgress || ChromeMotion.busy })
+                        Modifier.captureLiquidGlassBackdrop(liquidBackdrop, paused = { gridState.isScrollInProgress || ChromeMotion.busy || homeBounce?.active == true })
                     } else {
                         Modifier
                     },
@@ -1707,7 +1713,7 @@ private fun HomeScreen(
             ),
             horizontalArrangement = Arrangement.spacedBy(Ui.Space.m),
             verticalArrangement = Arrangement.spacedBy(Ui.Space.m),
-            modifier = Modifier.fillMaxSize().dragToSelect(
+            modifier = Modifier.fillMaxSize().edgeBounce(homeBounce).dragToSelect(
                 tiles = libraryTiles,
                 order = { (if (showFolders) subfolders.map(::folderKey) else emptyList()) + visibleNotes.map { it.id } },
                 selection = { selectionKeys() },
@@ -2927,13 +2933,10 @@ internal fun NoteCard(
     val glass = skin.isRefractive
     Card(
         modifier = Modifier
-            .graphicsLayer {
-                scaleX = sink; scaleY = sink
-                // Scrolling moves a texture instead of repainting the glass
-                // rim, continuous clips and thumbnail. Lazy disposal bounds
-                // its lifetime; thumbnail, theme and selection changes redraw.
-                compositingStrategy = if (glass) CompositingStrategy.Offscreen else CompositingStrategy.Auto
-            }
+            // No offscreen layer per card: each one was a texture to allocate
+            // and fill as the card scrolled in, a stall on every new row, for
+            // a rim and a picture the GPU draws again for almost nothing.
+            .graphicsLayer { scaleX = sink; scaleY = sink }
             .then(if (glass) Modifier.cardGlass(cardShape) else Modifier)
             .then(if (selected) Modifier.border(2.5.dp, MaterialTheme.colorScheme.primary, cardShape)
                 else if (skin == Skin.MATERIAL) Modifier.border(0.75.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f), cardShape)

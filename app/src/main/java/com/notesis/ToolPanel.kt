@@ -117,6 +117,7 @@ internal fun ToolPanel(
         val corner = skin.tokens().corner
         val shape = RoundedCornerShape(corner)
         val reveal = state.animate && growth.profile?.reveal == true
+        val bounce = rememberEdgeBounce()
         val tallest = LocalConfiguration.current.screenHeightDp.dp * 0.9f
         // Where the panel's top first lands, kept there: a part opening inside
         // it, or another tab of it, makes it longer downwards rather than
@@ -140,13 +141,16 @@ internal fun ToolPanel(
                 .fillMaxWidth()
                 .heightIn(max = tallest)
                 // Out of the point it was opened from under the glass looks:
-                // a rounded window and its contents scale together, with the
-                // glass recorded once while moving (see PopupReveal.kt).
+                // poured out as a drop, its rows never scaled, with the glass
+                // recorded once while moving (see PopupReveal.kt).
                 .then(if (reveal) Modifier.revealOutOf(growth, corner) { c -> anchor?.let { c.screenToLocal(it) } } else Modifier)
                 // Liquid glass under the glass skin, the same lens as the bar
                 // it came from; frost or a solid panel under the others.
                 .skinMaterial(shape, panel = true, role = ChromeRole.POPUP)
                 .clip(shape)
+                .revealContent(growth, reveal)
+                // Gives at either end and springs back, as Mornye's menus do.
+                .edgeBounce(bounce)
                 // No size animation of its own: a part that opens inside grows
                 // on one curve and the panel, measured round it, comes with it.
                 .verticalScroll(rememberScrollState())

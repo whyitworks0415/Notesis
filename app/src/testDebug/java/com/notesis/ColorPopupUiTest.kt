@@ -76,7 +76,7 @@ class ColorPopupUiTest {
         }
     }
 
-    @Test fun aMovingPanelHasTransformedHitBoundsAndAcceptsOneClick() {
+    @Test fun aPouringPanelKeepsItsRowsInPlaceAndAcceptsOneClick() {
         var clicks = 0
         lateinit var growth: PopupGrowth
         lateinit var scope: kotlinx.coroutines.CoroutineScope
@@ -92,18 +92,22 @@ class ColorPopupUiTest {
             }
         } }
         compose.mainClock.advanceTimeBy(80)
+        // Poured, not scaled: on its way out the rows are where they will rest,
+        // give or take the small run past full size.
+        val target = compose.onNodeWithTag("target").fetchSemanticsNode().boundsInRoot
         val mid = compose.onNodeWithTag("panel").fetchSemanticsNode().boundsInRoot.width
         compose.onNodeWithTag("target").performTouchInput { click() }
         compose.runOnIdle { assertEquals(1,clicks) }
         compose.mainClock.advanceTimeBy(1500)
         val full = compose.onNodeWithTag("panel").fetchSemanticsNode().boundsInRoot.width
-        assertTrue(mid > 0f && mid < full)
+        assertTrue(mid > 0f && kotlin.math.abs(mid - full) <= full * 0.05f)
+        val resting = compose.onNodeWithTag("target").fetchSemanticsNode().boundsInRoot
+        assertTrue(kotlin.math.abs(target.left - resting.left) <= 2f && kotlin.math.abs(target.top - resting.top) <= 2f)
         var closed = false
         compose.runOnIdle { scope.launch { growth.close(true); closed = true } }
         compose.mainClock.advanceTimeBy(64)
         assertFalse(closed)
-        val folding = compose.onNodeWithTag("panel").fetchSemanticsNode().boundsInRoot.width
-        assertTrue(folding > 0f && folding < full)
+        compose.runOnIdle { assertTrue(growth.width.value < 1f && growth.height.value < 1f) }
         compose.mainClock.advanceTimeBy(1000)
         compose.runOnIdle { assertTrue(closed) }
     }

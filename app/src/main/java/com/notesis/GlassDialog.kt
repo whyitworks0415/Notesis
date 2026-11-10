@@ -69,8 +69,8 @@ fun AlertDialog(
     val arrival = remember { Animatable(if (moves) 0f else 1f) }
 
     // Under the glass looks it comes out of the touch that opened it, as a
-    // popup comes out of its button: the rounded window and its contents
-    // grow together from a cached layer (see PopupReveal.kt).
+    // popup comes out of its button: poured out of that point, the dialog
+    // drawn once and never scaled (see PopupReveal.kt).
     val growth = rememberPopupGrowth(shown = !moves)
     val pours = moves && growth.profile?.reveal == true
     LaunchedEffect(Unit) {

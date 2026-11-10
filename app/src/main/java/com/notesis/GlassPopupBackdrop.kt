@@ -4,14 +4,19 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.LayoutDirection
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.LayerBackdrop
 
@@ -102,8 +107,28 @@ internal fun ProvideMovingBackdrops(motion: () -> Float, content: @Composable ()
  * written by the panel's own layer each frame it moves (see [ProvideSlidingBackdrops]).
  */
 internal class SlideShift {
+    /** Zero for panels moved by [slideInDraw], whose glass already sees where they rest. */
     var x = 0f
 }
+
+/**
+ * Moves what this draws [distance] towards the end edge it slides in from -
+ * past it at a full width - in the draw rather than by a layer.
+ *
+ * A layer's move is a move on screen, and Kyant's glass is redrawn whenever
+ * its place on screen changes: a panel slid by its layer blurred the page
+ * under it again on every frame of the slide, which was the sidebar's
+ * stutter. Moved in the draw, the panel stays laid out where it comes to
+ * rest, so its glass looks at that part of the page once and is carried in
+ * as a picture; and since what is inside has a layer of its own, a frame of
+ * the slide draws only this move.
+ */
+internal fun Modifier.slideInDraw(distance: DrawScope.() -> Float): Modifier =
+    this.drawWithContent {
+        val d = distance()
+        if (d == 0f) drawContent()
+        else translate(left = if (layoutDirection == LayoutDirection.Rtl) -d else d) { this@drawWithContent.drawContent() }
+    }.graphicsLayer()
 
 internal val LocalSlideShift = compositionLocalOf<SlideShift?> { null }
 

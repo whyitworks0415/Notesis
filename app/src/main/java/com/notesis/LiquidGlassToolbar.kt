@@ -858,7 +858,8 @@ internal fun LiquidGlassToolbar(
                                             .skinShadow(outline, panel = true)
                                             .then(if (skin == Skin.LIQUID_GLASS) Modifier.liquidGlassMorph(page) else Modifier)
                                             .skinMaterial(outline, panel = true, shadow = false, role = ChromeRole.POPUP)
-                                            .clip(outline)) {
+                                            .clip(outline)
+                                            .revealContent(menuGrowth, true)) {
                                             if (skin != Skin.LIQUID_GLASS) BlurBehind()
                                             menuBody()
                                         }
@@ -1420,7 +1421,8 @@ internal fun Modifier.growOutOf(anchor: () -> Offset?, growth: PopupGrowth): Mod
             val h = growth.height.value
             val profile = growth.profile
             if (profile?.reveal == true) {
-                // The rounded-window modifier owns both scale and clipping (see PopupReveal.kt).
+                // Nothing scaled: the pane's glass is poured round content that
+                // stays its size (see PopupReveal.kt).
                 return@graphicsLayer
             }
             if (profile == null) {

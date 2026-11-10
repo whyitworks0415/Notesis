@@ -185,17 +185,11 @@ internal fun SettingsSidebarFrame(
         val latestScreen by rememberUpdatedState(screen)
         val latestCommit by rememberUpdatedState(onWidthChange)
         val scheme = MaterialTheme.colorScheme
-        val slideShift = LocalSlideShift.current
         Row(Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(shown.dp)
-            // Slides in from the end edge it stands on and back out past it.
-            // Read in the layer, so a frame of the slide is a recomposite only.
-            .graphicsLayer {
-                val outside = 1f - appear().coerceIn(0f, 1f)
-                // Pulled past its narrowest it follows the finger out, to be let go of.
-                translationX = (outside * size.width + past.dp.toPx()) * (if (rtl) -1f else 1f)
-                // The glass looks at the page where the panel rests; see [ProvideSlidingBackdrops].
-                slideShift?.x = translationX
-            }) {
+            // Slides in from the end edge it stands on and back out past it,
+            // moved in the draw rather than by its layer (see [slideInDraw]).
+            // Pulled past its narrowest it follows the finger out, to be let go of.
+            .slideInDraw { (1f - appear().coerceIn(0f, 1f)) * size.width + past.dp.toPx() }) {
             val hapticView = androidx.compose.ui.platform.LocalView.current
             if (!full) {
                 Box(
@@ -276,14 +270,15 @@ internal fun SettingsSidebarFrame(
                         // What it holds arrives a beat after the panel and a
                         // little further, so it settles into the panel rather
                         // than being carried in pasted to it.
+                        // Its lead is a move in the draw too, so the glass on the
+                        // pages is not moved on screen and blurred again either.
+                        .slideInDraw { (1f - appear().coerceIn(0f, 1f)) * SIDEBAR_CONTENT_LEAD.toPx() }
                         .graphicsLayer {
-                            val p = appear().coerceIn(0f, 1f)
                             // Faded draw by draw rather than through a layer the
                             // size of the panel, which every frame of the slide
                             // would otherwise fill and blend again.
                             compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha
-                            alpha = sidebarContentAlpha(p)
-                            translationX = (1f - p) * SIDEBAR_CONTENT_LEAD.toPx() * (if (rtl) -1f else 1f)
+                            alpha = sidebarContentAlpha(appear().coerceIn(0f, 1f))
                         }
                         .background(scheme.surface.copy(alpha = if (LocalSkin.current == Skin.MATERIAL) 0f else 0.72f))
                         .windowInsetsPadding(ChromeInsets.only(WindowInsetsSides.Bottom + WindowInsetsSides.End)),

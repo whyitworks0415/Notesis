@@ -68,20 +68,21 @@ class LiquidMotionTest {
         assertTrue(MaterialOpen.reveal)
     }
 
-    @Test fun `legacy scale math stays bounded while window axes stay synchronized`() {
+    @Test fun `the glass pours as Mornye's menu does`() {
         // From the drop to full, then past full by only 0.35 of the overshoot.
         assertEquals(0.12f, pourScale(0f, 0.12f), 0f)
         assertEquals(0.56f, pourScale(0.5f, 0.12f), 0.0001f)
         assertEquals(1f, pourScale(1f, 0.12f), 0f)
         assertEquals(1f + 0.08f * 0.35f, pourScale(1.08f, 0.12f), 0.0001f)
-        // The window axes move together, with an initial velocity.
-        assertEquals(0, PourOpen.widthDelayMs)
+        // The height first, the width 50 ms behind, and a start that is seen at once.
+        assertEquals(50, PourOpen.widthDelayMs)
         assertTrue(PourOpen.openVelocity > 0f)
         // Material's kick stays under its spring's rate, so it never overshoots.
         assertTrue(MaterialOpen.openVelocity in 0.1f..14f)
-        assertNull(PourOpen.closeWidth)
-        // Legacy scale coefficients remain stable for other motion helpers.
-        assertEquals(361f, POUR_STIFFNESS, 0f)
+        // Back in, the width folds first.
+        assertTrue(PourOpen.closeWidth != null)
+        // Mornye's spring: 15 rad/s at 0.62, which overshoots by about 8%.
+        assertEquals(225f, POUR_STIFFNESS, 0f)
         val zeta = POUR_DAMPING_RATIO.toDouble()
         assertEquals(0.084, Math.exp(-zeta * Math.PI / Math.sqrt(1 - zeta * zeta)), 0.002)
     }
