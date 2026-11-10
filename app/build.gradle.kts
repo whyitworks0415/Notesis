@@ -54,6 +54,12 @@ android {
             all {
                 it.systemProperty("roborazzi.test.record", "true")
                 it.systemProperty("robolectric.pixelCopyRenderMode", "hardware")
+                // Robolectric fetches its Android jars itself, straight from
+                // Maven Central, which rate-limits CI runners (HTTP 429) and
+                // failed whole release builds before a test ran. Google's
+                // mirror of Maven Central serves the same artifacts.
+                it.systemProperty("robolectric.dependency.repo.url", "https://maven-central.storage-download.googleapis.com/maven2")
+                it.systemProperty("robolectric.dependency.repo.id", "google-maven-central")
                 providers.gradleProperty("notesis.hostNativeDir").orNull?.let { dir ->
                     it.systemProperty("java.library.path", dir)
                 }
