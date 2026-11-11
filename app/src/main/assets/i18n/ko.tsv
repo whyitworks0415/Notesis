@@ -1651,3 +1651,20 @@ The settings sidebar, the pages panel and the layers panel as they slide.	설정
 The library and lists in popups as they scroll.	첫 화면 목록과 팝업 안 목록을 스크롤할 때.
 The note's page as it is scrolled or flung.	노트 페이지를 스크롤하거나 넘길 때.
 The pen's in-between travel, drawn faintly ahead of the tip between screen frames.	화면 프레임 사이에 펜이 지나간 길을 펜 끝 앞에 흐리게 그립니다.
+Motion blur is off for now: {0}. Your setting is kept.	지금은 모션 블러를 그리지 않습니다({0}). 설정은 그대로 둡니다.
+battery saver	배터리 절약 모드
+the tablet running warm	기기 발열
+Performance recording	성능 기록
+Records how long each frame takes while you use the app, sorted by what you were doing: writing, moving the page, opening popups, scrolling the library, or nothing at all. Start it, close this panel, use the app as usual for a minute, then come back and stop it. Nothing of your notes is recorded.	앱을 쓰는 동안 프레임마다 걸린 시간을 하던 일별로 나눠 기록합니다(필기, 페이지 이동, 팝업 열기, 첫 화면 스크롤, 아무것도 안 함). 시작한 뒤 이 패널을 닫고 평소처럼 1분쯤 쓴 다음, 돌아와서 멈추세요. 노트 내용은 기록하지 않습니다.
+Stop and show the report	멈추고 결과 보기
+Start recording	기록 시작
+Recording. It stops by itself after ten minutes.	기록 중입니다. 10분 뒤 스스로 멈춥니다.
+How the stroke being written is shown	쓰는 중인 획을 보여 주는 방식
+Automatic	자동
+Fastest	가장 빠름
+Compatible	호환
+Safest	가장 안전
+If strokes do not show, show only when the pen lifts, or vanish, choose Safest. Fastest draws straight to the display and has the least delay where the tablet supports it. Compatible draws a second copy on a layer of its own. Safest draws it with the rest of the screen: the most sure to show, and the slowest with a web panel or a second note open.	획이 안 보이거나, 펜을 떼야 보이거나, 사라지면 '가장 안전'을 고르세요. '가장 빠름'은 화면에 바로 그려서 지원하는 기기에서 지연이 가장 적습니다. '호환'은 획을 별도 층에 한 번 더 그립니다. '가장 안전'은 화면의 나머지와 함께 그려서 가장 확실하게 보이지만, 웹 패널이나 두 번째 노트를 열어 두면 가장 느립니다.
+In use now: {0}.	지금 쓰는 방식: {0}.
+This tablet cannot show the fastest path, so it is not used here.	이 기기는 가장 빠른 방식으로 획을 보여 주지 못해서 쓰지 않습니다.
+Automatic picks Safest on tablets older than Android 13.	Android 13보다 낮은 기기에서는 자동이 '가장 안전'을 고릅니다.

@@ -683,9 +683,14 @@ private fun MotionGroup() {
         note = "A trace of blur along fast motion - popups, sidebars, scrolling and writing - so it reads as motion " +
             "rather than as steps. Shorter on faster screens. 0% is off; off in Light mode.",
     ) { MotionPrefs.setBlurStrength(context, it) }
-    // Each part on its own, for beta testers to find which one costs a frame.
-    val beta = remember { AppUpdate.isBeta(context) || isLabInstall(context) }
-    if (beta) {
+    // What is chosen above is kept; this says when it is not being drawn and why.
+    val heldBy = remember(InteractionGovernor.observedPowerSave, InteractionGovernor.heatStep,
+        InteractionGovernor.systemPowerSave) { InteractionGovernor.decorationsHeldBy }
+    if (heldBy != null && MotionPrefs.motionBlur) {
+        SettingsNote("Motion blur is off for now: $heldBy. Your setting is kept.")
+    }
+    // Each part on its own, for everyone: the way to find which one costs a frame.
+    run {
         SettingsSectionHeader("Motion blur by part")
         BlurPart.entries.forEach { part ->
             SettingsToggle(part.label, MotionPrefs.blurPartOn(part), { MotionPrefs.setBlurPart(context, part, it) },

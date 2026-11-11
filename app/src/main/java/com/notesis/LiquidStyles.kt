@@ -330,7 +330,7 @@ private fun Modifier.iosGlass(
             opacity = opacity,
         ))
     }
-    if (LabPerformance.efficientGlass) {
+    if (LabPerformance.efficientNow) {
         // One sampling/lens pass instead of a clear pass followed by a frosted pass.
         return drawBackdrop(backdrop = backdrop, shape = { shape }, effects = {
             blur(labBlurDp(g.frost, true).dp.toPx() * amount)

@@ -42,6 +42,14 @@ internal object DisplayRate {
             .maxByOrNull { it.refreshRate }?.modeId ?: 0
     }.getOrDefault(0)
 
+    /**
+     * The screen's refresh rate, or 60 when it cannot be read. Activity.display
+     * is Android 11's: called bare it threw NoSuchMethodError on Android 10,
+     * which took the app down from the frame watch and the motion settings.
+     */
+    fun refreshRate(activity: Activity): Float =
+        displayOf(activity)?.refreshRate?.takeIf { it.isFinite() && it >= 1f } ?: 60f
+
     @Suppress("DEPRECATION")
     private fun displayOf(activity: Activity): Display? =
         if (Build.VERSION.SDK_INT >= 30) runCatching { activity.display }.getOrNull()

@@ -10,6 +10,13 @@ internal object LabPerformance {
     var efficientGlass by mutableStateOf(false)
         private set
 
+    /**
+     * Whether the glass is drawn the cheaper way now: chosen, or the tablet
+     * is running warm. One sampling pass instead of two, and a smaller blur;
+     * it goes back by itself once the tablet has cooled (see [ThermalHold]).
+     */
+    val efficientNow: Boolean get() = efficientGlass || InteractionGovernor.heatStep >= 1
+
     /** Hint the system about the pen's threads while writing (see [WritingBoost]); on until compared. */
     var writingBoost by mutableStateOf(true)
         private set

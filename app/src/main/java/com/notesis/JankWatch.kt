@@ -72,7 +72,7 @@ internal object JankWatch {
         if (listener != null) return
         if (InteractionGovernor.lightMode || prefs(activity).getBoolean(KEY_ASKED, false)) return
         val handlerThread = thread ?: HandlerThread("frame-watch").also { it.start(); thread = it }
-        val interval = (1_000_000_000L / (activity.display?.refreshRate ?: 60f).coerceAtLeast(1f)).toLong()
+        val interval = (1_000_000_000L / DisplayRate.refreshRate(activity)).toLong()
         window.clear()
         skip = SETTLE_FRAMES
         val main = Handler(activity.mainLooper)

@@ -369,6 +369,55 @@ internal fun DiagnosticsSettings(
         )
     }
     SettingsCard {
+        SettingsSectionHeader("Performance recording")
+        SettingsNote("Records how long each frame takes while you use the app, sorted by what you were doing: " +
+            "writing, moving the page, opening popups, scrolling the library, or nothing at all. " +
+            "Start it, close this panel, use the app as usual for a minute, then come back and stop it. " +
+            "Nothing of your notes is recorded.")
+        val activity = remember(context) {
+            var host: Context? = context
+            while (host is android.content.ContextWrapper && host !is android.app.Activity) host = host.baseContext
+            host as? android.app.Activity
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(Ui.Space.s), verticalAlignment = Alignment.CenterVertically) {
+            if (PerfRecorder.recording) {
+                Button(onClick = { activity?.let { PerfRecorder.stop(it) } }, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text("Stop and show the report")
+                }
+            } else {
+                Button(
+                    onClick = {
+                        activity?.let {
+                            PerfRecorder.start(it, "Notesis $version · ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} · " +
+                                "Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})\n" +
+                                perfConditions(context, view))
+                        }
+                    },
+                    enabled = activity != null,
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) { Text("Start recording") }
+            }
+        }
+        if (PerfRecorder.recording) SettingsNote("Recording. It stops by itself after ten minutes.")
+        PerfRecorder.report?.let { text ->
+            Text(text, style = MaterialTheme.typography.bodySmall.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace))
+            Row(horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+                OutlinedButton(onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(text)) },
+                    modifier = Modifier.heightIn(min = 48.dp)) { Text("Copy") }
+                OutlinedButton(
+                    onClick = {
+                        val send = android.content.Intent(android.content.Intent.ACTION_SEND)
+                            .setType("text/plain")
+                            .putExtra(android.content.Intent.EXTRA_SUBJECT, "Notesis performance recording")
+                            .putExtra(android.content.Intent.EXTRA_TEXT, text)
+                        runCatching { context.startActivity(android.content.Intent.createChooser(send, null)) }
+                    },
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) { Text("Share") }
+            }
+        }
+    }
+    SettingsCard {
         SettingsSectionHeader("Experimental write path")
         SettingsNote("Switches to compare with the timings below. Turn one at a time, write the same lines, " +
             "and read the ink timings again. Nothing here changes what is drawn.")
@@ -524,3 +573,26 @@ internal fun DiagnosticRow(label: String, value: String, header: Boolean = false
 }
 
 private const val DIAGNOSTICS_REFRESH_MS = 1000L
+
+/**
+ * The settings a performance recording was made under: what would explain a
+ * difference between two of them.
+ */
+internal fun perfConditions(context: Context, view: InkCanvasView?): String {
+    val look = runCatching { SkinSettingsStore(context).load() }.getOrNull()
+    val parts = BlurPart.entries.filter { MotionPrefs.blurPartOn(it) }.joinToString(", ") { it.key }
+    return String.format(
+        Locale.US,
+        "%.0f Hz · Light mode %s · battery saver %s · thermal %s (step %d) · motion blur %.0f%% (%s)%s · motion speed %.0f%% · ink %s%s",
+        InteractionGovernor.refreshHz,
+        if (InteractionGovernor.lightMode) "on" else "off",
+        if (InteractionGovernor.systemPowerSave) "on" else "off",
+        thermalName(InteractionGovernor.thermalStatus), InteractionGovernor.heatStep,
+        MotionPrefs.blurStrength * 100f, parts.ifEmpty { "no parts" },
+        if (InteractionGovernor.decorationsAllowed) "" else ", held off",
+        MotionPrefs.speed * 100f,
+        view?.wetInkPathLabel ?: "no note open",
+        look?.let { " · look ${it.liquidStyle.name.lowercase(Locale.US)}" } ?: "",
+    )
+}
+

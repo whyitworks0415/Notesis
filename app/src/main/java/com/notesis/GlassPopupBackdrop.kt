@@ -14,6 +14,8 @@ import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -126,10 +128,28 @@ internal class SlideShift {
  * the slide draws only this move.
  */
 @androidx.compose.runtime.Composable
-internal fun Modifier.slideInDraw(blur: Boolean = false, distance: Density.(Size) -> Float): Modifier {
+internal fun Modifier.slideInDraw(
+    blur: Boolean = false,
+    /**
+     * Whether the panel is on its way in or out. While it is, it is drawn
+     * somewhere other than where it is laid out, so a touch would land on a
+     * button that is not under the finger: touches are taken and dropped
+     * until it has come to rest.
+     */
+    sliding: () -> Boolean = { false },
+    distance: Density.(Size) -> Float,
+): Modifier {
     // The slide's speed, from where it was a frame ago, for its trace of blur.
     val track = androidx.compose.runtime.remember { SlideSpeed() }
-    return this.drawWithContent {
+    val latestSliding = androidx.compose.runtime.rememberUpdatedState(sliding)
+    return this.pointerInput(Unit) {
+        awaitPointerEventScope {
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                if (latestSliding.value()) event.changes.forEach { it.consume() }
+            }
+        }
+    }.drawWithContent {
         val d = distance(size)
         if (d == 0f) drawContent()
         else translate(left = if (layoutDirection == LayoutDirection.Rtl) -d else d) { this@drawWithContent.drawContent() }
@@ -141,6 +161,9 @@ internal fun Modifier.slideInDraw(blur: Boolean = false, distance: Density.(Size
         renderEffect = motionBlurEffect(BlurPart.SIDEBARS, v, 0f, SLIDE_BLUR_MAX.toPx())
     }
 }
+
+/** Whether a panel at slide [progress] (1 is all the way in) is still on its way: more than a hair short of rest. */
+internal fun slidingNow(progress: Float): Boolean = progress.isFinite() && progress < 0.995f
 
 /** How far a sliding panel's blur runs at most. */
 private val SLIDE_BLUR_MAX = 8.dp

@@ -62,4 +62,36 @@ class MotionBlurTest {
     @Test fun `every part of the app is a part motion blur can be switched off for`() {
         assertEquals(setOf("popups", "sidebars", "lists", "page", "ink"), BlurPart.entries.map { it.key }.toSet())
     }
+
+    @Test fun `page scrolling is the one part that is off until chosen`() {
+        assertEquals(listOf(BlurPart.PAGE), BlurPart.entries.filter { !it.defaultOn })
+    }
+
+    @Test fun `heat is stepped up at once and down only after a cooldown`() {
+        val hold = ThermalHold(cooldownMs = 30_000L)
+        assertEquals(0, hold.update(status = 1, nowMs = 0L))
+        // Moderate: decorations go. Severe: the power-saving measures too.
+        assertEquals(1, hold.update(THERMAL_MODERATE, 1_000L))
+        assertEquals(2, hold.update(THERMAL_SEVERE, 2_000L))
+        // Cooler, but held for the cooldown.
+        assertEquals(2, hold.update(THERMAL_MODERATE, 3_000L))
+        assertEquals(29_000L, hold.remainingMs(4_000L))
+        assertEquals(2, hold.update(THERMAL_MODERATE, 32_000L))
+        assertEquals(1, hold.update(THERMAL_MODERATE, 33_000L))
+        // Warm again inside a cooldown: the wait starts over.
+        assertEquals(1, hold.update(0, 40_000L))
+        assertEquals(1, hold.update(THERMAL_MODERATE, 50_000L))
+        assertEquals(1, hold.update(0, 60_000L))
+        assertEquals(1, hold.update(0, 89_000L))
+        assertEquals(0, hold.update(0, 90_000L))
+        assertEquals(0L, hold.remainingMs(91_000L))
+    }
+
+    @Test fun `a panel is sliding until it is within a hair of rest`() {
+        assertTrue(slidingNow(0f))
+        assertTrue(slidingNow(0.9f))
+        assertTrue(!slidingNow(1f))
+        assertTrue(!slidingNow(0.999f))
+        assertTrue(!slidingNow(Float.NaN))
+    }
 }

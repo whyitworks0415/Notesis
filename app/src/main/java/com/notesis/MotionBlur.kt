@@ -37,7 +37,7 @@ internal fun motionBlurEffect(part: BlurPart, vx: Float, vy: Float, maxPx: Float
 
 /** The two radii [motionBlurEffect] would blur by, or null for none. */
 private fun motionBlurRadii(part: BlurPart, vx: Float, vy: Float, maxPx: Float): Pair<Float, Float>? {
-    if (Build.VERSION.SDK_INT < 31 || !MotionPrefs.blurs(part) || InteractionGovernor.lightMode) return null
+    if (Build.VERSION.SDK_INT < 31 || !MotionPrefs.blurs(part) || !InteractionGovernor.decorationsAllowed) return null
     val hz = MotionPrefs.refreshHz
     val strength = MotionPrefs.blurStrength
     val bx = motionBlurPx(vx, hz, maxPx, strength)

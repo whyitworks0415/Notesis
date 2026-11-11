@@ -57,8 +57,8 @@ internal object MotionPrefs {
     /** Whether any motion blur is drawn. */
     val motionBlur: Boolean get() = blurStrength > 0.001f
 
-    /** Which parts take it; all on unless a beta tester turned one off. */
-    private val blurParts = mutableStateOf(BlurPart.entries.toSet())
+    /** Which parts take it: each part's own default unless switched in the settings. */
+    private val blurParts = mutableStateOf(BlurPart.entries.filter { it.defaultOn }.toSet())
 
     /** Whether [part] is drawn with motion blur: on, and the blur not at 0. */
     fun blurs(part: BlurPart): Boolean = motionBlur && part in blurParts.value
@@ -89,7 +89,7 @@ internal object MotionPrefs {
             p.contains(KEY_BLUR) -> if (p.getBoolean(KEY_BLUR, false)) 0.5f else DEFAULT_BLUR
             else -> DEFAULT_BLUR
         }.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: DEFAULT_BLUR
-        blurParts.value = BlurPart.entries.filter { p.getBoolean(KEY_BLUR_PART + it.key, true) }.toSet()
+        blurParts.value = BlurPart.entries.filter { p.getBoolean(KEY_BLUR_PART + it.key, it.defaultOn) }.toSet()
     }
 
     fun setSpeed(context: Context, value: Float) {
@@ -206,12 +206,14 @@ internal fun motionBlurPx(velocityPx: Float, hz: Float, maxPx: Float, strength: 
     return if (blur < 0.5f) 0f else blur.coerceAtMost(maxPx)
 }
 
-/** The parts of the app motion blur is drawn on; each can be switched off by beta testers. */
-internal enum class BlurPart(val key: String, val label: String) {
+/** The parts of the app motion blur is drawn on; each can be switched on or off in the settings. */
+internal enum class BlurPart(val key: String, val label: String, val defaultOn: Boolean = true) {
     POPUPS("popups", "Popups"),
     SIDEBARS("sidebars", "Sidebars and panels"),
     LISTS("lists", "Lists"),
-    PAGE("page", "Page scrolling"),
+    // Off unless chosen: it blurs the whole page layer on every frame of a
+    // scroll, the dearest of the five, and nothing has measured it worth that.
+    PAGE("page", "Page scrolling", defaultOn = false),
     INK("ink", "Writing"),
 }
 
@@ -290,7 +292,7 @@ internal object MotionStats {
     fun start(activity: Activity) {
         if (listener != null) return
         val handlerThread = thread ?: HandlerThread("motion-frames").also { it.start(); thread = it }
-        val interval = 1_000_000_000L / (activity.display?.refreshRate ?: 60f).coerceAtLeast(1f).toLong()
+        val interval = 1_000_000_000L / DisplayRate.refreshRate(activity).toLong()
         val watch = Window.OnFrameMetricsAvailableListener { _, metrics, _ ->
             if (!ChromeMotion.busy) return@OnFrameMetricsAvailableListener
             val total = metrics.getMetric(FrameMetrics.TOTAL_DURATION)

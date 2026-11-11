@@ -52,7 +52,7 @@ internal fun SlideInPanel(
     }
     if (!visible && !present) return
     val shift = remember { SlideShift() }
-    Box(modifier.slideInDraw(blur = true) { size -> (1f - progress.value.coerceIn(0f, 1f)) * size.width }) {
+    Box(modifier.slideInDraw(blur = true, sliding = { slidingNow(progress.value) }) { size -> (1f - progress.value.coerceIn(0f, 1f)) * size.width }) {
         ProvideSlidingBackdrops(shift) { content() }
     }
 }

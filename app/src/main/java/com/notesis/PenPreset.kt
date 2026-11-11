@@ -672,21 +672,34 @@ class PenStore(context: Context) {
             .remove("laserTrail")
             .apply()
 
-    /** See [InkCanvasView.compatWetInk]; on by default where the front buffer is known to fail. */
+    /**
+     * How the stroke being written is shown: [INK_PATH_AUTO] or one of the
+     * three paths. An older version's two switches are read once as the choice.
+     */
+    var inkPath: Int
+        get() = if (prefs.contains("inkPath")) prefs.getInt("inkPath", INK_PATH_AUTO).coerceIn(INK_PATH_AUTO, INK_PATH_WINDOW)
+            else inkPathFromLegacy(
+                if (prefs.contains("compatWetInk")) prefs.getBoolean("compatWetInk", false) else null,
+                if (prefs.contains("compatInkInWindow")) prefs.getBoolean("compatInkInWindow", false) else null,
+            )
+        set(value) = prefs.edit().putInt("inkPath", value.coerceIn(INK_PATH_AUTO, INK_PATH_WINDOW)).apply()
+
+    /** See [InkCanvasView.compatWetInk]: whether the path in use shows a second copy of the stroke. */
     var compatWetInk: Boolean
-        // Always on where the front buffer only shows at pen-up: off there,
-        // every stroke appeared whole when the pen lifted.
-        get() = frontBufferInkUnreliable() || prefs.getBoolean("compatWetInk", false)
-        set(value) = prefs.edit().putBoolean("compatWetInk", value).apply()
+        get() = inkPathApplied(inkPath) != INK_PATH_FRONT
+        // Kept for the callers that still hand a switch back: only a real
+        // change is a choice, so "left to the app" survives being echoed.
+        set(value) { if (value != compatWetInk) inkPath = if (value) INK_PATH_COMPAT else INK_PATH_FRONT }
 
     /**
-     * The compatible wet ink drawn in the window instead of on a surface of
-     * its own; see [InkCanvasView.wetSurfaceAllowed]. For comparing the two
-     * on a given tablet.
+     * The second copy drawn in the window instead of on a surface of its
+     * own; see [InkCanvasView.wetSurfaceAllowed].
      */
     var compatInkInWindow: Boolean
-        get() = prefs.getBoolean("compatInkInWindow", false)
-        set(value) = prefs.edit().putBoolean("compatInkInWindow", value).apply()
+        get() = inkPathApplied(inkPath) == INK_PATH_WINDOW
+        set(value) {
+            if (value != compatInkInWindow) inkPath = if (value) INK_PATH_WINDOW else INK_PATH_COMPAT
+        }
 
     /** Screen rendering only - see [InkCanvasView.meshInk]. */
     var meshInk: Boolean

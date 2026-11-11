@@ -49,6 +49,13 @@ internal fun GlassMenu(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    // Nothing at all until it is first opened. Every card in the library has
+    // one of these shut, and each kept a growth, a remembered state and a
+    // coroutine for a menu most cards never open - composed again for every
+    // card that scrolled in.
+    val everOpened = remember { booleanArrayOf(false) }
+    if (expanded) everOpened[0] = true
+    if (!everOpened[0]) return
     // Out of what opened it and back into it, as the toolbar's popups: kept
     // on screen while it goes back, then taken away.
     val growth = rememberPopupGrowth(shown = false)

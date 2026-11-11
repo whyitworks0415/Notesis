@@ -153,7 +153,7 @@ fun Modifier.liquidGlass(
     val backdrop = LocalLiquidGlassBackdrop.current
     val effectsAllowed = rememberLiquidGlassEffectsAllowed() && !settings.highContrast
     val density = LocalDensity.current
-    val blurPx = with(density) { labBlurDp(settings.blur, LabPerformance.efficientGlass).dp.toPx() } * amount
+    val blurPx = with(density) { labBlurDp(settings.blur, LabPerformance.efficientNow).dp.toPx() } * amount
     val depthPx = with(density) { settings.depth.dp.toPx() } * amount
     val refractionPx = with(density) { settings.refraction.dp.toPx() } * amount
     val body = surfaceColor

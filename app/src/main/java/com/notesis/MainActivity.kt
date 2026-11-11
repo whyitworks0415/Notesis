@@ -578,6 +578,7 @@ class MainActivity : ComponentActivity() {
     // study clock. Seen here, before any view takes it, and cheap: one write.
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
         StudyClock.touched()
+        PerfRecorder.touched()
         // Samsung sends a touch made with the S Pen's side button held as
         // its own actions (211-214) rather than DOWN/MOVE/UP. Compose does not
         // know them and drops them before any view inside it is asked, so the
@@ -606,7 +607,8 @@ class MainActivity : ComponentActivity() {
         StudyClock.touched()
         DisplayRate.apply(this)
         JankWatch.start(this)
-        MotionPrefs.refreshHz = display?.refreshRate ?: 60f
+        // Not Activity.display: that is Android 11's, and this runs on every resume.
+        MotionPrefs.refreshHz = DisplayRate.refreshRate(this)
         LabGuard.entered(this)
     }
 
@@ -1291,13 +1293,18 @@ private fun HomeScreen(
     var searchOpen by remember { mutableStateOf(false) }
     var searchFocused by remember { mutableStateOf(false) }
     val gridState = rememberLazyGridState()
+    // A recording must not go on counting a scroll that ended with the screen.
+    DisposableEffect(Unit) { onDispose { PerfRecorder.homeScrolling = false } }
     // How fast the library is scrolling, for its trace of motion blur.
     val homeScrollSpeed = rememberScrollSpeed()
     // The frost under the glassmorphism look holds the library as it was while
     // the grid moves, as the liquid glass does: recorded again on every frame of
     // a fling, every pane over it was blurred again with it.
     LaunchedEffect(backdrop, gridState) {
-        snapshotFlow { gridState.isScrollInProgress }.collect { backdrop.paused = it }
+        snapshotFlow { gridState.isScrollInProgress }.collect {
+            backdrop.paused = it
+            PerfRecorder.homeScrolling = it
+        }
     }
     val libraryTiles = remember { LibraryTiles() }
     var edgeSpeed by remember { mutableFloatStateOf(0f) }
@@ -5787,7 +5794,8 @@ private fun NoteScreen(
                     }
                     val wait = UiScheduling.inkIndexWaitMs(
                         InteractionGovernor.state, InteractionGovernor.quietForMs(), sinceSave)
-                    if (wait <= 0L && InteractionGovernor.mayRunOptional(UiScheduling.INK_INDEX_IDLE_MS)) break
+                    if (wait <= 0L && InteractionGovernor.mayRunOptional(UiScheduling.INK_INDEX_IDLE_MS) &&
+                        !InteractionGovernor.optionalWorkHeld) break
                     delay(wait.coerceAtLeast(INK_INDEX_RECHECK_MS))
                 }
                 val view = canvas ?: return@collectLatest

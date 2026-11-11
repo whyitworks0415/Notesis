@@ -628,17 +628,35 @@ internal fun GlobalPenSettings(
             hint = "The pen reports about four positions per screen refresh. This draws the path between " +
                 "them faintly ahead of the tip, so the line seems to keep up. Nothing extra is saved.",
         ) { onGestures(gestures.copy(subframe = it)) }
-        SettingsToggle("Compatible wet ink", compatWetInk, onCompatWetInk,
-            hint = "Turn on if strokes only appear once the pen lifts.",
-            disabledReason = if (frontBufferInkUnreliable()) {
-                "Always on for this tablet: without it, strokes only appear once the pen lifts."
-            } else null)
-        if (compatWetInk) {
-            SettingsToggle("Draw it with the rest of the screen", compatInkInWindow, onCompatInkInWindow,
-                hint = "Off: the stroke being written goes on a layer of its own, which skips redrawing " +
-                    "the page. On: it is drawn with the rest of the screen, which can look steadier on " +
-                    "some tablets but slows with a web panel or a second note open. Try both and keep " +
-                    "the one that feels smoother.")
+        var inkPath by remember { mutableIntStateOf(store.inkPath) }
+        val applied = inkPathApplied(inkPath)
+        SettingsChoices(
+            "How the stroke being written is shown",
+            listOf(INK_PATH_AUTO to "Automatic", INK_PATH_FRONT to "Fastest", INK_PATH_COMPAT to "Compatible",
+                INK_PATH_WINDOW to "Safest"),
+            inkPath,
+            hint = "If strokes do not show, show only when the pen lifts, or vanish, choose Safest. " +
+                "Fastest draws straight to the display and has the least delay where the tablet supports it. " +
+                "Compatible draws a second copy on a layer of its own. Safest draws it with the rest of the screen: " +
+                "the most sure to show, and the slowest with a web panel or a second note open.",
+        ) {
+            inkPath = it
+            store.inkPath = it
+            // The canvas takes the two switches it always did.
+            onCompatWetInk(store.compatWetInk)
+            onCompatInkInWindow(store.compatInkInWindow)
+        }
+        val appliedName = when (applied) {
+            INK_PATH_FRONT -> "Fastest"
+            INK_PATH_COMPAT -> "Compatible"
+            else -> "Safest"
+        }
+        SettingsNote("In use now: $appliedName.")
+        when {
+            frontBufferInkUnreliable() && inkPath != applied ->
+                SettingsNote("This tablet cannot show the fastest path, so it is not used here.")
+            inkPath == INK_PATH_AUTO && applied == INK_PATH_WINDOW ->
+                SettingsNote("Automatic picks Safest on tablets older than Android 13.")
         }
         SettingsToggle("Sharpen after zooming", deferDetail, onDeferDetail,
             hint = "While zooming the page is drawn as it is, then redrawn sharp when your fingers lift.")

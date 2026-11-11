@@ -46,6 +46,40 @@ import kotlin.math.sqrt
 internal fun frontBufferInkUnreliable(model: String = Build.MODEL ?: ""): Boolean =
     Regex("^SM-P6(1[0-9]|2[0-9])[A-Z]*$").matches(model.trim().uppercase())
 
+/** How the stroke being written is put on screen; saved as its number. */
+internal const val INK_PATH_AUTO = 0
+/** The display's front buffer: the least delay, where the tablet's graphics driver does it properly. */
+internal const val INK_PATH_FRONT = 1
+/** A second copy of the stroke on a layer of its own. */
+internal const val INK_PATH_COMPAT = 2
+/** A second copy drawn with the rest of the screen: the plainest way there is, and so the one most sure to show. */
+internal const val INK_PATH_WINDOW = 3
+
+/**
+ * The path used for a [choice] on this tablet. Where the front buffer is
+ * known to fail it is never used, whatever was chosen. Left to itself, a
+ * tablet older than Android 13 takes the plainest path: those are the ones
+ * where strokes were reported not showing or vanishing, and nothing tells the
+ * app from inside that a front buffer it drew to never reached the panel.
+ */
+internal fun inkPathApplied(choice: Int, model: String = Build.MODEL ?: "", sdk: Int = Build.VERSION.SDK_INT): Int = when {
+    frontBufferInkUnreliable(model) -> if (choice == INK_PATH_WINDOW) INK_PATH_WINDOW else INK_PATH_COMPAT
+    choice == INK_PATH_FRONT || choice == INK_PATH_COMPAT || choice == INK_PATH_WINDOW -> choice
+    sdk < DeviceClass.FULL_EFFECTS_SDK -> INK_PATH_WINDOW
+    else -> INK_PATH_FRONT
+}
+
+/**
+ * The choice a tablet starts with, from what an older version saved: its two
+ * switches, where either was ever set, and otherwise left to the app.
+ */
+internal fun inkPathFromLegacy(compat: Boolean?, inWindow: Boolean?): Int = when {
+    compat == true && inWindow == true -> INK_PATH_WINDOW
+    compat == true -> INK_PATH_COMPAT
+    compat == false -> INK_PATH_FRONT
+    else -> INK_PATH_AUTO
+}
+
 /** Converts MotionEvent.AXIS_ORIENTATION ([-PI, PI], 0 = up) to Ink's [0, 2PI), 0 = left. */
 internal fun inkOrientationRadians(axisOrientation: Float): Float {
     val full = (2 * Math.PI).toFloat()

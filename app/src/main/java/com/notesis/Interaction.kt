@@ -101,6 +101,50 @@ internal fun backgroundBudget(cores: Int, state: Interaction, powerSave: Boolean
     return minOf(full, cap)
 }
 
+/**
+ * What heat takes away, from PowerManager's thermal status: 0 nothing; 1 the
+ * decorations (motion blur, the lens's travel); 2 the measures of saving
+ * power as well (plain glass, no fastest refresh rate asked for, less work).
+ */
+internal fun thermalStep(status: Int): Int = when {
+    status >= THERMAL_SEVERE -> 2
+    status >= THERMAL_MODERATE -> 1
+    else -> 0
+}
+
+/**
+ * Holds a [thermalStep] once reached until the tablet has reported cooler for
+ * [cooldownMs]: up at once, down only after the cooldown, so the quality does
+ * not swing on and off round a threshold.
+ */
+internal class ThermalHold(private val cooldownMs: Long = 30_000L) {
+    var step = 0
+        private set
+    private var coolerSince = -1L
+
+    /** The step in force at [nowMs] for a reported [status]. */
+    fun update(status: Int, nowMs: Long): Int {
+        val wanted = thermalStep(status)
+        if (wanted >= step) {
+            step = wanted
+            coolerSince = -1L
+        } else {
+            if (coolerSince < 0L) coolerSince = nowMs
+            if (nowMs - coolerSince >= cooldownMs) {
+                step = wanted
+                coolerSince = -1L
+            }
+        }
+        return step
+    }
+
+    /** How long until a held step may come down, or 0 when nothing is held. */
+    fun remainingMs(nowMs: Long): Long =
+        if (coolerSince < 0L) 0L else (cooldownMs - (nowMs - coolerSince)).coerceAtLeast(0L)
+}
+
+internal const val THERMAL_SEVERE = 3
+
 /** PowerManager.THERMAL_STATUS_MODERATE, kept here so the pure budget needs no Android. */
 internal const val THERMAL_MODERATE = 2
 
@@ -186,6 +230,7 @@ internal object InteractionGovernor {
             power?.addThermalStatusListener(app.mainExecutor) { status ->
                 thermalStatus = status
                 StrokeBuilder.thermalThrottle = status >= THERMAL_MODERATE
+                followHeat()
                 publish()
             }
         }
@@ -200,8 +245,49 @@ internal object InteractionGovernor {
         publish()
     }
 
+    /** The heat step in force (see [thermalStep]), held through a cooldown. */
+    var heatStep by mutableStateOf(0)
+        private set
+    private val heat = ThermalHold()
+    private val heatCheck = Runnable { followHeat() }
+
+    private fun followHeat() {
+        val now = SystemClock.uptimeMillis()
+        val step = heat.update(thermalStatus, now)
+        main.removeCallbacks(heatCheck)
+        // Held through its cooldown: looked at again when that runs out.
+        heat.remainingMs(now).takeIf { it > 0L }?.let { main.postDelayed(heatCheck, it + 50L) }
+        if (step == heatStep) return
+        heatStep = step
+        followPowerSave()
+        publish()
+    }
+
+    /**
+     * Whether the decorations - motion blur and the like - may be drawn: not
+     * while saving power, running light, or warm. What the person chose in
+     * the settings is kept; this is only what is applied now.
+     */
+    val decorationsAllowed: Boolean get() = !powerSave && heatStep == 0
+
+    /**
+     * Whether work that can wait - reading handwriting for the search - is
+     * put off: while the system saves battery, or the tablet runs warm. Not
+     * under Light mode alone, which a slower tablet runs in all the time and
+     * would then never have its notes read.
+     */
+    val optionalWorkHeld: Boolean get() = (systemPowerSave && batteryOptimization) || heatStep > 0
+
+    /** Why the decorations are off for now, in words for the settings, or null when they are allowed. */
+    val decorationsHeldBy: String? get() = when {
+        lightMode -> "Light mode"
+        systemPowerSave && batteryOptimization -> "battery saver"
+        heatStep > 0 -> "the tablet running warm"
+        else -> null
+    }
+
     private fun followPowerSave() {
-        powerSave = (systemPowerSave && batteryOptimization) || lightMode
+        powerSave = (systemPowerSave && batteryOptimization) || lightMode || heatStep >= 2
         observedPowerSave = powerSave
         applySettle()
     }
