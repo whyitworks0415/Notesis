@@ -372,6 +372,7 @@ internal fun AnimatedSettingsSidebar(
             if (animate && progress.value == 0f) awaitFirstFrames()
             if (animate) ChromeMotion.during { progress.animateTo(1f, sidebarOpenFor(skin), initialVelocity = velocity[0]) { velocity[0] = this.velocity }; velocity[0] = 0f } else { velocity[0] = 0f; progress.snapTo(1f) }
         } else {
+            if (progress.value == 0f && !progress.isRunning) { velocity[0] = 0f; present = false; return@LaunchedEffect }
             if (animate) ChromeMotion.during { progress.animateTo(0f, sidebarCloseFor(skin), initialVelocity = velocity[0]) { velocity[0] = this.velocity }; velocity[0] = 0f } else { velocity[0] = 0f; progress.snapTo(0f) }
             present = false
         }

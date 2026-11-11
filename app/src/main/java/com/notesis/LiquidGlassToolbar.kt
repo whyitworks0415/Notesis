@@ -735,7 +735,8 @@ internal fun LiquidGlassToolbar(
                                         tools.map { LiquidGlassItem(it.label, it.icon(), toolColors[it.mode]) },
                                         selectedIndex = selected, onSelected = { pick(tools[it]) },
                                         showLabels = false, compact = false, corner = outer,
-                                        surface = GlassBarSurface.LIQUID, vertical = true, role = ChromeRole.TOOLBAR)
+                                        surface = GlassBarSurface.LIQUID, vertical = true, role = ChromeRole.TOOLBAR,
+                                        holdFor = { tools.getOrNull(it) == GlassToolbarTool.AI })
                                     else ToolStrip(tools, selected, compact = false, corner = outer,
                                         ownSurface = true, toolColors = toolColors, onPick = ::pick, vertical = true)
                                 }
@@ -780,7 +781,8 @@ internal fun LiquidGlassToolbar(
                                     // for a lens to bend: the lens refracted only the clear
                                     // layer and the icons, and showed as a rim and smear
                                     // round the selection. The pill slides flat there.
-                                    lift = !full, role = ChromeRole.TOOLBAR)
+                                    lift = !full, role = ChromeRole.TOOLBAR,
+                                    holdFor = { tools.getOrNull(it) == GlassToolbarTool.AI })
                                   else ToolStrip(tools, selected, compact = full, corner = stripCorner,
                                     ownSurface = !full, toolColors = toolColors, onPick = ::pick)
                                 }
@@ -1281,6 +1283,16 @@ internal suspend fun awaitFirstFrames() {
     androidx.compose.runtime.withFrameNanos { }
 }
 
+/**
+ * Two frames: the one a popup's window is added in and the one it is first
+ * laid out and drawn in. Something moving that starts after them does not
+ * stall halfway for the popup.
+ */
+internal suspend fun awaitPopupFrames() {
+    androidx.compose.runtime.withFrameNanos { }
+    androidx.compose.runtime.withFrameNanos { }
+}
+
 internal class PopupGrowth(shown: Boolean) {
     val width = Animatable(if (shown) 1f else 0f)
     val height = Animatable(if (shown) 1f else 0f)
@@ -1318,12 +1330,21 @@ internal class PopupGrowth(shown: Boolean) {
             widthDelayMs = if (resumed) 0 else profile?.widthDelayMs ?: 0)
     }
 
+    /** At rest and shut. */
+    fun isShut(): Boolean = width.value == 0f && height.value == 0f && !width.isRunning && !height.isRunning
+
     /** Neither shut nor fully open: a move was caught on its way. */
     private fun midFlight(): Boolean =
         width.isRunning || height.isRunning || width.value in 0.001f..0.999f || height.value in 0.001f..0.999f
 
     suspend fun close(animate: Boolean) {
         closing = true
+        // Already shut: nothing to move. Every note card's menu is composed
+        // shut, and each one ran a whole close from 0 to 0 as its card
+        // scrolled in - 240 ms of frames counted as chrome motion, which the
+        // library's recording reads in its draw, so the list was drawn again
+        // over and over while it scrolled.
+        if (isShut()) return
         val spec = profile?.close ?: POPUP_CLOSE
         // Caught while still opening, it turns round at the speed it has
         // rather than being thrown back at the profile's own.
@@ -1530,6 +1551,9 @@ private fun ToolStrip(
             slideVelocity[0] = 0f
             return@LaunchedEffect
         }
+        // The AI tool opens a popup: the slide sets off once its first,
+        // long frame is behind it, rather than stopping halfway for it.
+        if (showing[0] && animateSelection && tools.getOrNull(selected) == GlassToolbarTool.AI) awaitPopupFrames()
         // Arriving from no selection there is nothing to slide from.
         if (!showing[0] || !animateSelection) {
             showing[0] = true

@@ -1,5 +1,9 @@
 package com.notesis
 
+import androidx.compose.runtime.rememberCoroutineScope
+
+import kotlinx.coroutines.launch
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -148,6 +152,8 @@ fun LiquidGlassBar(
     lift: Boolean = surface != GlassBarSurface.NONE,
     /** Which kind of chrome the capsule is, for its own transparency; null takes none. */
     role: ChromeRole? = null,
+    /** Whether choosing the item at an index opens a popup, so the lens waits for its first frame. */
+    holdFor: (Int) -> Boolean = { false },
 ) {
     require(items.isNotEmpty())
     val look = LocalSkinSettings.current
@@ -171,13 +177,24 @@ fun LiquidGlassBar(
     }
     var wake by remember { mutableIntStateOf(0) }
     var frameRevision by remember { mutableIntStateOf(0) }
+    val latestHold by rememberUpdatedState(holdFor)
+    val holdScope = rememberCoroutineScope()
     fun choose(index: Int) {
-        if (lensAllowed) motion.select(index.toFloat()) else motion.snap(index.toFloat())
-        wake++
+        if (lensAllowed && latestHold(index)) {
+            // It opens a popup: the popup's first frame - a window of its
+            // own, composed and drawn whole - is a long one, and a lens on
+            // its way across stopped dead for it. It sets off once that
+            // frame is behind it.
+            holdScope.launch { awaitPopupFrames(); motion.select(index.toFloat()); wake++ }
+        } else {
+            if (lensAllowed) motion.select(index.toFloat()) else motion.snap(index.toFloat())
+            wake++
+        }
         latestSelect(index)
     }
     LaunchedEffect(selected, lensAllowed) {
         if (selected != null) {
+            if (lensAllowed && latestHold(selected)) awaitPopupFrames()
             if (lensAllowed) motion.select(selected.toFloat()) else motion.snap(selected.toFloat())
             wake++
         }
