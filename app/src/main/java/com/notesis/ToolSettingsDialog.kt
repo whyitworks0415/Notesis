@@ -394,7 +394,8 @@ internal fun PenDialog(
                     view = it
                     store.colorPickerMode = it.ordinal
                 })
-                MorphingPicker(view, animate) { shownView ->
+                // One view for another at once: no morph between them.
+                MorphingPicker(view, animate = false) { shownView ->
                     ColorPickerBody(shownView, color, joined, opacity)
                 }
                 if (opacity) {
@@ -1316,6 +1317,19 @@ private fun <T> MorphSegments(
     modifier: Modifier = Modifier,
     icon: (@Composable (T, Color) -> Unit)? = null,
 ) {
+    // Under Liquid glass, the toolbar's own bar: a capsule of that glass whose
+    // selection rises into a lens as it moves from one choice to the next.
+    if (LocalSkin.current == Skin.LIQUID_GLASS) {
+        LiquidGlassBar(
+            items = options.map { LiquidGlassItem(label(it)) },
+            selectedIndex = options.indexOf(selected),
+            onSelected = { i -> options.getOrNull(i)?.let(onSelect) },
+            modifier = modifier.fillMaxWidth(),
+            showLabels = true, compact = true,
+            surface = GlassBarSurface.LIQUID,
+        )
+        return
+    }
     val scheme = MaterialTheme.colorScheme
     val index = options.indexOf(selected)
     val slide = remember { androidx.compose.animation.core.Animatable(index.coerceAtLeast(0).toFloat()) }
