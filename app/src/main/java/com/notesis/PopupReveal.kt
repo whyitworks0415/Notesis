@@ -48,6 +48,9 @@ private class DropShape(private val drop: PopupDrop) : Shape {
 /** How wide the drop a popup comes out of starts: Mornye's 44 points, about a button. */
 internal val REVEAL_START: Dp = 44.dp
 
+/** How far a popup's blur runs at most. */
+private val POPUP_BLUR_MAX: Dp = 4.dp
+
 /** A motion read in a glass's draw that never changes: for a popup that is cut, not moved. */
 internal val StillMotion: () -> Float = { 0f }
 
@@ -84,6 +87,10 @@ internal fun Modifier.revealOutOf(growth: PopupGrowth, corner: Dp, anchor: (Layo
         clip = true
         // Seen from the start, as glass is; gone only once it is back in the button.
         alpha = ((w + h) / 2f / 0.08f).coerceIn(0f, 1f)
+        // A trace of blur along its fastest moment, at the strength set in
+        // Motion: the drop's edges move at its growth's speed times its size.
+        renderEffect = motionBlurEffect(growth.width.velocity * size.width, growth.height.velocity * size.height,
+            POPUP_BLUR_MAX.toPx())
     }.drawWithContent {
         if (layer.isReleased || size.width <= 0f || size.height <= 0f) {
             drawContent(); return@drawWithContent

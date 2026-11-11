@@ -1291,6 +1291,8 @@ private fun HomeScreen(
     var searchOpen by remember { mutableStateOf(false) }
     var searchFocused by remember { mutableStateOf(false) }
     val gridState = rememberLazyGridState()
+    // How fast the library is scrolling, for its trace of motion blur.
+    val homeScrollSpeed = rememberScrollSpeed()
     // The frost under the glassmorphism look holds the library as it was while
     // the grid moves, as the liquid glass does: recorded again on every frame of
     // a fling, every pane over it was blurred again with it.
@@ -1713,7 +1715,7 @@ private fun HomeScreen(
             ),
             horizontalArrangement = Arrangement.spacedBy(Ui.Space.m),
             verticalArrangement = Arrangement.spacedBy(Ui.Space.m),
-            modifier = Modifier.fillMaxSize().dragToSelect(
+            modifier = Modifier.fillMaxSize().scrollBlur(homeScrollSpeed).dragToSelect(
                 tiles = libraryTiles,
                 order = { (if (showFolders) subfolders.map(::folderKey) else emptyList()) + visibleNotes.map { it.id } },
                 selection = { selectionKeys() },

@@ -67,6 +67,7 @@ internal fun GlassMenu(
     val reveal = animate && growth.profile?.reveal == true
     // Its rows give at either end and spring back, as Mornye's menus do.
     val bounce = rememberEdgeBounce()
+    val scrollSpeed = rememberScrollSpeed()
     // Inside the library's recorded content the glass may not look at its own
     // recording; popups are given the page capture separately for that.
     val backdrop = LocalGlassPopupBackdrop.current ?: LocalLiquidGlassBackdrop.current
@@ -99,6 +100,7 @@ internal fun GlassMenu(
                         .clip(shape)
                         .revealContent(growth, reveal)
                         .edgeBounce(bounce)
+                        .scrollBlur(scrollSpeed)
                         .verticalScroll(rememberScrollState())
                         .padding(vertical = GLASS_MENU_INSET),
                     content = content,

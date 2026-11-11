@@ -678,9 +678,11 @@ private fun MotionGroup() {
     SettingsToggle("Haptics", MotionPrefs.haptics, { MotionPrefs.setHaptics(context, it) },
         hint = "A light tick where something snaps, a switch flips or a slider lands on a step. " +
             "The tablet's own vibration setting still applies.")
-    SettingsToggle("Motion blur on 60 Hz", MotionPrefs.motionBlur, { MotionPrefs.setMotionBlur(context, it) },
-        hint = "A trace of blur along a popup's fastest moment, so it reads as motion rather than as steps. " +
-            "Off in Light mode, and never drawn on faster screens.")
+    AppearanceSlider("Motion blur", "%.0f%%".format(MotionPrefs.blurStrength * 100), MotionPrefs.blurStrength, 0f..1f,
+        step = 0.05f, default = MotionPrefs.DEFAULT_BLUR,
+        note = "A trace of blur along popups and scrolling lists at their fastest, so they read as motion rather than as steps. " +
+            "0% is off. Only on 60 Hz screens, and off in Light mode.",
+    ) { MotionPrefs.setBlurStrength(context, it) }
     SettingsSectionHeader("While the chrome moves")
     DiagnosticRow("Frames", MotionStats.frames.toString())
     DiagnosticRow("Late frames", MotionStats.late.toString())

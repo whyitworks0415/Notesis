@@ -1641,3 +1641,4 @@ HSV bars	HSV 막대
 Experimental write path	실험용 쓰기 경로
 Scripted benchmark	자동 입력 벤치마크
 Native code	네이티브 코드
+A trace of blur along popups and scrolling lists at their fastest, so they read as motion rather than as steps. 0% is off. Only on 60 Hz screens, and off in Light mode.	팝업과 스크롤하는 목록이 가장 빠를 때 약한 블러를 넣어, 끊긴 단계가 아니라 움직임으로 보이게 합니다. 0%면 꺼집니다. 60Hz 화면에서만 쓰이고, 가벼운 모드에서는 꺼집니다.

@@ -1317,23 +1317,11 @@ private fun <T> MorphSegments(
     modifier: Modifier = Modifier,
     icon: (@Composable (T, Color) -> Unit)? = null,
 ) {
-    // Under Liquid glass, the toolbar's own bar: a capsule of that glass whose
-    // selection rises into a lens as it moves from one choice to the next.
-    if (LocalSkin.current == Skin.LIQUID_GLASS) {
-        LiquidGlassBar(
-            items = options.map { LiquidGlassItem(label(it)) },
-            selectedIndex = options.indexOf(selected),
-            onSelected = { i -> options.getOrNull(i)?.let(onSelect) },
-            modifier = modifier.fillMaxWidth(),
-            showLabels = true, compact = true,
-            surface = GlassBarSurface.LIQUID,
-        )
-        return
-    }
     val scheme = MaterialTheme.colorScheme
     val index = options.indexOf(selected)
     val slide = remember { androidx.compose.animation.core.Animatable(index.coerceAtLeast(0).toFloat()) }
-    LaunchedEffect(index) { if (index >= 0) slide.animateTo(index.toFloat(), SEGMENT_SPRING.paced()) }
+    // Eased across, speeding up and slowing down, and landing without a bounce.
+    LaunchedEffect(index) { if (index >= 0) slide.animateTo(index.toFloat(), selectionEase()) }
     val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
     var touched by remember { mutableStateOf(false) }
@@ -1805,6 +1793,5 @@ private const val GRID_COLUMNS = 12
 private const val GRID_ROWS = 9
 /** How long a row of segments keeps its pictures after the pointer or finger leaves it. */
 private const val ICON_LINGER_MS = 700L
-private val SEGMENT_SPRING = androidx.compose.animation.core.spring<Float>(dampingRatio = 0.8f, stiffness = 520f)
 private val TAB_SPRING = androidx.compose.animation.core.spring<Float>(dampingRatio = 0.9f, stiffness = 420f)
 private val MORPH_SPRING = androidx.compose.animation.core.spring<Float>(dampingRatio = 0.78f, stiffness = 300f)

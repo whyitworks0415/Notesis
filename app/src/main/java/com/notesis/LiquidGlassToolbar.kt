@@ -1467,17 +1467,10 @@ internal fun Modifier.growOutOf(anchor: () -> Offset?, growth: PopupGrowth): Mod
 }
 
 /** The blur along a growing popup's motion, or none; see [motionBlurPx]. */
-private fun popupMotionBlur(growth: PopupGrowth, width: Float, height: Float, maxPx: Float): androidx.compose.ui.graphics.RenderEffect? {
-    if (android.os.Build.VERSION.SDK_INT < 31 || !MotionPrefs.motionBlur || InteractionGovernor.lightMode) return null
-    val hz = MotionPrefs.refreshHz
+private fun popupMotionBlur(growth: PopupGrowth, width: Float, height: Float, maxPx: Float): androidx.compose.ui.graphics.RenderEffect? =
     // An edge of a pane scaled about a point inside it moves at about the
     // scale's speed times half the pane's size.
-    val bx = motionBlurPx(growth.width.velocity * width / 2f, hz, maxPx)
-    val by = motionBlurPx(growth.height.velocity * height / 2f, hz, maxPx)
-    if (bx <= 0f && by <= 0f) return null
-    return androidx.compose.ui.graphics.BlurEffect(bx.coerceAtLeast(0.01f), by.coerceAtLeast(0.01f),
-        androidx.compose.ui.graphics.TileMode.Decal)
-}
+    motionBlurEffect(growth.width.velocity * width / 2f, growth.height.velocity * height / 2f, maxPx)
 
 /**
  * How small a popup is at the point it comes out of: nearly nothing, so it is
@@ -1563,8 +1556,8 @@ private fun ToolStrip(
             // The lens's travel spring, so a tap moves the selection as fast
             // here as it does under Liquid glass; a new tap mid-slide keeps
             // the velocity it has, as the lens does.
-            slide.animateTo(selected.toFloat(), if (skin == Skin.MATERIAL) MaterialMotion.selection() else TOOL_HIGHLIGHT_SPRING,
-                initialVelocity = slideVelocity[0]) { slideVelocity[0] = velocity }
+            // Eased across and landing without a bounce (see [selectionEase]).
+            slide.animateTo(selected.toFloat(), selectionEase(), initialVelocity = slideVelocity[0]) { slideVelocity[0] = velocity }
             slideVelocity[0] = 0f
         }
     }
@@ -1613,13 +1606,6 @@ private fun ToolStrip(
         }
     }
 }
-
-/** The still skins' highlight slides on the lens's travel spring (see [LiquidGlassMotion]). */
-private val TOOL_HIGHLIGHT_SPRING = spring(
-    dampingRatio = LIQUID_GLASS_TRAVEL_DAMPING_RATIO,
-    stiffness = LIQUID_GLASS_TRAVEL_STIFFNESS.toFloat(),
-    visibilityThreshold = LIQUID_GLASS_TRAVEL_SETTLE.toFloat(),
-)
 
 /** Buttons [columns] to a row, the last row padded so every button keeps one width. */
 @Composable

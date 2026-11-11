@@ -117,6 +117,7 @@ internal fun ToolPanel(
         val corner = skin.tokens().corner
         val shape = RoundedCornerShape(corner)
         val reveal = state.animate && growth.profile?.reveal == true
+        val scrollSpeed = rememberScrollSpeed()
         val tallest = LocalConfiguration.current.screenHeightDp.dp * 0.9f
         // Where the panel's top first lands, kept there: a part opening inside
         // it, or another tab of it, makes it longer downwards rather than
@@ -151,6 +152,7 @@ internal fun ToolPanel(
                 // No size animation of its own: a part that opens inside grows
                 // on one curve and the panel, measured round it, comes with it.
                 // Its ends stop it dead: no stretch, no bounce.
+                .scrollBlur(scrollSpeed)
                 .verticalScroll(rememberScrollState(), overscrollEffect = null)
                 .padding(TOOL_PANEL_INSET),
             verticalArrangement = Arrangement.spacedBy(GAP),

@@ -46,9 +46,16 @@ internal object MotionPrefs {
     var haptics by mutableStateOf(true)
         private set
 
-    /** A trace of blur along fast motion on screens that show only 60 frames a second. */
-    var motionBlur by mutableStateOf(false)
+    /**
+     * How much blur is drawn along fast motion - popups opening, lists
+     * scrolling - on screens that show only 60 frames a second: 0 is none,
+     * 1 the most. A trace of it reads as motion rather than as steps.
+     */
+    var blurStrength by mutableFloatStateOf(DEFAULT_BLUR)
         private set
+
+    /** Whether any motion blur is drawn. */
+    val motionBlur: Boolean get() = blurStrength > 0.001f
 
     /** The screen's rate, as the activity last read it. */
     var refreshHz by mutableFloatStateOf(60f)
@@ -67,7 +74,12 @@ internal object MotionPrefs {
         val p = prefs(context)
         speed = p.getFloat(KEY_SPEED, DEFAULT_SPEED).takeIf { it.isFinite() }?.coerceIn(SPEED_RANGE) ?: DEFAULT_SPEED
         haptics = p.getBoolean(KEY_HAPTICS, true)
-        motionBlur = p.getBoolean(KEY_BLUR, false)
+        // Saved as a switch before it was a strength: on keeps the old half strength.
+        blurStrength = when {
+            p.contains(KEY_BLUR_STRENGTH) -> p.getFloat(KEY_BLUR_STRENGTH, DEFAULT_BLUR)
+            p.contains(KEY_BLUR) -> if (p.getBoolean(KEY_BLUR, false)) 0.5f else DEFAULT_BLUR
+            else -> DEFAULT_BLUR
+        }.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: DEFAULT_BLUR
     }
 
     fun setSpeed(context: Context, value: Float) {
@@ -80,9 +92,9 @@ internal object MotionPrefs {
         prefs(context).edit().putBoolean(KEY_HAPTICS, on).apply()
     }
 
-    fun setMotionBlur(context: Context, on: Boolean) {
-        motionBlur = on
-        prefs(context).edit().putBoolean(KEY_BLUR, on).apply()
+    fun setBlurStrength(context: Context, value: Float) {
+        blurStrength = if (value.isFinite()) value.coerceIn(0f, 1f) else DEFAULT_BLUR
+        prefs(context).edit().putFloat(KEY_BLUR_STRENGTH, blurStrength).apply()
     }
 
     /** A little quicker than the springs were tuned at: at 1 the chrome felt slow to answer. */
@@ -91,6 +103,10 @@ internal object MotionPrefs {
     private const val KEY_SPEED = "motionSpeed"
     private const val KEY_HAPTICS = "motionHaptics"
     private const val KEY_BLUR = "motionBlur"
+    private const val KEY_BLUR_STRENGTH = "motionBlurStrength"
+
+    /** A light trace by default. */
+    const val DEFAULT_BLUR = 0.35f
 }
 
 /** A spring's response multiplier at motion [speed]: half as long at twice the speed. */
@@ -163,15 +179,25 @@ internal fun dragLead(velocity: Float, leadSeconds: Float = 0.012f, maxPx: Float
 
 /**
  * The blur along a motion of [velocityPx] px a second on a screen of [hz]:
- * a fifth of the step between two frames, nothing under half a pixel, never
- * more than [maxPx]. At 120 Hz the steps are small and none is drawn.
+ * at [strength] 0.5 a fifth of the step between two frames, in proportion
+ * either side of it; nothing under half a pixel, never more than [maxPx].
+ * At 120 Hz the steps are small and none is drawn.
  */
-internal fun motionBlurPx(velocityPx: Float, hz: Float, maxPx: Float): Float {
-    if (hz > 75f || hz <= 0f) return 0f
+internal fun motionBlurPx(velocityPx: Float, hz: Float, maxPx: Float, strength: Float = 0.5f): Float {
+    if (hz > 75f || hz <= 0f || !(strength > 0f)) return 0f
     val step = abs(velocityPx) / hz
-    val blur = step * 0.2f
+    val blur = step * 0.4f * strength.coerceAtMost(1f)
     return if (blur < 0.5f) 0f else blur.coerceAtMost(maxPx)
 }
+
+/** The curve a selection moves across a row of choices on: eased in and out, landing without a bounce. */
+internal val SelectionEasing = androidx.compose.animation.core.CubicBezierEasing(0.42f, 0f, 0.58f, 1f)
+
+/** [SelectionEasing] over a quarter of a second, at the motion speed. */
+internal fun <T> selectionEase(): androidx.compose.animation.core.AnimationSpec<T> =
+    androidx.compose.animation.core.tween<T>(SELECTION_EASE_MS, easing = SelectionEasing).paced()
+
+internal const val SELECTION_EASE_MS = 260
 
 /**
  * Whether the chrome is in motion: a popup opening or closing, a sidebar
