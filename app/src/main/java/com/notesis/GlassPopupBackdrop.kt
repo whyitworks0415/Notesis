@@ -16,6 +16,8 @@ import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.unit.LayoutDirection
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.LayerBackdrop
@@ -123,12 +125,46 @@ internal class SlideShift {
  * as a picture; and since what is inside has a layer of its own, a frame of
  * the slide draws only this move.
  */
-internal fun Modifier.slideInDraw(distance: DrawScope.() -> Float): Modifier =
-    this.drawWithContent {
-        val d = distance()
+@androidx.compose.runtime.Composable
+internal fun Modifier.slideInDraw(blur: Boolean = false, distance: Density.(Size) -> Float): Modifier {
+    // The slide's speed, from where it was a frame ago, for its trace of blur.
+    val track = androidx.compose.runtime.remember { SlideSpeed() }
+    return this.drawWithContent {
+        val d = distance(size)
         if (d == 0f) drawContent()
         else translate(left = if (layoutDirection == LayoutDirection.Rtl) -d else d) { this@drawWithContent.drawContent() }
-    }.graphicsLayer()
+    }.graphicsLayer {
+        if (!blur) return@graphicsLayer
+        // Read here as well as in the draw, so this runs on every frame of the
+        // slide and on none at rest: the blur goes with the motion.
+        val v = track.update(distance(size), System.nanoTime())
+        renderEffect = motionBlurEffect(BlurPart.SIDEBARS, v, 0f, SLIDE_BLUR_MAX.toPx())
+    }
+}
+
+/** How far a sliding panel's blur runs at most. */
+private val SLIDE_BLUR_MAX = 8.dp
+
+/** Px a second a slide is moving, from one frame's distance to the next. */
+internal class SlideSpeed {
+    private var last = Float.NaN
+    private var lastNanos = 0L
+    private var velocity = 0f
+
+    fun update(distance: Float, nanos: Long): Float {
+        val dt = (nanos - lastNanos) / 1e9f
+        velocity = when {
+            last.isNaN() || dt > 0.1f -> 0f
+            dt <= 0f -> velocity
+            else -> speedSample(velocity, (distance - last) / dt)
+        }
+        // Come to rest: nothing to blur, whatever the last step was.
+        if (distance == 0f) velocity = 0f
+        last = distance
+        lastNanos = nanos
+        return velocity
+    }
+}
 
 internal val LocalSlideShift = compositionLocalOf<SlideShift?> { null }
 

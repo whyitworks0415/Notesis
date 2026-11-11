@@ -189,7 +189,7 @@ internal fun SettingsSidebarFrame(
             // Slides in from the end edge it stands on and back out past it,
             // moved in the draw rather than by its layer (see [slideInDraw]).
             // Pulled past its narrowest it follows the finger out, to be let go of.
-            .slideInDraw { (1f - appear().coerceIn(0f, 1f)) * size.width + past.dp.toPx() }) {
+            .slideInDraw(blur = true) { size -> (1f - appear().coerceIn(0f, 1f)) * size.width + past.dp.toPx() }) {
             val hapticView = androidx.compose.ui.platform.LocalView.current
             if (!full) {
                 Box(

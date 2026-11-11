@@ -89,7 +89,7 @@ internal fun Modifier.revealOutOf(growth: PopupGrowth, corner: Dp, anchor: (Layo
         alpha = ((w + h) / 2f / 0.08f).coerceIn(0f, 1f)
         // A trace of blur along its fastest moment, at the strength set in
         // Motion: the drop's edges move at its growth's speed times its size.
-        renderEffect = motionBlurEffect(growth.width.velocity * size.width, growth.height.velocity * size.height,
+        renderEffect = motionBlurEffect(BlurPart.POPUPS, growth.width.velocity * size.width, growth.height.velocity * size.height,
             POPUP_BLUR_MAX.toPx())
     }.drawWithContent {
         if (layer.isReleased || size.width <= 0f || size.height <= 0f) {

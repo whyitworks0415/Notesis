@@ -137,6 +137,17 @@ internal class SubframeBlurView(context: Context) : View(context) {
     var mode: Int = SUBFRAME_OFF
         set(value) { field = value; if (value == SUBFRAME_OFF) clear() }
 
+    /**
+     * The streak shown even with [mode] off: motion blur's Writing part, at
+     * [blurStrength]. A pen's own choice of Motion blur or Trail comes first.
+     */
+    var autoBlur = false
+        set(value) { field = value; if (!value && mode == SUBFRAME_OFF) clear() }
+    var blurStrength = 0.5f
+
+    /** What is drawn: the pen's own choice, or motion blur's streak, or nothing. */
+    val active: Int get() = if (mode != SUBFRAME_OFF) mode else if (autoBlur) SUBFRAME_BLUR else SUBFRAME_OFF
+
     private val streak = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
@@ -151,6 +162,7 @@ internal class SubframeBlurView(context: Context) : View(context) {
     private var shown = false
     private var gradient: LinearGradient? = null
     private var gradientColor = 0
+    private var gradientStrength = -1f
     private val gradientMatrix = android.graphics.Matrix()
     private val hide = Runnable { clear() }
     private val box = IntArray(4)
@@ -161,7 +173,7 @@ internal class SubframeBlurView(context: Context) : View(context) {
     }
 
     fun show(tipX: Float, tipY: Float, leadX: Float, leadY: Float, colorArgb: Int, widthPx: Float) {
-        if (mode == SUBFRAME_OFF) return
+        if (active == SUBFRAME_OFF) return
         val length = hypot(leadX, leadY)
         if (!length.isFinite() || length < MIN_LENGTH_PX) { clear(); return }
         // A long streak is a guess, not the pen; keep it to a few nib widths.
@@ -198,15 +210,18 @@ internal class SubframeBlurView(context: Context) : View(context) {
         overlayOrigin(canvas)
         val alpha = Color.alpha(color)
         val rgb = color and 0xFFFFFF
-        if (mode == SUBFRAME_BLUR) {
+        if (active == SUBFRAME_BLUR) {
             streak.strokeWidth = width
+            // Chosen for this pen, as it always was; from motion blur, as strong as that is set.
+            val strength = if (mode == SUBFRAME_BLUR) 1f else streakStrength(blurStrength)
             // One gradient per ink colour, laid along a unit line and moved onto
             // the streak by its matrix: a new shader on every frame of writing
             // was garbage for nothing.
-            if (gradient == null || gradientColor != color) {
+            if (gradient == null || gradientColor != color || gradientStrength != strength) {
                 gradient = LinearGradient(0f, 0f, 1f, 0f,
-                    (alpha * BLUR_ALPHA).toInt() shl 24 or rgb, rgb, Shader.TileMode.CLAMP)
+                    (alpha * BLUR_ALPHA * strength).toInt().coerceIn(0, 255) shl 24 or rgb, rgb, Shader.TileMode.CLAMP)
                 gradientColor = color
+                gradientStrength = strength
             }
             gradientMatrix.setScale(hypot(dx, dy).coerceAtLeast(1e-3f), 1f)
             gradientMatrix.postRotate(Math.toDegrees(kotlin.math.atan2(dy, dx).toDouble()).toFloat())
@@ -235,3 +250,10 @@ internal class SubframeBlurView(context: Context) : View(context) {
         const val GHOSTS = 4
     }
 }
+
+/**
+ * How strong the pen's streak is at motion blur [strength] 0-1: the old
+ * streak at half, fainter below and up to a third stronger above.
+ */
+internal fun streakStrength(strength: Float): Float =
+    if (!strength.isFinite()) 1f else (strength.coerceIn(0f, 1f) / 0.5f).coerceIn(0f, 1.33f)

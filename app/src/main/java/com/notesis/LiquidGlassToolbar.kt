@@ -1470,7 +1470,7 @@ internal fun Modifier.growOutOf(anchor: () -> Offset?, growth: PopupGrowth): Mod
 private fun popupMotionBlur(growth: PopupGrowth, width: Float, height: Float, maxPx: Float): androidx.compose.ui.graphics.RenderEffect? =
     // An edge of a pane scaled about a point inside it moves at about the
     // scale's speed times half the pane's size.
-    motionBlurEffect(growth.width.velocity * width / 2f, growth.height.velocity * height / 2f, maxPx)
+    motionBlurEffect(BlurPart.POPUPS, growth.width.velocity * width / 2f, growth.height.velocity * height / 2f, maxPx)
 
 /**
  * How small a popup is at the point it comes out of: nearly nothing, so it is

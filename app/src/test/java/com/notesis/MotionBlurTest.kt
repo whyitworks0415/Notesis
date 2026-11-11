@@ -11,10 +11,11 @@ class MotionBlurTest {
         assertEquals(4f, motionBlurPx(600f, 60f, 6f, strength = 1f), 0.001f)
         assertEquals(0f, motionBlurPx(600f, 60f, 6f, strength = 0f), 0f)
         assertEquals(0f, motionBlurPx(600f, 60f, 6f, strength = Float.NaN), 0f)
-        // Never past its cap, never at 120 Hz, never under half a pixel.
+        // Never past its cap, never under half a pixel; at 120 Hz half as long.
         assertEquals(6f, motionBlurPx(20000f, 60f, 6f, strength = 1f), 0f)
-        assertEquals(0f, motionBlurPx(20000f, 120f, 6f, strength = 1f), 0f)
+        assertEquals(2f, motionBlurPx(600f, 120f, 6f, strength = 1f), 0.001f)
         assertEquals(0f, motionBlurPx(50f, 60f, 6f, strength = 1f), 0f)
+        assertEquals(0f, motionBlurPx(600f, 0f, 6f, strength = 1f), 0f)
     }
 
     @Test fun `a list's speed is smoothed, and a bad sample is left out`() {
@@ -35,5 +36,30 @@ class MotionBlurTest {
         assertTrue(SelectionEasing.transform(0.1f) < 0.1f)
         assertTrue(SelectionEasing.transform(0.9f) > 0.9f)
         assertEquals(1f, SelectionEasing.transform(1f), 1e-4f)
+    }
+
+    @Test fun `a slide's speed comes from frame to frame and is nothing at rest`() {
+        val speed = SlideSpeed()
+        assertEquals(0f, speed.update(400f, 0L), 0f)
+        // 40 px back in 16 ms is -2500 px a second, half of it on the first sample.
+        assertEquals(-1250f, speed.update(360f, 16_000_000L), 1f)
+        // Still for a frame: the smoothed speed halves.
+        assertEquals(-625f, speed.update(360f, 32_000_000L), 1f)
+        // Come to rest: none, whatever came before.
+        assertEquals(0f, speed.update(0f, 48_000_000L), 0f)
+        // A long gap starts again from rest.
+        speed.update(100f, 60_000_000L)
+        assertEquals(0f, speed.update(50f, 400_000_000L), 0f)
+    }
+
+    @Test fun `the pen's streak follows the motion blur strength`() {
+        assertEquals(1f, streakStrength(0.5f), 0f)
+        assertEquals(0f, streakStrength(0f), 0f)
+        assertEquals(1.33f, streakStrength(1f), 0.001f)
+        assertEquals(1f, streakStrength(Float.NaN), 0f)
+    }
+
+    @Test fun `every part of the app is a part motion blur can be switched off for`() {
+        assertEquals(setOf("popups", "sidebars", "lists", "page", "ink"), BlurPart.entries.map { it.key }.toSet())
     }
 }

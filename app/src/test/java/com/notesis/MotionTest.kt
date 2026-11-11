@@ -54,13 +54,14 @@ class MotionTest {
         assertEquals(-40f, dragLead(-100_000f, maxPx = 40f), 0f)
     }
 
-    @Test fun `motion blur is a fifth of a frame's step, only on 60 Hz and only when fast`() {
+    @Test fun `motion blur is a fifth of a frame's step, shorter on faster screens and only when fast`() {
         // 3000 px/s at 60 Hz steps 50 px a frame: 10 px of blur, held to 4.
         assertEquals(4f, motionBlurPx(3000f, 60f, 4f), 0f)
         assertEquals(2f, motionBlurPx(600f, 60f, 4f), 0.001f)
-        // Slow, none; fast screen, none.
+        // Slow, none.
         assertEquals(0f, motionBlurPx(100f, 60f, 4f), 0f)
-        assertEquals(0f, motionBlurPx(3000f, 120f, 4f), 0f)
+        // A faster screen has a shorter step between frames, and so a shorter blur.
+        assertEquals(2.5f, motionBlurPx(1500f, 120f, 4f), 0.001f)
     }
 
     @Test fun `the ordinary move is a spring that does not overshoot, a staggered one keeps its curve`() {

@@ -57,6 +57,15 @@ internal object MotionPrefs {
     /** Whether any motion blur is drawn. */
     val motionBlur: Boolean get() = blurStrength > 0.001f
 
+    /** Which parts take it; all on unless a beta tester turned one off. */
+    private val blurParts = mutableStateOf(BlurPart.entries.toSet())
+
+    /** Whether [part] is drawn with motion blur: on, and the blur not at 0. */
+    fun blurs(part: BlurPart): Boolean = motionBlur && part in blurParts.value
+
+    /** Whether [part] is switched on, whatever the strength. */
+    fun blurPartOn(part: BlurPart): Boolean = part in blurParts.value
+
     /** The screen's rate, as the activity last read it. */
     var refreshHz by mutableFloatStateOf(60f)
 
@@ -80,6 +89,7 @@ internal object MotionPrefs {
             p.contains(KEY_BLUR) -> if (p.getBoolean(KEY_BLUR, false)) 0.5f else DEFAULT_BLUR
             else -> DEFAULT_BLUR
         }.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: DEFAULT_BLUR
+        blurParts.value = BlurPart.entries.filter { p.getBoolean(KEY_BLUR_PART + it.key, true) }.toSet()
     }
 
     fun setSpeed(context: Context, value: Float) {
@@ -90,6 +100,11 @@ internal object MotionPrefs {
     fun setHaptics(context: Context, on: Boolean) {
         haptics = on
         prefs(context).edit().putBoolean(KEY_HAPTICS, on).apply()
+    }
+
+    fun setBlurPart(context: Context, part: BlurPart, on: Boolean) {
+        blurParts.value = if (on) blurParts.value + part else blurParts.value - part
+        prefs(context).edit().putBoolean(KEY_BLUR_PART + part.key, on).apply()
     }
 
     fun setBlurStrength(context: Context, value: Float) {
@@ -104,6 +119,7 @@ internal object MotionPrefs {
     private const val KEY_HAPTICS = "motionHaptics"
     private const val KEY_BLUR = "motionBlur"
     private const val KEY_BLUR_STRENGTH = "motionBlurStrength"
+    private const val KEY_BLUR_PART = "motionBlur."
 
     /** A light trace by default. */
     const val DEFAULT_BLUR = 0.35f
@@ -181,13 +197,22 @@ internal fun dragLead(velocity: Float, leadSeconds: Float = 0.012f, maxPx: Float
  * The blur along a motion of [velocityPx] px a second on a screen of [hz]:
  * at [strength] 0.5 a fifth of the step between two frames, in proportion
  * either side of it; nothing under half a pixel, never more than [maxPx].
- * At 120 Hz the steps are small and none is drawn.
+ * On a faster screen the step between frames is shorter, and so is the blur.
  */
 internal fun motionBlurPx(velocityPx: Float, hz: Float, maxPx: Float, strength: Float = 0.5f): Float {
-    if (hz > 75f || hz <= 0f || !(strength > 0f)) return 0f
+    if (hz <= 0f || !(strength > 0f)) return 0f
     val step = abs(velocityPx) / hz
     val blur = step * 0.4f * strength.coerceAtMost(1f)
     return if (blur < 0.5f) 0f else blur.coerceAtMost(maxPx)
+}
+
+/** The parts of the app motion blur is drawn on; each can be switched off by beta testers. */
+internal enum class BlurPart(val key: String, val label: String) {
+    POPUPS("popups", "Popups"),
+    SIDEBARS("sidebars", "Sidebars and panels"),
+    LISTS("lists", "Lists"),
+    PAGE("page", "Page scrolling"),
+    INK("ink", "Writing"),
 }
 
 /** The curve a selection moves across a row of choices on: eased in and out, landing without a bounce. */

@@ -24,20 +24,50 @@ import androidx.compose.ui.unit.dp
 
 /**
  * The blur drawn along something moving at [vx], [vy] px a second, at the
- * strength set in Motion (see [motionBlurPx]), or none. None at all - not a
- * blur of nothing - whenever it would be under half a pixel, on Android 11
- * and older, in Light mode and on screens faster than 75 Hz: a layer with no
- * effect is drawn straight, and a layer with one is drawn offscreen first.
- * One axis at a time where only one moves, which is one pass, not two.
+ * strength set in Motion (see [motionBlurPx]) when [part] takes it, or none.
+ * None at all - not a blur of nothing - whenever it would be under half a
+ * pixel, on Android 11 and older and in Light mode: a layer with no effect is
+ * drawn straight, and a layer with one is drawn offscreen first. One axis at
+ * a time where only one moves, which is one pass, not two.
  */
-internal fun motionBlurEffect(vx: Float, vy: Float, maxPx: Float): RenderEffect? {
-    if (Build.VERSION.SDK_INT < 31 || !MotionPrefs.motionBlur || InteractionGovernor.lightMode) return null
+internal fun motionBlurEffect(part: BlurPart, vx: Float, vy: Float, maxPx: Float): RenderEffect? {
+    val (bx, by) = motionBlurRadii(part, vx, vy, maxPx) ?: return null
+    return BlurEffect(bx, by, TileMode.Decal)
+}
+
+/** The two radii [motionBlurEffect] would blur by, or null for none. */
+private fun motionBlurRadii(part: BlurPart, vx: Float, vy: Float, maxPx: Float): Pair<Float, Float>? {
+    if (Build.VERSION.SDK_INT < 31 || !MotionPrefs.blurs(part) || InteractionGovernor.lightMode) return null
     val hz = MotionPrefs.refreshHz
     val strength = MotionPrefs.blurStrength
     val bx = motionBlurPx(vx, hz, maxPx, strength)
     val by = motionBlurPx(vy, hz, maxPx, strength)
     if (bx <= 0f && by <= 0f) return null
-    return BlurEffect(bx.coerceAtLeast(0.01f), by.coerceAtLeast(0.01f), TileMode.Decal)
+    return bx.coerceAtLeast(0.01f) to by.coerceAtLeast(0.01f)
+}
+
+/**
+ * The same blur for a View (the note's page), kept between frames while its
+ * radii round to the same half pixel, so a steady scroll makes one effect
+ * rather than one a frame.
+ */
+@android.annotation.SuppressLint("NewApi") // Every path to an effect checks for Android 12 first.
+internal class ViewMotionBlur {
+    private var effect: android.graphics.RenderEffect? = null
+    private var keyX = -1
+    private var keyY = -1
+
+    fun effectFor(part: BlurPart, vx: Float, vy: Float, maxPx: Float): android.graphics.RenderEffect? {
+        val radii = motionBlurRadii(part, vx, vy, maxPx) ?: return null
+        val kx = (radii.first * 2f).toInt()
+        val ky = (radii.second * 2f).toInt()
+        if (kx != keyX || ky != keyY || effect == null) {
+            keyX = kx; keyY = ky
+            if (Build.VERSION.SDK_INT >= 31) effect = android.graphics.RenderEffect.createBlurEffect(
+                (kx / 2f).coerceAtLeast(0.01f), (ky / 2f).coerceAtLeast(0.01f), android.graphics.Shader.TileMode.CLAMP)
+        }
+        return effect
+    }
 }
 
 /** How far a list's blur may run at most, whatever its speed. */
@@ -123,5 +153,5 @@ internal fun rememberScrollSpeed(): ScrollSpeed {
  * layer only, so a change of speed redraws nothing inside the list.
  */
 internal fun Modifier.scrollBlur(speed: ScrollSpeed): Modifier = this
-    .graphicsLayer { renderEffect = motionBlurEffect(0f, speed.velocity, SCROLL_BLUR_MAX.toPx()) }
+    .graphicsLayer { renderEffect = motionBlurEffect(BlurPart.LISTS, 0f, speed.velocity, SCROLL_BLUR_MAX.toPx()) }
     .nestedScroll(speed)

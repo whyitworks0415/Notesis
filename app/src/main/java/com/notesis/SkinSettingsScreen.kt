@@ -680,9 +680,24 @@ private fun MotionGroup() {
             "The tablet's own vibration setting still applies.")
     AppearanceSlider("Motion blur", "%.0f%%".format(MotionPrefs.blurStrength * 100), MotionPrefs.blurStrength, 0f..1f,
         step = 0.05f, default = MotionPrefs.DEFAULT_BLUR,
-        note = "A trace of blur along popups and scrolling lists at their fastest, so they read as motion rather than as steps. " +
-            "0% is off. Only on 60 Hz screens, and off in Light mode.",
+        note = "A trace of blur along fast motion - popups, sidebars, scrolling and writing - so it reads as motion " +
+            "rather than as steps. Shorter on faster screens. 0% is off; off in Light mode.",
     ) { MotionPrefs.setBlurStrength(context, it) }
+    // Each part on its own, for beta testers to find which one costs a frame.
+    val beta = remember { AppUpdate.isBeta(context) || isLabInstall(context) }
+    if (beta) {
+        SettingsSectionHeader("Motion blur by part")
+        BlurPart.entries.forEach { part ->
+            SettingsToggle(part.label, MotionPrefs.blurPartOn(part), { MotionPrefs.setBlurPart(context, part, it) },
+                hint = when (part) {
+                    BlurPart.POPUPS -> "Menus, tool panels and dialogs as they open and close."
+                    BlurPart.SIDEBARS -> "The settings sidebar, the pages panel and the layers panel as they slide."
+                    BlurPart.LISTS -> "The library and lists in popups as they scroll."
+                    BlurPart.PAGE -> "The note's page as it is scrolled or flung."
+                    BlurPart.INK -> "The pen's in-between travel, drawn faintly ahead of the tip between screen frames."
+                })
+        }
+    }
     SettingsSectionHeader("While the chrome moves")
     DiagnosticRow("Frames", MotionStats.frames.toString())
     DiagnosticRow("Late frames", MotionStats.late.toString())

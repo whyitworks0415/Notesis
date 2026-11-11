@@ -1641,4 +1641,13 @@ HSV bars	HSV 막대
 Experimental write path	실험용 쓰기 경로
 Scripted benchmark	자동 입력 벤치마크
 Native code	네이티브 코드
-A trace of blur along popups and scrolling lists at their fastest, so they read as motion rather than as steps. 0% is off. Only on 60 Hz screens, and off in Light mode.	팝업과 스크롤하는 목록이 가장 빠를 때 약한 블러를 넣어, 끊긴 단계가 아니라 움직임으로 보이게 합니다. 0%면 꺼집니다. 60Hz 화면에서만 쓰이고, 가벼운 모드에서는 꺼집니다.
+A trace of blur along fast motion - popups, sidebars, scrolling and writing - so it reads as motion rather than as steps. Shorter on faster screens. 0% is off; off in Light mode.	팝업, 사이드바, 스크롤, 필기처럼 빠르게 움직이는 곳에 약한 블러를 넣어 끊긴 단계가 아니라 움직임으로 보이게 합니다. 화면이 빠를수록 짧아집니다. 0%면 꺼지고, 가벼운 모드에서도 꺼집니다.
+Motion blur by part	부분별 모션 블러
+Sidebars and panels	사이드바와 패널
+Lists	목록
+Page scrolling	페이지 스크롤
+Menus, tool panels and dialogs as they open and close.	메뉴, 도구 패널, 확인창이 열리고 닫힐 때.
+The settings sidebar, the pages panel and the layers panel as they slide.	설정 사이드바, 페이지 패널, 레이어 패널이 미끄러질 때.
+The library and lists in popups as they scroll.	첫 화면 목록과 팝업 안 목록을 스크롤할 때.
+The note's page as it is scrolled or flung.	노트 페이지를 스크롤하거나 넘길 때.
+The pen's in-between travel, drawn faintly ahead of the tip between screen frames.	화면 프레임 사이에 펜이 지나간 길을 펜 끝 앞에 흐리게 그립니다.

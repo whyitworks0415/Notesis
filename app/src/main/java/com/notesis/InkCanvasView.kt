@@ -2132,7 +2132,63 @@ class InkCanvasView @JvmOverloads constructor(
     private var viewportFramePosted = false
     private val viewportFrame = Runnable {
         viewportFramePosted = false
-        if (!disposed) afterTransform()
+        if (!disposed) {
+            afterTransform()
+            updatePageBlur()
+        }
+    }
+
+    // The page's trace of blur while it is moved (see [updatePageBlur]).
+    private val pageBlur = ViewMotionBlur()
+    private val pageBlurValues = FloatArray(9)
+    private var pageBlurX = Float.NaN
+    private var pageBlurY = 0f
+    private var pageBlurScale = 0f
+    private var pageBlurNanos = 0L
+    private var pageBlurVx = 0f
+    private var pageBlurVy = 0f
+    private var pageBlurShown = false
+    private val clearPageBlur = Runnable {
+        if (pageBlurShown && android.os.Build.VERSION.SDK_INT >= 31) dry.setRenderEffect(null)
+        pageBlurShown = false
+        pageBlurX = Float.NaN
+        pageBlurVx = 0f
+        pageBlurVy = 0f
+    }
+
+    /**
+     * Once a frame while fingers or a fling move the page: how fast it moved
+     * since the last frame, and a trace of blur along that on the page's own
+     * layer - not on the ink being written, the bars or the glass. Only while
+     * it pans; a pinch changes the scale and is left sharp. It clears itself
+     * a few frames after the page stops, so it never stays on a still page.
+     */
+    private fun updatePageBlur() {
+        if (android.os.Build.VERSION.SDK_INT < 31) return
+        documentToScreen.getValues(pageBlurValues)
+        val now = System.nanoTime()
+        val x = pageBlurValues[android.graphics.Matrix.MTRANS_X]
+        val y = pageBlurValues[android.graphics.Matrix.MTRANS_Y]
+        val scale = pageBlurValues[android.graphics.Matrix.MSCALE_X]
+        val dt = (now - pageBlurNanos) / 1e9f
+        if (!pageBlurX.isNaN() && dt in 0.002f..0.1f && scale == pageBlurScale && viewRotation == 0f) {
+            pageBlurVx = speedSample(pageBlurVx, (x - pageBlurX) / dt)
+            pageBlurVy = speedSample(pageBlurVy, (y - pageBlurY) / dt)
+        } else {
+            pageBlurVx = 0f
+            pageBlurVy = 0f
+        }
+        pageBlurX = x; pageBlurY = y; pageBlurScale = scale; pageBlurNanos = now
+        val effect = pageBlur.effectFor(BlurPart.PAGE, pageBlurVx, pageBlurVy, PAGE_BLUR_MAX_DP * resources.displayMetrics.density)
+        if (effect != null) {
+            dry.setRenderEffect(effect)
+            pageBlurShown = true
+        } else if (pageBlurShown) {
+            dry.setRenderEffect(null)
+            pageBlurShown = false
+        }
+        removeCallbacks(clearPageBlur)
+        postDelayed(clearPageBlur, PAGE_BLUR_CLEAR_MS)
     }
 
     /** The zoom factor the scale detector found for the MOVE being handled; applied with its pan. */
@@ -5302,7 +5358,11 @@ class InkCanvasView @JvmOverloads constructor(
      * track and shows how far the pen will have gone by the next frame.
      */
     private fun updateSubframe(real: MotionEvent, pointerId: Int) {
-        if (subframe.mode == SUBFRAME_OFF) return
+        // Motion blur's Writing part draws the same streak when the pen has
+        // none of its own: read here, a field each, nothing allocated.
+        subframe.autoBlur = MotionPrefs.blurs(BlurPart.INK)
+        subframe.blurStrength = MotionPrefs.blurStrength
+        if (subframe.active == SUBFRAME_OFF) return
         // Decoration only, and a redraw of its own every pen frame: battery
         // saver goes without it. The setting itself is left as chosen.
         if (InteractionGovernor.powerSave || !softPredictionHead || viewRotation != 0f ||
@@ -11180,3 +11240,9 @@ private fun inkTileBudget(context: Context): Int {
     val total = runCatching { manager?.getMemoryInfo(info); info.totalMem }.getOrDefault(0L)
     return if (total >= 7L * 1024 * 1024 * 1024) 96 * 1024 * 1024 else 48 * 1024 * 1024
 }
+
+/** How far the page's blur runs at most while it scrolls, in dp. */
+private const val PAGE_BLUR_MAX_DP = 6f
+
+/** How long after the page's last moving frame its blur is taken away. */
+private const val PAGE_BLUR_CLEAR_MS = 80L
