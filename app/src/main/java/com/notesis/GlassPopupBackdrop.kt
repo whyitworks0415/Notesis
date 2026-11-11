@@ -162,9 +162,6 @@ internal fun Modifier.slideInDraw(
     }
 }
 
-/** Whether a panel at slide [progress] (1 is all the way in) is still on its way: more than a hair short of rest. */
-internal fun slidingNow(progress: Float): Boolean = progress.isFinite() && progress < 0.995f
-
 /** How far a sliding panel's blur runs at most. */
 private val SLIDE_BLUR_MAX = 8.dp
 

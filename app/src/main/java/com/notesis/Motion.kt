@@ -379,3 +379,6 @@ internal fun <T> sidebarCloseSpring(visibilityThreshold: T? = null): androidx.co
 
 internal const val SIDEBAR_IN_RESPONSE = 0.42f
 internal const val SIDEBAR_OUT_RESPONSE = 0.3f
+
+/** Whether a panel at slide [progress] (1 is all the way in) is still on its way: more than a hair short of rest. */
+internal fun slidingNow(progress: Float): Boolean = progress.isFinite() && progress < 0.995f
