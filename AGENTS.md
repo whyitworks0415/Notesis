@@ -87,8 +87,11 @@ S6 Lite, SM-P61x/P62x). Kotlin, Jetpack Compose for the chrome, a custom
   available as a saved choice. Keep the animated glyph player removed; motion
   belongs to controls, selection and navigation instead.
 - Removed features stay removed: no ruler/set square/protractor, laser
-  pointer, Claude handwriting reading or agent runtime. Do not bring their
-  code or strings back.
+  pointer or Claude handwriting reading. Do not bring their code or strings
+  back. The old agent runtime stays out as well; at the owner's request its
+  place is taken by the note commands (`NoteCommands.kt`, Todo.md section 5):
+  an agent or terminal changes notes only through them, never a note open on
+  screen, deletes only to the trash, and every change can be undone.
 - Large files: `MainActivity.kt` (screens) and `InkCanvasView.kt` (canvas).
   Search before adding; most features already have a home.
 - Commit messages: a short summary line, then what and why. No model names
@@ -109,6 +112,7 @@ S6 Lite, SM-P61x/P62x). Kotlin, Jetpack Compose for the chrome, a custom
 | Diagnostics | `Diagnostics.kt`, `LatencyStats.kt`, `JankWatch.kt` (dropped frames → light mode), `MemoryTrim.kt` |
 | Page panel, Internet panel | `PageSidebar.kt`, `WebPanel.kt` |
 | Folders, smart folders, templates | `FolderPaths.kt` (paths `School/Maths`), `SmartFolders.kt`, `PaperPicker.kt` |
+| Note commands (`notesis ...`) | `NoteCommands.kt` (pure: words, paths, undo), `NoteCommandStore.kt` (on disk) |
 | Backup, widget, updates | `AutoBackup.kt` (off by default), `NotesWidget.kt`, `AppUpdate.kt` (beta code) |
 | Look, popups | `Skin.kt`, `SkinSettings.kt` (the corner's saved key still says `spotiglass…`), `PopupGrowth.kt`, `PopupReveal.kt`, `AppDialog.kt`, `AppMenu.kt` |
 | Roadmap, archive | `Todo.md` (work in order), `archive/` (glass looks, not built) |

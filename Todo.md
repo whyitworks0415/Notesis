@@ -67,10 +67,13 @@
 
 시작할 때 AGENTS.md의 "agent runtime은 되살리지 않는다"는 줄을 고칩니다(소유자 요청으로 뒤집음).
 
-- [ ] **C1** 명령 코어: `notesis notes list`, `note read`, `text add`, `ink add`, `ink erase`, `page add|rm|mv`, `toc show|clear|set`, `note mv|tag|rename|trash`, `export`, `undo` (순수 함수, JSON 결과, 단위 테스트)
-  - 노트 목차 모델을 새로 만들어야 함
-  - AI가 넣는 필기: SVG 경로 → 획, 한 줄 글꼴 → 획
-- [ ] **C2** 안전: 변경 묶음마다 스냅숏과 한 번에 되돌리기, 삭제는 휴지통으로만, 변경 카드, 묻기/자동 설정
+- [x] **C1** (만듦, 아직 릴리스 안 함) 명령 코어 `NoteCommands.kt`: `notes list`, `note read|rename|mv|tag|trash|restore`, `page add|rm|mv`, `toc show|set|rm|clear`, `text add`, `ink add|erase`, `export`, `undo`, `help` (JSON 결과, 단위 시험)
+  - 목차는 따로 모델을 만들지 않고 페이지에 이미 있는 목차 항목(제목·단계)을 씀
+  - AI가 넣는 필기: SVG 경로·점 목록 → 획. **한 줄 글꼴 → 획은 아직**
+  - 아직 앱 화면에서 부를 곳이 없음: T1(터미널)이나 C3(MCP)에서 연결
+- [ ] **C2** 안전
+  - [x] (만듦) 줄 묶음마다 이전 상태를 보관하고 한 번에 되돌리기, 묶음 중 하나가 실패하면 전부 되돌림, 삭제는 휴지통으로만, 화면에 열린 노트는 읽기만
+  - [ ] 변경 카드(무엇이 바뀌었는지 보여 주기), 묻기/자동 설정
 - [ ] **C3** 연결: 기기 안(127.0.0.1) MCP 서버와 토큰, 같은 Wi-Fi 접속은 따로 켜기
 - [ ] **T1** 터미널 패널: 고정폭 글꼴, Tab·Ctrl·Esc·화살표 줄, Linux 없이 `notesis` 명령 동작
 - [ ] **T2** Linux 환경 시제품: APK에 proot, Debian 내려받기, 그 안에서 Claude Code·Codex·OpenCode 설치

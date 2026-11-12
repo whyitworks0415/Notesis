@@ -1583,6 +1583,9 @@ class NoteStore(context: Context) {
         runCatching { searchIndex.removeNote(id) }
     }
 
+    /** The note's own folder; for the note commands' undo copies (NoteCommandStore.kt). */
+    internal fun noteDir(id: String): File = File(root, id)
+
     fun pdfFile(id: String): File = File(root, "$id/doc.pdf")
 
     /** One entry of the outline a PDF carries inside it. */
