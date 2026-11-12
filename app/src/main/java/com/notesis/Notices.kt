@@ -1,5 +1,6 @@
 package com.notesis
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
@@ -146,3 +147,34 @@ internal fun Modifier.outOfPoint(from: Offset?, progress: () -> Float): Modifier
             alpha = (p / 0.3f).coerceIn(0f, 1f)
         }
 }
+
+/**
+ * A button for something that cannot be undone, that asks in place: pressed,
+ * it opens sideways into [question] and Cancel, and only that second press
+ * does it (Todo.md, A5). Cancel, or a few seconds untouched, folds it back.
+ */
+@Composable
+internal fun ConfirmInPlace(label: String, question: String, onConfirm: () -> Unit) {
+    var asking by remember { mutableStateOf(false) }
+    val moves = rememberMotionAllowed()
+    LaunchedEffect(asking) { if (asking) { delay(CONFIRM_FOLD_MS); asking = false } }
+    Row(
+        Modifier.then(if (moves) Modifier.animateContentSize(MaterialMotion.selection()) else Modifier),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (!asking) {
+            TextButton(onClick = { asking = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text(label) }
+        } else {
+            TextButton(onClick = { asking = false }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Cancel") }
+            androidx.compose.material3.Button(
+                onClick = { asking = false; onConfirm() },
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError),
+                modifier = Modifier.heightIn(min = 48.dp),
+            ) { Text(question, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+        }
+    }
+}
+
+/** How long an open question waits for its answer before folding back. */
+private const val CONFIRM_FOLD_MS = 5_000L

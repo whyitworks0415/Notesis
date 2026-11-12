@@ -37,14 +37,17 @@ import kotlin.math.roundToInt
 /*
  * A note opening out of its card and going back into it (Todo.md, A1).
  *
- * Tapped, the card's picture grows from where the card is to the whole
- * screen; only then is the note put under it, and the picture fades once the
- * note has shown its page. Closed, the picture starts over the whole screen
- * and shrinks into the card it came from, where the library has put it back.
+ * Tapped, the note is put in place at once, over the library, but cut to the
+ * card's outline with the card's picture over it; once its first, longest
+ * frame is behind it the outline grows to the whole screen, the note loading
+ * as it grows, and the picture fades once the note has shown its page. The
+ * library stays under the note until then. Closed, the picture starts over
+ * the whole screen and shrinks into the card it came from.
  *
- * The note is put in place after the growth rather than during it: building
- * the note screen is the longest frame the app draws, and a growth running
- * over it stopped half way.
+ * 0.92.0 put the note in place only after the growth, to keep the note's
+ * first frame from stalling it, and every note opened a growth later than
+ * before. Now the growth waits out that one frame instead, and the note
+ * loads while it grows.
  */
 
 /** One flight of a note's picture between its card and the screen. */
@@ -56,8 +59,12 @@ internal class NoteFlight(
     val picture: Bitmap?,
     val opening: Boolean,
 ) {
-    /** Runs once the picture has filled the screen: the note is put under it. */
-    var onArrived: () -> Unit = {}
+    /** How far it has grown: 0 the card, 1 the whole screen. */
+    val progress = Animatable(if (opening) 0f else 1f)
+    /** Opening: whether the library is still under the note, which is cut to [progress]'s outline. */
+    var covering by mutableStateOf(opening)
+    /** How many pages the canvas had shown when this note was put in place; see [NoteOpenClock.pagesShown]. */
+    var shownBefore = 0
     /** Where a closing flight lands, once the library has placed the card again. */
     var landing by mutableStateOf<Rect?>(null)
     /** Set when the library has looked for the card and it is not on screen. */
@@ -79,17 +86,22 @@ internal object NoteFlights {
 
     /**
      * Opens [noteId] out of its card if the card was just tapped and the
-     * chrome may move: [open] runs when the picture has grown. Returns false,
-     * having done nothing, otherwise - the caller then opens the note at once.
+     * chrome may move: [open] puts the note in place at once, and it grows out
+     * of the card from there. Returns false, having done nothing, otherwise -
+     * the caller then opens the note as it always did.
      */
     fun open(noteId: String, moves: Boolean, open: () -> Unit): Boolean {
         val flight = pending?.takeIf { it.noteId == noteId && it.card != null }
         pending = null
         if (flight == null || !moves) return false
-        flight.onArrived = open
+        flight.shownBefore = NoteOpenClock.pagesShown
         current = flight
+        open()
         return true
     }
+
+    /** Whether [noteId] is growing out of its card, so the library has to stay under it. */
+    fun growing(noteId: String?): Boolean = current?.let { it.opening && it.covering && it.noteId == noteId } == true
 
     /** A note is closing: its picture is laid over the library and shrinks into the card. */
     fun close(noteId: String, picture: Bitmap?, moves: Boolean) {
@@ -125,7 +137,7 @@ private val FLIGHT_OUT: AnimationSpec<Float> get() = tween<Float>(FLIGHT_MS, eas
 /** Back into the card, a little quicker. */
 private val FLIGHT_BACK: AnimationSpec<Float> get() = tween<Float>(FLIGHT_BACK_MS, easing = EmphasizedDecelerateEasing).paced()
 
-private const val FLIGHT_MS = 300
+private const val FLIGHT_MS = 280
 private const val FLIGHT_BACK_MS = 260
 private const val FADE_MS = 160
 
@@ -145,20 +157,22 @@ private val CARD_CORNER: Dp = Ui.Corner.card
 @Composable
 internal fun NoteFlightLayer(paper: Color) {
     val flight = NoteFlights.current ?: return
-    val progress = remember(flight) { Animatable(if (flight.opening) 0f else 1f) }
+    val progress = flight.progress
     val fade = remember(flight) { Animatable(1f) }
     LaunchedEffect(flight) {
         ChromeMotion.during {
             if (flight.opening) {
+                // The note was put in place with the flight: its first frame,
+                // the long one, goes by with the outline still at the card.
+                repeat(2) { withFrameNanos { } }
                 progress.animateTo(1f, FLIGHT_OUT)
-                val shownBefore = NoteOpenClock.pagesShown
-                flight.onArrived()
                 // Uncovered once the note has shown its page, or after a while
                 // whatever it is doing, so a slow note is not hidden behind a picture.
                 val start = System.nanoTime()
-                while (NoteOpenClock.pagesShown == shownBefore && (System.nanoTime() - start) / 1_000_000 < PAGE_WAIT_MS) {
+                while (NoteOpenClock.pagesShown == flight.shownBefore && (System.nanoTime() - start) / 1_000_000 < PAGE_WAIT_MS) {
                     withFrameNanos { }
                 }
+                flight.covering = false
                 fade.animateTo(0f, tween<Float>(FADE_MS).paced())
             } else {
                 val start = System.nanoTime()
@@ -213,4 +227,62 @@ internal fun NoteFlightLayer(paper: Color) {
             }
         }
     }
+}
+
+/**
+ * The note growing out of its card: cut to the flight's outline while it
+ * grows (see [NoteFlightLayer]), whole otherwise. Read in the layer, so a
+ * frame of the growth is a property change of this layer only.
+ */
+@Composable
+internal fun Modifier.grownOutOfCard(noteId: String): Modifier {
+    val flight = NoteFlights.current?.takeIf { it.opening && it.noteId == noteId && it.covering } ?: return this
+    val cornerPx = with(androidx.compose.ui.platform.LocalDensity.current) { CARD_CORNER.toPx() }
+    return this.graphicsLayer {
+        val p = flight.progress.value
+        val r = flightRect(flight.card, Rect(0f, 0f, size.width, size.height), p)
+        shape = object : androidx.compose.ui.graphics.Shape {
+            override fun createOutline(size: androidx.compose.ui.geometry.Size, layoutDirection: androidx.compose.ui.unit.LayoutDirection,
+                density: androidx.compose.ui.unit.Density) = androidx.compose.ui.graphics.Outline.Rounded(
+                androidx.compose.ui.geometry.RoundRect(r, androidx.compose.ui.geometry.CornerRadius(cornerPx * (1f - p.coerceIn(0f, 1f)))))
+        }
+        clip = true
+    }
+}
+
+/**
+ * How far a back gesture over the note has come, 0 to 1, and from which edge,
+ * while it is being made: the note draws in a little as it is pulled, and
+ * springs back if the gesture is let go of. Set by the note's back handler.
+ */
+internal object NoteBack {
+    var progress by androidx.compose.runtime.mutableFloatStateOf(0f)
+        private set
+    /** Which edge the gesture came from: [androidx.activity.BackEventCompat.EDGE_LEFT] or EDGE_RIGHT. */
+    var edge = androidx.activity.BackEventCompat.EDGE_LEFT
+        private set
+
+    fun follow(progress: Float, edge: Int) {
+        this.progress = progress.coerceIn(0f, 1f)
+        this.edge = edge
+    }
+
+    fun reset() { progress = 0f }
+}
+
+/** The scale the note is drawn at for a back gesture [progress] along: down to nine tenths. */
+internal fun backScale(progress: Float): Float = 1f - 0.1f * (if (progress.isFinite()) progress.coerceIn(0f, 1f) else 0f)
+
+/** The note following a back gesture; see [NoteBack]. Read in the layer, so the gesture moves only this layer. */
+internal fun Modifier.followingBack(): Modifier = graphicsLayer {
+    val p = NoteBack.progress
+    if (p <= 0f) return@graphicsLayer
+    val s = backScale(p)
+    scaleX = s
+    scaleY = s
+    // A little towards the side the gesture comes from, as Android's own does.
+    val towards = if (NoteBack.edge == androidx.activity.BackEventCompat.EDGE_LEFT) 1f else -1f
+    translationX = towards * size.width * 0.04f * p
+    shape = RoundedCornerShape((CARD_CORNER.toPx() * p))
+    clip = true
 }

@@ -40,8 +40,12 @@ class NoteFlightTest {
         assertTrue(NoteFlights.open("a", moves = true) { opened = true })
         val flight = NoteFlights.current!!
         assertTrue(flight.opening)
-        flight.onArrived()
+        // The note is put in place at once, and the library kept under it while it grows.
         assertTrue(opened)
+        assertTrue(NoteFlights.growing("a"))
+        assertFalse(NoteFlights.growing("b"))
+        flight.covering = false
+        assertFalse(NoteFlights.growing("a"))
         NoteFlights.finished(flight)
         assertNull(NoteFlights.current)
     }
@@ -60,5 +64,20 @@ class NoteFlightTest {
         NoteFlights.finished(NoteFlights.current!!)
         NoteFlights.close("a", null, moves = false)
         assertNull(NoteFlights.current)
+    }
+
+    @Test fun `a back gesture draws the note in to nine tenths at most`() {
+        assertEquals(1f, backScale(0f), 0f)
+        assertEquals(0.9f, backScale(1f), 0.0001f)
+        assertEquals(0.95f, backScale(0.5f), 0.0001f)
+        assertEquals(0.9f, backScale(2f), 0.0001f)
+        assertEquals(1f, backScale(Float.NaN), 0f)
+    }
+
+    @Test fun `a back gesture let go of puts the note back`() {
+        NoteBack.follow(0.6f, androidx.activity.BackEventCompat.EDGE_RIGHT)
+        assertEquals(0.6f, NoteBack.progress, 0f)
+        NoteBack.reset()
+        assertEquals(0f, NoteBack.progress, 0f)
     }
 }

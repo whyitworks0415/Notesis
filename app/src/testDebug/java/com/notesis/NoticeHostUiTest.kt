@@ -52,4 +52,20 @@ class NoticeHostUiTest {
         }
         compose.onNodeWithText("PDF saved").assertIsDisplayed()
     }
+
+    @Test fun emptyingAsksInPlaceAndOnlyTheSecondPressDoesIt() {
+        var emptied = 0
+        compose.setContent {
+            MaterialTheme {
+                CompositionLocalProvider(LocalMotionAllowed provides false) {
+                    ProvideSkin(SkinSettings()) { ConfirmInPlace("Empty", "Delete 3 notes for good") { emptied++ } }
+                }
+            }
+        }
+        compose.onNodeWithText("Empty").performClick()
+        compose.runOnIdle { assertEquals(0, emptied) }
+        compose.onNodeWithText("Delete 3 notes for good").performClick()
+        compose.runOnIdle { assertEquals(1, emptied) }
+        compose.onNodeWithText("Empty").assertIsDisplayed()
+    }
 }

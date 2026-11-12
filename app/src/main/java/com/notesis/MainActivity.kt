@@ -498,7 +498,10 @@ class MainActivity : ComponentActivity() {
                             onBack = { vaultTree = null },
                         )
                     }
-                } else if (note == null) {
+                } else {
+                // The library stays under a note growing out of its card, at
+                // the same place in the composition, so it is not built again.
+                if (note == null || NoteFlights.growing(note.id)) {
                     HomeLookTheme {
                     HomeScreen(
                         store = store,
@@ -519,7 +522,9 @@ class MainActivity : ComponentActivity() {
                         },
                     )
                     }
-                } else if (note.kind == NoteKind.MARKDOWN) {
+                }
+                if (note != null) Box(Modifier.fillMaxSize().grownOutOfCard(note.id).followingBack()) {
+                if (note.kind == NoteKind.MARKDOWN) {
                     key(note.id) {
                         MarkdownNoteScreen(
                             source = remember(note.id) {
@@ -549,6 +554,8 @@ class MainActivity : ComponentActivity() {
                     )
                     }
                     }
+                }
+                }
                 }
                 // The library and the ink note float the clock on their own
                 // glass; anywhere else, a finished timer or a ringing alarm
@@ -758,6 +765,8 @@ private fun HomeScreen(
     var bulkDelete by remember { mutableStateOf(false) }
     var bulkFolder by remember { mutableStateOf(false) }
     var naming by remember { mutableStateOf(false) }
+    // Where the + button is, for a new note to come out of (Todo.md, A3).
+    val newNoteButton = remember { arrayOfNulls<androidx.compose.ui.geometry.Rect>(1) }
     var templateRevision by remember { mutableIntStateOf(0) }
     var autoBackupOpen by remember { mutableStateOf(false) }
     // A template just added, asked for its name.
@@ -1292,6 +1301,23 @@ private fun HomeScreen(
         snapshotFlow { gridState.isScrollInProgress }.collect { PerfRecorder.homeScrolling = it }
     }
     val libraryTiles = remember { LibraryTiles() }
+    // A folder opening: its notes come out of the card that was tapped,
+    // going back out of the middle (see [folderZoom]).
+    var folderZoomFrom by remember { mutableStateOf<Offset?>(null) }
+    val folderZoom = remember { androidx.compose.animation.core.Animatable(1f) }
+    val folderMoves = rememberMotionAllowed() && !InteractionGovernor.lightMode
+    val shownFolder = remember { arrayOf<String?>(null) }
+    LaunchedEffect(folder) {
+        val before = shownFolder[0]
+        shownFolder[0] = folder
+        if (before == null || before == folder) return@LaunchedEffect
+        if (!folderMoves) return@LaunchedEffect
+        // Back up a level there is no card to come out of: from the middle.
+        if (!isInFolder(folder, before)) folderZoomFrom = null
+        folderZoom.snapTo(0f)
+        ChromeMotion.during { folderZoom.animateTo(1f, MaterialMotion.rawContainer<Float>().paced()) }
+        folderZoomFrom = null
+    }
     // A note closing goes back into its card: once the grid has placed the
     // cards, the card is where its picture lands, or nowhere if it is off screen.
     LaunchedEffect(Unit) {
@@ -1609,7 +1635,8 @@ private fun HomeScreen(
                 )
                 Spacer(Modifier.height(12.dp))
                 // Everything that makes a note, folded into the one button.
-                Box(Modifier.coachTarget(coachTargets, CoachTarget.NEW_NOTE)) {
+                Box(Modifier.coachTarget(coachTargets, CoachTarget.NEW_NOTE)
+                    .onGloballyPositioned { if (it.isAttached) newNoteButton[0] = it.boundsInRoot() }) {
                 NewNoteDial(
                     listOf(
                         DialOption("New note from web page", Reicons.Language) { askingUrl = true },
@@ -1686,7 +1713,7 @@ private fun HomeScreen(
             verticalArrangement = Arrangement.spacedBy(Ui.Space.m),
             // No motion blur on the library: a blur over the whole grid is the
             // whole screen drawn offscreen and blurred on every frame of a fling.
-            modifier = Modifier.fillMaxSize().dragToSelect(
+            modifier = Modifier.fillMaxSize().folderZoom(folderZoom, { folderZoomFrom }, { libraryTiles.origin }).dragToSelect(
                 tiles = libraryTiles,
                 order = { (if (showFolders) subfolders.map(::folderKey) else emptyList()) + visibleNotes.map { it.id } },
                 selection = { selectionKeys() },
@@ -1754,7 +1781,11 @@ private fun HomeScreen(
                         onOpen = {
                             if (selectionMode) {
                                 if (name in selectedFolders) selectedFolders.remove(name) else selectedFolders.add(name)
-                            } else folder = name
+                            } else {
+                                // The folder's contents open out of its card (Todo.md, A2).
+                                folderZoomFrom = libraryTiles.placed[folderKey(name)]?.takeIf { it.isAttached }?.boundsInRoot()?.center
+                                folder = name
+                            }
                         },
                         onRename = { menuFolder = name; renamingFolder = true },
                         onDelete = { menuFolder = name; deletingFolder = true },
@@ -2102,7 +2133,18 @@ private fun HomeScreen(
                 SelectionAction(Reicons.Archive, "Export", enabled = selectedIds.isNotEmpty()) {
                     saveSelectedArchive.launch("Notesis-selected-backup")
                 }
-                SelectionAction(Reicons.Delete, "Delete", enabled = selectedCount > 0) { bulkDelete = true }
+                SelectionAction(Reicons.Delete, "Delete", enabled = selectedCount > 0) {
+                    if (selectedFolders.isEmpty()) {
+                        // Notes alone go straight to the Trash, with Undo on the
+                        // notice (Todo.md, C2). Folders still ask: what becomes of
+                        // the notes in them is a choice to make.
+                        val trashed = selectedIds.toList()
+                        trashed.forEach(store::moveToTrash)
+                        clearSelection(); revision++
+                        Notices.show(if (trashed.size == 1) "Moved to Trash" else "Moved ${countNoun(trashed.size, "note")} to Trash", "Undo",
+                            onAction = { trashed.forEach(store::restoreFromTrash); revision++ })
+                    } else bulkDelete = true
+                }
             }
         }
         }
@@ -2370,11 +2412,14 @@ private fun HomeScreen(
             onDismiss = { naming = false },
             onConfirm = { title, kind, background, templateId ->
                 naming = false
-                onOpen(if (kind == NoteKind.MARKDOWN) {
+                val made = if (kind == NoteKind.MARKDOWN) {
                     filedHere(store.createMarkdown(title.ifBlank { "Untitled" }, "# ${title.ifBlank { "Untitled" }}\n\n"))
                 } else {
                     filedHere(store.create(title.ifBlank { "Untitled" }, background, templateId))
-                })
+                }
+                // A new note comes out of the + button it was made with, as blank paper.
+                NoteFlights.tapped(made.id, newNoteButton[0], null)
+                onOpen(made)
             },
         )
     }
@@ -2809,7 +2854,6 @@ private fun ImageOrderDialog(uris: List<Uri>, onDismiss: () -> Unit, onConfirm: 
 private fun TrashDialog(store: NoteStore, onChanged: () -> Unit, onDismiss: () -> Unit) {
     var revision by remember { mutableIntStateOf(0) }
     val trashed = remember(revision) { store.trashed() }
-    var confirmEmpty by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Trash") },
@@ -2841,20 +2885,14 @@ private fun TrashDialog(store: NoteStore, onChanged: () -> Unit, onDismiss: () -
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        // Emptying cannot be undone, so it still asks - in place, the button
+        // itself opening into the question (Todo.md, A5), not a second dialog.
         dismissButton = if (trashed.isNotEmpty()) {
-            { TextButton(onClick = { confirmEmpty = true }) { Text("Empty") } }
+            { ConfirmInPlace("Empty", "Delete ${countNoun(trashed.size, "note")} for good") {
+                store.emptyTrash()
+                revision++
+            } }
         } else null,
-    )
-    if (confirmEmpty) AlertDialog(
-        onDismissRequest = { confirmEmpty = false },
-        title = { Text("Empty Trash?") },
-        text = { Text("${countNoun(trashed.size, "note")} will be deleted for good and can't be recovered.") },
-        confirmButton = { TextButton(onClick = {
-            store.emptyTrash()
-            confirmEmpty = false
-            revision++
-        }) { Text("Empty") } },
-        dismissButton = { TextButton(onClick = { confirmEmpty = false }) { Text("Cancel") } },
     )
 }
 
@@ -4872,11 +4910,23 @@ private fun NoteScreen(
         if (uri != null) addImageFrom(uri)
     }
 
-    // Back clears a selection first, the way dismissing anything else works -
-    // one step out per press.
-    BackHandler {
-        if (selectedText != null) canvas?.clearSelection() else onBack()
+    // Back leaves the note. On Android 14 and later the note follows the
+    // back gesture as it is made, drawing in towards the card it goes back
+    // to, and comes back if the gesture is let go of (see NoteBack).
+    val backMoves = rememberMotionAllowed() && !InteractionGovernor.lightMode
+    androidx.activity.compose.PredictiveBackHandler { gesture ->
+        try {
+            gesture.collect { event -> if (backMoves) NoteBack.follow(event.progress, event.swipeEdge) }
+            NoteBack.reset()
+            onBack()
+        } catch (cancelled: kotlin.coroutines.cancellation.CancellationException) {
+            NoteBack.reset()
+            throw cancelled
+        }
     }
+    // Back clears a selection first, the way dismissing anything else works -
+    // one step out per press. Composed after the one above, so it comes first.
+    BackHandler(enabled = selectedText != null) { canvas?.clearSelection() }
 
     // Text being typed on the page goes on it when the tool changes or Back is pressed.
     LaunchedEffect(mode) { if (mode != EditMode.TEXT) commitInlineText() }

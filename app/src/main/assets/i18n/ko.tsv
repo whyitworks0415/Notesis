@@ -1669,3 +1669,6 @@ Light or dark	라이트 또는 다크
 The toolbar, its menus and the panels take the same curve.	툴바, 메뉴, 패널이 같은 곡선을 씁니다.
 Mornye (how menus grow out of their button and the dark palette, written again from its values)	Mornye (메뉴가 버튼에서 자라나는 방식과 어두운 색상, 그 값으로 다시 작성)
 Moved to Trash	휴지통으로 옮겼습니다
+Moved {0} notes to Trash	노트 {0}개를 휴지통으로 옮겼습니다
+Delete {0} notes for good	노트 {0}개 완전히 삭제
+Delete {0} note for good	노트 {0}개 완전히 삭제

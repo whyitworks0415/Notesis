@@ -1,5 +1,6 @@
 package com.notesis
 
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -748,3 +749,21 @@ internal fun EmptyLibraryStroke(modifier: Modifier = Modifier) {
 }
 
 private const val EMPTY_STROKE_MS = 1100
+
+/**
+ * The library's grid coming out of a point: from nine tenths of its size and
+ * clear at [progress] 0 to whole at 1, scaled about [from] (a point in the
+ * root, the folder card that was tapped) or about its middle. [origin] is the
+ * grid's own top-left in the root. Read in the layer only.
+ */
+internal fun Modifier.folderZoom(progress: Animatable<Float, *>, from: () -> Offset?, origin: () -> Offset): Modifier = graphicsLayer {
+    val p = progress.value
+    if (p >= 1f) return@graphicsLayer
+    val s = 0.9f + 0.1f * p.coerceIn(0f, 1f)
+    scaleX = s
+    scaleY = s
+    alpha = p.coerceIn(0f, 1f)
+    val at = from()
+    transformOrigin = if (at == null || size.width <= 0f || size.height <= 0f) TransformOrigin.Center
+        else (at - origin()).let { TransformOrigin((it.x / size.width).coerceIn(0f, 1f), (it.y / size.height).coerceIn(0f, 1f)) }
+}

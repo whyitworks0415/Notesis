@@ -2,7 +2,6 @@ package com.notesis
 
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.material3.AlertDialogDefaults
-import androidx.compose.material3.MenuDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -17,7 +16,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.material3.AlertDialog as MaterialAlertDialog
-import androidx.compose.material3.DropdownMenu as MaterialDropdownMenu
 
 /**
  * The app's dialog: Material's, grown out of the touch that opened it as a
@@ -83,9 +81,10 @@ fun AlertDialog(
 }
 
 /**
- * Material's menu at the app's own size. Only the arguments the app actually
- * passes are here - the rest of Material's list moves between versions, and a
- * wrapper that repeats it is a wrapper that breaks on the next upgrade.
+ * The app's menu under Material's name: every menu that was Material's own -
+ * it grew from its middle - is the app's (see AppMenu.kt), grown out of what
+ * opened it and gone back into it, as the card menus and the toolbar's are
+ * (Todo.md, B1). Only the arguments the app actually passes are here.
  */
 @Composable
 fun DropdownMenu(
@@ -93,17 +92,7 @@ fun DropdownMenu(
     onDismissRequest: () -> Unit,
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
-) {
-    MaterialDropdownMenu(
-        expanded,
-        onDismissRequest,
-        modifier,
-        shadowElevation = if (LocalSkinSettings.current.shadows) MenuDefaults.ShadowElevation else 0.dp,
-    ) {
-        val column = this
-        ProvideAppDensity { column.content() }
-    }
-}
+) = GlassMenu(expanded, onDismissRequest, modifier, content)
 
 /** Material's dialog padding: how far a dialog's content sits from its edge. */
 private val DIALOG_INSET = 24.dp
