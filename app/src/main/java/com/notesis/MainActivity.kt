@@ -2517,6 +2517,8 @@ private const val DIAL_STAGGER_MS = 12
 private const val BACK_OFFER_MS = 8_000L
 /** How long a capture waits for the chat to load and offer somewhere to put it. */
 private const val AI_ATTACH_WAIT_MS = 12_000L
+/** The most the pages for the chat may weigh to be put in its message box from here; larger ones wait for "+ › Files". */
+private const val CHAT_INLINE_BYTES = 6L * 1024 * 1024
 private const val AI_ATTACH_RETRY_MS = 600L
 /** A capture sent to the chat is no bigger than this on its long side: sharp to read, quick to send. */
 private const val AI_CAPTURE_MAX_PX = 2048f
@@ -4267,6 +4269,10 @@ private fun NoteScreen(
     var showWebLog by remember { mutableStateOf(false) }
     // A capture waiting to be handed to the next upload button a site shows.
     val pendingAttachment = remember { mutableStateOf<Uri?>(null) }
+    /** Files made for the chat that it has not taken yet: handed over at its next "+ › Files". */
+    val pendingChatFiles = remember { mutableStateOf<List<Uri>>(emptyList()) }
+    /** The sheet that sends pages of the note to the chat (see ChatAttach.kt). */
+    var attachingToChat by remember { mutableStateOf(false) }
     val webChooser = remember { mutableStateOf<android.webkit.ValueCallback<Array<Uri>>?>(null) }
     DisposableEffect(Unit) {
         onDispose {
@@ -4781,6 +4787,95 @@ private fun NoteScreen(
         mode = EditMode.CAPTURE
         KToast.makeText(context, "Drag over the part to send to the chat", Toast.LENGTH_SHORT).show()
     }
+    /**
+     * Pages of the note to the chat, as the sheet asked (Todo.md, P1-P3): a PDF
+     * of them, with or without the ink, or one page as a picture, and the
+     * handwriting read off them in a text file beside it. Handed to the chat's
+     * message box where it takes files that way; otherwise kept for its
+     * "+ › Files".
+     */
+    fun sendNoteToChat(request: ChatRequest) {
+        val view = canvas ?: return
+        if (webUrl?.let { isAiAddress(it, aiSites()) } != true) webUrl = lastAiSite(context) ?: AI_SITES.first().second
+        val pages = view.snapshotPages(request.pages)
+        if (pages.isEmpty()) return
+        val look = view.layers.translucentLook()
+        scope.launch {
+            val made = withContext(Dispatchers.IO) {
+                runCatching {
+                    val dir = java.io.File(context.cacheDir, "shared/chat").apply { deleteRecursively(); mkdirs() }
+                    val out = mutableListOf<Pair<java.io.File, String>>()
+                    val pdf = java.io.File(dir, chatFileName(note.title,
+                        if (pages.size == 1) "page ${request.pages.first() + 1}" else "${pages.size} pages", "pdf"))
+                    val written = pdf.outputStream().use { stream ->
+                        writeVectorPdf(context, store.pdfFile(note.id),
+                            pages.map { page ->
+                                if (request.withInk) VectorPdfPage(page, page.strokes, page.masks.map { m -> m.stroke }, look)
+                                else VectorPdfPage(page, emptyList(), emptyList())
+                            },
+                            { imageId -> store.imageFile(note.id, imageId) }, stream)
+                    }
+                    if (!written) return@runCatching null
+                    if (request.format == ChatFormat.PICTURE) {
+                        // The one page, drawn from its PDF, so the picture is the page exactly as the PDF has it.
+                        val png = java.io.File(dir, pdf.nameWithoutExtension + ".png")
+                        android.graphics.pdf.PdfRenderer(android.os.ParcelFileDescriptor.open(pdf,
+                            android.os.ParcelFileDescriptor.MODE_READ_ONLY)).use { renderer ->
+                            renderer.openPage(0).use { page ->
+                                val scale = AI_CAPTURE_MAX_PX / maxOf(page.width, page.height).toFloat()
+                                val bitmap = Bitmap.createBitmap((page.width * scale).toInt().coerceAtLeast(1),
+                                    (page.height * scale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+                                bitmap.eraseColor(android.graphics.Color.WHITE)
+                                page.render(bitmap, null, null, android.graphics.pdf.PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                                png.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                                bitmap.recycle()
+                            }
+                        }
+                        pdf.delete()
+                        out += png to "image/png"
+                    } else out += pdf to "application/pdf"
+                    if (request.handwritingText) {
+                        val text = handwritingText(note.title, request.pages.zip(pages).map { (index, page) ->
+                            index to runCatching { store.inkIndexFile(note.id, page.id).takeIf { it.isFile }?.readText() }.getOrNull()
+                        })
+                        if (text != null) {
+                            val txt = java.io.File(dir, chatFileName(note.title, "handwriting", "txt"))
+                            txt.writeText(text)
+                            out += txt to "text/plain"
+                        }
+                    }
+                    out
+                }.getOrNull()
+            }
+            if (made.isNullOrEmpty()) {
+                KToast.makeText(context, "Couldn't make the file for the chat", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            // Into the page's message box where it takes files that way, as a
+            // capture is; a large file waits for "+ › Files" instead.
+            var result = AiAttach.NONE
+            if (made.sumOf { it.first.length() } <= CHAT_INLINE_BYTES) {
+                val encoded = withContext(Dispatchers.Default) {
+                    made.map { (file, mime) -> Triple(android.util.Base64.encodeToString(file.readBytes(), android.util.Base64.NO_WRAP), mime, file.name) }
+                }
+                val until = android.os.SystemClock.uptimeMillis() + AI_ATTACH_WAIT_MS
+                while (true) {
+                    val web = browser.value
+                    if (web != null && web.progress >= 100) result = AiAttach.offerFiles(web, encoded)
+                    if (AiAttach.taken(result) || android.os.SystemClock.uptimeMillis() > until) break
+                    delay(AI_ATTACH_RETRY_MS)
+                }
+            }
+            if (AiAttach.taken(result)) {
+                KToast.makeText(context, "Attached to the chat", Toast.LENGTH_SHORT).show()
+            } else {
+                pendingChatFiles.value = made.map { (file, _) ->
+                    androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".files", file)
+                }
+                KToast.makeText(context, "Tap + in the chat and choose \"Files\"", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
     /** From the chat: the page in view, whole, in one tap. */
     fun sendPageToAi() {
         val view = canvas ?: return
@@ -5004,9 +5099,14 @@ private fun NoteScreen(
             onSendPage = ::sendPageToAi,
             insets = onMove == null,
             onMove = onMove,
+            onAttachNote = { attachingToChat = true },
             onFile = { callback ->
                 val ready = pendingAttachment.value
-                if (ready != null) {
+                val files = pendingChatFiles.value
+                if (files.isNotEmpty()) {
+                    pendingChatFiles.value = emptyList()
+                    callback.onReceiveValue(files.toTypedArray())
+                } else if (ready != null) {
                     pendingAttachment.value = null
                     callback.onReceiveValue(arrayOf(ready))
                 } else {
@@ -6566,6 +6666,18 @@ private fun NoteScreen(
             onPick = { preset -> applySplit(preset) },
             onDismiss = { choosingSplit = false },
         )
+        if (attachingToChat) canvas?.let { view ->
+            // Whether any page has had its handwriting read, looked up off the main thread.
+            val pageIds = remember(view) { view.document.pages.map { it.id } }
+            val read by produceState(false, pageIds) {
+                value = withContext(Dispatchers.IO) { pageIds.any { store.inkIndexFile(note.id, it).let { f -> f.isFile && f.length() > 0 } } }
+            }
+            ChatAttachSheet(
+                current = view.currentPageIndex(), count = pageIds.size, hasHandwriting = read,
+                onDismiss = { attachingToChat = false },
+                onSend = { request -> attachingToChat = false; sendNoteToChat(request) },
+            )
+        }
         if (choosingShape) ShapePickerDialog(
             current = shapeKind,
             holdToShape = gestures.holdToDraw,

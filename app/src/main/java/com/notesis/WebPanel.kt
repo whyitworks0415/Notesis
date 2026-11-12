@@ -254,6 +254,8 @@ internal fun WebPanel(
     onCaptureToChat: (() -> Unit)? = null,
     /** Sends the page in view to the chat, whole. */
     onSendPage: (() -> Unit)? = null,
+    /** Opens the sheet that sends pages of the note, as a PDF or a picture, to the chat. */
+    onAttachNote: (() -> Unit)? = null,
 ) {
     val web = holder.value
     var address by remember(url) { mutableStateOf(url) }
@@ -411,6 +413,11 @@ internal fun WebPanel(
                         // A logged error shows on the button that hides the log.
                         tint = if (log.isEmpty()) null else MaterialTheme.colorScheme.error)
                     DropdownMenu(more, onDismissRequest = { more = false }) {
+                        if (onAttachNote != null) DropdownMenuItem(
+                            text = { Text("Send pages to the chat…") },
+                            leadingIcon = { Icon(Reicons.PictureAsPdf, contentDescription = null) },
+                            onClick = { more = false; onAttachNote() },
+                        )
                         if (onSendPage != null) DropdownMenuItem(
                             text = { Text("Send this page to the chat") },
                             leadingIcon = { Icon(Reicons.Image, contentDescription = null) },

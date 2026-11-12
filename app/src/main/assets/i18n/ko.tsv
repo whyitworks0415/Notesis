@@ -1672,3 +1672,23 @@ Moved to Trash	휴지통으로 옮겼습니다
 Moved {0} notes to Trash	노트 {0}개를 휴지통으로 옮겼습니다
 Delete {0} notes for good	노트 {0}개 완전히 삭제
 Delete {0} note for good	노트 {0}개 완전히 삭제
+Couldn't make the file for the chat	채팅에 보낼 파일을 만들지 못했습니다
+Send pages to the chat…	페이지를 채팅으로 보내기…
+A picture is of one page; more pages go as a PDF.	그림은 한 페이지만 됩니다. 여러 페이지는 PDF로 보냅니다.
+Handwriting as text	필기를 글자로
+Nothing in this note has been read yet. Index the handwriting from the note's card first.	이 노트는 아직 필기를 읽지 않았습니다. 먼저 노트 카드 메뉴에서 필기 색인을 만들어 주세요.
+Of {0} pages	전체 {0}쪽
+Pages, such as 1-3, 5	페이지 (예: 1-3, 5)
+Pages…	페이지 지정…
+Send {0} pages	{0}쪽 보내기
+Send page {0}	{0}쪽 보내기
+Send to the chat	채팅으로 보내기
+Send	보내기
+Sent as	보내는 형식
+The pages as they are underneath the writing: the PDF or the paper alone.	필기 없이, PDF나 종이만 보냅니다.
+The pages as they look, with what is written on them.	쓴 내용까지 화면에 보이는 그대로 보냅니다.
+This note has pages 1 to {0}.	이 노트는 1쪽부터 {0}쪽까지 있습니다.
+This page	이 페이지
+What goes	보낼 내용
+What the handwriting says, read for search, in a text file beside the pages, so the chat can read it.	검색용으로 읽어 둔 필기 내용을 텍스트 파일로 함께 보내, 채팅이 글자로 읽을 수 있게 합니다.
+Whole note	노트 전체
