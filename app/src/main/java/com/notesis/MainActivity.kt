@@ -1252,8 +1252,19 @@ private fun HomeScreen(
     val gridState = rememberLazyGridState()
     // A recording must not go on counting a scroll that ended with the screen.
     DisposableEffect(Unit) { onDispose { PerfRecorder.homeScrolling = false } }
-    // How fast the library is scrolling, for its trace of motion blur.
-    val homeScrollSpeed = rememberScrollSpeed()
+    // The cards' pictures, decoded into memory a moment after the library
+    // settles - the notes in the order they are shown, as many as the cache
+    // holds - so a fling draws pictures already in memory rather than starting
+    // a decode for every card that comes in. Waits while the list moves.
+    LaunchedEffect(notes) {
+        delay(LIBRARY_WARM_DELAY_MS)
+        val room = FileBitmaps.roomFor(NOTE_CARD_PICTURE_PX)
+        val files = notes.asSequence().filter { !it.locked }.mapNotNull { it.thumbnail }.take(room).toList()
+        for (file in files) {
+            while (gridState.isScrollInProgress) delay(LIBRARY_WARM_DELAY_MS)
+            withContext(FileBitmaps.decoder) { FileBitmaps.warm(file, NOTE_CARD_PICTURE_PX) }
+        }
+    }
     // Told to a performance recording, which sorts its frames by what was going on.
     LaunchedEffect(gridState) {
         snapshotFlow { gridState.isScrollInProgress }.collect { PerfRecorder.homeScrolling = it }
@@ -1644,7 +1655,9 @@ private fun HomeScreen(
             ),
             horizontalArrangement = Arrangement.spacedBy(Ui.Space.m),
             verticalArrangement = Arrangement.spacedBy(Ui.Space.m),
-            modifier = Modifier.fillMaxSize().scrollBlur(homeScrollSpeed).dragToSelect(
+            // No motion blur on the library: a blur over the whole grid is the
+            // whole screen drawn offscreen and blurred on every frame of a fling.
+            modifier = Modifier.fillMaxSize().dragToSelect(
                 tiles = libraryTiles,
                 order = { (if (showFolders) subfolders.map(::folderKey) else emptyList()) + visibleNotes.map { it.id } },
                 selection = { selectionKeys() },
@@ -4131,16 +4144,14 @@ private fun NoteScreen(
     var editingPicture by remember { mutableIntStateOf(0) }
     var replacingText by remember { mutableStateOf<PageImage?>(null) }
     var textPosition by remember { mutableStateOf<Triple<Int, Float, Float>?>(null) }
-    // Text typed on the page where it was tapped, and tables; see InlineTextEditor and TableEditorDialog.
+    // Text typed on the page where it was tapped; see InlineTextEditor.
     var inlineText by remember { mutableStateOf<InlineTextTarget?>(null) }
     var inlineDraft by remember { mutableStateOf("") }
     var inlineSize by remember { mutableFloatStateOf(32f) }
     var textDialogInitial by remember { mutableStateOf<TextBoxContent?>(null) }
-    var tableEditing by remember { mutableStateOf<Triple<TextBoxContent?, PageImage?, Triple<Int, Float, Float>?>?>(null) }
     var textToolPanel by remember { mutableStateOf(false) }
     // What a link the pen rests over leads to, and where (window pixels).
     var linkPreview by remember { mutableStateOf<Triple<String, Float, Float>?>(null) }
-    var textToolTable by remember { mutableStateOf(penStore.textToolTable) }
     var textMarkdown by remember { mutableStateOf(penStore.textMarkdown) }
     var captured by remember { mutableStateOf<Bitmap?>(null) }
     // How captures come out, kept between them: picking 4x once is picking it.
@@ -4804,11 +4815,10 @@ private fun NoteScreen(
         inlineText = InlineTextTarget(position, replacing, Offset(at.x, at.y), view.pageScaleOnScreen(), initial)
     }
 
-    /** The page tapped with the text tool: a table there, or typing there. */
+    /** The page tapped with the text tool: typing there. */
     fun textAt(page: Int, x: Float, y: Float) {
         if (inlineText != null) { commitInlineText(); return }
-        if (textToolTable) tableEditing = Triple(null, null, Triple(page, x, y))
-        else openInlineText(Triple(page, x, y), null, null)
+        openInlineText(Triple(page, x, y), null, null)
     }
 
     val pickImage = rememberLauncherForActivityResult(
@@ -6759,41 +6769,22 @@ private fun NoteScreen(
                 onDone = { commitInlineText() },
             )
         }
-        tableEditing?.let { (initial, replacing, position) ->
-            TableEditorDialog(initial, onDismiss = { tableEditing = null }) { content ->
-                tableEditing = null
-                placeText(content, replacing, position)
-            }
-        }
         if (textToolPanel) AlertDialog(
             onDismissRequest = { textToolPanel = false },
             title = { Text("Text tool") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
-                        SettingsChoiceChip(selected = !textToolTable, onClick = {
-                            textToolTable = false; penStore.textToolTable = false
-                        }, label = "Text")
-                        SettingsChoiceChip(selected = textToolTable, onClick = {
-                            textToolTable = true; penStore.textToolTable = true
-                        }, label = "Table")
-                    }
-                    if (!textToolTable) {
-                        SettingsToggle("Markdown", textMarkdown, {
-                            textMarkdown = it; penStore.textMarkdown = it
-                        }, hint = "# heading, **bold**, *italic*, - list, - [ ] box, `code`, > quote")
-                        SettingsNote("Tap the page to type there.")
-                    } else {
-                        SettingsNote("Tap the page to put a table there. Cells take numbers, text and formulas such as =SUM(A1:A3).")
-                    }
+                    SettingsToggle("Markdown", textMarkdown, {
+                        textMarkdown = it; penStore.textMarkdown = it
+                    }, hint = "# heading, **bold**, *italic*, - list, - [ ] box, `code`, > quote")
+                    SettingsNote("Tap the page to type there.")
                 }
             },
             confirmButton = {
                 TextButton(onClick = {
                     textToolPanel = false
-                    if (textToolTable) tableEditing = Triple(null, null, null)
-                    else { replacingText = null; textPosition = null; textDialogInitial = null; showTextBox = true }
-                }) { Text(if (textToolTable) "Add a table" else "Add styled text") }
+                    replacingText = null; textPosition = null; textDialogInitial = null; showTextBox = true
+                }) { Text("Add styled text") }
             },
             dismissButton = { TextButton(onClick = { textToolPanel = false }) { Text("Close") } },
         )
@@ -6809,7 +6800,6 @@ private fun NoteScreen(
                     val content = box?.textContent
                     when {
                         box == null || content == null -> Unit
-                        content.table != null -> tableEditing = Triple(content, box, null)
                         // Plain or Markdown text is changed where it is; styled text in the full editor.
                         content.html == null -> openInlineText(null, box, content)
                         else -> { replacingText = box; showTextBox = true }
@@ -7765,15 +7755,13 @@ private fun ImageActions(
         ) {
             Text(when (box) {
                 PageImage.BOX_STICKY -> "Sticky note"
-                PageImage.BOX_TABLE -> "Table"
                 PageImage.BOX_CHECK -> "Checkbox"
                 else -> if (isText) "Text" else "Photo"
             }, style = MaterialTheme.typography.bodyMedium)
             if (box == PageImage.BOX_STICKY) TextButton(onClick = onFold) { Text("Fold/Unfold") }
-            // Tables can no longer be made or rebuilt; one already on a page is
-            // a picture of a grid, kept as it is.
+            // A grid from before tables were taken out is a picture like any other.
             if (isText) TextButton(onClick = onEdit) { Text("Edit") }
-            else if (box != PageImage.BOX_TABLE && box != PageImage.BOX_CHECK) {
+            else if (box != PageImage.BOX_CHECK) {
                 TextButton(onClick = onCrop) { Text("Crop") }
                 TextButton(onClick = onStyle) { Text("Style") }
             }
@@ -8718,6 +8706,8 @@ private val SCRUBBER_PREVIEW_WIDTH = 120.dp
 private const val SCRUBBER_THUMBNAIL_PX = 240
 /** About the widest a note's card in the list is drawn, in pixels. */
 private const val NOTE_CARD_PICTURE_PX = 480
+/** How long the library waits after loading, or while it scrolls, before warming the cards' pictures. */
+private const val LIBRARY_WARM_DELAY_MS = 400L
 /** The page panel's pictures: sharp at two to a row on a wide panel, small enough to keep many. */
 /**
  * How wide, in pixels, a page's picture is drawn for a grid of [columns]
@@ -9093,9 +9083,11 @@ private fun Toolbar(
             },
             onDrag = onDragBar,
             onTool = { tool -> when (tool.mode) {
-                // The shape already in hand, tapped again, opens the picker,
-                // the way a pen tapped again opens its settings.
-                EditMode.SHAPE -> if (mode == EditMode.SHAPE) onShapeOptions() else onShape(shapeKind)
+                // The shape tool takes up the shape in hand and opens the
+                // picker at once: which shape, its colour and corners are what
+                // the tool is chosen for, and a second tap to reach them was
+                // easy to miss.
+                EditMode.SHAPE -> { if (mode != EditMode.SHAPE) onShape(shapeKind); onShapeOptions() }
                 EditMode.TEXT -> onText()
                 null -> Unit
                 else -> onMode(tool.mode)

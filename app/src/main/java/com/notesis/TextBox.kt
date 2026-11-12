@@ -53,10 +53,6 @@ data class TextBoxContent(
     val minSize: Float = 0f,
     /** [text] is Markdown: headings, bold, italic, lists, quotes and code are drawn as such. */
     val markdown: Boolean = false,
-    /** A table instead of text: rows of cells, each as typed (a leading = is a formula); see TableBox. */
-    val table: List<List<String>>? = null,
-    /** The table's first row is its heading, drawn bold on a tint. */
-    val tableHeader: Boolean = true,
     /**
      * How wide the box is kept, in page units, the text wrapping inside it; 0
      * for as wide as its longest line. Set by resizing the box, so a bigger
@@ -114,7 +110,6 @@ internal fun drawTextBox(canvas: Canvas, content: TextBoxContent, layout: Static
 }
 
 internal fun renderTextBox(content: TextBoxContent): Bitmap {
-    content.table?.let { return renderTable(content, it) }
     val scale = 2f
     val pad = (content.padding * scale).toInt()
     val maxWidth = 1600
@@ -279,3 +274,11 @@ internal fun TextBoxDialog(initial: TextBoxContent?, onDismiss: () -> Unit, onSa
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
+
+/**
+ * The text a table box from before tables were taken out is kept as: a row a
+ * line, its cells apart by tabs, each as it was typed (a formula stays a
+ * formula's text). Nothing written in one is lost; it is plain text now.
+ */
+internal fun tableAsText(rows: List<List<String>>): String =
+    rows.joinToString("\n") { row -> row.joinToString("\t").trimEnd('\t') }.trimEnd('\n')

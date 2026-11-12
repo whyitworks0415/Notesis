@@ -650,7 +650,7 @@ private fun MotionGroup() {
                 hint = when (part) {
                     BlurPart.POPUPS -> "Menus, tool panels and dialogs as they open and close."
                     BlurPart.SIDEBARS -> "The settings sidebar, the pages panel and the layers panel as they slide."
-                    BlurPart.LISTS -> "The library and lists in popups as they scroll."
+                    BlurPart.LISTS -> "Lists in menus and panels as they scroll. Never the library: it would blur the whole screen."
                     BlurPart.PAGE -> "The note's page as it is scrolled or flung."
                     BlurPart.INK -> "The pen's in-between travel, drawn faintly ahead of the tip between screen frames."
                 })

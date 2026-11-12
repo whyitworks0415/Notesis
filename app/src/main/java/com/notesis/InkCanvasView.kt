@@ -5063,7 +5063,7 @@ class InkCanvasView @JvmOverloads constructor(
                     // A text box made bigger or smaller wraps its text to the new
                     // width rather than keeping it stretched; the host draws it again.
                     val image = selectedImage
-                    if (resized && image?.textContent != null && image.textContent.table == null) {
+                    if (resized && image?.textContent != null) {
                         onTextBoxResized?.invoke(image)
                     }
                     endStylus()

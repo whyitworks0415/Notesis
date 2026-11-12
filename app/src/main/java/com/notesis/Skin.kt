@@ -109,6 +109,11 @@ private object FocusOnlyIndication : IndicationNodeFactory {
 @Composable
 internal fun chromeCorner(): Dp = LocalSkinSettings.current.corner.coerceIn(SkinSettings.CORNER_RANGE).dp
 
+/** A panel's outline: round all round, or round only on its start side when it stands on the end edge. */
+internal fun edgePanelShape(radius: Dp, flushEnd: Boolean): RoundedCornerShape =
+    if (flushEnd) RoundedCornerShape(topStart = radius, bottomStart = radius, topEnd = 0.dp, bottomEnd = 0.dp)
+    else RoundedCornerShape(radius)
+
 /** The shadow a floating bar or panel casts, where shadows are on. */
 private val CHROME_SHADOW = 4.dp
 
@@ -126,6 +131,12 @@ fun SkinSurface(
     corner: Dp? = null,
     /** Set for chrome that spans the window rather than floating in it: its corners go square. */
     flush: Boolean = false,
+    /**
+     * Set for a panel that stands on the window's end edge - the sidebars,
+     * the AI panel beside the note: its corners on that edge go square, so it
+     * runs flush into the edge instead of leaving a notch at its top and foot.
+     */
+    flushEnd: Boolean = false,
     /** Which kind of chrome this is, for its tone; null is a panel's. */
     role: ChromeRole? = null,
     content: @Composable () -> Unit,
@@ -134,7 +145,7 @@ fun SkinSurface(
     val scheme = MaterialTheme.colorScheme
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(radius),
+        shape = edgePanelShape(radius, flushEnd),
         color = if (role == ChromeRole.TOOLBAR) scheme.surfaceContainerLow else scheme.surfaceContainer,
         contentColor = scheme.onSurface,
         border = BorderStroke(0.75.dp, scheme.outlineVariant.copy(alpha = 0.6f)),

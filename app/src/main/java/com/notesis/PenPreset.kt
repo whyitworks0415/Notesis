@@ -291,9 +291,6 @@ class PenStore(context: Context) {
         set(value) = prefs.edit().putFloat("whiteboardMargin", value).apply()
 
     /** The text tool puts tables rather than text. */
-    var textToolTable: Boolean
-        get() = prefs.getBoolean("textToolTable", false)
-        set(value) = prefs.edit().putBoolean("textToolTable", value).apply()
 
     /** Text typed on the page is Markdown. */
     var textMarkdown: Boolean

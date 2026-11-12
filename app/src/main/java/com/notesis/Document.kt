@@ -42,7 +42,7 @@ class PageImage(
     var opacity: Float = 1f,
     /** Degrees clockwise about the picture's middle. */
     var rotation: Float = 0f,
-    /** [BOX_NONE], or a container ([BOX_STICKY], [BOX_TABLE]) that carries what lies on it. */
+    /** [BOX_NONE], or a container ([BOX_STICKY]) that carries what lies on it. */
     var box: Int = BOX_NONE,
     /** A folded sticky note: drawn as a small tab, its full size kept for unfolding. */
     var collapsed: Boolean = false,
@@ -59,6 +59,7 @@ class PageImage(
     companion object {
         const val BOX_NONE = 0
         const val BOX_STICKY = 1
+        /** A grid drawn as a picture, from before tables were taken out; shown as the picture it is. */
         const val BOX_TABLE = 2
         /** A box to tick, drawn rather than pictured: there is no image file behind it. */
         const val BOX_CHECK = 3
@@ -1735,12 +1736,27 @@ class NoteStore(context: Context) {
         writeMeta(id, title, document)
 
         // ponytail: rendering the first page costs a PDF decode, and autosave
-        // runs every second or so while writing. The picture only has to be
-        // roughly current, so it is refreshed at most once a THUMB_INTERVAL_MS.
+        // runs every second or so while writing. While writing the picture is
+        // refreshed at most once a THUMB_INTERVAL_MS; a change it skipped is
+        // remembered, and drawn on the save made as the note closes, so the
+        // card in the library always shows the first page as it was left.
         val auto = File(root, "$id/$AUTO_THUMB")
         val stale = System.currentTimeMillis() - auto.lastModified() > THUMB_INTERVAL_MS
-        if (!auto.isFile || (firstPageChanged && stale)) writeAutoThumbnail(id, document)
+        val behind = firstPageChanged || id in thumbBehind
+        val closing = thumbOnClose.remove(id)
+        if (thumbnailDue(auto.isFile, behind, stale, closing)) {
+            writeAutoThumbnail(id, document)
+            thumbBehind.remove(id)
+        } else if (behind) {
+            thumbBehind.add(id)
+        }
     }
+
+    /** Notes whose first page changed since their picture was last drawn. */
+    private val thumbBehind: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    /** Notes being closed: their next save draws the picture whatever the interval. */
+    private val thumbOnClose: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
     private data class SavePage(
         val live: Page,
@@ -1879,6 +1895,21 @@ class NoteStore(context: Context) {
      * background. Duplicate lifecycle events are rejected before snapshotting.
      */
     fun flushSave(id: String, title: String, document: Document) {
+        thumbOnClose.add(id)
+        val generation = SaveGeneration(document.saveSessionId, document.editRevision, title)
+        val alreadySaved = synchronized(saveQueueLock) { saveLedger.contains(id, generation) }
+        // Nothing new to save, but the last change to the first page was too
+        // soon after the picture before it: draw it now, on the save worker.
+        if (alreadySaved && id in thumbBehind) {
+            val snapshot = snapshotForSave(document)
+            saveWorker.execute {
+                if (thumbBehind.remove(id)) {
+                    thumbOnClose.remove(id)
+                    runCatching { writeAutoThumbnail(id, snapshot.document) }
+                }
+            }
+            return
+        }
         enqueueSave(id, title, document)
     }
 
@@ -1952,11 +1983,7 @@ class NoteStore(context: Context) {
                         .put("corner", content.corner.toDouble()).put("pad", content.padding.toDouble())
                         .put("min", content.minSize.toDouble())
                         .put("md", content.markdown)
-                        .put("th", content.tableHeader)
-                        .put("wrap", content.wrapWidth.toDouble())
-                        .also { json -> content.table?.let { rows ->
-                            json.put("table", JSONArray().also { array -> rows.forEach { row -> array.put(JSONArray(row)) } })
-                        } } })
+                        .put("wrap", content.wrapWidth.toDouble()) })
                     .put("locked", image.locked)
                     .put("group", image.group)
                     .put("opacity", image.opacity.toDouble())
@@ -2000,7 +2027,14 @@ class NoteStore(context: Context) {
                 width = item.optDouble("w").toFloat(),
                 height = item.optDouble("h").toFloat(),
                 textContent = item.optJSONObject("text")?.let { content ->
-                    TextBoxContent(content.optString("value"), content.optDouble("size", 32.0).toFloat(),
+                    // A table box from before tables were taken out comes back as its text.
+                    val table = content.optJSONArray("table")?.let { rows ->
+                        (0 until rows.length()).map { r ->
+                            val row = rows.optJSONArray(r) ?: JSONArray()
+                            (0 until row.length()).map { c -> row.optString(c) }
+                        }
+                    }
+                    TextBoxContent(table?.let(::tableAsText) ?: content.optString("value"), content.optDouble("size", 32.0).toFloat(),
                         content.optInt("color", 0xFF000000.toInt()),
                         html = content.optString("html", "").ifBlank { null },
                         font = content.optString("font", ""),
@@ -2009,13 +2043,6 @@ class NoteStore(context: Context) {
                         padding = content.optDouble("pad", TextBoxContent.DEFAULT_PADDING.toDouble()).toFloat(),
                         minSize = content.optDouble("min", 0.0).toFloat(),
                         markdown = content.optBoolean("md", false),
-                        table = content.optJSONArray("table")?.let { rows ->
-                            (0 until rows.length()).map { r ->
-                                val row = rows.optJSONArray(r) ?: JSONArray()
-                                (0 until row.length()).map { c -> row.optString(c) }
-                            }
-                        },
-                        tableHeader = content.optBoolean("th", true),
                         wrapWidth = content.optDouble("wrap", 0.0).toFloat())
                 },
                 locked = item.optBoolean("locked", false),
@@ -2931,3 +2958,11 @@ internal fun sampleSizeFor(width: Int, height: Int, targetPx: Int): Int {
     while (longest / (sample * 2) >= targetPx.coerceAtLeast(1)) sample *= 2
     return sample
 }
+
+/**
+ * Whether a save draws the note's picture again: when there is none yet, or
+ * when the first page has changed since it was drawn ([behind]) and either
+ * enough time has passed ([stale]) or the note is being closed ([closing]).
+ */
+internal fun thumbnailDue(exists: Boolean, behind: Boolean, stale: Boolean, closing: Boolean): Boolean =
+    !exists || (behind && (stale || closing))

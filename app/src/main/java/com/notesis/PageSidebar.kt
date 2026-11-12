@@ -451,7 +451,7 @@ internal fun PageSidebar(
                         .background(MaterialTheme.colorScheme.outline.copy(alpha = if (draft != null) 0.95f else 0.6f)),
                 )
             }
-            SkinSurface(modifier = Modifier.width(shown.dp).fillMaxHeight(), role = ChromeRole.SIDEBAR) {
+            SkinSurface(modifier = Modifier.width(shown.dp).fillMaxHeight(), flushEnd = true, role = ChromeRole.SIDEBAR) {
                 Column {
                     // Split, which note's pages, contents and tape the panel is about.
                     if (sources.size > 1) {

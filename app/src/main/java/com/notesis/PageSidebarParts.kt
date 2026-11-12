@@ -133,7 +133,7 @@ internal fun rememberFileBitmap(file: File?, widthPx: Int): Bitmap? {
     return key(file?.path, stamp, widthPx) {
         val picture by produceState<Bitmap?>(FileBitmaps.cached(file, stamp, widthPx)) {
             if (value != null || file == null) return@produceState
-            value = withContext(Dispatchers.IO) { FileBitmaps.decode(file, stamp, widthPx) }
+            value = withContext(FileBitmaps.decoder) { FileBitmaps.decode(file, stamp, widthPx) }
         }
         picture
     }
@@ -144,8 +144,27 @@ internal object FileBitmaps {
     // A screen of cards and the rows either side of it, once each is no
     // wider than asked (see [decode]).
     private val cache = object : android.util.LruCache<String, Bitmap>(
-        (Runtime.getRuntime().maxMemory() / 8).coerceIn(16L * 1024 * 1024, 32L * 1024 * 1024).toInt()) {
+        (Runtime.getRuntime().maxMemory() / 6).coerceIn(16L * 1024 * 1024, 48L * 1024 * 1024).toInt()) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.allocationByteCount
+    }
+
+    /**
+     * Two decodes at a time, not one per card. A fling brings a dozen cards in
+     * at once, and on the IO pool each started its own decode: the tablet's
+     * cores all went to PNG decoding and allocation while the list was trying
+     * to draw its next frame.
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val decoder: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO.limitedParallelism(2)
+
+    /** How many pictures [widthPx] wide at about [aspect] height over width the cache holds with room to spare. */
+    fun roomFor(widthPx: Int, aspect: Float = 4f / 3f): Int =
+        prefetchCount(cache.maxSize().toLong(), widthPx, aspect)
+
+    /** Decodes [file] into the cache if it is not there; for warming it before the list scrolls. */
+    fun warm(file: File, widthPx: Int) {
+        val stamp = file.lastModified()
+        if (cached(file, stamp, widthPx) == null) decode(file, stamp, widthPx)
     }
 
     private fun keyOf(file: File, stamp: Long, widthPx: Int) = "${file.path}:$stamp:$widthPx"
@@ -171,6 +190,16 @@ internal object FileBitmaps {
         fitted.prepareToDraw()
         fitted.also { cache.put(keyOf(file, stamp, widthPx), it) }
     }.getOrNull()
+}
+
+/**
+ * How many pictures [widthPx] wide and [aspect] times as tall fit in a cache
+ * of [cacheBytes], leaving a quarter of it for the other pictures it holds.
+ */
+internal fun prefetchCount(cacheBytes: Long, widthPx: Int, aspect: Float): Int {
+    if (cacheBytes <= 0 || widthPx <= 0 || !(aspect > 0f)) return 0
+    val each = widthPx.toLong() * (widthPx * aspect).toLong().coerceAtLeast(1) * 4
+    return (cacheBytes * 3 / 4 / each).toInt()
 }
 
 /**

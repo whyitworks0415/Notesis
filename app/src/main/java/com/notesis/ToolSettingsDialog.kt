@@ -274,7 +274,7 @@ internal fun PenDialog(
     val animate = panel.animate
     fun keep() = panel.close { onConfirm(current()) }
     fun cancel() = panel.close(onDismiss)
-    var tab by remember { mutableStateOf(PenPanelTab.SETTING) }
+    var tab by remember { mutableStateOf(firstPenTab(mode.tints)) }
     // Each kind of pen keeps its own settings: leaving one keeps what it was
     // set to, and coming back to one finds it as it was left.
     fun takeUp(saved: PenPreset) {
@@ -415,8 +415,7 @@ internal fun PenDialog(
                     // The colour itself, then its code, then the eyedropper: one height, one corner.
                     Box(Modifier.size(FIELD_COMPACT).clip(pickerShape).background(Color.White).background(Color(color.argb()))
                         .border(1.dp, MaterialTheme.colorScheme.outlineVariant, pickerShape))
-                    if (view != ColorPickerMode.BARS) HexField(color, opacity, Modifier.weight(1f))
-                    else Spacer(Modifier.weight(1f))
+                    HexField(color, opacity, Modifier.weight(1f))
                     if (onEyedropper != null) {
                         Box(
                             Modifier
@@ -432,7 +431,7 @@ internal fun PenDialog(
                         }
                     }
                 }
-                Box(Modifier.fillMaxWidth().height(PALETTE_BELOW_HEIGHT)) { PalettePanel(color, opacity, perRow = 8) }
+                Box(Modifier.fillMaxWidth().height(PALETTE_BELOW_HEIGHT)) { PalettePanel(color, opacity) }
             }
         }
         EqualTabs(tabs.indexOf(tab).coerceAtLeast(0), animate,
@@ -859,9 +858,6 @@ private fun BarsPicker(color: PenColorState, joined: Boolean, opacity: Boolean) 
                     .background(Color.White)
                     .background(Color(color.argb())),
             )
-            Spacer(Modifier.height(GAP))
-            HexField(color, opacity, Modifier.fillMaxWidth())
-
         }
     }
 }
@@ -933,9 +929,14 @@ private fun RingPicker(color: PenColorState) {
 }
 
 
-/** The palette beside the picker: the built-in and saved colour sets, a tap each. */
+/**
+ * The colour sets, built-in and saved, under the picker: each set's name over
+ * its colours, which wrap onto as many lines as they need rather than being
+ * cut off at the panel's edge. The colour in use is ringed.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun PalettePanel(color: PenColorState, opacity: Boolean, perRow: Int = 3) {
+private fun PalettePanel(color: PenColorState, opacity: Boolean) {
     val context = LocalContext.current
     val store = remember { PenStore(context) }
     var custom by remember { mutableStateOf(store.colorTemplates()) }
@@ -945,46 +946,50 @@ private fun PalettePanel(color: PenColorState, opacity: Boolean, perRow: Int = 3
         store.saveColorTemplates(custom)
         adding = false
     })
+    val scheme = MaterialTheme.colorScheme
     Column(
         Modifier
             .fillMaxSize()
             .clip(pickerShape)
-            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
+            .background(scheme.onSurface.copy(alpha = 0.05f))
             .verticalScroll(rememberScrollState())
-            .padding(GAP),
-        verticalArrangement = Arrangement.spacedBy(Ui.Space.s),
+            .padding(horizontal = Ui.Space.m, vertical = Ui.Space.s),
+        verticalArrangement = Arrangement.spacedBy(Ui.Space.m),
     ) {
-        Text("Palette", style = MaterialTheme.typography.labelMedium)
         for ((name, colors) in COLOR_TEMPLATES + custom) {
-            Text(name, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
-            colors.chunked(perRow).forEach { row ->
-                // A fixed number to a row, spread edge to edge, so every row
-                // shares the same columns whether it is full or not.
-                Row(Modifier.fillMaxWidth()) {
-                    for (index in 0 until perRow) {
-                        val argb = row.getOrNull(index)
-                        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                            if (argb != null) Box(
-                                Modifier
-                                    .size(22.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(argb))
-                                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
-                                    .clickable {
-                                        // A see-through swatch brings its alpha only
-                                        // where the tool can be see-through at all.
-                                        val translucent = android.graphics.Color.alpha(argb) < 255
-                                        color.set(argb, keepAlpha = !(opacity && translucent))
-                                    },
-                            )
-                        }
+            Column(verticalArrangement = Arrangement.spacedBy(Ui.Space.xs)) {
+                Text(name, style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant)
+                androidx.compose.foundation.layout.FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(Ui.Space.s),
+                    verticalArrangement = Arrangement.spacedBy(Ui.Space.s),
+                ) {
+                    for (argb in colors) {
+                        val chosen = (argb and 0xFFFFFF) == (color.rgb() and 0xFFFFFF)
+                        Box(
+                            Modifier
+                                .size(PALETTE_SWATCH)
+                                .clip(CircleShape)
+                                .background(Color.White)
+                                .background(Color(argb))
+                                .border(if (chosen) 3.dp else 1.dp, if (chosen) scheme.primary else scheme.outlineVariant, CircleShape)
+                                .semantics { contentDescription = "Color #%06X".format(argb and 0xFFFFFF); selected = chosen }
+                                .clickable {
+                                    // A see-through swatch brings its alpha only
+                                    // where the tool can be see-through at all.
+                                    val translucent = android.graphics.Color.alpha(argb) < 255
+                                    color.set(argb, keepAlpha = !(opacity && translucent))
+                                },
+                        )
                     }
                 }
             }
         }
-        TextButton(onClick = { adding = true }) { Text("+ Add") }
+        TextButton(onClick = { adding = true }, modifier = Modifier.heightIn(min = Ui.Size.touchCompact)) { Text("+ Add template") }
     }
 }
+
+/** A palette colour, about a fingertip. */
+private val PALETTE_SWATCH = 30.dp
 
 /** #RRGGBB, or #AARRGGBB where the tool can be see-through; applied as soon as it parses. */
 @Composable
@@ -1252,7 +1257,11 @@ internal object LastTouch {
 // ---- the pen panel's parts: tabs, live stroke, segments, width, colour views ----
 
 /** The two faces of a pen's panel: how it draws, and its colour. */
-internal enum class PenPanelTab(val label: String) { SETTING("Setting"), COLOR("Color") }
+/** The pen panel's tabs, in the order they are shown: the colour first, as it is what a pen is opened for most. */
+internal enum class PenPanelTab(val label: String) { COLOR("Color"), SETTING("Setting") }
+
+/** The tab a pen's panel opens on: the colour where the tool has one, else its settings. */
+internal fun firstPenTab(tints: Boolean): PenPanelTab = if (tints) PenPanelTab.COLOR else PenPanelTab.SETTING
 
 /** The pens the pen tool offers, as four segments; the speed fountain pen shows as the fountain pen. */
 internal val PEN_TYPES = listOf(
@@ -1806,7 +1815,7 @@ private val TAB_SHIFT = 28.dp
 private val PEN_PANEL_WIDTH = 480.dp
 private val PREVIEW_HEIGHT = 64.dp
 private val LINE_TYPE_LABEL = 88.dp
-private val PALETTE_BELOW_HEIGHT = 132.dp
+private val PALETTE_BELOW_HEIGHT = 220.dp
 private const val GRID_COLUMNS = 12
 private const val GRID_ROWS = 9
 /** How long a row of segments keeps its pictures after the pointer or finger leaves it. */

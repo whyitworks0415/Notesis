@@ -1,5 +1,9 @@
 package com.notesis
 
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -75,14 +79,30 @@ internal fun ToolPanelHost(panel: ToolPanel) {
             IconButton(onClick = close) { Icon(Reicons.Close, contentDescription = "Close") }
         },
     ) {
-        when (panel) {
-            ToolPanel.CALCULATOR -> CalculatorPanel()
-            ToolPanel.CLOCK -> ClockSection()
-            ToolPanel.CALENDAR -> CalendarPanel()
-            ToolPanel.TODO -> TodoPanel()
+        // Every tool the same height, so the panel stands in one place and at
+        // one size whichever tab it opens on or moves to: sized to its
+        // contents, it took its place from the first tool shown and the others
+        // then hung off it, longer or shorter. A taller tool scrolls inside.
+        val tallest = (LocalConfiguration.current.screenHeightDp.dp * 0.9f - TOOLS_CHROME).coerceAtLeast(240.dp)
+        Box(Modifier.fillMaxWidth().height(minOf(TOOLS_CONTENT_HEIGHT, tallest))) {
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState(), overscrollEffect = null),
+                verticalArrangement = Arrangement.spacedBy(Ui.Space.m)) {
+                when (panel) {
+                    ToolPanel.CALCULATOR -> CalculatorPanel()
+                    ToolPanel.CLOCK -> ClockSection()
+                    ToolPanel.CALENDAR -> CalendarPanel()
+                    ToolPanel.TODO -> TodoPanel()
+                }
+            }
         }
     }
 }
+
+/** The height every tool's tab takes, room for the calculator's keys and a month of the calendar. */
+private val TOOLS_CONTENT_HEIGHT = 470.dp
+
+/** The panel's own header and insets above and below a tool. */
+private val TOOLS_CHROME = 120.dp
 
 /** The toolbar's and the library's way in: the clock and the three tools in one panel. */
 @Composable

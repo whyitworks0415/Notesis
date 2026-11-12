@@ -1646,7 +1646,7 @@ Lists	목록
 Page scrolling	페이지 스크롤
 Menus, tool panels and dialogs as they open and close.	메뉴, 도구 패널, 확인창이 열리고 닫힐 때.
 The settings sidebar, the pages panel and the layers panel as they slide.	설정 사이드바, 페이지 패널, 레이어 패널이 미끄러질 때.
-The library and lists in popups as they scroll.	첫 화면 목록과 팝업 안 목록을 스크롤할 때.
+Lists in menus and panels as they scroll. Never the library: it would blur the whole screen.	메뉴와 패널 안 목록을 스크롤할 때. 첫 화면 목록은 화면 전체를 흐리게 하므로 쓰지 않습니다.
 The note's page as it is scrolled or flung.	노트 페이지를 스크롤하거나 넘길 때.
 The pen's in-between travel, drawn faintly ahead of the tip between screen frames.	화면 프레임 사이에 펜이 지나간 길을 펜 끝 앞에 흐리게 그립니다.
 Motion blur is off for now: {0}. Your setting is kept.	지금은 모션 블러를 그리지 않습니다({0}). 설정은 그대로 둡니다.
