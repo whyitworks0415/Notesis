@@ -10082,7 +10082,7 @@ class InkCanvasView @JvmOverloads constructor(
             }
             pageRect.set(0f, 0f, page.width, page.height)
             canvas.drawBitmap(standIn.bitmap, null, pageRect, bitmapPaint)
-            opening?.let { if (it.inkShownMs < 0L) { it.inkShownMs = SystemClock.uptimeMillis() - it.startedAt; it.pictureUsed = true } }
+            opening?.let { if (it.inkShownMs < 0L) { it.inkShownMs = SystemClock.uptimeMillis() - it.startedAt; it.pictureUsed = true; NoteOpenClock.pageShown() } }
         }
 
         /** Notes how far the opening of a note has come as of this frame; see [NoteOpenClock]. */
@@ -10092,7 +10092,7 @@ class InkCanvasView @JvmOverloads constructor(
             if (open.firstFrameMs < 0L) open.firstFrameMs = elapsed
             val page = document.pages.getOrNull(currentPage) ?: return
             if (!page.loaded) return
-            if (open.inkShownMs < 0L) open.inkShownMs = elapsed
+            if (open.inkShownMs < 0L) { open.inkShownMs = elapsed; NoteOpenClock.pageShown() }
             open.geometryMs = elapsed
             open.strokes = page.strokes.size
             NoteOpenClock.finished(open)

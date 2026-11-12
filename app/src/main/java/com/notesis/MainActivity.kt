@@ -345,10 +345,14 @@ class MainActivity : ComponentActivity() {
                 // Lives here rather than in the list, which leaves composition
                 // while a note is open and used to come back at the top level.
                 var libraryFolder by remember { mutableStateOf("") }
+                // A note opens out of its card and goes back into it (see NoteFlight.kt).
+                val flightMoves = rememberMotionAllowed() && !InteractionGovernor.lightMode
                 fun closeNote(closed: NoteMeta) {
                     // Back to where the note lives, which is also where it was
                     // opened from unless it was found by searching.
                     libraryFolder = closed.folder
+                    NoteFlights.close(closed.id,
+                        if (closed.locked) null else FileBitmaps.newestCached(closed.thumbnail, NOTE_CARD_PICTURE_PX), flightMoves)
                     openNote = null
                     incomingImportedNote = null
                 }
@@ -379,6 +383,11 @@ class MainActivity : ComponentActivity() {
                 var unlocking by remember { mutableStateOf<NoteMeta?>(null) }
                 fun requestOpen(meta: NoteMeta?) {
                     if (meta != null && store.isLocked(meta.id) && meta.id !in unlocked) unlocking = meta
+                    else if (meta != null && NoteFlights.open(meta.id, flightMoves) {
+                            // Timed from when the note is put in place, after its card has grown.
+                            NoteOpenClock.tapped()
+                            openNote = meta
+                        }) Unit
                     else {
                         // The clock for how long the note takes to open starts at the tap.
                         if (meta != null) NoteOpenClock.tapped()
@@ -544,6 +553,10 @@ class MainActivity : ComponentActivity() {
                 val clockHosted = viewedDocument == null && !settingsOpen && vault == null &&
                     (note == null || note.kind != NoteKind.MARKDOWN)
                 if (!clockHosted) ClockOverlay()
+                // Over everything: a note's picture between its card and the
+                // screen, and the notices.
+                NoteFlightLayer(if (look.themeMode == AppThemeMode.DARK) MaterialTheme.colorScheme.surfaceContainerHigh else Color(0xFFFDFCF8))
+                NoticeHost()
                 }
             }
             }
@@ -1270,6 +1283,13 @@ private fun HomeScreen(
         snapshotFlow { gridState.isScrollInProgress }.collect { PerfRecorder.homeScrolling = it }
     }
     val libraryTiles = remember { LibraryTiles() }
+    // A note closing goes back into its card: once the grid has placed the
+    // cards, the card is where its picture lands, or nowhere if it is off screen.
+    LaunchedEffect(Unit) {
+        val flight = NoteFlights.current?.takeIf { !it.opening } ?: return@LaunchedEffect
+        repeat(2) { withFrameNanos { } }
+        NoteFlights.landed(flight.noteId, libraryTiles.placed[flight.noteId]?.takeIf { it.isAttached }?.boundsInRoot())
+    }
     var edgeSpeed by remember { mutableFloatStateOf(0f) }
     // Where the finger carrying selected notes is, in the grid's coordinates; null when nothing is carried.
     var carrying by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
@@ -1832,7 +1852,13 @@ private fun HomeScreen(
                         if (selectionMode) {
                             if (note.id in selectedIds) selectedIds.remove(note.id)
                             else selectedIds.add(note.id)
-                        } else onOpen(note)
+                        } else {
+                            // Where the note will come out of: this card and its picture.
+                            NoteFlights.tapped(note.id,
+                                libraryTiles.placed[note.id]?.takeIf { it.isAttached }?.boundsInRoot(),
+                                if (note.locked) null else FileBitmaps.newestCached(note.thumbnail, NOTE_CARD_PICTURE_PX))
+                            onOpen(note)
+                        }
                     },
                     onDelete = { pendingDelete = note },
                     onPickThumbnail = {
@@ -2408,6 +2434,7 @@ private fun HomeScreen(
                         store.moveToTrash(note.id)
                         pendingDelete = null
                         revision++
+                        Notices.show("Moved to Trash", "Undo", onAction = { store.restoreFromTrash(note.id); revision++ })
                     },
                 ) { Text("Delete") }
             },

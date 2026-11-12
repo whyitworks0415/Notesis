@@ -236,13 +236,23 @@ fun Text(
     )
 }
 
-/** Android's Toast, with its message in the language chosen. */
+/**
+ * A short message, in the language chosen: the app's own notice pill while a
+ * window of the app shows notices (see Notices.kt), Android's toast otherwise.
+ * Kept the shape of Toast's own call, so every place that said something with
+ * a toast says it with the pill instead.
+ */
 internal object KToast {
-    fun makeText(context: Context, text: CharSequence, duration: Int): android.widget.Toast =
-        android.widget.Toast.makeText(context, L10n.tr(text.toString()), duration)
+    fun makeText(context: Context, text: CharSequence, duration: Int): Shown = Shown(context, text.toString(), duration)
 
-    fun makeText(context: Context, resId: Int, duration: Int): android.widget.Toast =
-        android.widget.Toast.makeText(context, resId, duration)
+    fun makeText(context: Context, resId: Int, duration: Int): Shown = Shown(context, context.getString(resId), duration)
+
+    class Shown(private val context: Context, private val text: String, private val duration: Int) {
+        fun show() {
+            if (Notices.hosts > 0) Notices.show(text, long = duration == android.widget.Toast.LENGTH_LONG)
+            else android.widget.Toast.makeText(context, L10n.tr(text), duration).show()
+        }
+    }
 }
 
 /*

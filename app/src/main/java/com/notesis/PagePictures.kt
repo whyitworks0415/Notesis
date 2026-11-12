@@ -167,6 +167,17 @@ internal object NoteOpenClock {
     @Volatile private var tappedAt = 0L
     private val kept = ArrayDeque<Opening>()
 
+    /**
+     * Counts up each time an opening note first shows its page, so whatever
+     * covers the screen while a note opens (see NoteFlight.kt) can tell when
+     * there is a page under it to uncover. Written once per opening.
+     */
+    @Volatile var pagesShown = 0
+        private set
+
+    /** The canvas has just shown an opening note's page for the first time. */
+    fun pageShown() { pagesShown++ }
+
     /** A note was chosen to be opened. */
     fun tapped() { tappedAt = SystemClock.uptimeMillis() }
 

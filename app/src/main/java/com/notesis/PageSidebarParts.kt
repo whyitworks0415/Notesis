@@ -171,6 +171,20 @@ internal object FileBitmaps {
 
     fun cached(file: File?, stamp: Long, widthPx: Int): Bitmap? = file?.let { cache.get(keyOf(it, stamp, widthPx)) }
 
+    /**
+     * The newest picture of [file] at [widthPx] in the cache, whatever its
+     * stamp: for a note just closed, whose picture may have been drawn again
+     * a moment ago and not read back yet.
+     */
+    fun newestCached(file: File?, widthPx: Int): Bitmap? {
+        file ?: return null
+        val prefix = file.path + ":"
+        val suffix = ":$widthPx"
+        return cache.snapshot().entries
+            .filter { it.key.startsWith(prefix) && it.key.endsWith(suffix) }
+            .maxByOrNull { it.key.removePrefix(prefix).removeSuffix(suffix).toLongOrNull() ?: 0L }?.value
+    }
+
     fun decode(file: File, stamp: Long, widthPx: Int): Bitmap? = runCatching {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.path, bounds)
