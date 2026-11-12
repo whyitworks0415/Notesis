@@ -91,8 +91,6 @@ internal fun NoticeHost() {
     val notice = Notices.current ?: return
     val moves = rememberMotionAllowed()
     val grow = remember(notice) { Animatable(if (moves) 0f else 1f) }
-    // Where the pill rests, in the root, for the line it comes out along.
-    val rest = remember(notice) { floatArrayOf(Float.NaN, Float.NaN) }
     LaunchedEffect(notice) {
         if (moves) grow.animateTo(1f, MaterialMotion.rawContainer<Float>().paced())
         delay(noticeShownMs(notice.long))
@@ -105,20 +103,7 @@ internal fun NoticeHost() {
             Modifier
                 .padding(bottom = Ui.Space.xl, start = Ui.Space.l, end = Ui.Space.l)
                 .widthIn(max = 560.dp)
-                .onGloballyPositioned { c -> c.boundsInRoot().center.let { rest[0] = it.x; rest[1] = it.y } }
-                .graphicsLayer {
-                    val p = grow.value
-                    val restAt = if (rest[0].isNaN()) null else Offset(rest[0], rest[1])
-                    if (restAt != null) {
-                        val shift = noticeOffset(notice.from, restAt, p)
-                        translationX = shift.x
-                        translationY = shift.y
-                    }
-                    scaleX = noticeScale(p)
-                    scaleY = noticeScale(p)
-                    transformOrigin = TransformOrigin.Center
-                    alpha = (p / 0.3f).coerceIn(0f, 1f)
-                }
+                .outOfPoint(notice.from) { grow.value }
                 .skinMaterial(CircleShape, panel = true)
                 .heightIn(min = 48.dp)
                 .padding(start = Ui.Space.xl, end = if (notice.actionLabel != null) Ui.Space.s else Ui.Space.xl),
@@ -136,4 +121,28 @@ internal fun NoticeHost() {
             }
         }
     }
+}
+
+/**
+ * Draws what this is put on as coming out of [from] (a point in the root,
+ * the touch that led to it) at [progress]: from a fifth of its size there to
+ * full size where it rests. Read in the layer only, so a frame of it is a
+ * property change, not a layout. With no [from], it grows where it rests.
+ */
+internal fun Modifier.outOfPoint(from: Offset?, progress: () -> Float): Modifier {
+    val rest = floatArrayOf(Float.NaN, Float.NaN)
+    return this
+        .onGloballyPositioned { c -> c.boundsInRoot().center.let { rest[0] = it.x; rest[1] = it.y } }
+        .graphicsLayer {
+            val p = progress()
+            if (!rest[0].isNaN()) {
+                val shift = noticeOffset(from, Offset(rest[0], rest[1]), p)
+                translationX = shift.x
+                translationY = shift.y
+            }
+            scaleX = noticeScale(p)
+            scaleY = noticeScale(p)
+            transformOrigin = TransformOrigin.Center
+            alpha = (p / 0.3f).coerceIn(0f, 1f)
+        }
 }

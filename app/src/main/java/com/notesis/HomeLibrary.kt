@@ -1,5 +1,6 @@
 package com.notesis
 
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.selection.selectableGroup
@@ -684,3 +685,66 @@ internal const val GLASS_STRETCH_MAX = 0.15f
 
 /** How tall the glass is while [fold] runs below 0: stretched long, it thins, up to a tenth. */
 internal fun glassSquash(fold: Float): Float = 1f - ((-fold).coerceIn(0f, GLASS_STRETCH_MAX) * 0.66f)
+
+/**
+ * "3 selected", its number rolling to the next one as the selection grows or
+ * shrinks: up for more, down for fewer (Todo.md, A6).
+ */
+@Composable
+internal fun RollingCount(count: Int, modifier: Modifier = Modifier) {
+    val moves = rememberMotionAllowed() && !InteractionGovernor.lightMode
+    androidx.compose.animation.AnimatedContent(
+        targetState = count,
+        modifier = modifier,
+        transitionSpec = {
+            if (!moves) androidx.compose.animation.EnterTransition.None togetherWith androidx.compose.animation.ExitTransition.None
+            else {
+                val up = targetState > initialState
+                (androidx.compose.animation.slideInVertically(MaterialMotion.selection()) { h -> if (up) h else -h } +
+                    androidx.compose.animation.fadeIn(MaterialMotion.effects())) togetherWith
+                    (androidx.compose.animation.slideOutVertically(MaterialMotion.selection()) { h -> if (up) -h else h } +
+                        androidx.compose.animation.fadeOut(MaterialMotion.effects()))
+            }
+        },
+        label = "selected count",
+    ) { shown ->
+        Text("$shown selected", style = MaterialTheme.typography.labelLarge, maxLines = 1)
+    }
+}
+
+/**
+ * A line of loose handwriting drawn once from left to right, as a pen would
+ * write it, then left as it is: what an empty library shows. Still where the
+ * chrome holds still.
+ */
+@Composable
+internal fun EmptyLibraryStroke(modifier: Modifier = Modifier) {
+    val moves = rememberMotionAllowed()
+    val drawn = remember { Animatable(if (moves) 0f else 1f) }
+    LaunchedEffect(Unit) { if (moves) drawn.animateTo(1f, androidx.compose.animation.core.tween<Float>(EMPTY_STROKE_MS, easing = EmphasizedDecelerateEasing).paced()) }
+    val ink = MaterialTheme.colorScheme.primary
+    androidx.compose.foundation.Canvas(modifier) {
+        val path = androidx.compose.ui.graphics.Path().apply {
+            val w = size.width
+            val h = size.height
+            val mid = h * 0.55f
+            moveTo(w * 0.04f, mid)
+            // Loops of cursive, then a long tail.
+            var x = w * 0.04f
+            val step = w * 0.09f
+            repeat(7) { i ->
+                val up = if (i % 2 == 0) h * 0.18f else h * 0.32f
+                cubicTo(x + step * 0.25f, up, x + step * 0.75f, up, x + step, mid)
+                x += step
+            }
+            quadraticTo(w * 0.86f, h * 0.95f, w * 0.96f, h * 0.4f)
+        }
+        val measure = androidx.compose.ui.graphics.PathMeasure().apply { setPath(path, false) }
+        val part = androidx.compose.ui.graphics.Path()
+        measure.getSegment(0f, measure.length * drawn.value.coerceIn(0f, 1f), part, true)
+        drawPath(part, ink, style = androidx.compose.ui.graphics.drawscope.Stroke(
+            width = 3.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round))
+    }
+}
+
+private const val EMPTY_STROKE_MS = 1100

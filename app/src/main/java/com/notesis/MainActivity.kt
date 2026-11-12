@@ -345,6 +345,8 @@ class MainActivity : ComponentActivity() {
                 // Lives here rather than in the list, which leaves composition
                 // while a note is open and used to come back at the top level.
                 var libraryFolder by remember { mutableStateOf("") }
+                // The library's scroll position, kept while a note is open (see HomeScreen).
+                val libraryGrid = rememberLazyGridState()
                 // A note opens out of its card and goes back into it (see NoteFlight.kt).
                 val flightMoves = rememberMotionAllowed() && !InteractionGovernor.lightMode
                 fun closeNote(closed: NoteMeta) {
@@ -500,6 +502,7 @@ class MainActivity : ComponentActivity() {
                     HomeLookTheme {
                     HomeScreen(
                         store = store,
+                        libraryGrid = libraryGrid,
                         onSettings = { settingsOpen = true },
                         onOpenDocument = { pickedDocument = it },
                         onOpen = { incomingImportedNote = null; markdownBack.clear(); requestOpen(it) },
@@ -700,6 +703,13 @@ private fun android.content.Context.recordCrashes() {
 @Composable
 private fun HomeScreen(
     store: NoteStore,
+    /**
+     * The library's place in its list, kept by the caller: the library leaves
+     * the composition while a note is open, and its own state went with it,
+     * so coming back from a note far down the list put the reader at the top
+     * and the note's card, which the note shrinks back into, off screen.
+     */
+    libraryGrid: androidx.compose.foundation.lazy.grid.LazyGridState,
     onSettings: () -> Unit,
     onOpenDocument: (ViewerRequest) -> Unit,
     onOpen: (NoteMeta) -> Unit,
@@ -730,7 +740,6 @@ private fun HomeScreen(
         val ids = notes.mapTo(HashSet()) { it.id }
         RecentlyOpened.load(context).filter { it in ids }
     }
-    var pendingDelete by remember { mutableStateOf<NoteMeta?>(null) }
     val selectedIds = remember { mutableStateListOf<String>() }
     var selectionMode by remember { mutableStateOf(false) }
     // Folders can be selected beside notes, by their names.
@@ -1262,7 +1271,7 @@ private fun HomeScreen(
     var iconsOpen by remember { mutableStateOf(false) }
     var searchOpen by remember { mutableStateOf(false) }
     var searchFocused by remember { mutableStateOf(false) }
-    val gridState = rememberLazyGridState()
+    val gridState = libraryGrid
     // A recording must not go on counting a scroll that ended with the screen.
     DisposableEffect(Unit) { onDispose { PerfRecorder.homeScrolling = false } }
     // The cards' pictures, decoded into memory a moment after the library
@@ -1749,7 +1758,7 @@ private fun HomeScreen(
                         },
                         onRename = { menuFolder = name; renamingFolder = true },
                         onDelete = { menuFolder = name; deletingFolder = true },
-                        modifier = Modifier.libraryTile(libraryTiles, folderKey(name)),
+                        modifier = Modifier.then(itemMotion()).libraryTile(libraryTiles, folderKey(name)),
                     )
                 }
                 if (smartHere) items(smartFolders, key = { "smart:${it.id}" }, contentType = { "folder" }) { smart ->
@@ -1805,8 +1814,11 @@ private fun HomeScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(Ui.Space.s),
                     ) {
-                        Icon(
-                            if (query.isNotBlank()) Reicons.Search else if (folder.isNotBlank()) Reicons.Folder else Reicons.Edit,
+                        // An empty library draws a line of writing once, as a pen
+                        // would (Todo.md, A9); a search or a folder keeps its mark.
+                        if (query.isBlank() && folder.isBlank()) EmptyLibraryStroke(Modifier.size(width = 160.dp, height = 64.dp))
+                        else Icon(
+                            if (query.isNotBlank()) Reicons.Search else Reicons.Folder,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(48.dp),
@@ -1839,6 +1851,7 @@ private fun HomeScreen(
             fun noteItems(list: List<NoteMeta>) = items(list, key = { it.id }, contentType = { it.kind }) { note ->
                 // The guide's card is where the welcome folds into, and what its first mark points at.
                 Box((if (note.title == GuideNote.TITLE) Modifier.coachTarget(coachTargets, CoachTarget.GUIDE) else Modifier)
+                    .then(itemMotion())
                     .libraryTile(libraryTiles, note.id)) {
                 NoteCard(
                     note = note,
@@ -1860,7 +1873,14 @@ private fun HomeScreen(
                             onOpen(note)
                         }
                     },
-                    onDelete = { pendingDelete = note },
+                    // Straight to the Trash, with a way back on the notice: a
+                    // question before something that can be undone was a step
+                    // in the way every time (Todo.md, C2).
+                    onDelete = {
+                        store.moveToTrash(note.id)
+                        revision++
+                        Notices.show("Moved to Trash", "Undo", onAction = { store.restoreFromTrash(note.id); revision++ })
+                    },
                     onPickThumbnail = {
                         thumbnailFor = note
                         pickThumbnail.launch("image/*")
@@ -2025,12 +2045,30 @@ private fun HomeScreen(
         }
         // Floating bars take the chrome's own corner, the toolbar's, so every
         // bar over the page or the list is the same shape.
-        if (selectionMode) SkinSurface(
+        // It comes out of the card that started the selection (Todo.md, A6),
+        // and goes back down as the selection ends.
+        val selectionMoves = rememberMotionAllowed() && !InteractionGovernor.lightMode
+        val selectionBar = remember { androidx.compose.animation.core.Animatable(0f) }
+        val selectionFrom = remember(selectionMode) { if (selectionMode) LastTouch.recent() else null }
+        var selectionBarShown by remember { mutableStateOf(selectionMode) }
+        LaunchedEffect(selectionMode, selectionMoves) {
+            if (selectionMode) {
+                selectionBarShown = true
+                if (selectionMoves) selectionBar.animateTo(1f, MaterialMotion.rawContainer<Float>().paced()) else selectionBar.snapTo(1f)
+            } else {
+                if (selectionMoves) selectionBar.animateTo(0f, tween<Float>(160, easing = EmphasizedDecelerateEasing).paced())
+                else selectionBar.snapTo(0f)
+                selectionBarShown = false
+            }
+        }
+        if (selectionMode || selectionBarShown) SkinSurface(
             modifier = Modifier.align(Alignment.BottomCenter)
-                .padding(bottom = padding.calculateBottomPadding() + Ui.Space.l, start = Ui.Space.m, end = Ui.Space.m),
+                .padding(bottom = padding.calculateBottomPadding() + Ui.Space.l, start = Ui.Space.m, end = Ui.Space.m)
+                .outOfPoint(selectionFrom) { selectionBar.value },
         ) {
             val inkSelected = selectedIds.count { id -> notes.any { it.id == id && it.kind == NoteKind.INK } }
             SelectionActions {
+                RollingCount(selectedCount, Modifier.padding(horizontal = Ui.Space.m))
                 val everything = (if (showFolders) subfolders.map(::folderKey) else emptyList()) + visibleNotes.map { it.id }
                 val allIn = everything.isNotEmpty() && selectionKeys().containsAll(everything)
                 SelectionAction(Reicons.Checklist, if (allIn) "None" else "All") {
@@ -2423,26 +2461,6 @@ private fun HomeScreen(
         onDismiss = { showTrash = false },
     )
 
-    pendingDelete?.let { note ->
-        AlertDialog(
-            onDismissRequest = { pendingDelete = null },
-            title = { Text("Move note to Trash?") },
-            text = { Text("You can restore \"${note.title}\" from Trash for ${NoteStore.TRASH_DAYS} days.") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        store.moveToTrash(note.id)
-                        pendingDelete = null
-                        revision++
-                        Notices.show("Moved to Trash", "Undo", onAction = { store.restoreFromTrash(note.id); revision++ })
-                    },
-                ) { Text("Delete") }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) { Text("Cancel") }
-            },
-        )
-    }
 }
 
 private const val PLAYBACK_WINDOW_MS = 2500L

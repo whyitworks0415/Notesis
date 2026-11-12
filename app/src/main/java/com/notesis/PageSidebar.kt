@@ -560,7 +560,7 @@ internal fun PageSidebar(
                                 items(shownPages, key = { it.id }) { page ->
                                     val index = pageIndices[page.id] ?: return@items
                                     DisposableEffect(page.id) { onDispose { sweep.bounds.remove(page.id) } }
-                                    Box(Modifier.onGloballyPositioned { sweep.bounds[page.id] = it.boundsInRoot() }
+                                    Box(Modifier.then(itemMotion()).onGloballyPositioned { sweep.bounds[page.id] = it.boundsInRoot() }
                                         // The pen resting over a card shows its page large beside the panel.
                                         .hoverHold(PAGE_PEEK_HOLD_MS,
                                             onHold = { sweep.bounds[page.id]?.let { peek = page.id to it; peekShown = true } },
