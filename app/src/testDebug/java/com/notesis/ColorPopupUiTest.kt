@@ -32,11 +32,11 @@ class ColorPopupUiTest {
     @After fun restoreSpeed() { MotionPrefs.setSpeed(RuntimeEnvironment.getApplication(),previousSpeed) }
 
     @Test fun allFourLayoutsRenderWithoutChangingTheSelectedColor() {
-        var mode by mutableStateOf(ColorPickerMode.GRID)
+        var mode by mutableStateOf(ColorPickerMode.PALETTE)
         lateinit var color: PenColorState
         compose.setContent { MaterialTheme {
             color = remember { PenColorState(0x803366CC.toInt()) }
-            Box(Modifier.size(480.dp, 190.dp)) { ColorPickerBody(mode, color, false, true) }
+            Box(Modifier.size(480.dp, 260.dp)) { ColorPickerBody(mode, color, false, true) }
         } }
         val original = color.argb()
         for (view in COLOR_VIEWS) {

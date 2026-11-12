@@ -95,7 +95,7 @@ import kotlin.math.sqrt
 
 /**
  * The ways of picking a colour, by the index the choice is remembered by
- * across tools. Grid, SV square, HSV bars and hue ring are offered.
+ * across tools. The palette, the SV square, HSV bars and the hue ring are offered.
  * Legacy RGB and disc indices remain readable without moving saved ordinals.
  */
 internal enum class ColorPickerMode(val label: String) {
@@ -104,7 +104,8 @@ internal enum class ColorPickerMode(val label: String) {
     RING("HSV ring"),
     RGB("RGB"),
     DISC("RGB disc"),
-    GRID("Color grid"),
+    /** The colour sets, a tap each. Took the place of the colour grid, and its saved index. */
+    PALETTE("Palette"),
 }
 
 /**
@@ -431,7 +432,6 @@ internal fun PenDialog(
                         }
                     }
                 }
-                Box(Modifier.fillMaxWidth().height(PALETTE_BELOW_HEIGHT)) { PalettePanel(color, opacity) }
             }
         }
         EqualTabs(tabs.indexOf(tab).coerceAtLeast(0), animate,
@@ -798,7 +798,7 @@ private val pickerShape: androidx.compose.ui.graphics.Shape
 internal fun ColorPickerBody(view: ColorPickerMode, color: PenColorState, joined: Boolean, opacity: Boolean) {
     Box(Modifier.fillMaxWidth().testTag("color-picker-${view.name}")) {
         when (view) {
-            ColorPickerMode.GRID -> ColorGrid(color)
+            ColorPickerMode.PALETTE -> Box(Modifier.fillMaxWidth().height(PALETTE_VIEW_HEIGHT)) { PalettePanel(color, opacity) }
             ColorPickerMode.BARS, ColorPickerMode.RGB -> BarsPicker(color, joined, opacity)
             ColorPickerMode.RING, ColorPickerMode.DISC -> RingPicker(color)
             else -> SquarePicker(color, joined)
@@ -930,7 +930,7 @@ private fun RingPicker(color: PenColorState) {
 
 
 /**
- * The colour sets, built-in and saved, under the picker: each set's name over
+ * The colour sets, built-in and saved, as a picker of their own: each set's name over
  * its colours, which wrap onto as many lines as they need rather than being
  * cut off at the panel's edge. The colour in use is ringed.
  */
@@ -951,7 +951,6 @@ private fun PalettePanel(color: PenColorState, opacity: Boolean) {
         Modifier
             .fillMaxSize()
             .clip(pickerShape)
-            .background(scheme.onSurface.copy(alpha = 0.05f))
             .verticalScroll(rememberScrollState())
             .padding(horizontal = Ui.Space.m, vertical = Ui.Space.s),
         verticalArrangement = Arrangement.spacedBy(Ui.Space.m),
@@ -1296,30 +1295,8 @@ internal fun stepWidth(width: Float, direction: Int, range: ClosedFloatingPointR
 internal fun defaultWidthPresets(range: ClosedFloatingPointRange<Float>): List<Float> =
     listOf(0.5f, 1f, 2f, 3f, 5f, 8f, 12f, 20f, 30f, 50f).filter { it in range }.take(6)
 
-/**
- * The colours of the grid view, [columns] across and [rows] down, row by
- * row: greys from white to black on top, then each hue from dark through
- * full to pale.
- */
-internal fun gridColors(columns: Int, rows: Int): List<Int> {
-    val out = ArrayList<Int>(columns * rows)
-    for (c in 0 until columns) {
-        val v = 1f - c / (columns - 1).coerceAtLeast(1).toFloat()
-        out += android.graphics.Color.HSVToColor(floatArrayOf(0f, 0f, v))
-    }
-    for (r in 1 until rows) {
-        val t = (r - 1) / (rows - 2).coerceAtLeast(1).toFloat()
-        val value = (0.35f + 1.3f * t).coerceAtMost(1f)
-        val saturation = if (t <= 0.5f) 1f else 1f - 1.5f * (t - 0.5f)
-        for (c in 0 until columns) {
-            out += android.graphics.Color.HSVToColor(floatArrayOf(c * 360f / columns, saturation, value))
-        }
-    }
-    return out
-}
-
 /** The colour views the Color tab offers, in its order; the older HSV bars and RGB strips open as the ring and the disc. */
-internal val COLOR_VIEWS = listOf(ColorPickerMode.GRID, ColorPickerMode.SQUARE, ColorPickerMode.BARS, ColorPickerMode.RING)
+internal val COLOR_VIEWS = listOf(ColorPickerMode.PALETTE, ColorPickerMode.SQUARE, ColorPickerMode.BARS, ColorPickerMode.RING)
 
 /** The view a stored picker choice opens on. */
 internal fun colorViewOf(stored: Int): ColorPickerMode = when (ColorPickerMode.entries.getOrNull(stored)) {
@@ -1728,46 +1705,6 @@ private fun CompactNumber(label: String, value: Int, range: IntRange, suffix: St
     )
 }
 
-/** Every colour at a tap: greys along the top, then each hue from dark to pale. A drag runs over them. */
-@Composable
-private fun ColorGrid(color: PenColorState) {
-    val columns = GRID_COLUMNS
-    val rows = GRID_ROWS
-    val cells = remember { gridColors(columns, rows) }
-    val current = color.rgb()
-    Canvas(
-        Modifier
-            .fillMaxWidth()
-            .height(PICKER_HEIGHT)
-            .clip(pickerShape)
-            .pointerInput(color) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    down.consume()
-                    fun take(at: Offset) {
-                        val c = (at.x / size.width * columns).toInt().coerceIn(0, columns - 1)
-                        val r = (at.y / size.height * rows).toInt().coerceIn(0, rows - 1)
-                        color.set(cells[r * columns + c], keepAlpha = true)
-                    }
-                    take(down.position)
-                    drag(down.id) { change -> change.consume(); take(change.position) }
-                }
-            },
-    ) {
-        val cw = size.width / columns
-        val ch = size.height / rows
-        for (r in 0 until rows) for (c in 0 until columns) {
-            drawRect(Color(cells[r * columns + c]), Offset(c * cw, r * ch), Size(cw + 0.5f, ch + 0.5f))
-        }
-        val chosen = cells.indexOf(current)
-        if (chosen >= 0) {
-            val topLeft = Offset((chosen % columns) * cw, (chosen / columns) * ch)
-            drawRect(Color.White, topLeft, Size(cw, ch), style = Stroke(3.dp.toPx()))
-            drawRect(Color.Black.copy(alpha = 0.5f), topLeft, Size(cw, ch), style = Stroke(1.dp.toPx()))
-        }
-    }
-}
-
 /**
  * The colour view, which changes shape rather than being swapped: behind it
  * a pane that runs the width of the panel for the grid and the square and
@@ -1778,7 +1715,9 @@ private fun ColorGrid(color: PenColorState) {
 private fun MorphingPicker(view: ColorPickerMode, animate: Boolean, content: @Composable (ColorPickerMode) -> Unit) {
     val scheme = MaterialTheme.colorScheme
     val corner = with(LocalDensity.current) { nestedCorner(Ui.Corner.control).toPx() }
-    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth().height(PICKER_HEIGHT)) {
+    androidx.compose.foundation.layout.BoxWithConstraints(
+        Modifier.fillMaxWidth().height(if (view == ColorPickerMode.PALETTE) PALETTE_VIEW_HEIGHT else PICKER_HEIGHT),
+    ) {
         val full = constraints.maxWidth.toFloat()
         val tall = constraints.maxHeight.toFloat()
         val round = view == ColorPickerMode.RING
@@ -1815,9 +1754,8 @@ private val TAB_SHIFT = 28.dp
 private val PEN_PANEL_WIDTH = 480.dp
 private val PREVIEW_HEIGHT = 64.dp
 private val LINE_TYPE_LABEL = 88.dp
-private val PALETTE_BELOW_HEIGHT = 220.dp
-private const val GRID_COLUMNS = 12
-private const val GRID_ROWS = 9
+/** The palette view is taller than the other pickers: its sets run down and scroll. */
+private val PALETTE_VIEW_HEIGHT = 250.dp
 /** How long a row of segments keeps its pictures after the pointer or finger leaves it. */
 private const val ICON_LINGER_MS = 700L
 private val TAB_SPRING = androidx.compose.animation.core.spring<Float>(dampingRatio = 0.9f, stiffness = 420f)
