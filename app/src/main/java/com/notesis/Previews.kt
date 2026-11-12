@@ -30,55 +30,37 @@ import androidx.compose.ui.unit.dp
 /**
  * The chrome, without a tablet.
  *
- * Everything the skin settings can do to a control is a pure composable away
+ * Everything the look settings can do to a control is a pure composable away
  * from the ink engine, so it can be looked at in Android Studio's preview pane
  * - split view, no emulator, no device, redrawn as the file is edited. That is
  * the only kind of testing this app has that does not need hardware: latency
  * and the pen cannot be judged anywhere but on the tablet, and colour, contrast
  * and layout barely need to leave the laptop.
  *
- * Each preview is one skin at one setting, so a change that only looks right in
- * one of them shows up as soon as it is made rather than on the next install.
+ * Each preview is one setting, so a change that only looks right in one of
+ * them shows up as soon as it is made rather than on the next install.
  */
 @Preview(name = "Controls · Material", widthDp = 420, heightDp = 340)
 @Composable
-private fun PreviewMaterial() = ChromeSample(Skin.MATERIAL, SkinSettings())
+private fun PreviewMaterial() = ChromeSample(SkinSettings())
 
-@Preview(name = "Controls · Glass", widthDp = 420, heightDp = 340)
+@Preview(name = "Controls · High contrast", widthDp = 420, heightDp = 340)
 @Composable
-private fun PreviewGlass() = ChromeSample(Skin.GLASSMORPHISM, SkinSettings())
-
-@Preview(name = "Controls · Liquid glass", widthDp = 420, heightDp = 340)
-@Composable
-private fun PreviewLiquidGlass() = ChromeSample(Skin.LIQUID_GLASS, SkinSettings())
-
-@Preview(name = "Controls · Liquid glass dark", widthDp = 420, heightDp = 340)
-@Composable
-private fun PreviewLiquidGlassDark() = ChromeSample(Skin.LIQUID_GLASS, SkinSettings(themeMode = AppThemeMode.DARK))
-
-@Preview(name = "Controls · Glass high contrast", widthDp = 420, heightDp = 340)
-@Composable
-private fun PreviewHighContrast() =
-    ChromeSample(Skin.GLASSMORPHISM, SkinSettings(highContrast = true))
+private fun PreviewHighContrast() = ChromeSample(SkinSettings(highContrast = true))
 
 @Preview(name = "Controls · Green accent", widthDp = 420, heightDp = 340)
 @Composable
-private fun PreviewGreenAccent() =
-    ChromeSample(Skin.GLASSMORPHISM, SkinSettings(accent = 0xFF00A03C.toInt()))
+private fun PreviewGreenAccent() = ChromeSample(SkinSettings(accent = 0xFF00A03C.toInt(), dynamicColor = false))
 
 @Preview(name = "Controls · Deep ink", widthDp = 420, heightDp = 340)
 @Composable
 private fun PreviewInk() = ChromeSample(
-    Skin.GLASSMORPHISM,
-    SkinSettings(accent = 0xFF0A84FF.toInt(), content = 0xFF10314F.toInt()),
+    SkinSettings(accent = 0xFF0A84FF.toInt(), content = 0xFF10314F.toInt(), dynamicColor = false),
 )
 
 @Preview(name = "Controls · Dark mode", widthDp = 420, heightDp = 340)
 @Composable
-private fun PreviewDark() = ChromeSample(
-    Skin.GLASSMORPHISM,
-    SkinSettings(themeMode = AppThemeMode.DARK),
-)
+private fun PreviewDark() = ChromeSample(SkinSettings(themeMode = AppThemeMode.DARK))
 
 /**
  * One panel with one of everything the settings screen can change: the two
@@ -86,16 +68,15 @@ private fun PreviewDark() = ChromeSample(
  * hand and one that is not.
  */
 @Composable
-private fun ChromeSample(skin: Skin, look: SkinSettings) {
-    ProvideSkin(skin, look) {
+private fun ChromeSample(look: SkinSettings) {
+    ProvideSkin(look) {
         MaterialTheme(
-            colorScheme = skinColors(lookScheme(null, skin, look), skin, look),
-            shapes = skinShapes(skin),
+            colorScheme = skinColors(lookScheme(null, look), look),
+            shapes = Ui.shapes,
         ) {
             var amount by remember { mutableFloatStateOf(0.42f) }
             var on by remember { mutableStateOf(true) }
-            // Something worth looking through, because glass over a flat colour
-            // is indistinguishable from paint.
+            // Something busy behind, so the panel's edge and shadow can be judged.
             Box(
                 Modifier
                     .fillMaxSize()

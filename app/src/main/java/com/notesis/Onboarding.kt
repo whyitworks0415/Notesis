@@ -107,14 +107,12 @@ internal object Onboarding {
         val p = prefs(context)
         return onboardingStep(
             welcomeDone = p.getBoolean(WELCOME, false),
-            skinChosen = p.getBoolean(SKIN, false),
             homeTipsDone = p.getBoolean(HOME_TIPS, false),
             animations = animationsOn(context),
         )
     }
 
     fun finishWelcome(context: Context) = prefs(context).edit().putBoolean(WELCOME, true).apply()
-    fun finishSkin(context: Context) = prefs(context).edit().putBoolean(SKIN, true).apply()
     fun finishHomeTips(context: Context) = prefs(context).edit().putBoolean(HOME_TIPS, true).apply()
     fun noteTourDone(context: Context): Boolean = prefs(context).getBoolean(NOTE_TOUR, false)
     fun finishNoteTour(context: Context) = prefs(context).edit().putBoolean(NOTE_TOUR, true).apply()
@@ -565,52 +563,11 @@ private class WelcomeMarkPainter {
 private fun lerp(a: Float, b: Float, t: Float) = a + (b - a) * t
 
 /**
- * The first choice a new install is asked: which look. Picking one changes
- * the screen behind at once, so the choice is made by seeing it.
- */
-@Composable
-internal fun SkinChooser(current: Skin, onSkin: (Skin) -> Unit, onDone: () -> Unit) {
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.28f))
-            // Nothing behind is reachable until a look is chosen.
-            .pointerInput(Unit) { detectTapGestures { } },
-        contentAlignment = Alignment.Center,
-    ) {
-        SkinSurface(
-            modifier = Modifier
-                .windowInsetsPadding(ChromeInsets)
-                .padding(Ui.Space.l)
-                .widthIn(max = 440.dp),
-            corner = Ui.Corner.sheet,
-        ) {
-            Column(
-                Modifier
-                    .verticalScroll(rememberScrollState())
-                    .padding(Ui.Space.xl),
-                verticalArrangement = Arrangement.spacedBy(Ui.Space.m),
-            ) {
-                Text("Pick a look", style = MaterialTheme.typography.headlineSmall)
-                Text(
-                    "Every bar and panel wears it. Change it any time in the display settings.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                SkinChoiceList(current, onSkin)
-                Button(onClick = onDone, modifier = Modifier.align(Alignment.End)) { Text("Continue") }
-            }
-        }
-    }
-}
-
-/**
  * The home screen's coach marks: the screen dimmed but for one thing, a line
  * on what it is, and Next. Marks whose target is not on screen are left out.
  */
 @Composable
 internal fun CoachMarks(targets: CoachTargets, all: List<CoachMark> = HOME_MARKS, onDone: () -> Unit) {
-    val skin = LocalSkin.current
     val marks = remember(all) { all.filter { it.target in targets.bounds } }
     var index by remember { mutableIntStateOf(0) }
     if (marks.isEmpty()) {
@@ -696,7 +653,6 @@ private fun StepDots(at: Int, count: Int) {
 @Composable
 internal fun NoteTips(onLastPage: () -> Boolean, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val skin = LocalSkin.current
     val seen = remember { Onboarding.seenTips(context).toMutableSet() }
     var off by remember { mutableStateOf(Onboarding.tipsOff(context)) }
     var showing by remember { mutableStateOf<NoteTip?>(null) }

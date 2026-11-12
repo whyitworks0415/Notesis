@@ -38,9 +38,9 @@ import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 
 /**
- * A menu of the toolbar's own material, liquid glass under that skin, in
- * place of Material's flat white dropdown: under its anchor, its right edge
- * on the anchor's, kept on the screen. The same parameters as DropdownMenu.
+ * A menu of the toolbar's own material that grows out of what opened it:
+ * under its anchor, its right edge on the anchor's, kept on the screen. The
+ * same parameters as DropdownMenu.
  */
 @Composable
 internal fun GlassMenu(
@@ -59,7 +59,7 @@ internal fun GlassMenu(
     // Out of what opened it and back into it, as the toolbar's popups: kept
     // on screen while it goes back, then taken away.
     val growth = rememberPopupGrowth(shown = false)
-    val animate = rememberLiquidGlassEffectsAllowed()
+    val animate = rememberMotionAllowed()
     var present by remember { mutableStateOf(expanded) }
     LaunchedEffect(expanded, animate) {
         if (expanded) {
@@ -71,13 +71,9 @@ internal fun GlassMenu(
         }
     }
     if (!expanded && !present) return
-    val reveal = animate && growth.profile?.reveal == true
-    // Its rows give at either end and spring back, as Mornye's menus do.
+    // Its rows give at either end and spring back.
     val bounce = rememberEdgeBounce()
     val scrollSpeed = rememberScrollSpeed()
-    // Inside the library's recorded content the glass may not look at its own
-    // recording; popups are given the page capture separately for that.
-    val backdrop = LocalGlassPopupBackdrop.current ?: LocalLiquidGlassBackdrop.current
     val gap = with(androidx.compose.ui.platform.LocalDensity.current) { 6.dp.roundToPx() }
     // What it was opened from, in the popup's window, as the position puts it.
     val anchor = remember { floatArrayOf(Float.NaN, Float.NaN) }
@@ -86,33 +82,29 @@ internal fun GlassMenu(
         onDismissRequest = onDismissRequest,
         properties = PopupProperties(focusable = true),
     ) {
-        CompositionLocalProvider(
-            LocalLiquidGlassHostBackdrop provides null,
-            LocalLiquidGlassBackdrop provides backdrop,
-        ) {
-            // A popup is a panel: the panels' corner, its rows one inset in.
-            val shape = Ui.Shape.card
-            Box(Modifier.padding(12.dp)) {
-                Column(
-                    modifier
-                        .width(IntrinsicSize.Max)
-                        .widthIn(min = 200.dp, max = 320.dp)
-                        .heightIn(max = 520.dp)
-                        .then(if (reveal) {
-                            Modifier.revealOutOf(growth, Ui.Corner.card) { c ->
-                                if (anchor[0].isNaN()) null else c.windowToLocal(Offset(anchor[0], anchor[1]))
-                            }
-                        } else Modifier.growOutOf({ null }, growth))
-                        .skinMaterial(shape, panel = true, role = ChromeRole.POPUP)
-                        .clip(shape)
-                        .revealContent(growth, reveal)
-                        .edgeBounce(bounce)
-                        .scrollBlur(scrollSpeed)
-                        .verticalScroll(rememberScrollState())
-                        .padding(vertical = GLASS_MENU_INSET),
-                    content = content,
-                )
-            }
+        // A popup is a panel: the panels' corner, its rows one inset in.
+        val shape = Ui.Shape.card
+        Box(Modifier.padding(12.dp)) {
+            Column(
+                modifier
+                    .width(IntrinsicSize.Max)
+                    .widthIn(min = 200.dp, max = 320.dp)
+                    .heightIn(max = 520.dp)
+                    // Where motion is off the growth is already at its end and nothing is cut.
+                    .then(if (animate) {
+                        Modifier.revealOutOf(growth, Ui.Corner.card) { c ->
+                            if (anchor[0].isNaN()) null else c.windowToLocal(Offset(anchor[0], anchor[1]))
+                        }
+                    } else Modifier)
+                    .skinMaterial(shape, panel = true)
+                    .clip(shape)
+                    .revealContent(growth, animate)
+                    .edgeBounce(bounce)
+                    .scrollBlur(scrollSpeed)
+                    .verticalScroll(rememberScrollState())
+                    .padding(vertical = GLASS_MENU_INSET),
+                content = content,
+            )
         }
     }
 }

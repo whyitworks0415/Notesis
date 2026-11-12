@@ -321,42 +321,6 @@ internal object MotionStats {
     }
 }
 
-/** Whether the glass has been drawn once in this process (see [GlassWarmup]). */
-private object GlassWarm {
-    var done = false
-}
-
-/**
- * Draws one tiny, all but invisible pane of the chrome's glass a moment
- * after the screen settles, as Mornye prepares its glass before it is
- * needed: the lens's shader and the blur are built then, not on the frame a
- * popup first opens, which used to be the one that dropped. Once a process,
- * and only while nothing is being written or moved.
- */
-@androidx.compose.runtime.Composable
-internal fun GlassWarmup() {
-    var show by androidx.compose.runtime.remember { mutableStateOf(false) }
-    androidx.compose.runtime.LaunchedEffect(Unit) {
-        if (GlassWarm.done) return@LaunchedEffect
-        kotlinx.coroutines.delay(WARMUP_DELAY_MS)
-        while (InteractionGovernor.observed != Interaction.IDLE || ChromeMotion.busy) kotlinx.coroutines.delay(200)
-        show = true
-        repeat(3) { androidx.compose.runtime.withFrameNanos { } }
-        show = false
-        GlassWarm.done = true
-    }
-    if (show) {
-        androidx.compose.foundation.layout.Box(
-            androidx.compose.ui.Modifier
-                .size(24.dp)
-                .graphicsLayer { alpha = 0.01f }
-                .skinMaterial(androidx.compose.foundation.shape.RoundedCornerShape(12.dp), panel = true, role = ChromeRole.POPUP),
-        )
-    }
-}
-
-private const val WARMUP_DELAY_MS = 1200L
-
 /** Counts the chrome as moving while [running]; for motions the app does not drive itself. */
 @androidx.compose.runtime.Composable
 internal fun HoldChromeMotion(running: Boolean) {
@@ -365,20 +329,6 @@ internal fun HoldChromeMotion(running: Boolean) {
         onDispose { if (running) ChromeMotion.release() }
     }
 }
-
-/**
- * Every panel that slides in from an edge - settings, pages, layers - on the
- * same springs: in critically damped, so it never opens a gap at the edge it
- * stands on, out a little quicker.
- */
-internal fun <T> sidebarOpenSpring(visibilityThreshold: T? = null): androidx.compose.animation.core.SpringSpec<T> =
-    motionSpring(SIDEBAR_IN_RESPONSE, 1f, visibilityThreshold)
-
-internal fun <T> sidebarCloseSpring(visibilityThreshold: T? = null): androidx.compose.animation.core.SpringSpec<T> =
-    motionSpring(SIDEBAR_OUT_RESPONSE, 1f, visibilityThreshold)
-
-internal const val SIDEBAR_IN_RESPONSE = 0.42f
-internal const val SIDEBAR_OUT_RESPONSE = 0.3f
 
 /** Whether a panel at slide [progress] (1 is all the way in) is still on its way: more than a hair short of rest. */
 internal fun slidingNow(progress: Float): Boolean = progress.isFinite() && progress < 0.995f

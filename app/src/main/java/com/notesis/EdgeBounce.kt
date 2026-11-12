@@ -150,7 +150,7 @@ internal fun edgeMaxVelocity(throwPx: Float, stiffness: Float = EDGE_BOUNCE_STIF
 /** An [EdgeBounce] for one list, or null where motion is off and the system's stretch stays. */
 @Composable
 internal fun rememberEdgeBounce(vertical: Boolean = true): EdgeBounce? {
-    val moves = rememberLiquidGlassEffectsAllowed() && !LocalSkinSettings.current.highContrast
+    val moves = rememberMotionAllowed() && !LocalSkinSettings.current.highContrast
     val throwPx = with(LocalDensity.current) { EDGE_THROW.toPx() }
     return remember(moves, vertical, throwPx) { if (moves) EdgeBounce(vertical, edgeMaxVelocity(throwPx)) else null }
 }

@@ -82,7 +82,7 @@ class ColorPopupUiTest {
         lateinit var scope: kotlinx.coroutines.CoroutineScope
         compose.mainClock.autoAdvance = false
         compose.setContent { MaterialTheme {
-            growth = remember { PopupGrowth(false).apply { profile = PourOpen } }
+            growth = remember { PopupGrowth(false) }
             scope = rememberCoroutineScope()
             LaunchedEffect(Unit) { growth.open(true) }
             Box(Modifier.size(300.dp,240.dp).revealOutOf(growth,28.dp) { Offset(0f,0f) }.testTag("panel")) {

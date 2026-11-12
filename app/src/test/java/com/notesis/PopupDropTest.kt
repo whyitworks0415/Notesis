@@ -27,7 +27,7 @@ class PopupDropTest {
         // Still round while it is narrow.
         assertEquals(running.width / 2f, running.radius, 1f)
         val open = popupDrop(250f, -20f, 300f, 400f, 44f, 28f, 1f, 1f)
-        assertEquals(PopupDrop(0f, 0f, 300f, 400f, 28f, 1f, 1f, 250f, 22f), open)
+        assertEquals(PopupDrop(0f, 0f, 300f, 400f, 28f), open)
         // Every frame on the way stays inside the panel and rounded.
         for (step in 0..100) {
             val p = step / 100f
@@ -38,13 +38,13 @@ class PopupDropTest {
         }
     }
 
-    @Test fun `past its size it runs over by only part of the spring's overshoot`() {
+    @Test fun `a progress past either end is held at that end`() {
         val over = popupDrop(150f, -20f, 300f, 400f, 44f, 28f, 1.08f, 1.08f)
-        assertEquals(1f + 0.08f * POUR_OVERSHOOT_KEPT, over.scaleX, 0.0001f)
         assertEquals(300f, over.width, 0f)
-        assertEquals(1f, keptOvershoot(1f), 0f)
-        assertEquals(0f, keptOvershoot(-0.1f), 0f)
-        assertEquals(0f, keptOvershoot(Float.NaN), 0f)
+        assertEquals(400f, over.height, 0f)
+        assertEquals(1f, unitProgress(1.2f), 0f)
+        assertEquals(0f, unitProgress(-0.1f), 0f)
+        assertEquals(0f, unitProgress(Float.NaN), 0f)
     }
 
     @Test fun `tiny or unmeasured panels give no outline to invert`() {

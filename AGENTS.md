@@ -78,11 +78,12 @@ S6 Lite, SM-P61x/P62x). Kotlin, Jetpack Compose for the chrome, a custom
 - The pen path is latency-critical: no allocation, Compose state writes or
   file work per pen event. Background work gives way while the pen is down
   (`InteractionGovernor`, `penWorking`).
-- Chrome follows the chosen skin (`LocalSkin`, `SkinSurface`,
-  `skinMaterial`, liquid glass via `LocalLiquidGlassBackdrop`). Glass cannot
-  sample a backdrop it is itself inside of (`NoBackdrop`); floating chrome is
-  placed outside the recorded content.
-- Icons are static Material Symbols by default in every skin, with Reicons
+- Chrome is Material only (`SkinSurface`, `skinMaterial`, `LocalSkinSettings`).
+  The glass looks and the pouring popup animation are kept in `archive/`,
+  outside the build, and come back only when the owner asks (`Todo.md`, step 7).
+  New things that appear grow out of what made them (`PopupGrowth`,
+  `revealOutOf`).
+- Icons are static Material Symbols by default, with Reicons
   available as a saved choice. Keep the animated glyph player removed; motion
   belongs to controls, selection and navigation instead.
 - Removed features stay removed: no ruler/set square/protractor, laser
@@ -98,7 +99,7 @@ S6 Lite, SM-P61x/P62x). Kotlin, Jetpack Compose for the chrome, a custom
 | Area | Files |
 |---|---|
 | Library (home) | `MainActivity.kt` (`HomeScreen`), `HomeLibrary.kt` |
-| Note screen, toolbar | `MainActivity.kt` (`NoteScreen`, `Toolbar`), `LiquidGlassToolbar.kt`, `ToolbarCustomize.kt` |
+| Note screen, toolbar | `MainActivity.kt` (`NoteScreen`, `Toolbar`), `FloatingToolbar.kt`, `ToolbarCustomize.kt` |
 | Canvas and ink | `InkCanvasView.kt`, `CompatWetInkView.kt` (S6 Lite wet ink), `PencilBrushes.kt` |
 | Storage | `Document.kt` (`NoteStore`, pages, save/load, whiteboard `board.bin`) |
 | Text boxes, tables | `TextBox.kt`, `MarkdownSpans.kt`, `TableBox.kt`, `InlineText.kt` |
@@ -109,7 +110,8 @@ S6 Lite, SM-P61x/P62x). Kotlin, Jetpack Compose for the chrome, a custom
 | Page panel, Internet panel | `PageSidebar.kt`, `WebPanel.kt` |
 | Folders, smart folders, templates | `FolderPaths.kt` (paths `School/Maths`), `SmartFolders.kt`, `PaperPicker.kt` |
 | Backup, widget, updates | `AutoBackup.kt` (off by default), `NotesWidget.kt`, `AppUpdate.kt` (beta code) |
-| Liquid glass | `LiquidGlass*.kt`, `GlassPopupBackdrop.kt`; saved keys still say `spotiglass…` |
+| Look, popups | `Skin.kt`, `SkinSettings.kt` (the corner's saved key still says `spotiglass…`), `PopupGrowth.kt`, `PopupReveal.kt`, `AppDialog.kt`, `AppMenu.kt` |
+| Roadmap, archive | `Todo.md` (work in order), `archive/` (glass looks, not built) |
 
 ## Stable release and native checks
 

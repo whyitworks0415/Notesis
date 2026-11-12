@@ -60,7 +60,7 @@ class LibraryScreenshotTest {
     private fun themed(content: @androidx.compose.runtime.Composable () -> Unit) {
         compose.setContent {
             MaterialTheme {
-                ProvideSkin(Skin.MATERIAL, SkinSettings()) {
+                ProvideSkin(SkinSettings()) {
                     Column(Modifier.background(Color.White).padding(16.dp)) { content() }
                 }
             }
@@ -112,7 +112,7 @@ class LibraryScreenshotTest {
         var dark by mutableStateOf(false)
         compose.setContent {
             MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
-                ProvideSkin(Skin.LIQUID_GLASS, SkinSettings(liquidStyle = LiquidStyle.IOS)) {
+                ProvideSkin(SkinSettings()) {
                     LazyVerticalGrid(GridCells.Fixed(3), Modifier.fillMaxSize().testTag("library")) {
                         items(entries, key = { it }, contentType = { if (it % 2 == 0) "note" else "folder" }) { id ->
                             if (id % 2 == 0) NoteCard(

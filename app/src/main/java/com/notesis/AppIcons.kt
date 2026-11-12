@@ -20,7 +20,6 @@ internal object AppIcons {
     val redo get() = Reicons.Redo
     val mic get() = Reicons.Mic
     val rotate get() = Reicons.ScreenRotation
-    val skin get() = Reicons.AutoAwesomeMosaic
     val tools get() = Reicons.Calculate
     val input get() = Reicons.TouchApp
     val addPage get() = Reicons.Add

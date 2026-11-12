@@ -103,7 +103,7 @@ internal fun PagePeek(
 ) {
     val density = LocalDensity.current
     val config = LocalConfiguration.current
-    val moves = rememberLiquidGlassEffectsAllowed()
+    val moves = rememberMotionAllowed()
     val grow = remember { Animatable(0f) }
     LaunchedEffect(shown) {
         if (shown) grow.animateTo(1f, if (moves) Ui.Motion.spring(0.78f) else snap())
@@ -141,7 +141,7 @@ internal fun PagePeek(
                 }
                 .padding(Ui.Space.s)
                 .width(widthDp.dp)
-                .skinMaterial(androidx.compose.foundation.shape.RoundedCornerShape(Ui.Corner.card), panel = true, role = ChromeRole.POPUP)
+                .skinMaterial(androidx.compose.foundation.shape.RoundedCornerShape(Ui.Corner.card), panel = true)
                 .padding(Ui.Space.s),
         ) {
             Box { PagePicture(large ?: small, aspect, number) }

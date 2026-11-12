@@ -28,30 +28,23 @@ class MaterialMotionUiTest {
     private val context get() = RuntimeEnvironment.getApplication()
     @After fun restoreIconChoice() { AppIconStyle.select(context, StaticIconSet.MATERIAL) }
 
-    @Composable private fun Theme(skin: Skin = Skin.MATERIAL, content: @Composable () -> Unit) {
+    @Composable private fun Theme(content: @Composable () -> Unit) {
         val look = SkinSettings(dynamicColor = false)
-        MaterialTheme(colorScheme = skinColors(lookScheme(null, skin, look), skin, look)) {
-            CompositionLocalProvider(LocalLiquidGlassEffectsAllowed provides true) { ProvideSkin(skin, look, content) }
+        MaterialTheme(colorScheme = skinColors(lookScheme(null, look), look)) {
+            CompositionLocalProvider(LocalMotionAllowed provides true) { ProvideSkin(look, content) }
         }
     }
 
-    @Test fun iconChoiceIsStaticPersistentAndIndependentOfSkin() {
+    @Test fun iconChoiceIsStaticAndPersistent() {
         context.getSharedPreferences("pens", Context.MODE_PRIVATE).edit().clear()
             .putBoolean("iconAnimateIcons", true).putBoolean("iconAnimation", true).apply()
         AppIconStyle.load(context)
         assertEquals(StaticIconSet.MATERIAL, AppIconStyle.selected)
-        var skin by mutableStateOf(Skin.MATERIAL)
         var symbol: androidx.compose.ui.graphics.vector.ImageVector? = null
-        compose.setContent { Theme(skin) { val icon = AppIcons.undo; SideEffect { symbol = icon }; AppIcon(icon, "Undo") } }
-        for (look in Skin.entries) {
-            compose.runOnIdle { skin = look }
-            compose.runOnIdle { assertSame(MaterialSymbols.Undo, symbol) }
-        }
+        compose.setContent { Theme { val icon = AppIcons.undo; SideEffect { symbol = icon }; AppIcon(icon, "Undo") } }
+        compose.runOnIdle { assertSame(MaterialSymbols.Undo, symbol) }
         compose.runOnIdle { AppIconStyle.select(context, StaticIconSet.REICONS) }
-        for (look in Skin.entries) {
-            compose.runOnIdle { skin = look }
-            compose.runOnIdle { assertNotSame(MaterialSymbols.Undo, symbol) }
-        }
+        compose.runOnIdle { assertNotSame(MaterialSymbols.Undo, symbol) }
         compose.runOnIdle { AppIconStyle.load(context); assertEquals(StaticIconSet.REICONS, AppIconStyle.selected) }
     }
 

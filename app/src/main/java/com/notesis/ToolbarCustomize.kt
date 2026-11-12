@@ -85,7 +85,6 @@ internal enum class TopRowItem(val label: String, val removable: Boolean = true)
     MIC("Recordings"),
     ROTATE("Rotate note"),
     ZOOM("Zoom level"),
-    SKIN("UI style"),
     PLANNER("Tools"),
     GESTURES("Touch & gestures"),
     ADD_PAGE("Add page"),
@@ -780,7 +779,6 @@ internal fun TopRowItem.icon(): ImageVector = when (this) {
     TopRowItem.MIC -> AppIcons.mic
     TopRowItem.ROTATE -> AppIcons.rotate
     TopRowItem.ZOOM -> AppIcons.zoom
-    TopRowItem.SKIN -> AppIcons.skin
     TopRowItem.PLANNER -> AppIcons.tools
     TopRowItem.GESTURES -> AppIcons.touch
     TopRowItem.ADD_PAGE -> AppIcons.addPage

@@ -284,12 +284,10 @@ internal fun WebPanel(
     }
 
     // The bar over the page takes the colours of the page's own top, point by
-    // point across it, as a pane of tinted glass laid over them; the panel
-    // round the page takes the page's bottom colour, so nothing white frames
-    // it. Asked of the page five times a second and eased from one answer to
-    // the next, so the bar follows a scroll or a change of theme as it
-    // happens. Until the page answers, the bar is the panel's surface.
-    val skin = LocalSkin.current
+    // point across it; the panel round the page takes the page's bottom
+    // colour, so nothing white frames it. Asked of the page five times a
+    // second, so the bar follows a scroll or a change of theme as it happens.
+    // Until the page answers, the bar is the panel's surface.
     var pageColors by remember(web) { mutableStateOf<PageColors?>(null) }
     LaunchedEffect(web) {
         val view = web ?: return@LaunchedEffect
@@ -301,10 +299,8 @@ internal fun WebPanel(
         }
     }
     val surface = MaterialTheme.colorScheme.surface
-    // Material changes it at once; the other skins ease into it, about as
-    // long as the page takes to be asked again, so the change never stops.
-    val ease: androidx.compose.animation.core.AnimationSpec<Color> =
-        if (skin == Skin.MATERIAL) androidx.compose.animation.core.snap() else tween(PAGE_TOP_COLOR_POLL_MS.toInt() + 60, easing = LinearEasing)
+    // Taken at once, as each answer comes.
+    val ease: androidx.compose.animation.core.AnimationSpec<Color> = androidx.compose.animation.core.snap()
     val headerStops = List(PAGE_TOP_SAMPLES) { i ->
         androidx.compose.animation.animateColorAsState(
             pageColors?.top?.getOrNull(i)?.let { Color(it) } ?: surface, ease, label = "Web bar $i",
@@ -319,7 +315,7 @@ internal fun WebPanel(
         headerStops.sumOf { it.green.toDouble() }.toFloat() / headerStops.size,
         headerStops.sumOf { it.blue.toDouble() }.toFloat() / headerStops.size,
     )
-    val onHeader = if (pageColors == null) MaterialTheme.colorScheme.onSurface else liquidGlassContentColor(header)
+    val onHeader = if (pageColors == null) MaterialTheme.colorScheme.onSurface else readableOn(header)
     val fieldColors = OutlinedTextFieldDefaults.colors(
         focusedTextColor = onHeader,
         unfocusedTextColor = onHeader,
@@ -357,7 +353,7 @@ internal fun WebPanel(
             Column(
                 Modifier
                     .fillMaxWidth()
-                    .webBarGlass(headerStops, glass = skin != Skin.MATERIAL)
+                    .webBarColors(headerStops)
                     .then(if (insets) Modifier.windowInsetsPadding(ChromeInsets.only(WindowInsetsSides.Top)) else Modifier),
             ) {
             if (onMove != null) {
@@ -541,27 +537,14 @@ internal fun WebPanel(
     }
 }
 
-/**
- * The web bar's glass: the page's top colours left to right under it, a light
- * caught along its top fading down, and a lit hairline where it meets the
- * page - so it reads as a pane laid over the page rather than a band of paint.
- * Under Material it is the colours alone.
- */
-private fun Modifier.webBarGlass(stops: List<Color>, glass: Boolean): Modifier = drawBehind {
-    val across = if (stops.size > 1) Brush.horizontalGradient(stops) else androidx.compose.ui.graphics.SolidColor(stops.first())
-    drawRect(across)
-    if (!glass) return@drawBehind
-    // A wash of white, strongest at the top edge.
-    drawRect(Brush.verticalGradient(0f to Color.White.copy(alpha = 0.22f), 0.45f to Color.White.copy(alpha = 0.06f),
-        1f to Color.Transparent))
-    // The lit edge along its top, and a soft shadow and a bright line along its foot.
-    drawRect(Color.White.copy(alpha = 0.35f), size = androidx.compose.ui.geometry.Size(size.width, 1.dp.toPx()))
-    drawRect(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.08f)),
-        startY = size.height - 6.dp.toPx(), endY = size.height),
-        topLeft = Offset(0f, size.height - 6.dp.toPx()), size = androidx.compose.ui.geometry.Size(size.width, 6.dp.toPx()))
-    drawRect(Color.White.copy(alpha = 0.45f), topLeft = Offset(0f, size.height - 1.dp.toPx()),
-        size = androidx.compose.ui.geometry.Size(size.width, 1.dp.toPx()))
+/** The web bar's ground: the page's top colours, left to right under it. */
+private fun Modifier.webBarColors(stops: List<Color>): Modifier = drawBehind {
+    drawRect(if (stops.size > 1) Brush.horizontalGradient(stops) else androidx.compose.ui.graphics.SolidColor(stops.first()))
 }
+
+/** Ink that reads on [background]: near-black on a light one, white on a dark one. */
+private fun readableOn(background: Color): Color =
+    if (background.luminance() > 0.52f) Color(0xFF17171A) else Color.White
 
 /**
  * What the panel claims to be. Every AI site refuses to sign in to an embedded

@@ -16,8 +16,8 @@ android {
         // dependable from Q onward, even though ink itself declares minSdk 23.
         minSdk = 29
         targetSdk = 36
-        versionCode = 228
-        versionName = "0.90.28"
+        versionCode = 229
+        versionName = "0.91.0"
         testInstrumentationRunner = "com.notesis.CustomizationInstrumentation"
         // Ship arm64 for the tablet; opt into x86_64 for emulator GPU checks.
         ndk { abiFilters += providers.gradleProperty("notesis.testAbi").getOrElse("arm64-v8a") }
@@ -93,13 +93,6 @@ dependencies {
     implementation(platform("androidx.compose:compose-bom:2026.06.01"))
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui-tooling-preview")
-    // Backdrop 2.x supplies the API 33+ AGSL refraction path used by the
-    // reusable Liquid Glass controls. Older Android releases use our opaque
-    // fallback and never enter the runtime-shader path.
-    // 1.0.6 is the newest Backdrop release compatible with this project's
-    // compileSdk 36 / AGP 8 line. Backdrop 2.x requires compileSdk 37 and AGP
-    // 9.1+, which would turn this visual change into a toolchain migration.
-    implementation("io.github.kyant0:backdrop:1.0.6")
     // The renderer behind @Preview. Without it the annotations compile and the
     // preview pane stays empty, which is why the chrome could only be looked at
     // by installing the app - see Previews.kt. Debug only: it is a development

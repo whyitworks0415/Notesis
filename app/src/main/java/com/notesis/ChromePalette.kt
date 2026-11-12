@@ -78,26 +78,6 @@ internal fun readableScheme(base: ColorScheme): ColorScheme {
     )
 }
 
-/** Separate black, grouped charcoal and raised graphite, with opaque secondary ink. */
-internal fun iosChromeScheme(base: ColorScheme, dark: Boolean): ColorScheme = readableScheme(
-    if (!dark) base else base.copy(
-        background = Color(0xFF101114), surface = Color(0xFF101114),
-        surfaceDim = Color(0xFF101114), surfaceBright = Color(0xFF33353D),
-        surfaceContainerLowest = Color(0xFF090A0D), surfaceContainerLow = Color(0xFF191A20),
-        surfaceContainer = Color(0xFF1E1F26), surfaceContainerHigh = Color(0xFF272930),
-        surfaceContainerHighest = Color(0xFF33353D), surfaceVariant = Color(0xFF272930),
-        onSurface = Color(0xFFF5F5F7), onBackground = Color(0xFFF5F5F7),
-        onSurfaceVariant = Color(0xFFB9BAC4), outline = Color(0xFF92949F),
-        outlineVariant = Color(0xFF454751),
-    ),
-)
-
-/** A dark reading floor, including over white paper; rim and refraction stay independent. */
-internal fun iosDarkReadingMaterial(panel: Boolean, amount: Float = 1f, bodyOpacity: Float = 0f): Color {
-    val floor = if (panel) 0.92f else 0.84f
-    return Color(0xFF15161B).copy(alpha =
-        (floor + (1f - floor) * bodyOpacity.coerceIn(0f, 1f)) * amount.coerceIn(0f, 1f))
-}
 
 internal fun chromeTypography(): Typography = Typography().let { base -> base.copy(
     headlineLarge = base.headlineLarge.copy(fontWeight = FontWeight.SemiBold, letterSpacing = (-0.5).sp),

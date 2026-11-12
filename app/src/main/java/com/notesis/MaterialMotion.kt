@@ -34,19 +34,18 @@ internal object MaterialMotion {
 /** Scales rendering only; never delays input, changes layout or shrinks the hit area. */
 @Composable
 internal fun Modifier.materialPressFeedback(source: InteractionSource, enabled: Boolean = true): Modifier {
-    if (LocalSkin.current != Skin.MATERIAL) return this
     val held by source.collectIsPressedAsState()
-    val moves = enabled && rememberLiquidGlassEffectsAllowed() && !LocalSkinSettings.current.highContrast
+    val moves = enabled && rememberMotionAllowed() && !LocalSkinSettings.current.highContrast
     val scale = animateFloatAsState(if (held && moves) MaterialMotion.PRESS_SCALE else 1f,
         if (moves) MaterialMotion.press(held) else snap(), label = "Material contact")
     return drawWithContent { scale(scale.value) { this@drawWithContent.drawContent() } }
 }
 
-internal fun <T> sidebarOpenFor(skin: Skin): SpringSpec<T> =
-    if (skin == Skin.MATERIAL) motionSpring(MaterialMotion.CONTAINER, 1f) else sidebarOpenSpring()
+/** A sidebar or panel coming in from the edge: the container spring. */
+internal fun <T> sidebarOpen(): SpringSpec<T> = motionSpring(MaterialMotion.CONTAINER, 1f)
 
-internal fun <T> sidebarCloseFor(skin: Skin): SpringSpec<T> =
-    if (skin == Skin.MATERIAL) motionSpring(MaterialMotion.EXIT, 1f) else sidebarCloseSpring()
+/** And going back out past it: the exit spring. */
+internal fun <T> sidebarClose(): SpringSpec<T> = motionSpring(MaterialMotion.EXIT, 1f)
 
 /** A short forward/backward transition, derived from navigation history rather than page order. */
 internal fun materialPageDirection(oldDepth: Int, newDepth: Int): Int = if (newDepth >= oldDepth) 1 else -1

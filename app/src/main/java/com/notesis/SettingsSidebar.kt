@@ -104,7 +104,7 @@ internal fun settingsSidebarWidth(requested: Float, screen: Float): Float {
 internal enum class SettingsPage(val title: String, val subtitle: String, val scrolls: Boolean = true) {
     ROOT("Settings", ""),
     PEN("Pen settings", "Smoothing mode, latency, pressure and pen gestures for every pen"),
-    APPEARANCE("Appearance", "Language, brightness, size, light or dark, UI style, icons, glass and colors", scrolls = false),
+    APPEARANCE("Appearance", "Language, brightness, size, light or dark, icons and colors", scrolls = false),
     TOUCH("Touch & gestures", "Fingers, taps, palm rejection and three-finger gestures"),
     TOOLBAR("Customize toolbar", "Tools and their order for each toolbar size", scrolls = false),
     NOTE_VIEW("Note & view", "Page layout, page tone and this note"),
@@ -280,7 +280,6 @@ internal fun SettingsSidebarFrame(
                             compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha
                             alpha = sidebarContentAlpha(appear().coerceIn(0f, 1f))
                         }
-                        .background(scheme.surface.copy(alpha = if (LocalSkin.current == Skin.MATERIAL) 0f else 0.72f))
                         .windowInsetsPadding(ChromeInsets.only(WindowInsetsSides.Bottom + WindowInsetsSides.End)),
                 ) {
                     SidebarHeader(title, canGoBack, onBack, onClose)
@@ -353,9 +352,8 @@ internal fun AnimatedSettingsSidebar(
     nav: SidebarNav?,
     content: @Composable (nav: SidebarNav, appear: () -> Float, closing: Boolean) -> Unit,
 ) {
-    val animate = rememberLiquidGlassEffectsAllowed() &&
+    val animate = rememberMotionAllowed() &&
         !LocalSkinSettings.current.highContrast
-    val skin = LocalSkin.current
     // The screen it was on, kept for the slide out; not state, since [nav]
     // itself is what recomposes this.
     val last = remember { arrayOfNulls<SidebarNav>(1) }
@@ -370,26 +368,20 @@ internal fun AnimatedSettingsSidebar(
             // The first frame with the sidebar in it is the slow one; the slide
             // starts after it (see PopupGrowth.open), not on it.
             if (animate && progress.value == 0f) awaitFirstFrames()
-            if (animate) ChromeMotion.during { progress.animateTo(1f, sidebarOpenFor(skin), initialVelocity = velocity[0]) { velocity[0] = this.velocity }; velocity[0] = 0f } else { velocity[0] = 0f; progress.snapTo(1f) }
+            if (animate) ChromeMotion.during { progress.animateTo(1f, sidebarOpen(), initialVelocity = velocity[0]) { velocity[0] = this.velocity }; velocity[0] = 0f } else { velocity[0] = 0f; progress.snapTo(1f) }
         } else {
             if (progress.value == 0f && !progress.isRunning) { velocity[0] = 0f; present = false; return@LaunchedEffect }
-            if (animate) ChromeMotion.during { progress.animateTo(0f, sidebarCloseFor(skin), initialVelocity = velocity[0]) { velocity[0] = this.velocity }; velocity[0] = 0f } else { velocity[0] = 0f; progress.snapTo(0f) }
+            if (animate) ChromeMotion.during { progress.animateTo(0f, sidebarClose(), initialVelocity = velocity[0]) { velocity[0] = this.velocity }; velocity[0] = 0f } else { velocity[0] = 0f; progress.snapTo(0f) }
             present = false
         }
     }
-    // One reader, whichever skin is on, so switching skin with the sidebar
-    // open keeps its screens and their scroll positions intact.
+    // One reader, so the sidebar's screens and their scroll positions stay intact.
     val moving by rememberUpdatedState(animate)
     val appear = remember { { if (moving) progress.value else 1f } }
     // Keep the last screen until its closing motion has completed.
     if (!open && !(animate && present)) return
     val shown = nav ?: last[0] ?: return
-    // The glass in it looks at the page where it comes to rest, so it is drawn
-    // once rather than again on each frame of the slide; see [ProvideSlidingBackdrops].
-    val shift = remember { SlideShift() }
-    ProvideSlidingBackdrops(shift) {
-        content(shown, appear, !open)
-    }
+    content(shown, appear, !open)
 }
 
 /** How far past its widest the sidebar can be stretched at most, in dp; it gives far less. */
@@ -433,8 +425,7 @@ internal fun NoteSettingsSidebar(
     closing: Boolean = false,
 ) {
     val latestNav by rememberUpdatedState(nav)
-    val moves = rememberLiquidGlassEffectsAllowed() && !LocalSkinSettings.current.highContrast
-    val material = LocalSkin.current == Skin.MATERIAL
+    val moves = rememberMotionAllowed() && !LocalSkinSettings.current.highContrast
     BackHandler(enabled = !closing) { if (latestNav.canGoBack) onNav(latestNav.back()) else onClose() }
     SettingsSidebarFrame(
         title = nav.current.title,
@@ -449,15 +440,15 @@ internal fun NoteSettingsSidebar(
         AnimatedContent(targetState = nav, contentKey = { it.current },
             transitionSpec = {
                 if (!moves) EnterTransition.None togetherWith ExitTransition.None
-                else if (material) {
+                else {
                     val direction = materialPageDirection(initialState.stack.size, targetState.stack.size)
-                    (slideInHorizontally(sidebarOpenFor<androidx.compose.ui.unit.IntOffset>(Skin.MATERIAL)) {
+                    (slideInHorizontally(sidebarOpen<androidx.compose.ui.unit.IntOffset>()) {
                         (it * 0.06f * direction).toInt()
                     } + fadeIn(MaterialMotion.effects())) togetherWith
-                        (slideOutHorizontally(sidebarCloseFor<androidx.compose.ui.unit.IntOffset>(Skin.MATERIAL)) {
+                        (slideOutHorizontally(sidebarClose<androidx.compose.ui.unit.IntOffset>()) {
                             (-it * 0.04f * direction).toInt()
                         } + fadeOut(MaterialMotion.effects()))
-                } else fadeIn(Ui.Motion.tween()) togetherWith fadeOut(Ui.Motion.tween())
+                }
             }, label = "settings page") { target ->
             val page = target.current
             val content: @Composable () -> Unit = {

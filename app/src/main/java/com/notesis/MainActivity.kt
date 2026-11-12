@@ -291,9 +291,6 @@ class MainActivity : ComponentActivity() {
         setContent {
             // Hoisted to the top so a change repaints every bar at once rather
             // than whichever screen happened to be looking.
-            var skin by remember {
-                mutableStateOf(prefs.skin)
-            }
             var look by remember { mutableStateOf(lookStore.load()) }
             var settingsOpen by remember { mutableStateOf(false) }
             // The fastest refresh rate the panel has, unless turned off or saving power.
@@ -308,8 +305,8 @@ class MainActivity : ComponentActivity() {
                 AlertDialog(
                     onDismissRequest = { JankWatch.answered(this@MainActivity, turnOn = false) },
                     title = { Text("Turn on Light mode?") },
-                    text = { Text("This tablet is dropping frames. Light mode draws the glass plain and solid, " +
-                        "keeps the lens still and does less in the background, so writing and scrolling keep up. " +
+                    text = { Text("This tablet is dropping frames. Light mode shows menus and panels without motion " +
+                        "and does less in the background, so writing and scrolling keep up. " +
                         "It can be turned off again in Settings.") },
                     confirmButton = { TextButton(onClick = { JankWatch.answered(this@MainActivity, turnOn = true) }) { Text("Turn on") } },
                     dismissButton = { TextButton(onClick = { JankWatch.answered(this@MainActivity, turnOn = false) }) { Text("Not now") } },
@@ -321,9 +318,8 @@ class MainActivity : ComponentActivity() {
             // the accent changes: forty tones is forty bisections, which is
             // nothing once and not nothing on every recomposition.
             val darkMode = look.themeMode == AppThemeMode.DARK
-            val scheme = remember(skin, look.accent, look.highContrast, darkMode, look.liquidStyle,
-                look.mornye.accent, look.ios.accent, look.dynamicColor, look.amoled) {
-                lookScheme(this@MainActivity, skin, look)
+            val scheme = remember(look.accent, look.highContrast, darkMode, look.dynamicColor, look.amoled) {
+                lookScheme(this@MainActivity, look)
             }
             // edge-to-edge 시스템 바의 아이콘도 앱 모드와 동시에 바꿉니다.
             SideEffect {
@@ -332,24 +328,19 @@ class MainActivity : ComponentActivity() {
                     isAppearanceLightNavigationBars = !darkMode
                 }
             }
-            // The skin reaches Material's own components through the theme, so
-            // dialogs, menus and cards follow it without a single call site
-            // knowing a skin exists.
+            // The look reaches Material's own components through the theme, so
+            // dialogs, menus and cards follow it without a call site knowing.
             MaterialTheme(
-                colorScheme = skinColors(scheme, skin, look),
+                colorScheme = skinColors(scheme, look),
                 typography = remember { chromeTypography() },
-                shapes = skinShapes(skin),
+                shapes = Ui.shapes,
             ) {
-            ProvideSkin(skin, look) {
-            // A look picker that offers Liquid glass's recipes sets the recipe through this.
+            ProvideSkin(look) {
             // The system's largest font sizes, kept to one the bars, buttons
             // and panels have room for: past it their words were cut off
             // rather than the controls growing, most of all on a phone.
             val systemDensity = LocalDensity.current
-            CompositionLocalProvider(LocalLiquidStyleChange provides { style ->
-                look = look.copy(liquidStyle = style)
-                lookStore.save(look)
-            }, LocalDensity provides remember(systemDensity, UiScale.scale) { scaledDensity(systemDensity, UiScale.scale) }) {
+            CompositionLocalProvider(LocalDensity provides remember(systemDensity, UiScale.scale) { scaledDensity(systemDensity, UiScale.scale) }) {
                 var openNote by remember { mutableStateOf<NoteMeta?>(null) }
                 // Lives here rather than in the list, which leaves composition
                 // while a note is open and used to come back at the top level.
@@ -461,12 +452,7 @@ class MainActivity : ComponentActivity() {
                 } else if (settingsOpen) {
                     BackHandler { settingsOpen = false }
                     SkinSettingsScreen(
-                        skin = skin,
                         settings = look,
-                        onSkin = {
-                            skin = it
-                            prefs.skin = it
-                        },
                         onChange = {
                             look = it
                             lookStore.save(it)
@@ -505,10 +491,6 @@ class MainActivity : ComponentActivity() {
                     HomeLookTheme {
                     HomeScreen(
                         store = store,
-                        onSkin = {
-                            skin = it
-                            prefs.skin = it
-                        },
                         onSettings = { settingsOpen = true },
                         onOpenDocument = { pickedDocument = it },
                         onOpen = { incomingImportedNote = null; markdownBack.clear(); requestOpen(it) },
@@ -549,11 +531,6 @@ class MainActivity : ComponentActivity() {
                     NoteScreen(
                         store = store,
                         note = note,
-                        skin = skin,
-                        onSkin = {
-                            skin = it
-                            prefs.skin = it
-                        },
                         onOpenNote = { requestOpen(it) },
                         onLookChange = { look = it; lookStore.save(it) },
                         onBack = { closeNote(note) },
@@ -710,7 +687,6 @@ private fun android.content.Context.recordCrashes() {
 @Composable
 private fun HomeScreen(
     store: NoteStore,
-    onSkin: (Skin) -> Unit,
     onSettings: () -> Unit,
     onOpenDocument: (ViewerRequest) -> Unit,
     onOpen: (NoteMeta) -> Unit,
@@ -1268,25 +1244,6 @@ private fun HomeScreen(
         }
     }
 
-    // The list screen had no backdrop at all, so glass here was a low alpha over
-    // an opaque background - translucent and not frosted, which is the whole of
-    // why the skin looked like it had not been applied outside a note.
-    val look = LocalSkinSettings.current
-    val currentSkin = LocalSkin.current
-    val backdrop = rememberBackdrop(
-        active = currentSkin == Skin.GLASSMORPHISM && BACKDROP_DRAWABLE &&
-            (look.blur > 0.1f || look.vibrancy > 0.01f),
-    )
-    // Not while the app runs light, nor where nothing can draw through it:
-    // the panes go solid and nothing reads it, so the library is not drawn a
-    // second time for them.
-    val liquidBackdrop = if (currentSkin.isRefractive && BACKDROP_DRAWABLE && !InteractionGovernor.observedPowerSave) {
-        rememberLiquidGlassBackdrop()
-    } else null
-    // Menus open in windows of their own; seen through them, the library has to
-    // be put back where it is on screen, or they show some other part of it.
-    var homeLayerOrigin by remember { mutableStateOf(Offset.Zero) }
-    val homePopupBackdrop = remember(liquidBackdrop) { liquidBackdrop?.let { GlassPopupBackdrop(it) { homeLayerOrigin } } }
     val searchFocus = remember { androidx.compose.ui.focus.FocusRequester() }
     // Opened again by hand while the list is scrolled; each round button its own.
     var iconsOpen by remember { mutableStateOf(false) }
@@ -1297,14 +1254,9 @@ private fun HomeScreen(
     DisposableEffect(Unit) { onDispose { PerfRecorder.homeScrolling = false } }
     // How fast the library is scrolling, for its trace of motion blur.
     val homeScrollSpeed = rememberScrollSpeed()
-    // The frost under the glassmorphism look holds the library as it was while
-    // the grid moves, as the liquid glass does: recorded again on every frame of
-    // a fling, every pane over it was blurred again with it.
-    LaunchedEffect(backdrop, gridState) {
-        snapshotFlow { gridState.isScrollInProgress }.collect {
-            backdrop.paused = it
-            PerfRecorder.homeScrolling = it
-        }
+    // Told to a performance recording, which sorts its frames by what was going on.
+    LaunchedEffect(gridState) {
+        snapshotFlow { gridState.isScrollInProgress }.collect { PerfRecorder.homeScrolling = it }
     }
     val libraryTiles = remember { LibraryTiles() }
     var edgeSpeed by remember { mutableFloatStateOf(0f) }
@@ -1375,19 +1327,8 @@ private fun HomeScreen(
         searchOpen = true
         runCatching { searchFocus.requestFocus() }
     }
-    CompositionLocalProvider(
-        LocalBackdrop provides backdrop,
-        // Placed by the recording's place on screen, as the note screen's bars are:
-        // the recording is made by hand (so it can pause while the list scrolls)
-        // and so carries no position of its own for the glass to line up with -
-        // given the bare recording, the bars, search and filter bar lost their glass.
-        LocalLiquidGlassBackdrop provides if (currentSkin.isRefractive) homePopupBackdrop else null,
-        // The menus opened from inside the list look at the page through this.
-        LocalGlassPopupBackdrop provides if (currentSkin.isRefractive) homePopupBackdrop else null,
-    ) {
-    // The clock floats over the library too, on the same glass as its bars.
+    // The clock floats over the library too, on the same surface as its bars.
     Box(Modifier.fillMaxSize()) {
-    GlassWarmup()
     Scaffold(
         // Under the header too, the library's own ground colour, not the theme's.
         containerColor = homeColor?.let { Color(it) } ?: homeLookTop() ?: MaterialTheme.colorScheme.background,
@@ -1419,8 +1360,7 @@ private fun HomeScreen(
             val button = LIBRARY_SEARCH_HEIGHT
             // No layer switched on as the grid starts to move: that was a
             // header-sized texture allocated and filled on the first frame of
-            // every scroll. The backdrop it looks at is held while the grid
-            // moves, so the glass has nothing new to blur anyway.
+            // every scroll.
             Box(Modifier.fillMaxWidth()) {
                 // A quarter of the header's height of fade at the very top, over the status bar.
                 Box(Modifier.matchParentSize()) {
@@ -1438,7 +1378,7 @@ private fun HomeScreen(
                         // to go back to, and an arrow that does nothing is a lie.
                         if ((folder.isNotBlank() || smartOpen != null) && !selectionMode) {
                             Box(Modifier.size(button), contentAlignment = Alignment.Center) {
-                                Box(Modifier.matchParentSize().skinMaterial(CircleShape, role = ChromeRole.TOOLBAR))
+                                Box(Modifier.matchParentSize().skinMaterial(CircleShape))
                                 IconButton(onClick = { if (smartOpen != null) smartOpen = null else folder = folderParent(folder) }) {
                                     Icon(Reicons.ArrowBack, contentDescription = "Back")
                                 }
@@ -1457,7 +1397,7 @@ private fun HomeScreen(
                             // them as they fold and spreading as they open: past its
                             // width it thins a little, as a drop pulled long does.
                             Box(Modifier.matchParentSize().graphicsLayer { scaleY = glassSquash(iconsFold()) }
-                                .skinMaterial(capsule, role = ChromeRole.TOOLBAR))
+                                .skinMaterial(capsule))
                             Row(Modifier.height(button), verticalAlignment = Alignment.CenterVertically) {
                                 Row(
                                     Modifier.foldTowardsEnd(iconsFold)
@@ -1653,29 +1593,11 @@ private fun HomeScreen(
             }
         },
     ) { padding ->
-        // Nothing inside the recording may sample it; see NoBackdrop.
-        // Nothing inside the recording may sample it; see NoBackdrop.
-        CompositionLocalProvider(
-            LocalBackdrop provides NoBackdrop,
-            LocalLiquidGlassBackdrop provides null,
-        ) {
         Box(
             Modifier
                 .fillMaxSize()
-                .graphicsLayer()
-                .recordBackdrop(backdrop)
-                .onGloballyPositioned { homeLayerOrigin = it.positionOnScreen() }
-                .then(
-                    if (liquidBackdrop != null) {
-                        // Not while the list scrolls: recording the whole library
-                        // every frame of a fling, for the glass at the top to
-                        // blur, was most of what made it stutter. The glass
-                        // keeps the last frame and catches up when it stops.
-                        Modifier.captureLiquidGlassBackdrop(liquidBackdrop, paused = { gridState.isScrollInProgress || ChromeMotion.busy })
-                    } else {
-                        Modifier
-                    },
-                ),
+                // A layer of its own, so a redraw of the bars over it is not a redraw of the list.
+                .graphicsLayer(),
         ) {
         val ground = homeLookColors()?.takeIf { homeColor == null }
         Box(
@@ -2062,7 +1984,7 @@ private fun HomeScreen(
                     style = MaterialTheme.typography.labelLarge)
             }
         }
-        // Floating bars take the skin's own corner, the toolbar's, so every
+        // Floating bars take the chrome's own corner, the toolbar's, so every
         // bar over the page or the list is the same shape.
         if (selectionMode) SkinSurface(
             modifier = Modifier.align(Alignment.BottomCenter)
@@ -2107,11 +2029,8 @@ private fun HomeScreen(
             }
         }
         }
-        }
     }
     // What the library shows: everything in its sections, or one kind alone.
-    // Outside the list's recording, so its glass looks at the notes under it,
-    // as the toolbar's does.
     if (!selectionMode) LibraryFilterBar(
         selected = libraryFilter,
         onSelect = { libraryFilter = it; homeStore.libraryFilter = it },
@@ -2125,14 +2044,6 @@ private fun HomeScreen(
             target = { coachTargets.bounds[CoachTarget.GUIDE] },
             onDone = {
                 Onboarding.finishWelcome(context)
-                onboarding = Onboarding.step(context)
-            },
-        )
-        OnboardingStep.SKIN -> SkinChooser(
-            current = currentSkin,
-            onSkin = onSkin,
-            onDone = {
-                Onboarding.finishSkin(context)
                 onboarding = Onboarding.step(context)
             },
         )
@@ -2154,7 +2065,6 @@ private fun HomeScreen(
             }
         },
     )
-    }
     }
 
     busy?.let { label ->
@@ -2934,56 +2844,22 @@ internal fun NoteCard(
     // timestamp so a replaced picture is read again. Decoded whole in
     // composition, one per card as it scrolled in, it made a long list stutter.
     val preview = rememberFileBitmap(note.thumbnail, NOTE_CARD_PICTURE_PX)
-    val skin = LocalSkin.current
     val cardShape = Ui.Shape.card
     // A selected card sits back a little inside its ring, as Photos marks a pick.
     val sink by androidx.compose.animation.core.animateFloatAsState(if (selected) 0.95f else 1f, Ui.Motion.spring(), label = "cardSelected")
-    // Glass under the glass skin, drawn without sampling the ground; see cardGlass.
-    val glass = skin.isRefractive
     Card(
         modifier = Modifier
             // No offscreen layer per card: each one was a texture to allocate
             // and fill as the card scrolled in, a stall on every new row, for
             // a rim and a picture the GPU draws again for almost nothing.
             .graphicsLayer { scaleX = sink; scaleY = sink }
-            .then(if (glass) Modifier.cardGlass(cardShape) else Modifier)
             .then(if (selected) Modifier.border(2.5.dp, MaterialTheme.colorScheme.primary, cardShape)
-                else if (skin == Skin.MATERIAL) Modifier.border(0.75.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f), cardShape)
-                else Modifier),
+                else Modifier.border(0.75.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f), cardShape)),
         onClick = onOpen,
         shape = cardShape,
-        // No shadow on glass. A shadow is drawn under the whole card, not only
-        // around it, and the card's body is translucent - so the strip under
-        // the thumbnail, which is the only part you can see through, showed the
-        // shadow beneath it: dark at the edges, clear in the middle. That pale
-        // patch under every note's name was a shadow seen from the front.
-        // And none in any state: a card's elevation rises when it is pressed,
-        // focused, or a pen hovers over it, and that lifted shadow showed
-        // through the strip as a pale box set inside it, cut off at the
-        // thumbnail.
-        elevation = if (skin == Skin.MATERIAL) CardDefaults.cardElevation(defaultElevation = 1.dp)
-            else CardDefaults.cardElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
-        colors = if (skin == Skin.MATERIAL) {
-            CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
-                contentColor = MaterialTheme.colorScheme.onSurface)
-        } else if (glass) {
-            CardDefaults.cardColors(containerColor = Color.Transparent)
-        } else if (skin.isRefractive) {
-            // Cards are themselves inside the backdrop recording and must not
-            // sample that recording recursively. Asking for a liquid lens here
-            // therefore entered its opaque fallback and drew the thick grey
-            // frame seen around the title strip.
-            CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
-            )
-        } else {
-            // The card is mostly its own picture, so it goes only slightly
-            // translucent - enough to belong with the glass, not so much that
-            // the thumbnail has to compete with the wallpaper behind it.
-            CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
-            )
-        },
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+            contentColor = MaterialTheme.colorScheme.onSurface),
     ) {
         // The page sits inset in the card, rounded as the card is, with the
         // name and date under it.
@@ -3208,14 +3084,6 @@ internal fun NoteCard(
     }
 }
 
-/** Picks how the chrome is dressed, on the same panel and list as everywhere else the look is chosen. */
-@Composable
-private fun SkinButton(skin: Skin, onSkin: (Skin) -> Unit) {
-    var open by remember { mutableStateOf(false) }
-    AppIconButton(onClick = { open = true }, icon = AppIcons.skin, contentDescription = "Look")
-    if (open) SkinPickerPanel(skin, onSkin, onDismiss = { open = false })
-}
-
 /**
  * Reads every page of a note. Pages are loaded one at a time and let go again,
  * because a 120 page book indexed all at once is a 120 page book in memory.
@@ -3299,7 +3167,7 @@ private fun FolderDialog(
 }
 
 /**
- * A floating button in the skin the rest of the chrome is wearing.
+ * A floating button, as Material draws them.
  *
  * Material's own FAB paints its container itself, so the three buttons in the
  * corner of the note list stayed opaque slabs while every other pane on the
@@ -3318,41 +3186,13 @@ private fun GlassFab(
 ) {
     val side = if (small) 40.dp else 56.dp
     val iconModifier = Modifier.graphicsLayer { rotationZ = iconRotation }
-    if (LocalSkin.current == Skin.MATERIAL) {
-        if (small) {
-            SmallFloatingActionButton(onClick = onClick, modifier = modifier) {
-                AppIcon(icon, contentDescription = contentDescription, modifier = iconModifier)
-            }
-        } else {
-            FloatingActionButton(onClick = onClick, modifier = modifier) {
-                AppIcon(icon, contentDescription = contentDescription, modifier = iconModifier)
-            }
-        }
-        return
-    }
-    if (LocalSkin.current.isRefractive) {
-        LiquidGlassButton(
-            onClick = onClick,
-            modifier = modifier.size(side),
-            contentPadding = PaddingValues(0.dp),
-            containerColor = Color.Transparent,
-            contentColor = MaterialTheme.colorScheme.onSurface,
-            drawBorder = false,
-            glassShadowElevation = 3.dp,
-        ) {
+    if (small) {
+        SmallFloatingActionButton(onClick = onClick, modifier = modifier) {
             AppIcon(icon, contentDescription = contentDescription, modifier = iconModifier)
         }
     } else {
-        // The theme's FAB corners: card for the big one, control for the
-        // small, so glass and Material buttons have the same outline.
-        SkinSurface(modifier = modifier.size(side), corner = if (small) Ui.Corner.control else Ui.Corner.card) {
-            // Clickable inside the surface, so the ripple is clipped to the corner.
-            Box(
-                Modifier.fillMaxSize().clickable(onClick = onClick),
-                contentAlignment = Alignment.Center,
-            ) {
-                AppIcon(icon, contentDescription = contentDescription, modifier = iconModifier)
-            }
+        FloatingActionButton(onClick = onClick, modifier = modifier) {
+            AppIcon(icon, contentDescription = contentDescription, modifier = iconModifier)
         }
     }
 }
@@ -4130,12 +3970,14 @@ private fun LatencyHud(report: () -> String, modifier: Modifier = Modifier) {
     Text(text, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = modifier)
 }
 
+/** A boundary for the compiler: what is inside is compiled as a function of its own. */
+@Composable
+private fun NoteScreenBody(content: @Composable () -> Unit) = content()
+
 @Composable
 private fun NoteScreen(
     store: NoteStore,
     note: NoteMeta,
-    skin: Skin,
-    onSkin: (Skin) -> Unit,
     onOpenNote: (NoteMeta) -> Unit,
     onLookChange: (SkinSettings) -> Unit,
     onBack: () -> Unit,
@@ -4639,7 +4481,7 @@ private fun NoteScreen(
     val barCrowdsBack = crowdsAcross && !barVertical
     val barRoom = if (barCrowdsBack) acrossRoom else maxBarWidth
     val barClearStartPx = with(density) { if (barCrowdsBack) backReserve.toPx() else 0f }
-    val toolbarEffects = rememberLiquidGlassEffectsAllowed() && !LocalSkinSettings.current.highContrast
+    val toolbarEffects = rememberMotionAllowed() && !LocalSkinSettings.current.highContrast
     // While the Functions button is dragged the bar's width follows the finger
     // (see BarLiveResize); let go, it settles on its size with the bar's spring.
     var liveBarWidth by remember { mutableStateOf<Dp?>(null) }
@@ -5162,8 +5004,6 @@ private fun NoteScreen(
             onBack = onBack,
             pageLabel = "${currentPage + 1} / $pageCount",
             onPalette = { showPalette = true },
-            skin = skin,
-            onSkin = onSkin,
             docked = barDocked && previewLevel == null,
             onSettings = { openSettings(it) },
             onDragBar = { delta ->
@@ -5184,32 +5024,10 @@ private fun NoteScreen(
         }
     }
 
-    // The chrome looks through whatever is drawn under it, so the page records
-    // itself once a frame - but only while something actually bends or blurs it.
-    val look = LocalSkinSettings.current
-    // Not in battery saver: the frost is decoration, and it is the page drawn a
-    // second time. The panes go solid instead (see SkinSurface); the setting
-    // itself is left as chosen and the frost is back when saving ends.
-    val backdrop = rememberBackdrop(
-        active = skin == Skin.GLASSMORPHISM && BACKDROP_DRAWABLE &&
-            (look.blur > 0.1f || look.vibrancy > 0.01f) &&
-            !InteractionGovernor.observedPowerSave,
-    )
-    // Running light (battery saver, or a slower tablet) the panes are solid
-    // and the lens still; the page is then not recorded for them at all, and
-    // neither where the system cannot draw through it.
-    val liquidBackdrop = if (skin.isRefractive && BACKDROP_DRAWABLE && !InteractionGovernor.observedPowerSave) {
-        rememberLiquidGlassBackdrop()
-    } else null
-    var drawingPage by remember { mutableStateOf(false) }
-    var pageLayerOrigin by remember { mutableStateOf(Offset.Zero) }
-    val popupBackdrop = remember(liquidBackdrop) { liquidBackdrop?.let { GlassPopupBackdrop(it) { pageLayerOrigin } } }
     var movingPage by remember { mutableStateOf(false) }
-    CompositionLocalProvider(
-        LocalBackdrop provides backdrop,
-        LocalLiquidGlassBackdrop provides if (skin.isRefractive) popupBackdrop else null,
-        LocalGlassPopupBackdrop provides if (skin == Skin.LIQUID_GLASS) popupBackdrop else null,
-    ) {
+    // Its own function, not part of this one: everything under it is a
+    // screen's worth of code, more than one method may hold.
+    NoteScreenBody {
     Row(Modifier.fillMaxSize().drawWithContent {
         drawContent()
         draftWebWidth?.let { draft ->
@@ -5252,93 +5070,12 @@ private fun NoteScreen(
             .onGloballyPositioned { containerOrigin = it.positionInWindow() },
     ) {
         val ready = opened
-        // Only the page is recorded, never the chrome above it. A pane that
-        // refracts draws the layer, so a pane inside the recording puts the
-        // layer inside itself - the render tree becomes a cycle and the
-        // RenderThread walks it until the stack runs out.
-        // The ground goes inside the recording, not over it. Recorded on a
-        // transparent one, the layer is only the page's content, and a pane
-        // draws that blurred over the sharp copy already on screen - the same
-        // light twice, which is the wash that made the middle of every panel
-        // paler than the page beside it.
-        // What the glass sees is the ground and the page the canvas has drawn,
-        // never the canvas view itself: that view holds the wet-ink surfaces,
-        // and a surface drawn into a recording moves to wherever the glass
-        // draws that recording - the ink then showed beside the pen until it
-        // lifted. Turned with the note, as the view is below.
-        // The turn each recording was made at. Pausing the glass while the page
-        // is busy is right for ink and scrolling, whose frost a moment late
-        // nobody sees; a turned note is the whole picture at a new angle, and
-        // the glass showed the old one until the screen went idle, or kept it
-        // when nothing else came along to ask for a redraw.
-        val recordedTurn = remember { floatArrayOf(Float.NaN) }
-        val turnStale: () -> Boolean = { recordedTurn[0] != noteRotation }
-        val pageBackdrop: DrawScope.() -> Unit = {
-            recordedTurn[0] = noteRotation
-            drawRect(desk)
-            // Split, every part's page, each where its part is, so the glass over
-            // any of them shows that part and not this note's page or bare desk.
-            // Read here, in the draw, so a change of parts records again.
-            val parts = split?.layout(SplitRect(0f, 0f, size.width, size.height), splitGap)
-            val view = canvas
-            if (view != null) {
-                val own = parts?.get(0)
-                // The canvas turns its own page about its middle; the glass sees it the same way.
-                withTransform({
-                    if (own != null) {
-                        // Each part turns about its own middle, as its canvas does.
-                        clipRect(own.left, own.top, own.right, own.bottom)
-                        translate(own.left, own.top)
-                        rotate(noteRotation, Offset(own.width / 2f, own.height / 2f))
-                    } else {
-                        rotate(noteRotation)
-                    }
-                }) {
-                    drawIntoCanvas { view.drawBackdrop(it.nativeCanvas) }
-                }
-            }
-            parts?.forEach { (id, r) ->
-                val pane = paneViews[id] ?: return@forEach
-                if (id == 0) return@forEach
-                withTransform({
-                    clipRect(r.left, r.top, r.right, r.bottom)
-                    translate(r.left, r.top)
-                    rotate(paneRotations[id] ?: 0f, Offset(r.width / 2f, r.height / 2f))
-                }) {
-                    drawIntoCanvas { pane.drawBackdrop(it.nativeCanvas) }
-                }
-            }
-        }
         Box(
             Modifier
                 .fillMaxSize()
-                // A layer of its own: on the window's root list, any small
-                // redraw anywhere (a clock tick, a spinner) re-ran both page
-                // recordings and every pane of glass sampling them.
+                // A layer of its own, so a small redraw elsewhere in the
+                // window (a clock tick, a spinner) is not a redraw of the page.
                 .graphicsLayer()
-                .recordBackdrop(backdrop, pageBackdrop, stale = turnStale)
-                .onGloballyPositioned { pageLayerOrigin = it.positionOnScreen() }
-                .then(
-                    if (liquidBackdrop != null) {
-                        Modifier.captureLiquidGlassBackdrop(
-                            liquidBackdrop,
-                            // Any canvas busy - this one, or the reference panel's -
-                            // and through the short settle after: the panes keep the
-                            // last recording until the screen is idle again.
-                            // Also while a popup or sidebar moves: the page behind it is
-                            // not changing, and re-recording it every frame is the
-                            // heaviest thing a 60 Hz frame of that motion would do.
-                            paused = { !turnStale() &&
-                                (drawingPage || movingPage || InteractionGovernor.observed != Interaction.IDLE ||
-                                    ChromeMotion.busy ||
-                                    // Another app's window in use over or beside this one: hold the last frost.
-                                    (sharedScreen && !WindowFocus.focused)) },
-                            source = pageBackdrop,
-                        )
-                    } else {
-                        Modifier
-                    },
-                )
                 .background(desk),
         ) {
         if (ready == null) {
@@ -5411,14 +5148,9 @@ private fun NoteScreen(
                     }
                 },
                 update = { view ->
-                    // The frost stops while the pen is down; see Backdrop.paused.
-                    view.onDrawingChanged = { drawing ->
-                        drawingPage = drawing
-                        backdrop.paused = drawing || movingPage
-                    }
+                    view.onDrawingChanged = null
                     view.onViewportInteractionChanged = { moving ->
                         movingPage = moving
-                        backdrop.paused = moving || drawingPage
                         if (!moving) zoom = liveZoom[0]
                     }
                     view.predictionEnabled = prediction
@@ -6101,7 +5833,7 @@ private fun NoteScreen(
                     )
                 },
                 appearance = {
-                    AppearanceSettings(skin, LocalSkinSettings.current, onSkin, onLookChange,
+                    AppearanceSettings(LocalSkinSettings.current, onLookChange,
                         toolbarSize = toolbarSize, onToolbarSize = { setToolbarSize(it) })
                 },
                 touch = { TouchGestureSettings(gestures) { setGestures(it) } },
@@ -7715,8 +7447,8 @@ private fun NoteScreen(
             }
         }
     }
-
     }
+
 
     if (webPopup && webUrl != null) {
         Dialog(
@@ -8821,9 +8553,8 @@ private fun SelectionActions(
 /**
  * A page-scale scrollbar: the whole note is reachable with one short drag.
  *
- * The visible thumb is deliberately smaller than its 52dp touch target. It
- * borrows the current skin's surface, so Liquid Glass gets the same refracting
- * capsule as the rest of the chrome without making the rail visually heavy.
+ * The visible thumb is deliberately smaller than its 52dp touch target, a
+ * capsule of the chrome's own surface, so the rail is not visually heavy.
  */
 @Composable
 private fun PageScrubber(
@@ -8839,17 +8570,12 @@ private fun PageScrubber(
     val fraction = page.toFloat() / (pageCount - 1).toFloat()
     val density = LocalDensity.current
     val scheme = MaterialTheme.colorScheme
-    val liquid = LocalSkin.current.isRefractive
-    // Liquid glass draws the horizontal slider stood on end, whose lens
-    // centre stops [GLASS_SLIDER_START] short of each end. The page mapping
-    // uses the same reach so the finger and the lens stay on one line.
-    val liquidSkin = LocalSkin.current == Skin.LIQUID_GLASS
-    val thumbHeight = if (liquidSkin) GLASS_SLIDER_START * 2 else 52.dp
+    val thumbHeight = 52.dp
     val thumbHeightPx = with(density) { thumbHeight.toPx() }
     var trackHeight by remember { mutableIntStateOf(0) }
     var dragging by remember { mutableStateOf(false) }
     val thumbWidth by animateDpAsState(
-        targetValue = if (dragging && liquid) 40.dp else 34.dp,
+        targetValue = 34.dp,
         animationSpec = Ui.Motion.tween(),
         label = "page scrubber width",
     )
@@ -8907,20 +8633,13 @@ private fun PageScrubber(
             },
         contentAlignment = Alignment.TopCenter,
     ) {
-        if (liquidSkin) {
-            LiquidGlassPageRail(
-                target = if (dragging && dragFraction >= 0f) dragFraction else fraction,
-                held = dragging || pressed,
-                label = "${page + 1}",
-                modifier = Modifier.matchParentSize(),
-            )
-        } else Box(
+        Box(
             Modifier
                 .align(Alignment.Center)
-                .width(if (liquid) 6.dp else 4.dp)
+                .width(4.dp)
                 .fillMaxHeight()
                 .clip(CircleShape)
-                .background(scheme.onSurface.copy(alpha = if (liquid) 0.16f else 0.12f)),
+                .background(scheme.onSurface.copy(alpha = 0.12f)),
         ) {
             if (shown > 0f) {
                 Box(
@@ -8928,7 +8647,7 @@ private fun PageScrubber(
                         .fillMaxWidth()
                         .fillMaxHeight(shown)
                         .clip(CircleShape)
-                        .background(scheme.primary.copy(alpha = if (liquid) 0.84f else 1f)),
+                        .background(scheme.primary),
                 )
             }
         }
@@ -8991,11 +8710,7 @@ private fun PageScrubber(
                 }
             }
         }
-        // Liquid glass drew its own lens with the rail above: solid at rest,
-        // glass only while held, exactly as the horizontal slider does.
-        if (!liquidSkin) {
-            SkinSurface(modifier = thumbPlace, corner = 100.dp) { pageLabel() }
-        }
+        SkinSurface(modifier = thumbPlace, corner = 100.dp) { pageLabel() }
     }
 }
 
@@ -9027,19 +8742,10 @@ private const val THUMBNAIL_RETRY_MS = 80L
 /** Within this many degrees of a quarter turn, a turned note settles onto it. */
 private const val ROTATION_SNAP_DEGREES = 4f
 
-/**
- * The body of a chip in a panel. Solid under Material, and under glass a wash
- * that lets the panel through: a white card inside a pane of glass reads as a
- * Material dialog that has been dropped into the wrong app.
- */
+/** The body of a chip in a panel: the accent's container when chosen, else the lowest surface. */
 @Composable
-internal fun chipFill(selected: Boolean): Color = when {
-    selected -> MaterialTheme.colorScheme.primaryContainer
-    LocalSkin.current == Skin.MATERIAL -> MaterialTheme.colorScheme.surfaceContainerLowest
-    // A white wash on a dark panel greys it and pales the light text in it.
-    isDarkTheme() -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f)
-    else -> Color.White.copy(alpha = 0.34f)
-}
+internal fun chipFill(selected: Boolean): Color =
+    if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLowest
 
 /** Whether the app is in its dark theme. */
 @Composable
@@ -9247,8 +8953,6 @@ private fun Toolbar(
     shapeKind: ShapeKind,
     straightLine: Boolean,
     onToggleStraightLine: () -> Unit,
-    skin: Skin,
-    onSkin: (Skin) -> Unit,
     docked: Boolean,
     canUndo: Boolean,
     canRedo: Boolean,
@@ -9358,7 +9062,6 @@ private fun Toolbar(
                             .widthIn(min = 52.dp)
                             .padding(horizontal = 6.dp, vertical = 10.dp),
                     )
-                    TopRowItem.SKIN -> SkinButton(skin, onSkin)
                     // The clock, the calculator, the to-do list and the calendar.
                     TopRowItem.PLANNER -> ToolsMenuButton()
                     TopRowItem.GESTURES -> AppIconButton(onClick = { onSettings(SettingsPage.TOUCH) }, icon = AppIcons.touch,
@@ -9374,7 +9077,7 @@ private fun Toolbar(
             }
         }
     }
-    LiquidGlassToolbar(sizeLevel, onSizeLevel, mode,
+    FloatingToolbar(sizeLevel, onSizeLevel, mode,
             // A preview of the bar is not where the tour should point.
             coachTargets = if (preview) null else NoteCoachTargets,
             // A preview of the tools shows them across, as they are arranged.
@@ -9531,18 +9234,6 @@ private fun ToolButton(
         selected && tint != null -> readableChrome(tint, MaterialTheme.colorScheme.surfaceContainerHighest)
         selected -> MaterialTheme.colorScheme.primary
         else -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
-    if (selected && LocalSkin.current.isRefractive) {
-        LiquidGlassButton(
-            onClick = onClick,
-            modifier = Modifier.size(Ui.Size.button),
-            contentPadding = PaddingValues(0.dp),
-            containerColor = Color.Transparent,
-            contentColor = contentColor,
-        ) {
-            Icon(icon, contentDescription = label)
-        }
-        return
     }
     IconButton(
         onClick = onClick,

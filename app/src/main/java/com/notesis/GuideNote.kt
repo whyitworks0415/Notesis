@@ -154,8 +154,8 @@ internal object GuideNote {
                 "so an AI chat can sit next to your notes."),
         )),
         GuidePage("Make it yours", listOf(
-            Block.Body("Settings › Appearance: Material, Glassmorphism or\n" +
-                "Liquid glass, light or dark, icons, colours and corners."),
+            Block.Body("Settings › Appearance: light or dark,\n" +
+                "icons, colours and corners."),
             Block.Body("Settings › Customize toolbar: which tools each bar size shows,\n" +
                 "and in what order."),
             Block.Tip("Back up a note, or all of them, from the home screen menu.\n" +

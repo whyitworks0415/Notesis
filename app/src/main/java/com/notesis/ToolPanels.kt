@@ -64,11 +64,10 @@ internal fun ToolPanelHost(panel: ToolPanel) {
         onOutside = close,
         maxWidth = 480.dp,
         heading = {
-            LiquidSegmentedControl(
+            SegmentedControl(
                 segments = ToolPanel.entries.map { it.label },
                 selectedIndex = panel.ordinal,
                 onSelected = { Planner.show(ToolPanel.entries[it]) },
-                useLiquidGlass = LocalSkin.current.isRefractive,
                 modifier = Modifier.weight(1f),
             )
         },

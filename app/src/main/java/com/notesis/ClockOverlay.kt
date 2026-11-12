@@ -11,6 +11,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -156,13 +157,10 @@ private fun BoxWithConstraintsScope.ClockPill(kind: PillKind) {
             // The panel grows out of the pill when the pill opens it.
             .onGloballyPositioned { pillCenter[0] = it.localToScreen(Offset(it.size.width / 2f, it.size.height / 2f)) }
             .then(if (alert) Modifier.alertGlow(scheme.primary) else Modifier)
-            .liquidGlass(
-                shape = shape,
-                surfaceColor = if (alert) scheme.primaryContainer else scheme.surface,
-                surfaceOpacity = if (alert) 0.92f else 0.72f,
-                useGlassStyle = false,
-            )
+            .skinShadow(shape)
             .clip(shape)
+            .background(if (alert) scheme.primaryContainer else scheme.surfaceContainerLow)
+            .border(0.75.dp, scheme.outlineVariant.copy(alpha = 0.6f), shape)
             .pointerInput(Unit) {
                 detectDragGestures(onDragEnd = { clock.saveButtonPlace() }) { change, drag ->
                     change.consume()

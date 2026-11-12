@@ -6,16 +6,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class OnboardingPlanTest {
-    @Test fun `a first run goes welcome, look, home marks, then nothing`() {
-        assertEquals(OnboardingStep.WELCOME, onboardingStep(false, false, false, animations = true))
-        assertEquals(OnboardingStep.SKIN, onboardingStep(true, false, false, animations = true))
-        assertEquals(OnboardingStep.COACH, onboardingStep(true, true, false, animations = true))
-        assertEquals(OnboardingStep.NONE, onboardingStep(true, true, true, animations = true))
+    @Test fun `a first run goes welcome, home marks, then nothing`() {
+        assertEquals(OnboardingStep.WELCOME, onboardingStep(false, false, animations = true))
+        assertEquals(OnboardingStep.COACH, onboardingStep(true, false, animations = true))
+        assertEquals(OnboardingStep.NONE, onboardingStep(true, true, animations = true))
     }
 
     @Test fun `without animations the welcome is left out`() {
-        assertEquals(OnboardingStep.SKIN, onboardingStep(false, false, false, animations = false))
-        assertEquals(OnboardingStep.NONE, onboardingStep(false, true, true, animations = false))
+        assertEquals(OnboardingStep.COACH, onboardingStep(false, false, animations = false))
+        assertEquals(OnboardingStep.NONE, onboardingStep(false, true, animations = false))
     }
 
     @Test fun `tips come with writing, one at a time`() {

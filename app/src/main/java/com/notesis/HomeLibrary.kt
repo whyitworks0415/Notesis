@@ -1,5 +1,12 @@
 package com.notesis
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -333,16 +340,57 @@ internal fun LibrarySectionToggle(
 @Composable
 internal fun LibraryFilterBar(selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifier) {
     val items = listOf(
-        LiquidGlassItem("All", Reicons.Category),
-        LiquidGlassItem("Folders", Reicons.Folder),
-        LiquidGlassItem("Notes", Reicons.Edit),
-        LiquidGlassItem("Markdown", Reicons.Description),
+        "All" to Reicons.Category,
+        "Folders" to Reicons.Folder,
+        "Notes" to Reicons.Edit,
+        "Markdown" to Reicons.Description,
     )
-    LiquidGlassBar(
-        items, selectedIndex = selected.coerceIn(0, items.lastIndex), onSelected = onSelect,
-        modifier = modifier.widthIn(max = 420.dp).fillMaxWidth(0.9f),
-        showLabels = true, surface = GlassBarSurface.LIQUID,
-    )
+    val chosen = selected.coerceIn(0, items.lastIndex)
+    val scheme = MaterialTheme.colorScheme
+    val corner = chromeCorner()
+    val barHeight = 64.dp
+    val padding = 6.dp
+    val cellHeight = barHeight - padding * 2
+    val pill = RoundedCornerShape(toolPillRadius(corner, barHeight, padding))
+    // A neutral wash, never the accent (see [selectionPillFill]).
+    val highlight = selectionPillFill(scheme.onSurface, scheme.surface.luminance() < 0.5f)
+    val moves = rememberMotionAllowed() && !LocalSkinSettings.current.highContrast
+    val slide = remember { Animatable(chosen.toFloat()) }
+    LaunchedEffect(chosen, moves) {
+        // Eased across and landing without a bounce (see [selectionEase]).
+        if (moves) slide.animateTo(chosen.toFloat(), selectionEase()) else slide.snapTo(chosen.toFloat())
+    }
+    BoxWithConstraints(modifier.widthIn(max = 420.dp).fillMaxWidth(0.9f).height(barHeight).selectableGroup()) {
+        val cell = (maxWidth - padding * 2).coerceAtLeast(1.dp) / items.size
+        Box(Modifier.matchParentSize().skinMaterial(RoundedCornerShape(corner))) {
+            // Moved in the draw, to the fraction of a pixel, so its slow end does not creep in steps.
+            Box(Modifier
+                .graphicsLayer {
+                    translationX = (padding + cell * slide.value.coerceIn(0f, items.lastIndex.toFloat())).toPx()
+                    translationY = padding.toPx()
+                }
+                .size(cell, cellHeight)
+                .background(highlight, pill))
+        }
+        EvenCells(vertical = false, Modifier.matchParentSize().padding(horizontal = padding)) {
+            items.forEachIndexed { index, (label, icon) ->
+                val on = index == chosen
+                val ink = if (on) scheme.primary else scheme.onSurface
+                Column(
+                    Modifier
+                        .semantics { this.selected = on }
+                        .clickable(role = Role.Tab, interactionSource = remember { MutableInteractionSource() },
+                            indication = null) { onSelect(index) },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(Ui.Space.hair, Alignment.CenterVertically),
+                ) {
+                    AppIcon(icon, null, tint = ink, modifier = Modifier.size(25.dp))
+                    Text(label, color = ink, style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                        fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+    }
 }
 
 /** The inset between a library card's edge and the page or folder inside it. */
@@ -379,17 +427,12 @@ internal fun FolderTile(
     val picture = rememberFileBitmap(thumbnail, 480)
     val press by animateFloatAsState(if (selected) 0.95f else 1f, Ui.Motion.spring(), label = "folderSelected")
     // A plain card, as the notes beside it are: no shadow under it.
-    // Glass under the glass skin, as the note cards are; see cardGlass.
-    val glass = LocalSkin.current.isRefractive
     Box(
         modifier
             // No offscreen layer of its own, as on note cards.
             .graphicsLayer { scaleX = press; scaleY = press }
-            .then(if (glass) Modifier.cardGlass(Ui.Shape.card)
-                else if (LocalSkin.current == Skin.MATERIAL) Modifier
-                    .background(MaterialTheme.colorScheme.surfaceContainerLowest, Ui.Shape.card)
-                    .border(0.75.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f), Ui.Shape.card)
-                else Modifier.background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f), Ui.Shape.card))
+            .background(MaterialTheme.colorScheme.surfaceContainerLowest, Ui.Shape.card)
+            .border(0.75.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f), Ui.Shape.card)
             .clip(Ui.Shape.card)
             .then(if (selected) Modifier.border(2.5.dp, primary, Ui.Shape.card) else Modifier),
     ) {
@@ -558,10 +601,10 @@ internal fun LibrarySearchMorph(
                 layout(constraints.maxWidth, side) { placeable.place(x, 0) }
             },
         ) {
-            // Glass open or folded, the same stuff as the buttons beside it, and
+            // Open or folded, the same surface as the buttons beside it, and
             // thinning a little where it runs past its width as it opens.
             Box(Modifier.matchParentSize().graphicsLayer { scaleY = glassSquash(fold()) }
-                .skinMaterial(capsule, role = ChromeRole.TOOLBAR))
+                .skinMaterial(capsule))
             Box(Modifier.matchParentSize().clip(capsule)) {
                 Row(
                     Modifier.wrapContentWidth(Alignment.Start, unbounded = true).width(full).fillMaxHeight(),

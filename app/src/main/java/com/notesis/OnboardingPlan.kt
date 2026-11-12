@@ -7,20 +7,19 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /**
- * What a first run shows, in order: the welcome, then a choice of look, then
- * a few marks on the home screen pointing at where things are. Each is shown
- * once; [NONE] is a library like any other day's.
+ * What a first run shows, in order: the welcome, then a few marks on the
+ * home screen pointing at where things are. Each is shown once; [NONE] is a
+ * library like any other day's.
  */
-internal enum class OnboardingStep { WELCOME, SKIN, COACH, NONE }
+internal enum class OnboardingStep { WELCOME, COACH, NONE }
 
 /**
  * The step to show now, from what has already been seen. Without animations
- * there is no welcome to watch, so it goes straight to the choice of look.
+ * there is no welcome to watch, so it goes straight to the marks.
  */
-internal fun onboardingStep(welcomeDone: Boolean, skinChosen: Boolean, homeTipsDone: Boolean, animations: Boolean): OnboardingStep =
+internal fun onboardingStep(welcomeDone: Boolean, homeTipsDone: Boolean, animations: Boolean): OnboardingStep =
     when {
         !welcomeDone && animations -> OnboardingStep.WELCOME
-        !skinChosen -> OnboardingStep.SKIN
         !homeTipsDone -> OnboardingStep.COACH
         else -> OnboardingStep.NONE
     }

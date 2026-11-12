@@ -13,21 +13,19 @@ class MaterialMotionTest {
         assertEquals(StaticIconSet.REICONS, StaticIconSet.fromName("REICONS"))
     }
 
-    @Test fun `menus dialogs and Material sidebars share the same spatial response`() {
-        val open = MaterialOpen.open as SpringSpec<Float>
-        val dialog = dialogArrival(true) as SpringSpec<Float>
-        assertEquals(MaterialMotion.START_SCALE, dialogArrivalScale(0f, true), 0f)
-        assertEquals(open.stiffness, dialog.stiffness, 0f)
+    @Test fun `popups, dialogs and sidebars share the same spatial response`() {
+        val open = POPUP_OPEN as SpringSpec<Float>
         assertEquals(1f, open.dampingRatio, 0f)
         assertEquals(open.stiffness / (MotionPrefs.responseScale * MotionPrefs.responseScale),
-            sidebarOpenFor<Float>(Skin.MATERIAL).stiffness, 0.01f)
-        assertEquals(sidebarOpenSpring<Float>().stiffness, sidebarOpenFor<Float>(Skin.LIQUID_GLASS).stiffness, 0f)
+            sidebarOpen<Float>().stiffness, 0.01f)
+        // Back into the button a little quicker than out of it.
+        assertTrue((POPUP_CLOSE as SpringSpec<Float>).stiffness > open.stiffness)
     }
 
     @Test fun `an opening is visible on its first frame and lands without overshoot at 60 and 120 Hz`() {
         for (hz in listOf(60, 120)) {
             val motion = TargetBasedAnimation(MaterialMotion.rawContainer<Float>(), Float.VectorConverter,
-                0f, 1f, MaterialOpen.openVelocity)
+                0f, 1f, POPUP_OPEN_VELOCITY)
             assertTrue(motion.getValueFromNanos(1_000_000_000L / hz) > 0f)
             repeat(hz) { i -> assertTrue(motion.getValueFromNanos((i + 1) * 1_000_000_000L / hz) in 0f..1.0001f) }
             assertEquals(1f, motion.getValueFromNanos(2_000_000_000L), 0.0001f)

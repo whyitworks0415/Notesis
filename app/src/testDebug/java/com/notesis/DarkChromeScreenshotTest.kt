@@ -26,18 +26,16 @@ import org.robolectric.annotation.GraphicsMode
 class DarkChromeScreenshotTest {
     @get:Rule val compose = createComposeRule()
 
-    private fun show(skin: Skin, dark: Boolean, name: String) {
-        val look = SkinSettings(themeMode = if (dark) AppThemeMode.DARK else AppThemeMode.LIGHT,
-            liquidStyle = LiquidStyle.IOS, dynamicColor = false)
-        val scheme = skinColors(lookScheme(null, skin, look), skin, look)
+    private fun show(dark: Boolean, name: String) {
+        val look = SkinSettings(themeMode = if (dark) AppThemeMode.DARK else AppThemeMode.LIGHT, dynamicColor = false)
+        val scheme = skinColors(lookScheme(null, look), look)
         var bareInk = Color.Unspecified
         var buttonInk = Color.Unspecified
         compose.setContent {
             MaterialTheme(colorScheme = scheme, typography = chromeTypography()) {
-                ProvideSkin(skin, look) {
-                    // This fixture checks real chrome and its solid fallback,
-                    // not AGSL or an Android window compositor on a device.
-                    CompositionLocalProvider(LocalLiquidGlassEffectsAllowed provides false) {
+                ProvideSkin(look) {
+                    // This fixture checks real chrome, not a window compositor on a device.
+                    CompositionLocalProvider(LocalMotionAllowed provides false) {
                         val inherited = LocalContentColor.current
                         SideEffect { bareInk = inherited }
                         Showcase {
@@ -88,7 +86,6 @@ class DarkChromeScreenshotTest {
         }
     }
 
-    @Test fun materialDark() = show(Skin.MATERIAL, true, "material-studio-dark")
-    @Test fun materialLight() = show(Skin.MATERIAL, false, "material-studio-light")
-    @Test fun iosDark() = show(Skin.LIQUID_GLASS, true, "ios-dark-chrome")
+    @Test fun materialDark() = show(true, "material-studio-dark")
+    @Test fun materialLight() = show(false, "material-studio-light")
 }

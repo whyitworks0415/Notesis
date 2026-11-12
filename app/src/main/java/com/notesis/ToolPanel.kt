@@ -63,7 +63,7 @@ internal class ToolPanelState(
 
 @Composable
 internal fun rememberToolPanelState(): ToolPanelState {
-    val animate = rememberLiquidGlassEffectsAllowed()
+    val animate = rememberMotionAllowed()
     return remember { ToolPanelState(animate) }
 }
 
@@ -106,17 +106,16 @@ internal fun ToolPanel(
         }
     }
     val anchor = remember { PenPopupAnchor.point() }
-    val skin = LocalSkin.current
 
     Dialog(onDismissRequest = onOutside, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        // A light dim: the page should still show through the glass.
+        // A light dim: the page should still be readable round the panel.
         (LocalView.current.parent as? DialogWindowProvider)?.window?.setDimAmount(LocalSkinSettings.current.popupDim)
         // The panel's own corner is the one fixed radius, and everything
         // inside follows it, one inset in. It is the toolbar's and its menu's,
-        // on the same round outline, in every skin (see [chromeCorner]).
-        val corner = skin.tokens().corner
+        // on the same round outline (see [chromeCorner]).
+        val corner = chromeCorner()
         val shape = RoundedCornerShape(corner)
-        val reveal = state.animate && growth.profile?.reveal == true
+        val reveal = state.animate
         val scrollSpeed = rememberScrollSpeed()
         val tallest = LocalConfiguration.current.screenHeightDp.dp * 0.9f
         // Where the panel's top first lands, kept there: a part opening inside
@@ -126,27 +125,20 @@ internal fun ToolPanel(
         val pinnedTop = remember { intArrayOf(-1) }
         val panelBounds = remember { IntArray(4) }
         val outside by rememberUpdatedState(onOutside)
-        ProvideMovingBackdrops(if (reveal) StillMotion else growth.motion) {
         NestedCorners(corner, TOOL_PANEL_INSET) {
         Layout(
             content = {
         Column(
             Modifier
-                // Outside the padding: while the panel fades, the growth's
-                // layer is drawn offscreen at its own bounds, and the padding
-                // is the room the panel's shadow falls in.
-                .growOutOf({ anchor }, growth)
+                // The room the panel's shadow falls in.
                 .padding(Ui.Space.l)
                 .widthIn(max = maxWidth)
                 .fillMaxWidth()
                 .heightIn(max = tallest)
-                // Out of the point it was opened from under the glass looks:
-                // poured out as a drop, its rows never scaled, with the glass
-                // recorded once while moving (see PopupReveal.kt).
+                // Out of the point it was opened from: grown as a surface, its
+                // rows never scaled, drawn once while it moves (see PopupReveal.kt).
                 .then(if (reveal) Modifier.revealOutOf(growth, corner) { c -> anchor?.let { c.screenToLocal(it) } } else Modifier)
-                // Liquid glass under the glass skin, the same lens as the bar
-                // it came from; frost or a solid panel under the others.
-                .skinMaterial(shape, panel = true, role = ChromeRole.POPUP)
+                .skinMaterial(shape, panel = true)
                 .clip(shape)
                 .revealContent(growth, reveal)
                 // No size animation of its own: a part that opens inside grows
@@ -187,7 +179,6 @@ internal fun ToolPanel(
             panelBounds[2] = panel.width
             panelBounds[3] = top + panel.height
             layout(panel.width, height) { panel.place(0, top) }
-        }
         }
         }
     }

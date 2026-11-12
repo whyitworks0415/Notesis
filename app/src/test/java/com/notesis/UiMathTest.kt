@@ -84,18 +84,6 @@ class UiMathTest {
         for (curve in ToolbarCurve.entries) assertEquals(curve, ToolbarCurve.fromStored(curve.stored))
     }
 
-    @Test fun `the retired lens skin loads as liquid glass`() {
-        assertEquals(Skin.LIQUID_GLASS, Skin.fromName("LIQUID_GLASS"))
-        assertEquals(Skin.LIQUID_GLASS, Skin.fromName("SPOTIGLASS"))
-        assertEquals(Skin.GLASSMORPHISM, Skin.fromName("GLASSMORPHISM"))
-        assertEquals(Skin.MATERIAL, Skin.fromName("MATERIAL"))
-        assertEquals(Skin.MATERIAL, Skin.fromName(""))
-        assertEquals(Skin.MATERIAL, Skin.fromName(null))
-        assertEquals(Skin.MATERIAL, Skin.fromName("liquid_glass"))
-        assertEquals(listOf("Material", "Glassmorphism", "Liquid glass"), Skin.entries.map { it.label })
-        assertEquals(listOf(Skin.LIQUID_GLASS), Skin.entries.filter { it.isRefractive })
-    }
-
     @Test fun `a popup grows from the point it was opened from`() {
         assertEquals(0.75f to 0f, popupGrowOrigin(175f, 100f, 100f, 100f, 100f, 200f))
         assertEquals(1f to 0f, popupGrowOrigin(900f, 40f, 100f, 100f, 100f, 200f))

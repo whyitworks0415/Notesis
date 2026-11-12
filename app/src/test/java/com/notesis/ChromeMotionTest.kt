@@ -82,41 +82,4 @@ class ChromeMotionTest {
         assertTrue(sidebarContentAlpha(0.6f) in 0.4f..0.6f)
     }
 
-    @Test fun `the lens travel spring is just under critical damping`() {
-        assertEquals(0.938f, LIQUID_GLASS_TRAVEL_DAMPING_RATIO, 0.001f)
-    }
-
-    /**
-     * The still skins slide their highlight on a Compose spring of the lens's
-     * stiffness and damping ratio. That spring's closed form has to follow the
-     * lens's own integration, or the two skins would move at different speeds.
-     */
-    @Test fun `the highlight's spring moves with the lens`() {
-        val motion = LiquidGlassMotion(0f)
-        motion.select(3f)
-        val k = LIQUID_GLASS_TRAVEL_STIFFNESS
-        val zeta = LIQUID_GLASS_TRAVEL_DAMPING_RATIO.toDouble()
-        val omega = sqrt(k)
-        val damped = omega * sqrt(1 - zeta * zeta)
-        fun spring(t: Double): Double {
-            // From 0 to 3, at rest at the start.
-            val decay = exp(-zeta * omega * t)
-            return 3.0 * (1 - decay * (cos(damped * t) + zeta * omega / damped * sin(damped * t)))
-        }
-        val dt = 1.0 / 120
-        var t = 0.0
-        var halfwayAt = -1.0
-        repeat(120) {
-            t += dt
-            motion.tick(t, dt, 100f)
-            // The lens steps its spring at 240 Hz, which runs a few
-            // milliseconds ahead of the exact curve: about a tenth of a cell
-            // at its fastest, now that it settles in 180 ms.
-            assertEquals(spring(t), motion.position.toDouble(), 0.12)
-            if (halfwayAt < 0 && motion.position >= 1.5f) halfwayAt = t
-        }
-        // Halfway in under 70 ms, settled within the chrome's 180 ms.
-        assertTrue(halfwayAt in 0.055..0.085)
-        assertEquals(3f, motion.position, 0.001f)
-    }
 }

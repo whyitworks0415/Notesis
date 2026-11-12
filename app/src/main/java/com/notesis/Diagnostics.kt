@@ -592,7 +592,7 @@ internal fun perfConditions(context: Context, view: InkCanvasView?): String {
         if (InteractionGovernor.decorationsAllowed) "" else ", held off",
         MotionPrefs.speed * 100f,
         view?.wetInkPathLabel ?: "no note open",
-        look?.let { " · look ${it.liquidStyle.name.lowercase(Locale.US)}" } ?: "",
+        "",
     )
 }
 

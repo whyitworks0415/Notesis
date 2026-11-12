@@ -164,7 +164,7 @@ private val LESSONS: List<Lesson> = listOf(
         listOf(
             "Settings opens along the edge, over the note.",
             "Pen settings: pressure, smoothing, prediction and drawing options for every pen.",
-            "Touch & gestures, Appearance (skin, colours, dark mode), Customize toolbar and Note & view are beside it.",
+            "Touch & gestures, Appearance (colours, dark mode), Customize toolbar and Note & view are beside it.",
         ),
     ) { SettingsPicture() },
     Lesson(
@@ -189,12 +189,10 @@ internal fun TutorialOverlay(
     onGuide: (() -> Unit)? = null,
 ) {
     BackHandler(onBack = onClose)
-    val skin = LocalSkin.current
     val pager = rememberPagerState(pageCount = { LESSONS.size })
     val scope = rememberCoroutineScope()
     fun go(page: Int) {
         scope.launch {
-            // Material steps; the glass skins slide.
             pager.animateScrollToPage(page)
         }
     }
@@ -279,7 +277,7 @@ private fun LessonPage(lesson: Lesson) {
         Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(Ui.Space.m),
     ) {
-        // The picture, on a scrap of paper, the same in every skin.
+        // The picture, on a scrap of paper.
         Box(
             Modifier
                 .fillMaxWidth()

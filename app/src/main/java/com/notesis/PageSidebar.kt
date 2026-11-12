@@ -465,11 +465,10 @@ internal fun PageSidebar(
                             }
                         }
                     }
-                    LiquidSegmentedControl(
+                    SegmentedControl(
                         segments = PAGE_PANEL_TABS,
                         selectedIndex = tab,
                         onSelected = { tab = it; search?.panelTab = it },
-                        useLiquidGlass = LocalSkin.current.isRefractive,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(8.dp),

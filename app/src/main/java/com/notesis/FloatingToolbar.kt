@@ -78,7 +78,6 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.coroutineScope
 import kotlin.math.sin
-import com.kyant.backdrop.drawBackdrop
 
 internal enum class GlassToolbarTool(val mode: EditMode?, val label: String) {
     READ(EditMode.READ, "Read"), PEN(EditMode.PEN, "Pen"), PENCIL(EditMode.PENCIL, "Pencil"),
@@ -428,36 +427,6 @@ internal data class GlassToolbarAction(
     val onClick: () -> Unit,
 )
 
-/** Apply the original optics during a size/menu change, then hand back to frost.
- * The lens captures the surface and its contents; it never records the page. */
-@Composable
-internal fun Modifier.liquidGlassMorph(key: Any, enter: Boolean = false): Modifier {
-    if (LocalSkin.current != Skin.LIQUID_GLASS) return this
-    val look = LocalSkinSettings.current
-    val effects = rememberLiquidGlassEffectsAllowed() && !look.highContrast &&
-        look.liquidGlassResponse > 0f && look.liquidGlassClarity > 0f
-    val phase = remember { Animatable(if (enter) 0f else 1f) }
-    var initial by remember { mutableStateOf(true) }
-    LaunchedEffect(key, effects) {
-        if (effects && (enter || !initial)) {
-            phase.snapTo(0f)
-            phase.animateTo(1f, Ui.Motion.tween())
-        } else phase.snapTo(1f)
-        initial = false
-    }
-    fun raised() = sin(PI * phase.value).toFloat().coerceIn(0f, 1f)
-    return liquidGlassLens(effects, active = { raised() > 0.002f }) { size, density ->
-        val raised = raised()
-        LiquidGlassLensFrame(center = Offset(size.width / 2, size.height / 2), size = size,
-            radius = look.glassCorner * density, progress = raised, presence = raised,
-            distortion = 0.04f * (look.refraction / 24) * look.liquidGlassResponse,
-            band = look.depth, dispersion = 0.002f * (look.dispersion / 0.35f),
-            // The pane under it is a round rectangle; see [LiquidGlassLensFrame.continuous].
-            continuous = false)
-    }
-}
-
-
 /**
  * A round button of the bar's own material standing on its own, as the
  * Functions button of the smaller bars does - for the way back to the
@@ -485,62 +454,36 @@ private fun GlassActionButton(
         contentDescription = label
         if (reason != null) stateDescription = reason
     }
-    val skin = LocalSkin.current
-    val glass = skin == Skin.LIQUID_GLASS
     val scheme = MaterialTheme.colorScheme
     val look = LocalSkinSettings.current
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    // Only a trigger lifts on press, in the same rest -> lifted -> rest cycle as
-    // the tool pill; an ordinary button stays flat, and still skins never lift.
-    val lifts = persistentGlass && rememberLiquidGlassEffectsAllowed() &&
-        !look.highContrast && look.liquidGlassResponse > 0f
-    // A recipe with its own press switched on grows (or shrinks) the button its way.
-    val recipe = if (glass) look.pressRecipe() else null
-    var buttonSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
-    val density = LocalDensity.current.density
-    val target = when {
-        !pressed || !lifts -> 1f
-        recipe != null -> recipe.scale(buttonSize.width.toFloat(), buttonSize.height.toFloat(), density)
-        else -> 1f + 0.08f * look.liquidGlassResponse
-    }
+    val moves = rememberMotionAllowed() && !look.highContrast
+    // Only a round trigger standing on its own lifts under the finger; a
+    // button in a menu stays flat and answers with [materialPressFeedback].
+    val lifts = persistentGlass && moves
     val grow by androidx.compose.animation.core.animateFloatAsState(
-        target,
-        when {
-            !lifts -> snap()
-            recipe != null -> if (pressed) recipe.press else recipe.release
-            else -> Ui.Motion.spring(0.78f)
-        }, label = "Action button lift")
+        if (pressed && lifts) 1.08f else 1f,
+        if (lifts) Ui.Motion.spring(0.78f) else snap(), label = "Action button lift")
     val radius = corner ?: nestedCorner(Ui.Corner.control)
-    // One shape family in every skin: the round corner the bar and its strip draw.
     val shape = RoundedCornerShape(radius)
-    // Liquid glass tints its buttons into the glass they sit on; the other two
-    // keep their own buttons, solid under Material and glassy under frost.
-    val fill = when {
-        glass -> if (selected) scheme.primary.copy(alpha = 0.12f) else scheme.onSurface.copy(alpha = 0.06f)
-        selected -> scheme.primaryContainer
-        else -> scheme.surfaceContainerHigh
-    }
+    val fill = if (selected) scheme.primaryContainer else scheme.surfaceContainerHigh
     // A round trigger shows its menu is open by its icon alone; a tile by its fill.
     val content = when {
-        selected && (glass || persistentGlass) -> scheme.primary
+        selected && persistentGlass -> scheme.primary
         selected -> scheme.onPrimaryContainer
         else -> scheme.onSurface
     }.copy(alpha = if (enabled) 1f else 0.38f)
-    val materialEffects = skin == Skin.MATERIAL && rememberLiquidGlassEffectsAllowed() && !look.highContrast
-    val visibleFill by animateColorAsState(fill, if (materialEffects) MaterialMotion.effects() else snap(), label = "Action selection fill")
-    val visibleContent by animateColorAsState(content, if (materialEffects) MaterialMotion.effects() else snap(), label = "Action selection ink")
+    val visibleFill by animateColorAsState(fill, if (moves) MaterialMotion.effects() else snap(), label = "Action selection fill")
+    val visibleContent by animateColorAsState(content, if (moves) MaterialMotion.effects() else snap(), label = "Action selection ink")
     Box(modifier.sizeIn(minWidth = Ui.Size.touchCompact, minHeight = Ui.Size.touchCompact)
         .materialPressFeedback(interaction, enabled)
-        .onSizeChanged { buttonSize = it }
         .then(described)
         .clickable(enabled = enabled, role = Role.Button, interactionSource = interaction,
-            // Glass answers a press with the lift; the still skins with the
-            // skin's native state feedback, alongside the control's contact motion.
-            indication = if (glass) null else LocalIndication.current, onClick = onClick),
+            indication = LocalIndication.current, onClick = onClick),
         contentAlignment = Alignment.Center) {
         val body = Modifier.matchParentSize().graphicsLayer { scaleX = grow; scaleY = grow }
-        val pane = if (persistentGlass) body.skinMaterial(CircleShape, role = ChromeRole.TOOLBAR) else body.background(visibleFill, shape)
+        val pane = if (persistentGlass) body.skinMaterial(CircleShape) else body.background(visibleFill, shape)
         // No glow under the finger: a white wash on every press read as a grey flash.
         Box(pane)
         Column(Modifier.padding(horizontal = Ui.Space.s, vertical = Ui.Space.xs),
@@ -598,14 +541,13 @@ internal class GlassToolbarPopupPosition(
  * menu holds the size switch and [functions], one group to a block; settings
  * live in their own sidebar, reached from the last group.
  *
- * Every skin builds the same bar: at the full size one surface holding the
- * top row, the tool strip, the pen options and the Functions button; at the
- * smaller sizes the tool strip as a capsule of its own beside a round
- * Functions button. The skin only decides what those surfaces are made of
- * (see [skinMaterial]); every look moves.
+ * At the full size it is one surface holding the top row, the tool strip,
+ * the pen options and the Functions button; at the smaller sizes the tool
+ * strip is a capsule of its own beside a round Functions button. What those
+ * surfaces are made of is [skinMaterial]'s business.
  */
 @Composable
-internal fun LiquidGlassToolbar(
+internal fun FloatingToolbar(
     sizeLevel: Int, onSizeLevel: (Int) -> Unit, mode: EditMode,
     /** Where the note's tour finds the bar's parts; null for a preview of the bar. */
     coachTargets: CoachTargets? = null,
@@ -629,18 +571,14 @@ internal fun LiquidGlassToolbar(
         else { open = false; onTool(tool) }
     }
     val config = currentToolbarConfig()
-    val skin = LocalSkin.current
     val look = LocalSkinSettings.current
-    val motionAllowed = rememberLiquidGlassEffectsAllowed() && !look.highContrast
+    val motionAllowed = rememberMotionAllowed() && !look.highContrast
     // The bar's own morphs and fades; the popup's growth is its own question.
     val effects = motionAllowed
     val popupMotion = motionAllowed
-    val popupBackdrop = LocalGlassPopupBackdrop.current ?: LocalLiquidGlassBackdrop.current
     // The one radius the bar is built from. Everything inside it - the strip,
-    // its pill, the Functions button - is concentric with it.
-    // The same in every skin (see [chromeCorner]), and so is its shape: a
-    // round corner, the one outline Backdrop's lens takes.
-    val outer = skin.tokens().corner
+    // its pill, the Functions button - is concentric with it (see [chromeCorner]).
+    val outer = chromeCorner()
     val outline = RoundedCornerShape(outer)
     val full = sizeLevel == 0
     val chrome = LocalChromeScale.current
@@ -691,9 +629,8 @@ internal fun LiquidGlassToolbar(
                     androidx.compose.ui.geometry.Size(it.size.width.toFloat(), it.size.height.toFloat()))
             }
         }) {
-        // The full bar is one surface. The strip on it is content, not a
-        // second pane of glass, so the page shows through both the same way.
-        if (full) Box(Modifier.matchParentSize().skinMaterial(outline, role = ChromeRole.TOOLBAR))
+        // The full bar is one surface; the strip on it is content, not a second one.
+        if (full) Box(Modifier.matchParentSize().skinMaterial(outline))
         // The whole bar is scaled as one row (see glassFitRow), so nothing in it scales again.
         CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides androidx.compose.ui.unit.Dp.Unspecified,
             LocalChromeScale provides if (full) 1f else chrome) {
@@ -731,13 +668,7 @@ internal fun LiquidGlassToolbar(
                                 columns.forEach { tools ->
                                     val selected = if (open && page == ToolbarMenu.AI) tools.indexOf(GlassToolbarTool.AI)
                                         else tools.indexOfFirst { it.mode == mode }
-                                    if (skin == Skin.LIQUID_GLASS) LiquidGlassBar(
-                                        tools.map { LiquidGlassItem(it.label, it.icon(), toolColors[it.mode]) },
-                                        selectedIndex = selected, onSelected = { pick(tools[it]) },
-                                        showLabels = false, compact = false, corner = outer,
-                                        surface = GlassBarSurface.LIQUID, vertical = true, role = ChromeRole.TOOLBAR,
-                                        holdFor = { tools.getOrNull(it) == GlassToolbarTool.AI })
-                                    else ToolStrip(tools, selected, compact = false, corner = outer,
+                                    ToolStrip(tools, selected, compact = false, corner = outer,
                                         ownSurface = true, toolColors = toolColors, onPick = ::pick, vertical = true)
                                 }
                             }
@@ -769,21 +700,7 @@ internal fun LiquidGlassToolbar(
                                 rows.forEach { tools ->
                                   val selected = if (open && page == ToolbarMenu.AI) tools.indexOf(GlassToolbarTool.AI)
                                       else tools.indexOfFirst { it.mode == mode }
-                                  // The full bar's strip is drawn on the bar's own glass, but
-                                  // its selection still rises into a lens while it moves, as
-                                  // the smaller bars' does - kept inside the strip's height.
-                                  if (skin == Skin.LIQUID_GLASS) LiquidGlassBar(tools.map { LiquidGlassItem(it.label, it.icon(), toolColors[it.mode]) },
-                                    selectedIndex = selected,
-                                    onSelected = { pick(tools[it]) }, modifier = Modifier.fillMaxWidth(),
-                                    showLabels = false, compact = full, corner = stripCorner,
-                                    surface = if (full) GlassBarSurface.NONE else GlassBarSurface.LIQUID,
-                                    // On the whole bar (1/4) the strip has no glass of its own
-                                    // for a lens to bend: the lens refracted only the clear
-                                    // layer and the icons, and showed as a rim and smear
-                                    // round the selection. The pill slides flat there.
-                                    lift = !full, role = ChromeRole.TOOLBAR,
-                                    holdFor = { tools.getOrNull(it) == GlassToolbarTool.AI })
-                                  else ToolStrip(tools, selected, compact = full, corner = stripCorner,
+                                  ToolStrip(tools, selected, compact = full, corner = stripCorner,
                                     ownSurface = !full, toolColors = toolColors, onPick = ::pick)
                                 }
                               }
@@ -817,17 +734,24 @@ internal fun LiquidGlassToolbar(
                         Popup(popupPositionProvider = position,
                             onDismissRequest = { open = false },
                             properties = PopupProperties(focusable = true, clippingEnabled = false)) {
-                            // This surface has its own page capture; do not sample
-                            // the parent toolbar's exported frost across windows.
-                            CompositionLocalProvider(LocalLiquidGlassHostBackdrop provides null,
-                                LocalLiquidGlassBackdrop provides popupBackdrop) {
-                              // Cut out of the button rather than scaled, its glass is drawn
-                              // once and need not look at the page again on each frame.
-                              val reveal = menuGrowth.profile?.reveal == true && popupMotion
-                              ProvideMovingBackdrops(if (reveal) StillMotion else menuGrowth.motion) {
-                                val paneModifier = Modifier.width(minOf(340.dp,
-                                    (LocalConfiguration.current.screenWidthDp - 24).coerceAtLeast(140).dp)).heightIn(max = maxHeight)
-                                val menuBody: @Composable () -> Unit = {
+                            val paneModifier = Modifier.width(minOf(340.dp,
+                                (LocalConfiguration.current.screenWidthDp - 24).coerceAtLeast(140).dp)).heightIn(max = maxHeight)
+                            // The popup window ends where its content does, so the
+                            // content keeps clear room round the panel for its shadow.
+                            Box(Modifier
+                                .dismissInRoom(POPUP_SHADOW_ROOM) { open = false }
+                                .padding(POPUP_SHADOW_ROOM)) {
+                                // Grown out of the button: the surface grows and the menu
+                                // on it stays its size, seen where the surface has reached
+                                // (see PopupReveal.kt). Its shadow is cast outside the
+                                // growth, whose layer would cut it off at the panel's edge.
+                                Box(paneModifier
+                                    .then(if (popupMotion) Modifier.revealOutOf(menuGrowth, outer) { c -> anchor?.let { c.screenToLocal(it) } }
+                                        else Modifier)
+                                    .skinShadow(outline, panel = true)
+                                    .skinMaterial(outline, panel = true, shadow = false)
+                                    .clip(outline)
+                                    .revealContent(menuGrowth, popupMotion)) {
                                     // The menu's buttons sit one padding inside it, so
                                     // their corners are its corner moved in by that.
                                     NestedCorners(outer, Ui.Space.m) {
@@ -845,45 +769,6 @@ internal fun LiquidGlassToolbar(
                                         }
                                     }
                                 }
-                                // The popup window ends where its content does, so the
-                                // content keeps clear room round the panel for the
-                                // shadow; the growth's layer holds that room too, so
-                                // its fade does not cut the shadow at the panel's edge.
-                                Box(Modifier.growOutOf({ anchor }, menuGrowth)
-                                    .dismissInRoom(POPUP_SHADOW_ROOM) { open = false }
-                                    .padding(POPUP_SHADOW_ROOM)) {
-                                    if (reveal) {
-                                        // Poured out of the button: the glass grows from a drop
-                                        // and the menu on it stays its size, seen where the glass
-                                        // has reached (see PopupReveal.kt). Its shadow is cast
-                                        // outside the morph, whose lens layer would cut it off.
-                                        Box(paneModifier.revealOutOf(menuGrowth, outer) { c -> anchor?.let { c.screenToLocal(it) } }
-                                            .skinShadow(outline, panel = true)
-                                            .then(if (skin == Skin.LIQUID_GLASS) Modifier.liquidGlassMorph(page) else Modifier)
-                                            .skinMaterial(outline, panel = true, shadow = false, role = ChromeRole.POPUP)
-                                            .clip(outline)
-                                            .revealContent(menuGrowth, true)) {
-                                            if (skin != Skin.LIQUID_GLASS) BlurBehind()
-                                            menuBody()
-                                        }
-                                    } else if (skin == Skin.LIQUID_GLASS) {
-                                        // The menu is the same liquid glass as the bar it came
-                                        // from, looking at the page through the lens. Its shadow
-                                        // is cast outside the morph, whose lens layer would cut
-                                        // it off at the panel's edge while it plays.
-                                        Box(paneModifier.skinShadow(outline, panel = true)
-                                            // Only between the menu's pages: on top of coming out of
-                                            // the point, a lens ripple was one motion too many.
-                                            .liquidGlassMorph(page)
-                                            .skinMaterial(outline, panel = true, shadow = false, role = ChromeRole.POPUP)) { menuBody() }
-                                    } else {
-                                        SkinSurface(paneModifier, role = ChromeRole.POPUP) {
-                                            if (skin != Skin.MATERIAL) BlurBehind()
-                                            menuBody()
-                                        }
-                                    }
-                                }
-                              }
                             }
                         }
                     }
@@ -1272,213 +1157,6 @@ private fun ToolbarMenuContent(
  * Opening it shoots out and settles softly; closing it gathers speed into the
  * point. Material snaps.
  */
-@Stable
-/**
- * Lets the frame that first composes and draws something new go by before
- * anything is timed from it. It waited for the frame after as well, which on
- * a 60 Hz screen held every popup and panel still for a frame more than
- * needed: the beat between a tap and the first movement.
- */
-internal suspend fun awaitFirstFrames() {
-    androidx.compose.runtime.withFrameNanos { }
-}
-
-/**
- * Two frames: the one a popup's window is added in and the one it is first
- * laid out and drawn in. Something moving that starts after them does not
- * stall halfway for the popup.
- */
-internal suspend fun awaitPopupFrames() {
-    androidx.compose.runtime.withFrameNanos { }
-    androidx.compose.runtime.withFrameNanos { }
-}
-
-internal class PopupGrowth(shown: Boolean) {
-    val width = Animatable(if (shown) 1f else 0f)
-    val height = Animatable(if (shown) 1f else 0f)
-    // Animatable clears velocity when its coroutine is cancelled. Keep the
-    // last frame's sample so a reversal starts with the motion it interrupted.
-    private val velocities = floatArrayOf(0f, 0f)
-
-    /**
-     * Read in a draw: the glass inside the popup redraws, and looks at the
-     * page again from where it now is, on every frame either axis moves.
-     */
-    val motion: () -> Float = { width.value + height.value }
-
-    /** A recipe's own way in and out (see [openProfile]); null is this app's. Set as the popup is composed. */
-    var profile: OpenProfile? = null
-
-    /** Whether the last move was a close, so the scale it is drawn at is the closing one. */
-    var closing = false
-        private set
-
-    /** Whether the popup is anywhere but fully open: on its way, or shut. */
-    fun moving(w: Float, h: Float): Boolean = w < 1f || h < 1f || width.isRunning || height.isRunning
-
-    suspend fun open(animate: Boolean) {
-        closing = false
-        // Opening from nothing: the popup's first frame - composing, measuring
-        // and drawing all of it, its glass included - is the slow one, and a
-        // curve started on it lost its first steps to that frame and jumped.
-        // It goes out unseen; the curve starts on the frame after.
-        if (animate && width.value == 0f && height.value == 0f) awaitFirstFrames()
-        val spec = profile?.open ?: POPUP_OPEN
-        // Opened again while closing: on from where it is, at the speed it has.
-        val resumed = midFlight()
-        move(1f, animate, spec, spec, if (resumed) Float.NaN else profile?.openVelocity ?: 0f,
-            widthDelayMs = if (resumed) 0 else profile?.widthDelayMs ?: 0)
-    }
-
-    /** At rest and shut. */
-    fun isShut(): Boolean = width.value == 0f && height.value == 0f && !width.isRunning && !height.isRunning
-
-    /** Neither shut nor fully open: a move was caught on its way. */
-    private fun midFlight(): Boolean =
-        width.isRunning || height.isRunning || width.value in 0.001f..0.999f || height.value in 0.001f..0.999f
-
-    suspend fun close(animate: Boolean) {
-        closing = true
-        // Already shut: nothing to move. Every note card's menu is composed
-        // shut, and each one ran a whole close from 0 to 0 as its card
-        // scrolled in - 240 ms of frames counted as chrome motion, which the
-        // library's recording reads in its draw, so the list was drawn again
-        // over and over while it scrolled.
-        if (isShut()) return
-        val spec = profile?.close ?: POPUP_CLOSE
-        // Caught while still opening, it turns round at the speed it has
-        // rather than being thrown back at the profile's own.
-        val throwBack = if (midFlight()) Float.NaN else profile?.closeVelocity ?: 0f
-        move(0f, animate, profile?.closeWidth ?: spec, spec, throwBack)
-    }
-
-    private suspend fun move(
-        target: Float, animate: Boolean,
-        widthSpec: androidx.compose.animation.core.AnimationSpec<Float>,
-        heightSpec: androidx.compose.animation.core.AnimationSpec<Float>,
-        velocity: Float,
-        widthDelayMs: Int = 0,
-    ) {
-        if (!animate) {
-            velocities.fill(0f)
-            width.snapTo(target)
-            height.snapTo(target)
-            return
-        }
-        // The same curve on both unless the opening pours, so the shape keeps
-        // its proportion on the way; a poured one runs down, then spreads.
-        // NaN velocity: each axis keeps the speed it is already moving at.
-        val widthStart = if (velocity.isNaN()) velocities[0] else velocity
-        val heightStart = if (velocity.isNaN()) velocities[1] else velocity
-        ChromeMotion.during {
-            coroutineScope {
-                launch {
-                    if (widthDelayMs > 0) kotlinx.coroutines.delay((widthDelayMs * MotionPrefs.responseScale).toLong())
-                    width.animateTo(target, widthSpec.paced(), initialVelocity = widthStart) { velocities[0] = this.velocity }
-                    velocities[0] = 0f
-                }
-                launch {
-                    height.animateTo(target, heightSpec.paced(), initialVelocity = heightStart) { velocities[1] = this.velocity }
-                    velocities[1] = 0f
-                }
-            }
-        }
-    }
-}
-
-/**
- * A popup's growth: Material's out of the button on its spring, the glass
- * looks' poured as Mornye pours its menus, or a recipe's own opening where
- * that is switched on.
- */
-@Composable
-internal fun rememberPopupGrowth(shown: Boolean): PopupGrowth {
-    val growth = remember { PopupGrowth(shown) }
-    val look = LocalSkinSettings.current
-    growth.profile = popupOpening(LocalSkin.current, look)
-    return growth
-}
-
-/** How [skin]'s popups open under [look]; see [rememberPopupGrowth]. */
-internal fun popupOpening(skin: Skin, look: SkinSettings): OpenProfile = when (skin) {
-    Skin.MATERIAL -> MaterialOpen
-    Skin.GLASSMORPHISM -> PourOpen
-    Skin.LIQUID_GLASS -> look.openProfile() ?: PourOpen
-}
-
-// Material's emphasized accelerate: leaves slowly and is gone quickly.
-internal val EmphasizedAccelerateEasing = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)
-// Material's emphasized decelerate: arrives quickly and lands softly.
-internal val EmphasizedDecelerateEasing = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
-// Out of the point: fast at first, then a soft landing at full size.
-private val POPUP_OPEN = tween<Float>(Ui.Motion.MS, easing = EmphasizedDecelerateEasing)
-// Back into it: slow to leave, then drawn in quickly.
-private val POPUP_CLOSE = tween<Float>(Ui.Motion.MS, easing = EmphasizedAccelerateEasing)
-
-/**
- * Grows a popup out of [anchor], a point on screen - the button or the tool
- * that opened it - as [growth] runs from 0 to 1, and folds it back into that
- * point as it returns, each axis on its own curve. The scale is a layer over
- * the popup, so the glass inside it has to be told to keep looking at the
- * page from where it now is: see [ProvideMovingBackdrops], whose alignment
- * undoes the two scales separately. Put it outside any room kept for the
- * shadow: while the popup fades this layer is drawn offscreen, and cuts off
- * whatever lies past its own bounds.
- */
-@Composable
-internal fun Modifier.growOutOf(anchor: () -> Offset?, growth: PopupGrowth): Modifier {
-    var origin by remember { mutableStateOf(TransformOrigin(0.5f, 0f)) }
-    return this
-        // Before the layer, so the bounds are the popup's own, unscaled.
-        .onGloballyPositioned { coordinates ->
-            val at = anchor() ?: return@onGloballyPositioned
-            val corner = coordinates.positionOnScreen()
-            val (x, y) = popupGrowOrigin(at.x, at.y, corner.x, corner.y,
-                coordinates.size.width.toFloat(), coordinates.size.height.toFloat())
-            val next = TransformOrigin(x, y)
-            if (next != origin) origin = next
-        }
-        .graphicsLayer {
-            val w = growth.width.value
-            val h = growth.height.value
-            val profile = growth.profile
-            if (profile?.reveal == true) {
-                // Nothing scaled: the pane's glass is poured round content that
-                // stays its size (see PopupReveal.kt).
-                return@graphicsLayer
-            }
-            if (profile == null) {
-                alpha = popupGrowAlpha(w, h)
-                scaleX = popupGrowScale(w, POPUP_START_SCALE_X)
-                scaleY = popupGrowScale(h, POPUP_START_SCALE_Y)
-            } else {
-                val start = if (growth.closing) profile.closeScale else profile.startScale
-                alpha = profile.alpha(maxOf(w, h))
-                scaleX = profile.scaleOf(w, start)
-                scaleY = profile.scaleOf(h, start)
-                translationY = -profile.dropDp * density * (1f - minOf(w, h).coerceIn(0f, 1f))
-            }
-            transformOrigin = origin
-            // On a 60 Hz screen the fast start of a popup jumps far between
-            // frames; a trace of blur along it reads as motion rather than
-            // as steps. Gone as it slows, and never at 120 Hz.
-            renderEffect = popupMotionBlur(growth, size.width, size.height, 4.dp.toPx())
-        }
-}
-
-/** The blur along a growing popup's motion, or none; see [motionBlurPx]. */
-private fun popupMotionBlur(growth: PopupGrowth, width: Float, height: Float, maxPx: Float): androidx.compose.ui.graphics.RenderEffect? =
-    // An edge of a pane scaled about a point inside it moves at about the
-    // scale's speed times half the pane's size.
-    motionBlurEffect(BlurPart.POPUPS, growth.width.velocity * width / 2f, growth.height.velocity * height / 2f, maxPx)
-
-/**
- * How small a popup is at the point it comes out of: nearly nothing, so it is
- * seen to come from where the finger was, the same on both axes.
- */
-private const val POPUP_START_SCALE_X = 0.06f
-private const val POPUP_START_SCALE_Y = 0.06f
-
 /** The bar's switch between sizes: its length, and the curve it moves on. */
 @Composable
 internal fun ToolbarMotionSettings() {
@@ -1506,14 +1184,12 @@ internal fun ToolbarMotionSettings() {
 }
 
 /**
- * The tool strip of the still skins, cut to the glass bar's measure: the same
- * capsule, cells and resting pill as [LiquidGlassBar], so all three skins share
- * one toolbar. Every other icon wears the same ink; the tool in hand wears its
- * own colour - the pen's ink, as under Liquid glass - or the accent for a tool
- * that has none, and its highlight slides over from the tool before it on the
- * lens's own spring without changing size - the one motion Material and
- * Glassmorphism keep. [ownSurface] gives it a capsule of the skin's material;
- * without one it is content on the bar it sits in.
+ * The tool strip: a capsule of cells with a pill under the tool in hand.
+ * Every other icon wears the same ink; the tool in hand wears its own colour
+ * - the pen's ink - or the accent for a tool that has none, and its pill
+ * slides over from the tool before it without changing size. [ownSurface]
+ * gives the strip a capsule of the chrome's material; without one it is
+ * content on the bar it sits in.
  */
 @Composable
 private fun ToolStrip(
@@ -1523,22 +1199,20 @@ private fun ToolStrip(
     vertical: Boolean = false,
 ) {
     if (tools.isEmpty()) return
-    val skin = LocalSkin.current
     val scheme = MaterialTheme.colorScheme
     val chromeScale = LocalChromeScale.current
     val barHeight = (if (compact) 40.dp else 48.dp) * chromeScale
     val padding = 6.dp
     val cellHeight = barHeight - padding * 2
-    // Liquid glass's resting pill and lens radius, from the same function.
     val pill = RoundedCornerShape(toolPillRadius(corner, barHeight, padding))
-    // The same neutral wash in every skin, never the accent (see [selectionPillFill]).
+    // A neutral wash, never the accent (see [selectionPillFill]).
     val highlight = selectionPillFill(scheme.onSurface, scheme.surface.luminance() < 0.5f)
     val selected = selectedIndex.takeIf { it in tools.indices }
     val slide = remember { Animatable((selected ?: 0).toFloat()) }
     val slideVelocity = remember { floatArrayOf(0f) }
     val showing = remember { booleanArrayOf(selected != null) }
-    val animateSelection = rememberLiquidGlassEffectsAllowed() && !LocalSkinSettings.current.highContrast
-    LaunchedEffect(selected, animateSelection, skin) {
+    val animateSelection = rememberMotionAllowed() && !LocalSkinSettings.current.highContrast
+    LaunchedEffect(selected, animateSelection) {
         if (selected == null) {
             showing[0] = false
             slideVelocity[0] = 0f
@@ -1553,10 +1227,8 @@ private fun ToolStrip(
             slideVelocity[0] = 0f
             slide.snapTo(selected.toFloat())
         } else {
-            // The lens's travel spring, so a tap moves the selection as fast
-            // here as it does under Liquid glass; a new tap mid-slide keeps
-            // the velocity it has, as the lens does.
-            // Eased across and landing without a bounce (see [selectionEase]).
+            // Eased across and landing without a bounce (see [selectionEase]);
+            // a new tap mid-slide keeps the velocity it has.
             slide.animateTo(selected.toFloat(), selectionEase(), initialVelocity = slideVelocity[0]) { slideVelocity[0] = velocity }
             slideVelocity[0] = 0f
         }
@@ -1567,7 +1239,7 @@ private fun ToolStrip(
         val cell = ((if (vertical) maxHeight else maxWidth) - padding * 2).coerceAtLeast(1.dp) / tools.size
         val capsule = if (vertical) Modifier.fillMaxHeight().width(barHeight) else Modifier.fillMaxWidth().height(barHeight)
         Box(capsule.align(Alignment.Center)
-            .then(if (ownSurface) Modifier.skinMaterial(RoundedCornerShape(corner), role = ChromeRole.TOOLBAR) else Modifier)) {
+            .then(if (ownSurface) Modifier.skinMaterial(RoundedCornerShape(corner)) else Modifier)) {
             if (selected != null) {
                 // Kept inside the strip if the spring runs a hair past the end.
                 // Moved in the draw, to the fraction of a pixel: placed on
