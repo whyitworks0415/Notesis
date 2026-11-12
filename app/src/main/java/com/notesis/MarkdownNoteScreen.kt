@@ -1,6 +1,9 @@
 package com.notesis
 
 import android.content.Intent
+import android.os.SystemClock
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ScrollState
@@ -58,6 +61,16 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.foundation.layout.size
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
@@ -101,13 +114,13 @@ internal object MarkdownIo {
 internal enum class MarkdownMode(val label: String) { LIVE("Live"), SOURCE("Source"), READING("Read") }
 
 /** The colours Markdown is drawn in, from the theme. */
-private data class MdColors(
+internal data class MdColors(
     val text: Color, val heading: Color, val marker: Color, val link: Color, val tagBack: Color,
     val codeBack: Color, val highlight: Color, val quote: Color, val done: Color,
 )
 
 @Composable
-private fun mdColors(): MdColors {
+internal fun mdColors(): MdColors {
     val scheme = MaterialTheme.colorScheme
     return MdColors(
         text = scheme.onSurface,
@@ -122,9 +135,9 @@ private fun mdColors(): MdColors {
     )
 }
 
-private val BODY_SIZE = 17.sp
+internal val BODY_SIZE = 17.sp
 
-private fun headingSize(level: Int): TextUnit = when (level) {
+internal fun headingSize(level: Int): TextUnit = when (level) {
     1 -> 1.7.em
     2 -> 1.45.em
     3 -> 1.25.em
@@ -159,7 +172,14 @@ internal fun MarkdownNoteScreen(
     var backlinks by remember(source.key) { mutableStateOf<List<String>?>(null) }
     var showLinks by remember { mutableStateOf(false) }
     val scroll = rememberScrollState()
+    val blockScroll = rememberScrollState()
     var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    val history = remember(source.key) { EditHistory() }
+    // Whether a block is open for writing in Live; the rest are drawn as they read.
+    var editing by remember(source.key) { mutableStateOf(false) }
+    var jump by remember { mutableStateOf<Int?>(null) }
+    // Where a picture being picked goes, once it is chosen.
+    var imageAt by remember { mutableStateOf<Int?>(null) }
 
     LaunchedEffect(source.key) {
         runCatching { withContext(MarkdownIo.serial) { source.load() } }
@@ -189,6 +209,8 @@ internal fun MarkdownNoteScreen(
     }
     fun leave() { saveNow(); onBack() }
     BackHandler { leave() }
+    // Back first closes the block being written, as tapping away does.
+    BackHandler(enabled = editing && mode == MarkdownMode.LIVE) { editing = false }
     fun follow(name: String) {
         saveNow()
         scope.launch { runCatching { source.follow(name) } }
@@ -205,12 +227,110 @@ internal fun MarkdownNoteScreen(
             next.text.removeRange(at - 1, at) == old.text) {
             continueAfterBreak(next.text, at)?.let { updated = TextFieldValue(it.text, TextRange(it.start, it.end)) }
         }
+        if (updated.text != old.text) history.record(old.state(), updated.state(), typed = true, now = SystemClock.uptimeMillis())
         value = updated
     }
-    fun apply(change: MdEdit) { value = TextFieldValue(change.text, TextRange(change.start, change.end)) }
+    fun apply(change: MdEdit) {
+        val next = TextFieldValue(change.text, TextRange(change.start, change.end))
+        history.record(value.state(), next.state(), typed = false, now = SystemClock.uptimeMillis())
+        value = next
+    }
+    fun undo() { history.undo(value.state())?.let { value = TextFieldValue(it.text, TextRange(it.start, it.end)) } }
+    fun redo() { history.redo(value.state())?.let { value = TextFieldValue(it.text, TextRange(it.start, it.end)) } }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        val at = imageAt
+        imageAt = null
+        if (uri == null || at == null) return@rememberLauncherForActivityResult
+        val resolver = context.contentResolver
+        scope.launch {
+            val name = withContext(Dispatchers.IO) {
+                val extension = resolver.getType(uri)?.let { android.webkit.MimeTypeMap.getSingleton().getExtensionFromMimeType(it) } ?: "png"
+                runCatching {
+                    resolver.openInputStream(uri)?.use { input ->
+                        source.addFile(attachmentName(extension, System.currentTimeMillis(), emptySet()), input)
+                    }
+                }.getOrNull()
+            }
+            if (name == null) KToast.makeText(context, "Couldn't add the picture", android.widget.Toast.LENGTH_SHORT).show()
+            else apply(insertEmbed(value.text, at.coerceIn(0, value.text.length), name))
+        }
+    }
+    fun pickImage(at: Int) {
+        imageAt = at
+        runCatching { picker.launch("image/*") }.onFailure { imageAt = null }
+    }
+    fun format(action: FormatAction) {
+        val s = value.selection.min
+        val e = value.selection.max
+        when (action) {
+            FormatAction.UNDO -> return undo()
+            FormatAction.REDO -> return redo()
+            FormatAction.IMAGE -> return pickImage(e)
+            else -> Unit
+        }
+        apply(when (action) {
+            FormatAction.BOLD -> toggleWrap(value.text, s, e, "**")
+            FormatAction.ITALIC -> toggleWrap(value.text, s, e, "*")
+            FormatAction.STRIKE -> toggleWrap(value.text, s, e, "~~")
+            FormatAction.HIGHLIGHT -> toggleWrap(value.text, s, e, "==")
+            FormatAction.CODE -> toggleWrap(value.text, s, e, "`")
+            FormatAction.HEADING -> toggleLineStyle(value.text, s, e, LineStyle.HEADING)
+            FormatAction.BULLET -> toggleLineStyle(value.text, s, e, LineStyle.BULLET)
+            FormatAction.NUMBERED -> toggleLineStyle(value.text, s, e, LineStyle.NUMBERED)
+            FormatAction.TASK -> toggleLineStyle(value.text, s, e, LineStyle.TASK)
+            FormatAction.QUOTE -> toggleLineStyle(value.text, s, e, LineStyle.QUOTE)
+            FormatAction.INDENT -> indentLines(value.text, s, e, outdent = false)
+            FormatAction.OUTDENT -> indentLines(value.text, s, e, outdent = true)
+            FormatAction.TABLE -> applySlash(value.text, e, e, SlashItem.TABLE)
+            FormatAction.WIKILINK -> {
+                val picked = value.text.substring(s, e)
+                val inserted = value.text.substring(0, s) + "[[" + picked + "]]" + value.text.substring(e)
+                // With words picked they become the link; without, the cursor waits inside for a name.
+                if (picked.isEmpty()) MdEdit(inserted, s + 2) else MdEdit(inserted, s + picked.length + 4)
+            }
+            FormatAction.LINK -> {
+                val picked = value.text.substring(s, e).ifEmpty { "text" }
+                val inserted = value.text.substring(0, s) + "[$picked](https://)" + value.text.substring(e)
+                val urlAt = s + picked.length + 3
+                MdEdit(inserted, urlAt, urlAt + 8)
+            }
+            FormatAction.UNDO, FormatAction.REDO, FormatAction.IMAGE -> return
+        })
+    }
+    /** The keys a keyboard brings: undo and redo, bold, italic, a link, and Tab to nest a list. */
+    fun shortcut(event: KeyEvent): Boolean {
+        if (event.type != KeyEventType.KeyDown) return false
+        val ctrl = event.isCtrlPressed || event.isMetaPressed
+        val action = when {
+            ctrl && event.key == Key.Z && event.isShiftPressed -> FormatAction.REDO
+            ctrl && event.key == Key.Z -> FormatAction.UNDO
+            ctrl && event.key == Key.Y -> FormatAction.REDO
+            ctrl && event.key == Key.B -> FormatAction.BOLD
+            ctrl && event.key == Key.I -> FormatAction.ITALIC
+            ctrl && event.key == Key.K -> FormatAction.LINK
+            ctrl && event.key == Key.E -> FormatAction.CODE
+            !ctrl && event.key == Key.Tab -> if (event.isShiftPressed) FormatAction.OUTDENT else FormatAction.INDENT
+            else -> return false
+        }
+        format(action)
+        return true
+    }
+    fun chooseSlash(item: SlashItem, slash: Pair<Int, String>) {
+        val cursor = value.selection.start
+        when (item) {
+            SlashItem.IMAGE -> {
+                apply(MdEdit(value.text.removeRange(slash.first, cursor), slash.first))
+                pickImage(slash.first)
+            }
+            SlashItem.DATE -> apply(applySlash(value.text, slash.first, cursor, item,
+                java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.ROOT).format(java.util.Date())))
+            else -> apply(applySlash(value.text, slash.first, cursor, item))
+        }
+    }
     fun jumpTo(offset: Int) {
         if (mode == MarkdownMode.READING) mode = MarkdownMode.LIVE
         value = value.copy(selection = TextRange(offset))
+        if (mode == MarkdownMode.LIVE) { jump = offset; return }
         val at = layout ?: return
         val top = at.getLineTop(at.getLineForOffset(offset.coerceIn(0, at.layoutInput.text.length))).toInt()
         scope.launch { scroll.animateScrollTo(top) }
@@ -264,28 +384,47 @@ internal fun MarkdownNoteScreen(
                     Text(failed!!, color = MaterialTheme.colorScheme.error)
                 }
                 !loaded -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                mode == MarkdownMode.READING -> MarkdownReader(
+                mode == MarkdownMode.READING -> MarkdownWebText(
                     text = value.text,
-                    onToggleTask = { at -> value = value.copy(text = toggleTask(value.text, at)) },
-                    onWiki = ::follow,
+                    source = source,
+                    onTask = { n -> toggleNthTask(value.text, n)?.let { apply(MdEdit(it, value.selection.start, value.selection.end)) } },
+                    onFollow = ::follow,
                     onUrl = ::openUrl,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
                 else -> {
                     Box(Modifier.weight(1f).fillMaxWidth()) {
-                        MarkdownEditor(
+                        if (mode == MarkdownMode.LIVE) MarkdownBlockEditor(
                             value = value,
                             onValueChange = ::edit,
-                            live = mode == MarkdownMode.LIVE,
+                            onChange = ::apply,
+                            source = source,
+                            onFollow = ::follow,
+                            onUrl = ::openUrl,
+                            onKey = ::shortcut,
+                            scroll = blockScroll,
+                            jumpTo = jump,
+                            onJumped = { jump = null },
+                            editing = editing,
+                            onEditing = { editing = it },
+                        ) else MarkdownEditor(
+                            value = value,
+                            onValueChange = ::edit,
+                            live = false,
                             scroll = scroll,
                             onLayout = { layout = it },
+                            onKey = ::shortcut,
                         )
                     }
-                    val query = remember(value.text, value.selection) {
-                        if (value.selection.collapsed) wikiQueryAt(value.text, value.selection.start) else null
+                    val writing = mode == MarkdownMode.SOURCE || editing
+                    val query = remember(value.text, value.selection, writing) {
+                        if (writing && value.selection.collapsed) wikiQueryAt(value.text, value.selection.start) else null
                     }
-                    val linkHere = remember(value.text, value.selection) {
-                        if (query != null) null else markdownSpans(value.text).firstOrNull {
+                    val slash = remember(value.text, value.selection, writing) {
+                        if (writing && query == null && value.selection.collapsed) slashQueryAt(value.text, value.selection.start) else null
+                    }
+                    val linkHere = remember(value.text, value.selection, writing) {
+                        if (!writing || query != null) null else markdownSpans(value.text).firstOrNull {
                             it.kind == MdKind.WIKILINK && value.selection.start in it.start..it.end
                         }?.target
                     }
@@ -294,38 +433,12 @@ internal fun MarkdownNoteScreen(
                             apply(completeWiki(value.text, query.first, value.selection.start, name))
                             if (name !in names) names = names + name
                         }
+                        slash != null -> SlashMenu(slashMatches(slash.second)) { item -> chooseSlash(item, slash) }
                         linkHere != null -> Row(Modifier.fillMaxWidth().padding(horizontal = Ui.Space.s)) {
                             TextButton(onClick = { follow(linkHere) }) { Text("Open “$linkHere”") }
                         }
                     }
-                    FormatBar { action ->
-                        val s = value.selection.min
-                        val e = value.selection.max
-                        apply(when (action) {
-                            FormatAction.BOLD -> toggleWrap(value.text, s, e, "**")
-                            FormatAction.ITALIC -> toggleWrap(value.text, s, e, "*")
-                            FormatAction.STRIKE -> toggleWrap(value.text, s, e, "~~")
-                            FormatAction.HIGHLIGHT -> toggleWrap(value.text, s, e, "==")
-                            FormatAction.CODE -> toggleWrap(value.text, s, e, "`")
-                            FormatAction.HEADING -> toggleLineStyle(value.text, s, e, LineStyle.HEADING)
-                            FormatAction.BULLET -> toggleLineStyle(value.text, s, e, LineStyle.BULLET)
-                            FormatAction.NUMBERED -> toggleLineStyle(value.text, s, e, LineStyle.NUMBERED)
-                            FormatAction.TASK -> toggleLineStyle(value.text, s, e, LineStyle.TASK)
-                            FormatAction.QUOTE -> toggleLineStyle(value.text, s, e, LineStyle.QUOTE)
-                            FormatAction.WIKILINK -> {
-                                val picked = value.text.substring(s, e)
-                                val inserted = value.text.substring(0, s) + "[[" + picked + "]]" + value.text.substring(e)
-                                // With words picked they become the link; without, the cursor waits inside for a name.
-                                if (picked.isEmpty()) MdEdit(inserted, s + 2) else MdEdit(inserted, s + picked.length + 4)
-                            }
-                            FormatAction.LINK -> {
-                                val picked = value.text.substring(s, e).ifEmpty { "text" }
-                                val inserted = value.text.substring(0, s) + "[$picked](https://)" + value.text.substring(e)
-                                val urlAt = s + picked.length + 3
-                                MdEdit(inserted, urlAt, urlAt + 8)
-                            }
-                        })
-                    }
+                    if (writing) FormatBar(history.canUndo, history.canRedo, ::format)
                 }
             }
         }
@@ -412,6 +525,7 @@ private fun MarkdownEditor(
     live: Boolean,
     scroll: ScrollState,
     onLayout: (TextLayoutResult) -> Unit,
+    onKey: (KeyEvent) -> Boolean = { false },
 ) {
     val colors = mdColors()
     val spans = remember(value.text) { markdownSpans(value.text) }
@@ -436,6 +550,7 @@ private fun MarkdownEditor(
                 .fillMaxWidth()
                 .heightIn(min = 400.dp)
                 .padding(horizontal = 24.dp, vertical = 16.dp)
+                .onPreviewKeyEvent(onKey)
                 .semantics { contentDescription = "Note text" },
         )
     }
@@ -475,7 +590,7 @@ private class SourceView(private val spans: List<MdSpan>, private val c: MdColor
  * text keeps its length - a hidden mark is drawn see-through at a hair's
  * width, a bullet is drawn as • - so the cursor and the source stay one to one.
  */
-private class LivePreview(
+internal class LivePreview(
     private val spans: List<MdSpan>,
     private val active: IntRange,
     private val c: MdColors,
@@ -542,24 +657,57 @@ private class LivePreview(
 }
 
 /** The buttons along the bottom of the editor. */
-private enum class FormatAction(val label: String, val description: String) {
+internal enum class FormatAction(val label: String, val description: String) {
+    UNDO("↶", "Undo"), REDO("↷", "Redo"),
     BOLD("B", "Bold"), ITALIC("I", "Italic"), STRIKE("S", "Strikethrough"), HIGHLIGHT("==", "Highlight"),
     CODE("</>", "Code"), HEADING("H", "Heading"), BULLET("•", "Bullet list"), NUMBERED("1.", "Numbered list"),
-    TASK("☐", "Task"), QUOTE("❝", "Quote"), WIKILINK("[[ ]]", "Link a note"), LINK("Link", "Web link"),
+    TASK("☐", "Task"), QUOTE("❝", "Quote"), OUTDENT("⇤", "Outdent"), INDENT("⇥", "Indent"),
+    WIKILINK("[[ ]]", "Link a note"), LINK("Link", "Web link"), IMAGE("", "Picture"), TABLE("", "Table"),
 }
 
 @Composable
-private fun FormatBar(onAction: (FormatAction) -> Unit) {
+private fun FormatBar(canUndo: Boolean, canRedo: Boolean, onAction: (FormatAction) -> Unit) {
     Surface(tonalElevation = 2.dp) {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = Ui.Space.s),
             verticalAlignment = Alignment.CenterVertically) {
             FormatAction.entries.forEach { action ->
-                TextButton(onClick = { onAction(action) },
+                val enabled = when (action) { FormatAction.UNDO -> canUndo; FormatAction.REDO -> canRedo; else -> true }
+                val icon = when (action) {
+                    FormatAction.UNDO -> Reicons.Undo
+                    FormatAction.REDO -> Reicons.Redo
+                    FormatAction.IMAGE -> Reicons.Image
+                    FormatAction.TABLE -> Reicons.AutoAwesomeMosaic
+                    else -> null
+                }
+                if (icon != null) {
+                    IconButton(onClick = { onAction(action) }, enabled = enabled, modifier = Modifier.size(48.dp)) {
+                        Icon(icon, action.description)
+                    }
+                } else TextButton(onClick = { onAction(action) }, enabled = enabled,
                     modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = action.description }) {
-                    Text(action.label, fontWeight = if (action == FormatAction.BOLD) FontWeight.Bold else FontWeight.Normal,
+                    Text(AnnotatedString(action.label), fontWeight = if (action == FormatAction.BOLD) FontWeight.Bold else FontWeight.Normal,
                         fontStyle = if (action == FormatAction.ITALIC) FontStyle.Italic else FontStyle.Normal,
                         textDecoration = if (action == FormatAction.STRIKE) TextDecoration.LineThrough else null)
                 }
+                if (action == FormatAction.REDO || action == FormatAction.CODE || action == FormatAction.INDENT || action == FormatAction.LINK) {
+                    Box(Modifier.padding(horizontal = 4.dp).width(1.dp).height(24.dp).background(MaterialTheme.colorScheme.outlineVariant))
+                }
+            }
+        }
+    }
+}
+
+/** What "/" offers as it is typed: blocks to make, Notion's way, filtered by the words after the slash. */
+@Composable
+private fun SlashMenu(items: List<SlashItem>, onPick: (SlashItem) -> Unit) {
+    Surface(tonalElevation = 3.dp, shape = Ui.Shape.preview, modifier = Modifier.padding(horizontal = Ui.Space.s, vertical = 4.dp)) {
+        if (items.isEmpty()) {
+            Text("No block by that name", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(12.dp))
+        } else LazyColumn(Modifier.widthIn(max = 420.dp).heightIn(max = 260.dp)) {
+            items(items) { item ->
+                Text(item.label, style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.fillMaxWidth().clickable { onPick(item) }.padding(horizontal = 16.dp, vertical = 11.dp))
             }
         }
     }
@@ -582,173 +730,4 @@ private fun WikiSuggestions(names: List<String>, query: String, onPick: (String)
     }
 }
 
-// ---- reading ----------------------------------------------------------------------------------
-
-@Composable
-private fun MarkdownReader(
-    text: String,
-    onToggleTask: (Int) -> Unit,
-    onWiki: (String) -> Unit,
-    onUrl: (String) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val colors = mdColors()
-    val blocks = remember(text) { markdownBlocks(text) }
-    if (blocks.isEmpty()) {
-        Box(modifier, contentAlignment = Alignment.Center) {
-            Text("Nothing written yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        return
-    }
-    fun inline(source: String) = inlineAnnotated(source, colors, onWiki, onUrl)
-    LazyColumn(modifier, contentPadding = PaddingValues(horizontal = 24.dp, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        items(blocks, key = { it.start }) { block ->
-            when (block) {
-                is MdBlock.Heading -> Text(inline(block.text),
-                    fontSize = (BODY_SIZE.value * headingSize(block.level).value).sp, fontWeight = FontWeight.Bold,
-                    lineHeight = 1.3.em,
-                    modifier = Modifier.padding(top = if (block.level <= 2) 10.dp else 4.dp).semantics { heading() })
-                is MdBlock.Paragraph -> Text(inline(block.text), fontSize = BODY_SIZE, lineHeight = 1.55.em)
-                is MdBlock.Item -> Row(Modifier.padding(start = (block.depth * 22).dp), verticalAlignment = Alignment.Top) {
-                    if (block.task != null) {
-                        Checkbox(checked = block.task, onCheckedChange = { onToggleTask(block.taskAt) },
-                            modifier = Modifier.padding(end = 2.dp))
-                    } else {
-                        Text(block.marker, fontSize = BODY_SIZE, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.widthIn(min = 22.dp).padding(end = 6.dp))
-                    }
-                    Text(inline(block.text), fontSize = BODY_SIZE, lineHeight = 1.5.em,
-                        color = if (block.task == true) colors.done else colors.text,
-                        textDecoration = if (block.task == true) TextDecoration.LineThrough else null,
-                        modifier = Modifier.padding(top = if (block.task != null) 12.dp else 0.dp))
-                }
-                is MdBlock.Quote -> {
-                    val callout = remember(block.text) { calloutOf(block.text) }
-                    if (callout != null) MarkdownCallout(callout, ::inline)
-                    else Row(Modifier.height(IntrinsicSize.Min)) {
-                        Box(Modifier.width(3.dp).fillMaxHeight().background(MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)))
-                        Text(inline(block.text), fontSize = BODY_SIZE, fontStyle = FontStyle.Italic, color = colors.quote,
-                            modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp))
-                    }
-                }
-                is MdBlock.Code -> Surface(color = colors.codeBack, shape = Ui.Shape.preview, modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(12.dp)) {
-                        if (block.language.isNotBlank()) Text(block.language, style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(block.text, fontFamily = FontFamily.Monospace, fontSize = 15.sp,
-                            modifier = Modifier.horizontalScroll(rememberScrollState()))
-                    }
-                }
-                is MdBlock.Table -> MarkdownTable(block, ::inline)
-                is MdBlock.Rule -> HorizontalDivider(Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant)
-                is MdBlock.FrontMatter -> Surface(color = colors.codeBack, shape = Ui.Shape.preview, modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(12.dp)) {
-                        Text("Properties", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(block.text, fontFamily = FontFamily.Monospace, fontSize = 14.sp)
-                    }
-                }
-            }
-        }
-    }
-}
-
-/**
- * A callout as reading mode shows it: a tinted box with its type's colour
- * down the side and its title on top; one marked + or - folds at the title.
- */
-@Composable
-private fun MarkdownCallout(callout: MdCallout, inline: (String) -> AnnotatedString) {
-    val tint = calloutColor(callout.type)
-    var open by remember(callout) { mutableStateOf(callout.startsOpen ?: true) }
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .height(IntrinsicSize.Min)
-            .clip(Ui.Shape.preview)
-            .background(tint.copy(alpha = 0.10f)),
-    ) {
-        Box(Modifier.width(4.dp).fillMaxHeight().background(tint))
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = if (callout.startsOpen != null) Modifier.clickable { open = !open } else Modifier,
-            ) {
-                Text(inline(callout.title), fontSize = BODY_SIZE, fontWeight = FontWeight.SemiBold, color = tint,
-                    modifier = Modifier.weight(1f, fill = false))
-                if (callout.startsOpen != null) Text(if (open) "  ▾" else "  ▸", color = tint)
-            }
-            if (open && callout.body.isNotBlank()) {
-                Text(inline(callout.body), fontSize = BODY_SIZE, lineHeight = 1.5.em, modifier = Modifier.padding(top = 4.dp))
-            }
-        }
-    }
-}
-
-/** The colour Obsidian gives each kind of callout, near enough; anything unknown reads as a note. */
-private fun calloutColor(type: String): Color = when (type) {
-    "tip", "hint", "important", "success", "check", "done" -> Color(0xFF2E9E5B)
-    "question", "help", "faq" -> Color(0xFFD08A1B)
-    "warning", "caution", "attention" -> Color(0xFFE07B1F)
-    "failure", "fail", "missing", "danger", "error", "bug" -> Color(0xFFD9443A)
-    "example" -> Color(0xFF7B5CD6)
-    "quote", "cite" -> Color(0xFF8A8A8A)
-    else -> Color(0xFF3B7DDD)
-}
-
-@Composable
-private fun MarkdownTable(table: MdBlock.Table, inline: (String) -> AnnotatedString) {
-    val line = MaterialTheme.colorScheme.outlineVariant
-    val columns = maxOf(table.header.size, table.rows.maxOfOrNull { it.size } ?: 0)
-    Column(Modifier.horizontalScroll(rememberScrollState()).border(1.dp, line)) {
-        (listOf(table.header) + table.rows).forEachIndexed { index, row ->
-            Row(Modifier.height(IntrinsicSize.Min).background(if (index == 0) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent)) {
-                for (column in 0 until columns) {
-                    Box(Modifier.widthIn(min = 96.dp, max = 260.dp).fillMaxHeight().border(0.5.dp, line).padding(8.dp)) {
-                        Text(inline(row.getOrElse(column) { "" }), fontSize = 15.sp,
-                            fontWeight = if (index == 0) FontWeight.SemiBold else FontWeight.Normal)
-                    }
-                }
-            }
-        }
-    }
-}
-
-/** A line of Markdown as styled text, its marks gone and its links followable. */
-private fun inlineAnnotated(text: String, c: MdColors, onWiki: (String) -> Unit, onUrl: (String) -> Unit): AnnotatedString {
-    val spans = markdownSpans(text)
-    val hidden = BooleanArray(text.length)
-    for (s in spans) if (s.kind == MdKind.MARKER) for (i in s.start until s.end.coerceAtMost(text.length)) hidden[i] = true
-    // Where each source character lands in the text shown.
-    val at = IntArray(text.length + 1)
-    val shown = StringBuilder()
-    for (i in text.indices) {
-        at[i] = shown.length
-        if (!hidden[i]) shown.append(text[i])
-    }
-    at[text.length] = shown.length
-    val out = AnnotatedString.Builder(shown.toString())
-    for (s in spans) {
-        val start = at[s.start.coerceIn(0, text.length)]
-        val end = at[s.end.coerceIn(0, text.length)]
-        if (end <= start) continue
-        when (s.kind) {
-            MdKind.BOLD -> out.addStyle(SpanStyle(fontWeight = FontWeight.Bold), start, end)
-            MdKind.ITALIC -> out.addStyle(SpanStyle(fontStyle = FontStyle.Italic), start, end)
-            MdKind.STRIKE -> out.addStyle(SpanStyle(textDecoration = TextDecoration.LineThrough), start, end)
-            MdKind.HIGHLIGHT -> out.addStyle(SpanStyle(background = c.highlight), start, end)
-            MdKind.CODE -> out.addStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = c.codeBack), start, end)
-            MdKind.TAG -> out.addStyle(SpanStyle(color = c.link, background = c.tagBack), start, end)
-            MdKind.WIKILINK -> s.target?.let { target ->
-                out.addLink(LinkAnnotation.Clickable(target, TextLinkStyles(SpanStyle(color = c.link))) { onWiki(target) }, start, end)
-            }
-            MdKind.LINK -> s.target?.let { url ->
-                out.addLink(LinkAnnotation.Clickable(url, TextLinkStyles(SpanStyle(color = c.link, textDecoration = TextDecoration.Underline))) {
-                    onUrl(url)
-                }, start, end)
-            }
-            else -> Unit
-        }
-    }
-    return out.toAnnotatedString()
-}
+private fun TextFieldValue.state() = EditHistory.State(text, selection.start, selection.end)

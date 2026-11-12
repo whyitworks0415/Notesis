@@ -1,0 +1,56 @@
+/* A Markdown note read on screen: GitHub's look (github-markdown-css), Obsidian's own marks,
+   and the app's colours, which the app passes in as --bg, --fg, --accent, --muted, --line, --code. */
+:root { --bg: #fff; --fg: #1f2328; --accent: #0969da; --muted: #59636e; --line: #d1d9e0; --code: #f6f8fa; --mark: #fff3a3; }
+html, body { margin: 0; background: var(--bg); }
+body { font-family: -apple-system, 'Segoe UI', 'Noto Sans KR', 'Noto Sans CJK KR', Roboto, Arial, sans-serif; }
+.markdown-body { box-sizing: border-box; max-width: 860px; margin: 0 auto; padding: 20px 28px 96px;
+  background: transparent !important; color: var(--fg) !important; font-size: 17px; line-height: 1.65; }
+.markdown-body a, .markdown-body .wikilink { color: var(--accent) !important; text-decoration: none; cursor: pointer; }
+.markdown-body a:hover { text-decoration: underline; }
+.markdown-body h1, .markdown-body h2 { border-bottom-color: var(--line) !important; }
+.markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4, .markdown-body h5, .markdown-body h6 { color: var(--fg); }
+.markdown-body h6 { color: var(--muted) !important; }
+.markdown-body hr { background-color: var(--line) !important; height: 2px; }
+.markdown-body blockquote { color: var(--muted) !important; border-left-color: var(--line) !important; }
+.markdown-body code, .markdown-body tt { background: var(--code) !important; color: inherit; }
+.markdown-body pre { background: var(--code) !important; color: var(--fg); position: relative; }
+.markdown-body pre .copy { position: absolute; top: 6px; right: 6px; font: 12px sans-serif; padding: 4px 8px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--muted); }
+.markdown-body pre .lang { position: absolute; top: 8px; left: 12px; font: 11px sans-serif; color: var(--muted); }
+.markdown-body pre.has-lang { padding-top: 28px; }
+.markdown-body table { display: table; width: auto; max-width: 100%; overflow-x: auto; }
+.markdown-body table th, .markdown-body table td { border-color: var(--line) !important; }
+.markdown-body table tr { background: transparent !important; border-color: var(--line) !important; }
+.markdown-body table tr:nth-child(2n) { background: var(--code) !important; }
+.markdown-body img { background: transparent !important; border-radius: 6px; }
+.markdown-body mark { background: var(--mark); color: inherit; padding: 0 2px; border-radius: 2px; }
+.markdown-body .embed-note { display: block; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 6px; padding: 8px 12px; margin: 8px 0; color: var(--accent); cursor: pointer; }
+.markdown-body .missing { color: var(--muted); font-style: italic; }
+.markdown-body .tag { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 10px; padding: 0 7px; font-size: .9em; }
+.markdown-body .callout { border-left: 4px solid var(--callout, #0969da); background: color-mix(in srgb, var(--callout, #0969da) 10%, transparent);
+  border-radius: 6px; padding: 10px 14px; margin: 0 0 16px; color: var(--fg); }
+.markdown-body .callout-title { font-weight: 600; color: var(--callout, #0969da); margin-bottom: 4px; display: flex; gap: 6px; align-items: center; }
+.markdown-body .callout.foldable > .callout-title { cursor: pointer; }
+.markdown-body .callout.foldable > .callout-title::after { content: '▾'; }
+.markdown-body .callout.folded > .callout-title::after { content: '▸'; }
+.markdown-body .callout.folded > :not(.callout-title) { display: none; }
+.markdown-body .callout > :last-child { margin-bottom: 0; }
+.markdown-body .katex-display { margin: .6em 0; overflow-x: auto; overflow-y: hidden; }
+.markdown-body .task-list-item { list-style: none; }
+.markdown-body .task-list-item input { margin: 0 .4em .2em -1.4em; width: 1.05em; height: 1.05em; vertical-align: middle; accent-color: var(--accent); }
+.markdown-body .task-list-item.done { color: var(--muted); text-decoration: line-through; }
+.markdown-body .footnotes { font-size: .88em; color: var(--muted); border-top: 1px solid var(--line); margin-top: 32px; padding-top: 8px; }
+.markdown-body sup.fn a { font-size: .8em; }
+.markdown-body .properties { border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; margin-bottom: 16px; font-size: .9em; }
+.markdown-body .properties div { display: flex; gap: 12px; padding: 3px 0; }
+.markdown-body .properties b { min-width: 96px; color: var(--muted); font-weight: 500; }
+.markdown-body .empty { color: var(--muted); text-align: center; margin-top: 30vh; }
+.dark .hljs-keyword, .dark .hljs-built_in { color: #ff7b72; }
+.dark .hljs-string { color: #a5d6ff; }
+.dark .hljs-comment { color: #8b949e; }
+.dark .hljs-number, .dark .hljs-literal { color: #79c0ff; }
+.dark .hljs-title, .dark .hljs-function { color: #d2a8ff; }
+.dark .katex { color: var(--fg); }
+.compact .markdown-body { padding: 0; max-width: none; }
+.compact .markdown-body .katex-display { margin: 0; }
+.compact .markdown-body .math-block { padding: 4px 0; }

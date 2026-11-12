@@ -1265,6 +1265,26 @@ class NoteStore(context: Context) {
         }
     }
 
+    /** A Markdown note's own files (its pictures), beside note.md; exported with it in an archive. */
+    internal fun markdownFile(id: String, name: String): File? {
+        val clean = name.substringAfterLast('/').substringAfterLast('\\').trim()
+        if (clean.isEmpty() || clean.startsWith(".")) return null
+        return File(File(root, "$id/$MARKDOWN_FILES"), clean)
+    }
+
+    /** Keeps [input] as one of the note's files under a free name like [name]; the name it got. */
+    internal fun addMarkdownFile(id: String, name: String, input: java.io.InputStream): String? = runCatching {
+        val dir = File(root, "$id/$MARKDOWN_FILES").apply { mkdirs() }
+        val taken = dir.list()?.map { it.lowercase() }?.toSet().orEmpty()
+        val base = name.substringAfterLast('/').trim().ifEmpty { "file" }
+        var chosen = base
+        var n = 1
+        while (chosen.lowercase() in taken) chosen = base.substringBeforeLast('.') + " ${++n}." + base.substringAfterLast('.', "bin")
+        val file = File(dir, chosen)
+        file.outputStream().use { input.copyTo(it) }
+        chosen
+    }.getOrNull()
+
     internal fun saveMarkdown(id: String, title: String, text: String) {
         val metaFile = File(root, "$id/meta.json")
         val meta = JSONObject(metaFile.readText())
@@ -2761,6 +2781,8 @@ class NoteStore(context: Context) {
         const val LABEL = "label"
         const val LOCKED = "locked"
         const val ARCHIVE_MARK = "notesis.json"
+        /** A Markdown note's pictures and other files, beside note.md. */
+        const val MARKDOWN_FILES = "files"
         const val ARCHIVE_VERSION = 1
         const val THUMB_INTERVAL_MS = 20_000L
         /** Finer outlines than the live viewport, where PDF zoom has no fixed limit. */

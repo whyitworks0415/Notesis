@@ -96,8 +96,67 @@ internal class MarkdownVault(private val context: Context, val tree: Uri) {
         VaultFile(title, "$title.md", uri, System.currentTimeMillis())
     }.getOrNull()
 
+    /**
+     * A file of the folder by name, as Obsidian finds what ![[name]] shows:
+     * by its path from the top if it has one, else the first file of that
+     * name anywhere. Remembered, as walking the folder is slow.
+     */
+    fun openAttachment(name: String): java.io.InputStream? {
+        val wanted = name.trim().removePrefix("/").removePrefix("./")
+        val uri = attachments[tree.toString() + "|" + wanted.lowercase(Locale.ROOT)] ?: findAttachment(wanted)?.also {
+            attachments[tree.toString() + "|" + wanted.lowercase(Locale.ROOT)] = it
+        } ?: return null
+        return runCatching { resolver.openInputStream(uri) }.getOrNull()
+    }
+
+    private fun findAttachment(wanted: String): Uri? {
+        val leaf = wanted.substringAfterLast('/').lowercase(Locale.ROOT)
+        var found: Uri? = null
+        var visited = 0
+        fun walk(parentId: String, prefix: String, depth: Int) {
+            if (found != null || depth > MAX_DEPTH || visited > MAX_FILES) return
+            val folders = ArrayList<Pair<String, String>>()
+            runCatching {
+                resolver.query(DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentId), arrayOf(
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                    DocumentsContract.Document.COLUMN_MIME_TYPE), null, null, null)?.use { cursor ->
+                    while (cursor.moveToNext() && found == null) {
+                        visited++
+                        val id = cursor.getString(0) ?: continue
+                        val name = cursor.getString(1) ?: continue
+                        if (name.startsWith(".")) continue
+                        if (cursor.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR) folders += id to name
+                        else if (name.lowercase(Locale.ROOT) == leaf &&
+                            (!wanted.contains('/') || (prefix + name).equals(wanted, ignoreCase = true))) {
+                            found = DocumentsContract.buildDocumentUriUsingTree(tree, id)
+                        }
+                    }
+                }
+            }
+            for ((id, name) in folders) walk(id, "$prefix$name/", depth + 1)
+        }
+        walk(rootId, "", 0)
+        return found
+    }
+
+    /** Keeps [input] at the top of the folder under a free name like [name]; the name it got. */
+    fun addAttachment(name: String, input: java.io.InputStream): String? = runCatching {
+        val base = name.substringAfterLast('/').replace(Regex("[\\\\/:*?\"<>|]"), " ").trim().ifEmpty { "file" }
+        var chosen = base
+        var n = 1
+        while (findAttachment(chosen) != null) chosen = base.substringBeforeLast('.') + " ${++n}." + base.substringAfterLast('.', "bin")
+        val mime = android.webkit.MimeTypeMap.getSingleton()
+            .getMimeTypeFromExtension(chosen.substringAfterLast('.', "").lowercase(Locale.ROOT)) ?: "application/octet-stream"
+        val parent = DocumentsContract.buildDocumentUriUsingTree(tree, rootId)
+        val uri = DocumentsContract.createDocument(resolver, parent, mime, chosen) ?: return null
+        resolver.openOutputStream(uri, "w")?.use { input.copyTo(it) } ?: return null
+        attachments[tree.toString() + "|" + chosen.lowercase(Locale.ROOT)] = uri
+        chosen
+    }.getOrNull()
+
     companion object {
         private val listed = java.util.concurrent.ConcurrentHashMap<String, List<VaultFile>>()
+        private val attachments = java.util.concurrent.ConcurrentHashMap<String, Uri>()
         private const val MAX_FILES = 5000
         private const val MAX_DEPTH = 12
         private const val PREFS = "vaults"

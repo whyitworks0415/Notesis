@@ -42,13 +42,15 @@
       catch (e) { return `<code>${escapeHtml(tex)}</code>`; }
     };
     const at = (text, needle) => { const i = text.indexOf(needle); return i < 0 ? undefined : i; };
+    // A block mark counts only at the start of a line; found mid-line it would cut the paragraph there.
+    const lineStart = (text, mark) => { const m = new RegExp('(^|\\n)[ \\t]*' + mark.source).exec(text); return m ? m.index + m[1].length : undefined; };
     marked.use({
       gfm: true,
       // Obsidian, unless told to be strict, keeps a single line break as a break.
       breaks: true,
       extensions: [
         {
-          name: 'mathBlock', level: 'block', start: (src) => at(src, '$$'),
+          name: 'mathBlock', level: 'block', start: (src) => lineStart(src, /\$\$/),
           tokenizer(src) {
             const m = /^\$\$([\s\S]+?)\$\$[^\S\n]*(?:\n|$)/.exec(src);
             if (m) return { type: 'mathBlock', raw: m[0], text: m[1].trim() };
@@ -56,7 +58,7 @@
           renderer: (token) => `<div class="math-block">${math(token.text, true)}</div>`,
         },
         {
-          name: 'commentBlock', level: 'block', start: (src) => at(src, '%%'),
+          name: 'commentBlock', level: 'block', start: (src) => lineStart(src, /%%/),
           tokenizer(src) {
             const m = /^%%[\s\S]*?%%[^\S\n]*(?:\n|$)/.exec(src);
             if (m) return { type: 'commentBlock', raw: m[0] };

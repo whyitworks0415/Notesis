@@ -107,7 +107,7 @@ S6 Lite, SM-P61x/P62x). Kotlin, Jetpack Compose for the chrome, a custom
 | Storage | `Document.kt` (`NoteStore`, pages, save/load, whiteboard `board.bin`) |
 | Text boxes, tables | `TextBox.kt`, `MarkdownSpans.kt`, `TableBox.kt`, `InlineText.kt` |
 | Handwriting recognition | `InkIndexer.kt` (ML Kit), `OcrResultDialog.kt` |
-| Markdown notes, vault | `MarkdownNoteScreen.kt`, `MarkdownText.kt`, `MarkdownVault*.kt` |
+| Markdown notes, vault | `MarkdownNoteScreen.kt`, `MarkdownBlockEditor.kt` (Live blocks), `MarkdownLive.kt` (pure: blocks, inline rules, tables, slash menu, undo), `MarkdownReadView.kt` + `assets/viewer/md-read.*` (reading), `MarkdownText.kt`, `MarkdownVault*.kt` |
 | Settings | `SettingsSidebar.kt`, `ToolSettingsDialog.kt`, `PenPreset.kt` (`PenStore`) |
 | Diagnostics | `Diagnostics.kt`, `LatencyStats.kt`, `JankWatch.kt` (dropped frames → light mode), `MemoryTrim.kt` |
 | Page panel, Internet panel | `PageSidebar.kt`, `WebPanel.kt` |

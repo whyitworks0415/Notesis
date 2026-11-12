@@ -112,6 +112,7 @@ internal fun markdownSpans(text: String): List<MdSpan> {
 private val CODE_SPAN = Regex("`([^`\n]+)`")
 private val WIKILINK = Regex("\\[\\[([^\\[\\]\\n|#]+)(#[^\\[\\]\\n|]*)?(\\|([^\\[\\]\\n]+))?\\]\\]")
 private val LINK = Regex("\\[([^\\[\\]\\n]+)\\]\\(([^()\\s]+)\\)")
+private val BOLD_ITALIC = Regex("(\\*\\*\\*|___)(?=\\S)([^\\n]+?)(?<=\\S)\\1")
 private val BOLD = Regex("(\\*\\*|__)(?=\\S)([^\\n]+?)(?<=\\S)\\1")
 private val ITALIC = Regex("(?<![*\\w])([*_])(?=[^\\s*_])([^*_\\n]+?)(?<=[^\\s*_])\\1(?![*\\w])")
 private val STRIKE = Regex("~~(?=\\S)([^\\n]+?)(?<=\\S)~~")
@@ -170,6 +171,17 @@ private fun inlineSpans(text: String, from: Int, to: Int, out: MutableList<MdSpa
             blank(m.range.first, m.range.first + mark)
             blank(m.range.last + 1 - mark, m.range.last + 1)
         }
+    }
+    // ***both*** first, or bold would take two of its three marks and leave one standing.
+    BOLD_ITALIC.findAll(work.toString()).toList().forEach { m ->
+        val s = from + m.range.first
+        val e = from + m.range.last + 1
+        out += MdSpan(s, s + 3, MdKind.MARKER)
+        out += MdSpan(s + 3, e - 3, MdKind.BOLD)
+        out += MdSpan(s + 3, e - 3, MdKind.ITALIC)
+        out += MdSpan(e - 3, e, MdKind.MARKER)
+        blank(m.range.first, m.range.first + 3)
+        blank(m.range.last - 2, m.range.last + 1)
     }
     wrapped(BOLD, MdKind.BOLD, 1)
     wrapped(STRIKE, MdKind.STRIKE, null)

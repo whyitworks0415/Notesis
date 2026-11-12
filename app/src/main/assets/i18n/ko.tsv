@@ -1692,3 +1692,36 @@ This page	이 페이지
 What goes	보낼 내용
 What the handwriting says, read for search, in a text file beside the pages, so the chat can read it.	검색용으로 읽어 둔 필기 내용을 텍스트 파일로 함께 보내, 채팅이 글자로 읽을 수 있게 합니다.
 Whole note	노트 전체
+Block menu	블록 메뉴
+Unfold	펼치기
+{0} (not found)	{0} (찾을 수 없음)
+Copied	복사됨
++ Row above	+ 위에 행
++ Row below	+ 아래에 행
++ Column left	+ 왼쪽에 열
++ Column right	+ 오른쪽에 열
+Align left	왼쪽 정렬
+Align center	가운데 정렬
+Align right	오른쪽 정렬
+Edit as text	텍스트로 편집
+Turn into	바꾸기
+Heading 1	제목 1
+Heading 2	제목 2
+Heading 3	제목 3
+Bulleted list	글머리 기호 목록
+To-do list	할 일 목록
+Callout	콜아웃
+Tip callout	팁 콜아웃
+Warning callout	경고 콜아웃
+Toggle	토글
+Code block	코드 블록
+Math block	수식 블록
+Divider	구분선
+Link to note	노트 링크
+Image	이미지
+Footnote	각주
+Today's date	오늘 날짜
+No block by that name	그런 이름의 블록이 없습니다
+Couldn't add the picture	그림을 넣지 못했습니다
+(no text)	(내용 없음)
+The reading view stopped. Switch to Live or Source to keep writing.	읽기 화면이 멈췄습니다. 계속 쓰려면 Live나 Source로 바꾸세요.

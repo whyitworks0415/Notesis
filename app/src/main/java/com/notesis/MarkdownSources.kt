@@ -23,6 +23,10 @@ internal interface MarkdownSource {
     suspend fun backlinks(): List<String>
     /** Follows a [[link]] to [name]: that note, or a new one by that name; found off the main thread, opened on it. */
     suspend fun follow(name: String)
+    /** A file the note shows (a picture in ![[name]]), opened for reading; null when there is none. Called off the main thread. */
+    fun openFile(name: String): java.io.InputStream?
+    /** Keeps [input] with the note under a free name like [name]; the name to write in ![[ ]], or null. */
+    suspend fun addFile(name: String, input: java.io.InputStream): String?
 }
 
 /** A Markdown note in the library (note.md in its folder). */
@@ -57,6 +61,12 @@ internal class StoreMarkdownSource(
         }
         open(target)
     }
+
+    override fun openFile(name: String): java.io.InputStream? =
+        store.markdownFile(note.id, name)?.takeIf { it.isFile }?.inputStream()
+
+    override suspend fun addFile(name: String, input: java.io.InputStream): String? =
+        withContext(Dispatchers.IO) { store.addMarkdownFile(note.id, name, input) }
 }
 
 /** A file in a vault folder, read and written where it is. */
@@ -88,6 +98,11 @@ internal class VaultMarkdownSource(
         }
         target?.let(open)
     }
+
+    override fun openFile(name: String): java.io.InputStream? = vault.openAttachment(name)
+
+    override suspend fun addFile(name: String, input: java.io.InputStream): String? =
+        withContext(Dispatchers.IO) { vault.addAttachment(name, input) }
 
     private companion object {
         /** Backlinks are read from at most this many files, so a huge vault does not stall. */
