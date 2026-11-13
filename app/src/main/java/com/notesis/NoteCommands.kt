@@ -53,6 +53,8 @@ internal interface NoteWorkspace {
     /** A copy of everything a change to the note's pages can touch, for [bring]. */
     fun keep(id: String): Any
     fun bring(id: String, kept: Any)
+    /** Lets go of a copy from [keep] that will not be brought back: its change was taken back, or is too old to be. */
+    fun release(kept: Any) {}
 }
 
 internal enum class ExportKind { PDF, PNG, MD }
@@ -302,10 +304,17 @@ internal val COMMAND_USAGE = linkedMapOf(
  * serves; undo does not outlast it.
  */
 internal class NoteCommands(private val workspace: NoteWorkspace) {
-    private class Step(val label: String, val reverts: List<() -> Unit>)
-    private class Done(val result: Any, val label: String? = null, val revert: (() -> Unit)? = null)
+    private class Step(val id: Long, val label: String, val reverts: List<() -> Unit>, val releases: List<() -> Unit>)
+    private class Done(
+        val result: Any, val label: String? = null,
+        /** Lets go of what [revert] kept, once it can no longer be called. */
+        val release: (() -> Unit)? = null,
+        /** Last, so a trailing lambda at a call is the way to take the change back. */
+        val revert: (() -> Unit)? = null,
+    )
 
     private val history = ArrayDeque<Step>()
+    private var lastStepId = 0L
 
     /** How many changes [undo] can still take back. */
     val undoable: Int get() = history.size
@@ -314,12 +323,41 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
     fun run(line: String): String = runAll(listOf(line))
 
     /**
+     * What each of [lines] would do, without doing it: for a card that asks
+     * before a change is made. A note a line names is found as running it
+     * would find it; reading changes nothing.
+     */
+    @Synchronized
+    fun preview(lines: List<String>): List<ChangeLine> {
+        val notes = runCatching { workspace.notes() + workspace.trashed() }.getOrDefault(emptyList())
+        return cleanLines(lines).map { line ->
+            val words = commandWords(line)?.let { if (it.firstOrNull() == "notesis") it.drop(1) else it }
+            if (words == null) ChangeLine("Not a command: {0}", listOf(line.take(80)), changes = false)
+            else describeCommand(words, notes)
+        }
+    }
+
+    /**
+     * Takes back the change numbered [stepId] (from its answer's "step"), only
+     * while it is still the latest: an older one would take the newer ones
+     * with it, or leave them standing on what is no longer there.
+     */
+    @Synchronized
+    fun undoIfLast(stepId: Long): String {
+        if (history.lastOrNull()?.id != stepId) {
+            return failure(CommandError("Newer changes were made after this one, so it cannot be taken back on its own. `undo` takes back the latest first."))
+        }
+        return runAll(listOf("undo"))
+    }
+
+    /**
      * Several lines as one change: done in order, and if one fails the ones
      * before it are taken back, so the notes are as they were or as all the
      * lines together leave them. One `undo` takes the whole batch back.
      */
+    @Synchronized
     fun runAll(lines: List<String>): String {
-        val commands = lines.map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }
+        val commands = cleanLines(lines)
         if (commands.isEmpty()) return failure(CommandError("Nothing to do. `notesis help` lists the commands."))
         val done = mutableListOf<Done>()
         for ((index, line) in commands.withIndex()) {
@@ -330,25 +368,36 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
                 done += execute(command)
             } catch (error: CommandError) {
                 // Taken back in reverse, so each revert finds what it left.
-                for (step in done.asReversed()) step.revert?.let { runCatching(it) }
+                for (step in done.asReversed()) { step.revert?.let { runCatching(it) }; step.release?.let { runCatching(it) } }
                 return failure(error, line = index + 1, of = commands.size, undone = done.count { it.revert != null })
             } catch (error: Exception) {
-                for (step in done.asReversed()) step.revert?.let { runCatching(it) }
+                for (step in done.asReversed()) { step.revert?.let { runCatching(it) }; step.release?.let { runCatching(it) } }
                 return failure(CommandError("It failed: ${error.message ?: error.javaClass.simpleName}"),
                     line = index + 1, of = commands.size, undone = done.count { it.revert != null })
             }
         }
         val changes = done.filter { it.revert != null }
+        var step = 0L
         if (changes.isNotEmpty()) {
-            history.addLast(Step(changes.joinToString("; ") { it.label.orEmpty() }, changes.map { it.revert!! }))
-            while (history.size > UNDO_STEPS) history.removeFirst()
+            step = ++lastStepId
+            history.addLast(Step(step, changes.joinToString("; ") { it.label.orEmpty() }, changes.map { it.revert!! },
+                changes.mapNotNull { it.release }))
+            // A change too old to take back no longer needs the copy kept for it.
+            while (history.size > UNDO_STEPS) history.removeFirst().releases.forEach { runCatching(it) }
         }
         return JSONObject().apply {
             put("ok", true)
             if (done.size == 1) put("result", done[0].result) else put("results", JSONArray(done.map { it.result }))
-            if (changes.isNotEmpty()) put("undo", "notesis undo takes back: " + history.last().label)
+            if (changes.isNotEmpty()) {
+                put("undo", "notesis undo takes back: " + history.last().label)
+                put("step", step)
+                put("changes", JSONArray(changes.map { it.label.orEmpty() }))
+            }
         }.toString()
     }
+
+    private fun cleanLines(lines: List<String>): List<String> =
+        lines.map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }
 
     private fun failure(error: CommandError, line: Int = 1, of: Int = 1, undone: Int = 0): String = JSONObject().apply {
         put("ok", false)
@@ -508,6 +557,7 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
     private fun undo(): Done {
         val step = history.removeLastOrNull() ?: throw CommandError("There is nothing to undo.")
         for (revert in step.reverts.asReversed()) revert()
+        step.releases.forEach { runCatching(it) }
         return Done(JSONObject().put("undone", step.label))
     }
 
@@ -715,9 +765,10 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
         } catch (error: Exception) {
             // Something may already be written (a stroke file, say): put it all back.
             runCatching { workspace.bring(meta.id, kept) }
+            runCatching { workspace.release(kept) }
             throw error
         }
-        return Done(result, "$label in \"${meta.title}\"") { workspace.bring(meta.id, kept) }
+        return Done(result, "$label in \"${meta.title}\"", revert = { workspace.bring(meta.id, kept) }, release = { workspace.release(kept) })
     }
 
     companion object {

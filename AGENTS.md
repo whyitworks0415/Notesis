@@ -92,6 +92,15 @@ S6 Lite, SM-P61x/P62x). Kotlin, Jetpack Compose for the chrome, a custom
   place is taken by the note commands (`NoteCommands.kt`, Todo.md section 5):
   an agent or terminal changes notes only through them, never a note open on
   screen, deletes only to the trash, and every change can be undone.
+- The agent connection (Todo.md C3) is off until the owner turns it on, listens on
+  127.0.0.1 (private networks only when the owner switches that on too), and
+  answers nothing without its token: the token is made on the device, shown only
+  on the owner's screen, kept out of backups, and never logged, printed or
+  written in the repository. An agent's changes go through `AgentGateway`: asked
+  about first or made at once as the owner chose, never on a note on screen
+  (`OpenNotes`), always undoable. A command added to `NoteCommands` must also be
+  described in `describeCommand` (a test fails otherwise), or it would run
+  without asking. Do not add a way around any of this.
 - Large files: `MainActivity.kt` (screens) and `InkCanvasView.kt` (canvas).
   Search before adding; most features already have a home.
 - Commit messages: a short summary line, then what and why. No model names
@@ -113,6 +122,7 @@ S6 Lite, SM-P61x/P62x). Kotlin, Jetpack Compose for the chrome, a custom
 | Page panel, Internet panel | `PageSidebar.kt`, `WebPanel.kt` |
 | Folders, smart folders, templates | `FolderPaths.kt` (paths `School/Maths`), `SmartFolders.kt`, `PaperPicker.kt` |
 | Note commands (`notesis ...`), terminal | `NoteCommands.kt` (pure: words, paths, undo), `NoteCommandStore.kt` (on disk), `Terminal.kt` (pure: completion, history, printing), `TerminalPanel.kt` (`TerminalHost`, `TerminalSession`) |
+| Agent connection (MCP) | `McpProtocol.kt` (pure JSON-RPC), `AgentServer.kt` (HTTP and its checks), `AgentGateway.kt` (ask or make at once), `ChangeCards.kt` (what a command says it does, the log, the questions waiting), `AgentConnection.kt` (settings, `AgentRuntime`, `AgentService`), `AgentPanel.kt` (setup panel, approval card), `OpenNotes.kt` (notes on screen, `SharedNotes`) |
 | Backup, widget, updates | `AutoBackup.kt` (off by default), `NotesWidget.kt`, `AppUpdate.kt` (beta code) |
 | Look, popups | `Skin.kt`, `SkinSettings.kt` (the corner's saved key still says `spotiglass…`), `PopupGrowth.kt`, `PopupReveal.kt`, `AppDialog.kt`, `AppMenu.kt` |
 | Roadmap, archive | `Todo.md` (work in order), `archive/` (glass looks, not built) |

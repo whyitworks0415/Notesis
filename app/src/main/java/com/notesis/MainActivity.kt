@@ -278,8 +278,11 @@ class MainActivity : ComponentActivity() {
         UiScale.init(applicationContext)
         // A real start, not a rotation: first-run mode shows the welcome and the tutorial again.
         if (savedInstanceState == null) Onboarding.startAsFirstRunIfAsked(applicationContext)
-        val store = NoteStore(this)
+        // One store for the app, which the note commands (the terminal, an agent's connection) use too.
+        val store = SharedNotes.store(this)
         noteStore = store
+        // The agent connection, if the owner left it on: listening again after the app was shut.
+        AgentService.apply(applicationContext)
         // Only when switched on: off, the scheduler is not even started.
         if (AutoBackup.target(this) != BackupTarget.OFF) runCatching { AutoBackup.schedule(applicationContext) }
         val prefs = PenStore(this)
@@ -526,6 +529,8 @@ class MainActivity : ComponentActivity() {
                 if (note != null) Box(Modifier.fillMaxSize().grownOutOfCard(note.id).followingBack()) {
                 if (note.kind == NoteKind.MARKDOWN) {
                     key(note.id) {
+                        // On screen, so the note commands only read it.
+                        HoldOpenNotes(setOf(note.id))
                         MarkdownNoteScreen(
                             source = remember(note.id) {
                                 StoreMarkdownSource(store, note) { next -> markdownBack += note; requestOpen(next) }
@@ -567,7 +572,10 @@ class MainActivity : ComponentActivity() {
                 // screen, and the notices.
                 NoteFlightLayer(if (look.themeMode == AppThemeMode.DARK) MaterialTheme.colorScheme.surfaceContainerHigh else Color(0xFFFDFCF8))
                 // The terminal, from the library's menu or a note's quick actions, over whatever is open.
-                TerminalHost(store, note?.id)
+                TerminalHost(store)
+                AgentPanelHost()
+                // An agent's change waiting for the owner's word comes over whatever is open.
+                ChangeApprovalHost()
                 NoticeHost()
                 }
             }
@@ -1554,6 +1562,11 @@ private fun HomeScreen(
                                             text = { Text("Terminal") },
                                             leadingIcon = { Icon(AppIcons.terminal, contentDescription = null) },
                                             onClick = { homeMore = false; TerminalSession.show() },
+                                        )
+                                        GlassMenuItem(
+                                            text = { Text("Agent connection") },
+                                            leadingIcon = { Icon(AppIcons.ai, contentDescription = null) },
+                                            onClick = { homeMore = false; AgentPanelState.open = true },
                                         )
                                         if (narrowLibrary) {
                                             GlassMenuItem(
@@ -4493,6 +4506,12 @@ private fun NoteScreen(
         }
     }
     var referenceNoteId by remember { mutableStateOf(initialReferenceNoteId) }
+    // The notes on screen: this one, each part of a split, the reference panel's. The note commands leave them be.
+    HoldOpenNotes(buildSet {
+        add(note.id)
+        addAll(paneNotes.values)
+        if (referenceOpen) referenceNoteId?.let { add(it) }
+    })
     var referencePage by remember { mutableIntStateOf(initialReferencePage) }
     // Whether the page in the panel is fitted to the panel's width. Off, it
     // keeps whatever zoom it was put at.

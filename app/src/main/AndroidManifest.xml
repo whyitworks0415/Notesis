@@ -7,6 +7,9 @@
     <!-- A recording keeps going when another app is in front, as a microphone foreground service. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- The agent connection (note commands over MCP) is kept alive by a foreground service while another app is in front. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <!-- An update downloaded from the GitHub releases is handed to the system installer. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
@@ -22,6 +25,8 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:enableOnBackInvokedCallback="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:theme="@style/Theme.Notesis">
         <activity
             android:name=".MainActivity"
@@ -71,6 +76,16 @@
             android:name=".RecordingService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <!-- Listens on this device for an agent that reads and changes notes through the note commands. Off until switched on. -->
+        <service
+            android:name=".AgentService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="A local server, off until the owner turns it on, that lets an agent on this device or network use the note commands." />
+        </service>
 
         <!-- Sharing a capture hands out a content:// uri for one cache file
              rather than a path no other app is allowed to read. -->

@@ -1730,3 +1730,66 @@ Resize the terminal	터미널 크기 바꾸기
 Command line	명령 줄
 Notesis terminal. `help` lists the commands, Tab completes, ↑ ↓ go back through what was run. A note open on screen is only read.	Notesis 터미널입니다. `help`로 명령 목록을 보고, Tab으로 자동 완성, ↑ ↓로 실행했던 줄을 다시 부릅니다. 화면에 열린 노트는 읽기만 합니다.
 Run	실행
+Allow this change?	이 변경을 허용할까요?
+“{0}” asks to change your notes. The name is only what the program calls itself.	“{0}”이(가) 노트를 바꾸려 합니다. 이름은 그 프로그램이 스스로 밝힌 것일 뿐입니다.
+Everything can be undone with the terminal's undo, and nothing is deleted for good.	모든 변경은 터미널의 undo로 되돌릴 수 있고, 아무것도 완전히 지워지지 않습니다.
+{0} more waiting	{0}개 더 기다리는 중
+Don't allow	허용 안 함
+Allow	허용
+{0} changed your notes	{0}이(가) 노트를 바꿨습니다
+Undone	되돌렸습니다
+Newer changes were made after this one, so it cannot be taken back on its own.	이 변경 뒤에 더 새로운 변경이 있어 이것만 되돌릴 수 없습니다.
+Agent connection	에이전트 연결
+Lets a program on this tablet, such as Claude Code or Codex in Termux, read and change your notes through the note commands. Off until you switch it on.	이 태블릿의 프로그램(예: Termux의 Claude Code, Codex)이 노트 명령으로 노트를 읽고 바꿀 수 있게 합니다. 켜기 전에는 꺼져 있습니다.
+Connection	연결
+Listening on this tablet, port {0}.	이 태블릿에서 기다리는 중입니다(포트 {0}).
+Starting…	시작하는 중…
+Token	토큰
+An agent must send this with every request; nothing is answered without it.	에이전트는 요청마다 이 토큰을 보내야 하며, 토큰이 없으면 아무것도 답하지 않습니다.
+Show	보기
+Copy token	토큰 복사
+New token	새 토큰
+Stop what is connected	연결된 것 끊고 새로 만들기
+Changes	변경
+Ask first	먼저 묻기
+Make them at once	바로 하기
+A card asks before each change. Reading is never asked about.	변경할 때마다 카드가 먼저 묻습니다. 읽기는 묻지 않습니다.
+Changes are made at once, and a pill lets you undo the latest. Reading is never asked about.	변경을 바로 하고, 알약으로 가장 최근 것을 되돌릴 수 있습니다. 읽기는 묻지 않습니다.
+Same Wi-Fi	같은 Wi-Fi
+Allow other devices on this network	이 네트워크의 다른 기기 허용
+A computer on the same Wi-Fi can connect with the token. The traffic is not encrypted: use a network you trust.	같은 Wi-Fi의 컴퓨터가 토큰으로 접속할 수 있습니다. 통신은 암호화되지 않으니 믿을 수 있는 네트워크에서만 쓰세요.
+No Wi-Fi address found.	Wi-Fi 주소를 찾지 못했습니다.
+Connect	연결하기
+Run this where the agent is (on this tablet, in Termux):	에이전트가 있는 곳(이 태블릿이라면 Termux)에서 실행하세요:
+Copy Claude Code command	Claude Code 명령 복사
+Copy settings as JSON	JSON 설정 복사
+Copy address	주소 복사
+Recent changes	최근 변경
+Nothing changed by an agent yet.	에이전트가 바꾼 것이 아직 없습니다.
+{0} · {1}	{0} · {1}
+Agents	에이전트
+Shown while an agent can connect to your notes	에이전트가 노트에 연결할 수 있는 동안 표시됩니다
+Waiting for your OK on a change. Open Notesis.	변경에 대한 허용을 기다리는 중입니다. Notesis를 여세요.
+Listening on port {0}	포트 {0}에서 기다리는 중
+Turn off	끄기
+No free port was found.	빈 포트를 찾지 못했습니다.
+Rename “{0}” to “{1}”	“{0}” 이름을 “{1}”(으)로 바꿈
+Move “{0}” to the top level	“{0}”을(를) 맨 위 단계로 옮김
+Move “{0}” to the folder “{1}”	“{0}”을(를) “{1}” 폴더로 옮김
+Change the tags of “{0}”: {1}	“{0}”의 태그 변경: {1}
+Move “{0}” to the trash	“{0}”을(를) 휴지통으로 보냄
+Restore “{0}” from the trash	“{0}”을(를) 휴지통에서 복원
+Add a page to “{0}”	“{0}”에 페이지 하나 추가
+Add {1} pages to “{0}”	“{0}”에 페이지 {1}개 추가
+Remove pages {1} from “{0}”	“{0}”에서 {1}쪽 삭제
+Move page {1} of “{0}” to position {2}	“{0}”의 {1}쪽을 {2}번째로 이동
+Set the outline entry of page {1} of “{0}”: “{2}”	“{0}”의 {1}쪽 목차 항목 지정: “{2}”
+Remove the outline entry of page {1} of “{0}”	“{0}”의 {1}쪽 목차 항목 삭제
+Clear the outline of “{0}”	“{0}”의 목차를 모두 지움
+Add text to page {1} of “{0}”: “{2}”	“{0}”의 {1}쪽에 글 추가: “{2}”
+Draw on page {1} of “{0}”	“{0}”의 {1}쪽에 필기 추가
+Erase all the ink on page {1} of “{0}”	“{0}”의 {1}쪽 필기를 모두 지움
+Erase the ink in an area of page {1} of “{0}”	“{0}”의 {1}쪽 일부 영역의 필기를 지움
+Undo the last change	마지막 변경을 되돌림
+Read: {0}	읽기: {0}
+Not a command: {0}	명령이 아님: {0}

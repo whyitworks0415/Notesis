@@ -37,6 +37,8 @@ class TerminalUiTest {
         note.deleteRecursively()
         File(note, "pages").mkdirs()
         File(note, "meta.json").writeText("""{"title":"Chemistry","modified":1,"pages":[{"id":"p1","w":1240,"h":1754}]}""")
+        SharedNotes.resetForTests()
+        TerminalSession.resetForTests()
         TerminalSession.lines.clear()
         TerminalSession.open = true
     }
@@ -47,7 +49,7 @@ class TerminalUiTest {
         compose.setContent {
             MaterialTheme {
                 CompositionLocalProvider(LocalMotionAllowed provides false) {
-                    ProvideSkin(SkinSettings()) { TerminalHost(store, null) }
+                    ProvideSkin(SkinSettings()) { TerminalHost(store) }
                 }
             }
         }

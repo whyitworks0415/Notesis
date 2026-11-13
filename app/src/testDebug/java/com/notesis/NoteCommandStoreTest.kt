@@ -40,7 +40,7 @@ class NoteCommandStoreTest {
 
     @Test fun changesAreSavedAndUndoBringsTheFilesBack() {
         val store = NoteStore(context)
-        val commands = NoteCommands(NoteStoreWorkspace(context, store) { null })
+        val commands = NoteCommands(NoteStoreWorkspace(context, store) { false })
         val pageBefore = File(note, "pages/p2.bin").readBytes()
 
         val done = JSONObject(commands.runAll(listOf("page add Physics --after 1", "toc set Physics 1 Waves", "page rm Physics 3")))
@@ -59,9 +59,22 @@ class NoteCommandStoreTest {
         assertEquals(null, store.load("command-fixture").pages[0].tocTitle)
     }
 
+    @Test fun theCopiesKeptForUndoAreRemovedWithTheirChange() {
+        val store = NoteStore(context)
+        val commands = NoteCommands(NoteStoreWorkspace(context, store) { false })
+        val kept = File(context.cacheDir, "command-undo")
+        fun copies() = kept.listFiles()?.size ?: 0
+        commands.run("page add Physics")
+        assertEquals(1, copies())
+        commands.run("undo")
+        assertEquals(0, copies())
+        commands.runAll(listOf("page add Physics", "page rm Physics 40"))
+        assertEquals(0, copies())
+    }
+
     @Test fun aNoteOnScreenIsLeftAlone() {
         val store = NoteStore(context)
-        val commands = NoteCommands(NoteStoreWorkspace(context, store) { "command-fixture" })
+        val commands = NoteCommands(NoteStoreWorkspace(context, store) { it == "command-fixture" })
         val before = File(note, "meta.json").readText()
         assertFalse(JSONObject(commands.run("page add Physics")).getBoolean("ok"))
         assertEquals(before, File(note, "meta.json").readText())
@@ -71,7 +84,7 @@ class NoteCommandStoreTest {
 
     @Test fun renameAndTrashAreUndone() {
         val store = NoteStore(context)
-        val commands = NoteCommands(NoteStoreWorkspace(context, store) { null })
+        val commands = NoteCommands(NoteStoreWorkspace(context, store) { false })
         commands.run("note rename Physics Optics")
         commands.run("note trash Optics")
         assertTrue(store.trashed().any { it.id == "command-fixture" && it.title == "Optics" })

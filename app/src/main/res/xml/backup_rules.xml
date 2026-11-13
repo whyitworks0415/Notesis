@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The agent connection's token is a secret of this device: it is not backed up, nor moved to another device. -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="agent.xml" />
+</full-backup-content>

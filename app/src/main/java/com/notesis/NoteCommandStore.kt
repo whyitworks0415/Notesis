@@ -10,7 +10,7 @@ import java.util.UUID
 
 /**
  * The note commands' workspace over the notes on disk (NoteCommands.kt).
- * [openNote] says which note is on screen now, so it is left alone.
+ * [isOpenNote] says which notes are on screen now, so they are left alone.
  *
  * Undo copies of a note are its meta.json and page files, kept in the cache
  * for as long as this lives; a new one starts with none.
@@ -18,14 +18,16 @@ import java.util.UUID
 internal class NoteStoreWorkspace(
     private val context: Context,
     private val store: NoteStore,
-    private val openNote: () -> String?,
+    /** Whether a note is on screen now (see [OpenNotes]), so it is read but not changed. */
+    private val isOpenNote: (String) -> Boolean,
 ) : NoteWorkspace {
     private val kept = File(context.cacheDir, "command-undo").apply { deleteRecursively(); mkdirs() }
 
     override fun notes(): List<NoteMeta> = store.list()
     override fun trashed(): List<NoteMeta> = store.trashed()
-    override fun isOpen(id: String): Boolean = openNote() == id
-    override fun load(id: String): Document = store.load(id)
+    override fun isOpen(id: String): Boolean = isOpenNote(id)
+    // A note closed a moment ago may still be on its way to disk; what is read is what it was left as.
+    override fun load(id: String): Document { store.settled(); return store.load(id) }
     override fun save(id: String, title: String, document: Document) = store.save(id, title, document)
     override fun markdown(id: String): String? = runCatching { store.loadMarkdown(id) }.getOrNull()
     override fun rename(id: String, title: String): Boolean = store.renameNote(id, title)
@@ -137,6 +139,8 @@ internal class NoteStoreWorkspace(
         File(note, "pages").takeIf { it.isDirectory }?.copyRecursively(File(copy, "pages"))
         return copy
     }
+
+    override fun release(kept: Any) { (kept as? File)?.deleteRecursively() }
 
     override fun bring(id: String, kept: Any) {
         val copy = kept as File

@@ -31,7 +31,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -95,13 +94,20 @@ internal object TerminalSession {
     val history = TerminalHistory()
     var running by mutableStateOf(false)
 
-    /** The note on screen now, which the commands may read but not change. */
-    @Volatile var openNoteId: String? = null
-
     private var commands: NoteCommands? = null
 
-    fun commands(context: android.content.Context, store: NoteStore): NoteCommands =
-        commands ?: NoteCommands(NoteStoreWorkspace(context.applicationContext, store) { openNoteId }).also { commands = it }
+    /**
+     * The commands, one set for the app: the terminal and an agent's connection share them,
+     * so one undo history and one line at a time (NoteCommands is synchronized).
+     */
+    @Synchronized
+    fun commands(context: android.content.Context): NoteCommands =
+        commands ?: NoteCommands(NoteStoreWorkspace(context.applicationContext, SharedNotes.store(context)) { OpenNotes.isOpen(it) })
+            .also { commands = it }
+
+    /** For tests: a fresh set of commands, for the store the next asking finds. */
+    @Synchronized
+    internal fun resetForTests() { commands = null; lines.clear() }
 
     fun show() { open = true }
 
@@ -117,11 +123,10 @@ internal object TerminalSession {
 /**
  * The terminal, while it is open: on the panel every tool opens on
  * ([ToolPanel]), grown out of the point that opened it and folded back into
- * it. [openNoteId] is the note on screen now.
+ * it.
  */
 @Composable
-internal fun TerminalHost(store: NoteStore, openNoteId: String?) {
-    SideEffect { TerminalSession.openNoteId = openNoteId }
+internal fun TerminalHost(store: NoteStore) {
     if (TerminalSession.open) TerminalPanel(store)
 }
 
@@ -180,7 +185,7 @@ private fun TerminalPanel(store: NoteStore) {
         session.running = true
         scope.launch {
             val answer = withContext(Dispatchers.IO) {
-                runCatching { session.commands(context, store).runAll(lines) }
+                runCatching { session.commands(context).runAll(lines) }
                     .getOrElse { "{\"ok\":false,\"error\":${org.json.JSONObject.quote(it.message ?: it.javaClass.simpleName)}}" }
             }
             for (out in terminalOutput(answer)) session.print(clipLines(out.text, 400), out.tone)
@@ -244,6 +249,7 @@ private fun TerminalPanel(store: NoteStore) {
         maxWidth = 760.dp,
         actions = {
             if (session.running) Text("Running…", style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant)
+            TextButton(onClick = { AgentPanelState.open = true }, modifier = Modifier.heightIn(min = Ui.Size.touchCompact)) { Text("Agents") }
             TextButton(onClick = { session.lines.clear() }, modifier = Modifier.heightIn(min = Ui.Size.touchCompact)) { Text("Clear") }
             IconButton(onClick = onClose) { Icon(Reicons.Close, contentDescription = "Close") }
         },

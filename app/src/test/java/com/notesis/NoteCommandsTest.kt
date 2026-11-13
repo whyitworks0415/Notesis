@@ -9,61 +9,8 @@ import org.junit.Test
 
 class NoteCommandsTest {
 
-    /** Notes in memory: each a list of pages, ink counted per page id. */
-    private class Memory : NoteWorkspace {
-        val metas = mutableMapOf<String, NoteMeta>()
-        val trash = mutableSetOf<String>()
-        val pages = mutableMapOf<String, MutableList<Page>>()
-        val ink = mutableMapOf<String, Int>()
-        val texts = mutableMapOf<String, String>()
-        var open: String? = null
-        var saves = 0
-
-        fun add(id: String, title: String, pageCount: Int = 3, folder: String = "", tags: List<String> = emptyList(),
-                kind: NoteKind = NoteKind.INK) {
-            metas[id] = NoteMeta(id, title, 0L, pageCount, 0, folder = folder, tags = tags, kind = kind)
-            pages[id] = MutableList(pageCount) { Page(id = "$id-p${it + 1}") }
-        }
-
-        private fun copy(page: Page) = Page(id = page.id, width = page.width, height = page.height,
-            background = page.background, tocTitle = page.tocTitle, tocLevel = page.tocLevel, besideOf = page.besideOf)
-            .also { it.images.addAll(page.images) }
-
-        override fun notes() = metas.values.filter { it.id !in trash }
-        override fun trashed() = metas.values.filter { it.id in trash }
-        override fun isOpen(id: String) = open == id
-        override fun load(id: String) = Document(pages.getValue(id).map(::copy).toMutableList())
-        override fun save(id: String, title: String, document: Document) {
-            pages[id] = document.pages.map(::copy).toMutableList(); saves++
-        }
-        override fun markdown(id: String) = texts[id]
-        override fun rename(id: String, title: String): Boolean { metas[id] = metas.getValue(id).copy(title = title); return true }
-        override fun setFolder(id: String, folder: String) { metas[id] = metas.getValue(id).copy(folder = folder) }
-        override fun setTags(id: String, tags: List<String>) { metas[id] = metas.getValue(id).copy(tags = tags) }
-        override fun trash(id: String) { trash += id }
-        override fun restore(id: String) { trash -= id }
-        override fun handwriting(id: String, page: Page) = if (page.id.endsWith("p1")) "hello world" else null
-        override fun inkCount(id: String, page: Page) = ink[page.id] ?: 0
-        override fun textBox(id: String, content: TextBoxContent) = PageImage("img", 0f, 0f, 200f, 50f, content)
-        override fun addInk(id: String, document: Document, page: Page, lines: List<List<FloatArray>>, color: Int, width: Float): Int {
-            ink[page.id] = (ink[page.id] ?: 0) + lines.size; return lines.size
-        }
-        override fun eraseInk(id: String, document: Document, page: Page, area: FloatArray?): Int {
-            val had = ink[page.id] ?: 0; ink[page.id] = 0; return had
-        }
-        override fun export(id: String, title: String, format: ExportKind, pages: List<Int>, withInk: Boolean) =
-            "/out/$title.${format.name.lowercase()}"
-        override fun keep(id: String): Any = pages.getValue(id).map(::copy) to ink.toMap()
-        @Suppress("UNCHECKED_CAST")
-        override fun bring(id: String, kept: Any) {
-            val (savedPages, savedInk) = kept as Pair<List<Page>, Map<String, Int>>
-            pages[id] = savedPages.map(::copy).toMutableList()
-            ink.clear(); ink.putAll(savedInk)
-        }
-    }
-
     private fun json(text: String) = JSONObject(text)
-    private fun ids(memory: Memory, note: String) = memory.pages.getValue(note).map { it.id.substringAfter('-') }
+    private fun ids(memory: MemoryNotes, note: String) = memory.pages.getValue(note).map { it.id.substringAfter('-') }
 
     @Test
     fun `words keep quoted spaces and escapes`() {
@@ -102,7 +49,7 @@ class NoteCommandsTest {
 
     @Test
     fun `list and read`() {
-        val memory = Memory().apply { add("n1", "Maths", folder = "School/Maths", tags = listOf("exam")); add("n2", "Diary") }
+        val memory = MemoryNotes().apply { add("n1", "Maths", folder = "School/Maths", tags = listOf("exam")); add("n2", "Diary") }
         val commands = NoteCommands(memory)
         val listed = json(commands.run("notesis notes list --folder School"))
         assertTrue(listed.getBoolean("ok"))
@@ -116,7 +63,7 @@ class NoteCommandsTest {
 
     @Test
     fun `wrong commands say how they are written`() {
-        val commands = NoteCommands(Memory().apply { add("n1", "Maths") })
+        val commands = NoteCommands(MemoryNotes().apply { add("n1", "Maths") })
         val unknown = json(commands.run("page explode Maths"))
         assertFalse(unknown.getBoolean("ok"))
         assertTrue(unknown.has("usage"))
@@ -128,7 +75,7 @@ class NoteCommandsTest {
 
     @Test
     fun `pages are added, moved and removed, and undo puts them back`() {
-        val memory = Memory().apply { add("n1", "Maths") }
+        val memory = MemoryNotes().apply { add("n1", "Maths") }
         val commands = NoteCommands(memory)
         assertTrue(json(commands.run("page add Maths --after 1 --count 2")).getBoolean("ok"))
         assertEquals(5, memory.pages.getValue("n1").size)
@@ -147,7 +94,7 @@ class NoteCommandsTest {
 
     @Test
     fun `the outline is set, shown and cleared`() {
-        val memory = Memory().apply { add("n1", "Maths") }
+        val memory = MemoryNotes().apply { add("n1", "Maths") }
         val commands = NoteCommands(memory)
         commands.run("toc set Maths 1 Introduction")
         commands.run("toc set Maths 3 \"Chapter two\" --level 1")
@@ -163,7 +110,7 @@ class NoteCommandsTest {
 
     @Test
     fun `text and ink go on the page, and erase takes ink off`() {
-        val memory = Memory().apply { add("n1", "Maths") }
+        val memory = MemoryNotes().apply { add("n1", "Maths") }
         val commands = NoteCommands(memory)
         val text = json(commands.run("text add Maths 2 \"x = 3\" --y 300"))
         assertTrue(text.toString(), text.getBoolean("ok"))
@@ -180,7 +127,7 @@ class NoteCommandsTest {
 
     @Test
     fun `names, folders, tags and the trash, each undone`() {
-        val memory = Memory().apply { add("n1", "Maths", tags = listOf("old")) }
+        val memory = MemoryNotes().apply { add("n1", "Maths", tags = listOf("old")) }
         val commands = NoteCommands(memory)
         commands.run("note rename Maths Algebra notes")
         assertEquals("Algebra notes", memory.metas.getValue("n1").title)
@@ -199,7 +146,7 @@ class NoteCommandsTest {
 
     @Test
     fun `a note open on screen is read but not changed`() {
-        val memory = Memory().apply { add("n1", "Maths"); open = "n1" }
+        val memory = MemoryNotes().apply { add("n1", "Maths"); open = "n1" }
         val commands = NoteCommands(memory)
         assertTrue(json(commands.run("note read Maths")).getBoolean("ok"))
         val refused = json(commands.run("page add Maths"))
@@ -211,7 +158,7 @@ class NoteCommandsTest {
 
     @Test
     fun `a batch is all or nothing and undone as one`() {
-        val memory = Memory().apply { add("n1", "Maths") }
+        val memory = MemoryNotes().apply { add("n1", "Maths") }
         val commands = NoteCommands(memory)
         val failed = json(commands.runAll(listOf("page add Maths", "toc set Maths 1 Start", "page rm Maths 40")))
         assertFalse(failed.getBoolean("ok"))
@@ -232,7 +179,7 @@ class NoteCommandsTest {
 
     @Test
     fun `markdown notes are read as text and have no pages`() {
-        val memory = Memory().apply { add("m1", "Ideas", kind = NoteKind.MARKDOWN); texts["m1"] = "# Ideas" }
+        val memory = MemoryNotes().apply { add("m1", "Ideas", kind = NoteKind.MARKDOWN); texts["m1"] = "# Ideas" }
         val commands = NoteCommands(memory)
         assertEquals("# Ideas", json(commands.run("note read Ideas")).getJSONObject("result").getString("text"))
         assertFalse(json(commands.run("page add Ideas")).getBoolean("ok"))
@@ -246,5 +193,22 @@ class NoteCommandsTest {
         assertEquals(0x80112233.toInt(), commandColor("80112233"))
         assertEquals(0xFF1E5BD8.toInt(), commandColor("Blue"))
         assertTrue(runCatching { commandColor("#12") }.exceptionOrNull() is CommandError)
+    }
+
+    @Test
+    fun `copies kept for undo are let go when undone, when a batch fails, and when too old`() {
+        val memory = MemoryNotes().apply { add("n1", "Maths") }
+        val commands = NoteCommands(memory)
+        commands.run("page add Maths")
+        assertEquals(0, memory.released)
+        commands.run("undo")
+        assertEquals(1, memory.released)
+        // A batch that fails lets go of the copy of the change that failed and of the one it took back.
+        commands.runAll(listOf("page add Maths", "page rm Maths 40"))
+        assertEquals(3, memory.released)
+        // Past the steps that can be taken back, the oldest copies go as the newest are made.
+        val before = memory.released
+        repeat(NoteCommands.UNDO_STEPS + 5) { commands.run("page add Maths") }
+        assertEquals(5, memory.released - before)
     }
 }

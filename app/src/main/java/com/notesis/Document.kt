@@ -1603,6 +1603,15 @@ class NoteStore(context: Context) {
         runCatching { searchIndex.removeNote(id) }
     }
 
+    /**
+     * Waits until every save already handed to this store has been written, for a reader
+     * that must see a note as it was just left: the note commands, run by an agent a
+     * moment after the note was closed. Gives up after [timeoutMs].
+     */
+    fun settled(timeoutMs: Long = 5_000L) {
+        runCatching { saveWorker.submit {}.get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS) }
+    }
+
     /** The note's own folder; for the note commands' undo copies (NoteCommandStore.kt). */
     internal fun noteDir(id: String): File = File(root, id)
 
