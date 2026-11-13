@@ -566,6 +566,8 @@ class MainActivity : ComponentActivity() {
                 // Over everything: a note's picture between its card and the
                 // screen, and the notices.
                 NoteFlightLayer(if (look.themeMode == AppThemeMode.DARK) MaterialTheme.colorScheme.surfaceContainerHigh else Color(0xFFFDFCF8))
+                // The terminal, from the library's menu or a note's quick actions, over whatever is open.
+                TerminalHost(store, note?.id)
                 NoticeHost()
                 }
             }
@@ -741,7 +743,8 @@ private fun HomeScreen(
     // Re-read from disk whenever something changed it, rather than keeping a
     // second copy of the truth in memory and having to hold the two in sync.
     var revision by remember { mutableIntStateOf(0) }
-    val notes = remember(revision) { store.list() }
+    // The terminal changes notes from outside this screen; its changes are read in the same way.
+    val notes = remember(revision, LibraryChanges.version) { store.list() }
     // The notes opened last, newest first, leaving out any since deleted; for smart folders.
     val opened = remember(notes) {
         val ids = notes.mapTo(HashSet()) { it.id }
@@ -1546,6 +1549,11 @@ private fun HomeScreen(
                                             text = { Text("Appearance") },
                                             leadingIcon = { Icon(Reicons.Palette, contentDescription = null) },
                                             onClick = { homeMore = false; onSettings() },
+                                        )
+                                        GlassMenuItem(
+                                            text = { Text("Terminal") },
+                                            leadingIcon = { Icon(AppIcons.terminal, contentDescription = null) },
+                                            onClick = { homeMore = false; TerminalSession.show() },
                                         )
                                         if (narrowLibrary) {
                                             GlassMenuItem(
@@ -6011,6 +6019,7 @@ private fun NoteScreen(
                     GlassToolbarAction("Pages & search", AppIcons.search, selected = showPages) { showPages = !showPages },
                     // The calculator, the clock, the calendar and the to-do list, one panel.
                     GlassToolbarAction("Tools", AppIcons.tools) { Planner.show(Planner.lastPanel) },
+                    GlassToolbarAction("Terminal", AppIcons.terminal) { TerminalSession.show() },
                     GlassToolbarAction("Split notes", AppIcons.split, selected = split != null) {
                         settingsNav = null
                         choosingSplit = true

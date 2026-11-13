@@ -1725,3 +1725,7 @@ No block by that name	그런 이름의 블록이 없습니다
 Couldn't add the picture	그림을 넣지 못했습니다
 (no text)	(내용 없음)
 The reading view stopped. Switch to Live or Source to keep writing.	읽기 화면이 멈췄습니다. 계속 쓰려면 Live나 Source로 바꾸세요.
+Terminal	터미널
+Resize the terminal	터미널 크기 바꾸기
+Command line	명령 줄
+Notesis terminal. `help` lists the commands, Tab completes, ↑ ↓ go back through what was run. A note open on screen is only read.	Notesis 터미널입니다. `help`로 명령 목록을 보고, Tab으로 자동 완성, ↑ ↓로 실행했던 줄을 다시 부릅니다. 화면에 열린 노트는 읽기만 합니다.

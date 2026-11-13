@@ -112,7 +112,7 @@ S6 Lite, SM-P61x/P62x). Kotlin, Jetpack Compose for the chrome, a custom
 | Diagnostics | `Diagnostics.kt`, `LatencyStats.kt`, `JankWatch.kt` (dropped frames → light mode), `MemoryTrim.kt` |
 | Page panel, Internet panel | `PageSidebar.kt`, `WebPanel.kt` |
 | Folders, smart folders, templates | `FolderPaths.kt` (paths `School/Maths`), `SmartFolders.kt`, `PaperPicker.kt` |
-| Note commands (`notesis ...`) | `NoteCommands.kt` (pure: words, paths, undo), `NoteCommandStore.kt` (on disk) |
+| Note commands (`notesis ...`), terminal | `NoteCommands.kt` (pure: words, paths, undo), `NoteCommandStore.kt` (on disk), `Terminal.kt` (pure: completion, history, printing), `TerminalPanel.kt` (`TerminalHost`, `TerminalSession`) |
 | Backup, widget, updates | `AutoBackup.kt` (off by default), `NotesWidget.kt`, `AppUpdate.kt` (beta code) |
 | Look, popups | `Skin.kt`, `SkinSettings.kt` (the corner's saved key still says `spotiglass…`), `PopupGrowth.kt`, `PopupReveal.kt`, `AppDialog.kt`, `AppMenu.kt` |
 | Roadmap, archive | `Todo.md` (work in order), `archive/` (glass looks, not built) |

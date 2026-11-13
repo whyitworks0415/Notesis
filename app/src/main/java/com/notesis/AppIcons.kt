@@ -21,6 +21,7 @@ internal object AppIcons {
     val mic get() = Reicons.Mic
     val rotate get() = Reicons.ScreenRotation
     val tools get() = Reicons.Calculate
+    val terminal get() = Reicons.Computer
     val input get() = Reicons.TouchApp
     val addPage get() = Reicons.Add
     val noteMenu get() = Reicons.MoreVert
