@@ -1737,3 +1737,13 @@ C++ core status	C++ 코어 상태
 C++ cleanup calls	C++ 획 후처리 횟수
 C++ page reads	C++ 페이지 해석 횟수
 Safe mode	안전 모드
+
+Rust document I/O	Rust 문서 입출력
+Rust page reads	Rust 페이지 읽기
+Rust page replacements	Rust 페이지 저장
+
+Compare native stroke cleanup, document I/O and Markdown history with the Kotlin paths. Restart the app after changing this.	네이티브 획 후처리·문서 입출력·Markdown 편집 이력을 Kotlin 경로와 비교합니다. 변경 후 앱을 다시 시작하세요.
+
+C++ and Rust processing	C++·Rust 처리
+Rust page saves	Rust 페이지 저장
+Rust history operations	Rust 편집 이력 처리

@@ -461,9 +461,9 @@ internal fun DiagnosticsSettings(
     }
     SettingsCard {
         SettingsSectionHeader("Native code")
-        SettingsToggle("C++ bulk processing", LabPerformance.cppCore,
+        SettingsToggle("C++ and Rust processing", LabPerformance.cppCore,
             { LabPerformance.setCppCore(context, it) },
-            hint = "Stage 1 of 4. Compare stroke cleanup and page record decoding with the original Kotlin path. Reopen the note after changing this.")
+            hint = "Compare native stroke cleanup, document I/O and Markdown history with the Kotlin paths. Restart the app after changing this.")
         DiagnosticRow("C++ core status", when {
             LabGuard.nativeOff -> "Safe mode"
             !LabPerformance.cppCore -> "Off"
@@ -472,6 +472,10 @@ internal fun DiagnosticsSettings(
         })
         DiagnosticRow("C++ cleanup calls", CppCore.tidyCalls.get().toString())
         DiagnosticRow("C++ page reads", CppCore.pageCalls.get().toString())
+        DiagnosticRow("Rust document I/O", if (RustNative.active) "Loaded" else "Not loaded")
+        DiagnosticRow("Rust page reads", RustNative.reads.get().toString())
+        DiagnosticRow("Rust page saves", RustNative.writes.get().toString())
+        DiagnosticRow("Rust history operations", RustNative.historyOperations.get().toString())
         if (LabGuard.nativeOff) {
             SettingsNote("Left out for this run: the app did not close cleanly several times in a row. " +
                 "The Kotlin paths are doing the work. Switch it back on to load it at the next start.")

@@ -1,5 +1,5 @@
 # Lab branch only. Preview tags and com.notesis.lab must never enter the stable feed.
-name: Notesis C++ Lab APK
+name: Notesis C++ and Rust Lab APK
 
 on:
   workflow_dispatch:
@@ -34,7 +34,7 @@ jobs:
       - name: Verify isolated Lab application package
         run: |
           grep -q 'applicationId = "com.notesis.lab"' app/build.gradle.kts
-          grep -q 'versionName = ".*lab.cpp' app/build.gradle.kts
+          grep -q 'versionName = ".*lab.native' app/build.gradle.kts
 
       - uses: actions/setup-java@v4
         with:
@@ -49,6 +49,11 @@ jobs:
           log-accepted-android-sdk-licenses: false
 
       - uses: gradle/actions/setup-gradle@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.100.0"
+          targets: "aarch64-linux-android,x86_64-linux-android"
 
       - name: Native correctness and host benchmark
         run: bash tools/performance-lab/check-native.sh
@@ -93,7 +98,7 @@ jobs:
           cp build/host-native/benchmark.txt Spatial-host-benchmark.txt
           cp build/host-native/erase-comparison.txt Erase-host-comparison.txt
           cp build/host-native/core-benchmark.txt Cpp-core-host-benchmark.txt
-          cp docs/cpp-migration.md Cpp-migration.md
+          cp docs/native-migration.md Native-migration.md
 
       - name: Sign the APK with the release key
         if: ${{ github.event.inputs.update != 'check' }}
@@ -182,7 +187,7 @@ jobs:
             Spatial-host-benchmark.txt
             Erase-host-comparison.txt
             Cpp-core-host-benchmark.txt
-            Cpp-migration.md
+            Native-migration.md
           fail_on_unmatched_files: true
 
       # The app looks for updates in a repository of its own that holds nothing
@@ -204,5 +209,5 @@ jobs:
             Spatial-host-benchmark.txt
             Erase-host-comparison.txt
             Cpp-core-host-benchmark.txt
-            Cpp-migration.md
+            Native-migration.md
           fail_on_unmatched_files: true

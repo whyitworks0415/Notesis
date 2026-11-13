@@ -985,19 +985,29 @@ internal fun applySlash(text: String, slash: Int, cursor: Int, item: SlashItem, 
  * taking away), joins it, so one undo takes back a word or a sentence, not
  * a letter; anything else - a format, a block moved - is a step of its own.
  */
-internal class EditHistory(private val limit: Int = 200) {
+internal class EditHistory(private val limit: Int = 200) : java.io.Closeable {
     data class State(val text: String, val start: Int, val end: Int)
     private val back = ArrayDeque<State>()
     private val forward = ArrayDeque<State>()
     private var lastAt = 0L
     private var lastGrew: Boolean? = null
+    private var native = if (RustNative.active && limit in 0..10000) RustNative.newHistory(limit) else 0L
+    private var nativeFlags = 0
+    private val selection = IntArray(3)
+    private var closed = false
 
-    val canUndo: Boolean get() = back.isNotEmpty()
-    val canRedo: Boolean get() = forward.isNotEmpty()
+    val canUndo: Boolean get() = if (native != 0L) nativeFlags and 1 != 0 else back.isNotEmpty()
+    val canRedo: Boolean get() = if (native != 0L) nativeFlags and 2 != 0 else forward.isNotEmpty()
 
     /** [before] is about to become [after]; typing ([typed]) may join the run before it. */
     fun record(before: State, after: State, typed: Boolean, now: Long) {
+        check(!closed)
         if (before.text == after.text) return
+        if (native != 0L) {
+            nativeFlags = RustNative.recordHistory(native, before.text, after.text.length, before.start, before.end, typed, now)
+            RustNative.historyOperations.incrementAndGet()
+            return
+        }
         val grew = after.text.length > before.text.length
         val joins = typed && lastGrew == grew && now - lastAt < MERGE_MS && back.isNotEmpty()
         if (!joins) {
@@ -1010,6 +1020,8 @@ internal class EditHistory(private val limit: Int = 200) {
     }
 
     fun undo(current: State): State? {
+        check(!closed)
+        if (native != 0L) return restore(current, false)
         val state = back.removeLastOrNull() ?: return null
         forward.addLast(current)
         lastGrew = null
@@ -1017,10 +1029,27 @@ internal class EditHistory(private val limit: Int = 200) {
     }
 
     fun redo(current: State): State? {
+        check(!closed)
+        if (native != 0L) return restore(current, true)
         val state = forward.removeLastOrNull() ?: return null
         back.addLast(current)
         lastGrew = null
         return state
+    }
+
+    private fun restore(current: State, redo: Boolean): State? {
+        val text = RustNative.moveHistory(native, current.text, current.start, current.end, redo, selection) ?: return null
+        nativeFlags = selection[2]
+        RustNative.historyOperations.incrementAndGet()
+        return State(text, selection[0], selection[1])
+    }
+
+    override fun close() {
+        if (closed) return
+        closed = true
+        val owned = native; native = 0
+        if (owned != 0L) RustNative.closeHistory(owned)
+        back.clear(); forward.clear()
     }
 
     companion object { const val MERGE_MS = 1_000L }

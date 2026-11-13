@@ -19,7 +19,11 @@ internal object CppCore {
         if (started) return
         started = true
         Thread({
-            ready = runCatching { System.loadLibrary("notesis_core"); true }.getOrDefault(false)
+            ready = runCatching {
+                System.loadLibrary("notesis_core")
+                RustNative.connected()
+                true
+            }.getOrDefault(false)
         }, "notesis-core-init").apply { isDaemon = true; start() }
     }
 

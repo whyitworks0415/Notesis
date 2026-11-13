@@ -175,6 +175,7 @@ internal fun MarkdownNoteScreen(
     val blockScroll = rememberScrollState()
     var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
     val history = remember(source.key) { EditHistory() }
+    androidx.compose.runtime.DisposableEffect(history) { onDispose { history.close() } }
     // Whether a block is open for writing in Live; the rest are drawn as they read.
     var editing by remember(source.key) { mutableStateOf(false) }
     var jump by remember { mutableStateOf<Int?>(null) }

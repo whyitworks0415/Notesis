@@ -2657,6 +2657,18 @@ class NoteStore(context: Context) {
             writeStrokes(file, strokes)
             return
         }
+        if (RustNative.active) {
+            val appended = runCatching {
+                val writer = RustPageWriter.append(file, onDisk, strokes.size) ?: return@runCatching false
+                writer.use {
+                    for (i in onDisk until strokes.size) writeNativeStroke(it, strokes[i])
+                    it.commit()
+                }
+                true
+            }.getOrDefault(false)
+            if (!appended) writeStrokes(file, strokes)
+            return
+        }
         val appended = runCatching {
             java.io.RandomAccessFile(file, "rw").use { raw ->
                 if (raw.length() < HEADER_BYTES) return@use false
@@ -2686,7 +2698,7 @@ class NoteStore(context: Context) {
         // buffer and its toByteArray() copy were two allocations per stroke,
         // thousands per dense page. The bytes on disk are the same.
         val inputs = strokeScratch.get()?.apply { reset() }
-            ?: ByteArrayOutputStream().also(strokeScratch::set)
+            ?: StrokeScratchBuffer().also(strokeScratch::set)
         StrokeInputBatchSerialization.encode(stroke.inputs, inputs)
         out.writeInt(inputs.size())
         inputs.writeTo(out)
@@ -2698,8 +2710,33 @@ class NoteStore(context: Context) {
         out.writeByte(Tool.nibAngleOf(brush.family) ?: Tool.NO_NIB)
     }
 
+    /** The same encoded inputs and metadata serve a full rewrite or an append. */
+    private fun writeNativeStroke(writer: RustPageWriter, stroke: Stroke) {
+        val brush = stroke.brush
+        val inputs = strokeScratch.get()?.apply { reset() }
+            ?: StrokeScratchBuffer().also(strokeScratch::set)
+        StrokeInputBatchSerialization.encode(stroke.inputs, inputs)
+        writer.push(StrokeTags.pack(Tool.ofBrushFamily(brush.family).ordinal, StrokeTags.of(stroke)),
+            brush.colorIntArgb, brush.size, brush.epsilon, inputs.bytes, inputs.size(),
+            StrokeLayers.of(stroke), Tool.nibAngleOf(brush.family) ?: Tool.NO_NIB)
+        if (inputs.size() > MAX_SCRATCH_BYTES) strokeScratch.remove()
+    }
+
     /** False when the rename failed and [file] still holds what it held before. */
     private fun writeStrokes(file: File, strokes: List<Stroke>): Boolean {
+        val native = RustPageWriter.open(file, strokes.size)
+        if (native != null) {
+            try {
+                native.use { writer ->
+                    for (stroke in strokes) writeNativeStroke(writer, stroke)
+                    writer.commit()
+                }
+                return true
+            } catch (_: UnsupportedOperationException) {
+                // The previous save is still intact. Unusually large records
+                // keep the original writer rather than losing their content.
+            }
+        }
         // Write beside the real file and rename over it, so a crash mid-write
         // leaves the previous save intact instead of a truncated page.
         val tmp = File(file.parentFile, "${file.name}.tmp")
@@ -2721,6 +2758,34 @@ class NoteStore(context: Context) {
         // One Brush per tool, colour and size: a page of the same pen
         // otherwise made a native brush for every stroke.
         val brushes = HashMap<BrushKey, Brush>()
+        fun accept(storedVersion: Int, rawTool: Int, color: Int, size: Float, layer: Int, nib: Int, bytes: ByteArray) {
+            val storedTool = Tool.entries[StrokeTags.ordinalOf(rawTool)]
+            val tool = if (storedVersion == 1 && storedTool == Tool.HIGHLIGHTER && color ushr 24 == 255)
+                Tool.PEN else storedTool
+            val brush = brushes.getOrPut(BrushKey(tool.ordinal, color, size, 0f, 0, nib)) {
+                val family = tool.brushFamily(nib.takeIf { it != Tool.NO_NIB })
+                Brush.createWithColorIntArgb(family, color, size, inkEpsilon(family, size, epsilon))
+            }
+            records += StoredStroke(tool, rawTool, brush, bytes, layer)
+        }
+        val native = RustPageReader.open(file)
+        if (native != null) {
+            var supported = true
+            try {
+                native.use { reader ->
+                    for (i in 0 until reader.count) {
+                        val bytes = reader.next() ?: break
+                        val meta = reader.metadata
+                        accept(reader.version, meta[0], meta[1], Float.fromBits(meta[2]), meta[4], meta[5], bytes)
+                    }
+                }
+            } catch (_: UnsupportedOperationException) {
+                records.clear(); brushes.clear(); supported = false
+            } catch (_: Exception) {
+                // As before, a truncated tail leaves its complete prefix readable.
+            }
+            if (supported) return StrokeBuilder.buildAll(records)
+        }
         val framed = CppPageReader.read(file)
         if (Thread.currentThread().isInterrupted) return emptyList()
         if (framed != null) {
@@ -2809,7 +2874,7 @@ class NoteStore(context: Context) {
         private const val REMEMBERED_NOTES = 4
         /** A per-thread stroke buffer that grew past this is dropped after use. */
         private const val MAX_SCRATCH_BYTES = 1 shl 20
-        private val strokeScratch = ThreadLocal<ByteArrayOutputStream>()
+        private val strokeScratch = ThreadLocal<StrokeScratchBuffer>()
         /**
          * 3 added a layer byte to each stroke; 1 and 2 still read, as layer 0.
          * 4 added the nib's angle after it; 3 reads as every nib at its default.

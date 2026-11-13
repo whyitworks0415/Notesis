@@ -117,26 +117,31 @@ S6 Lite, SM-P61x/P62x). Kotlin, Jetpack Compose for the chrome, a custom
 | Look, popups | `Skin.kt`, `SkinSettings.kt` (the corner's saved key still says `spotiglass…`), `PopupGrowth.kt`, `PopupReveal.kt`, `AppDialog.kt`, `AppMenu.kt` |
 | Roadmap, archive | `Todo.md` (work in order), `archive/` (glass looks, not built) |
 
-## C++ Lab release and native checks
+## C++ and Rust Lab
 
-This is stage 1 of the owner's four-stage C++ migration, based on stable
-0.93.0 (233), commit 581ee53. Read `docs/cpp-migration.md` for the exact scope.
-Do not describe this as an all-C++ app: the UI, platform bridge, Ink mesh
-construction and document ownership have not been ported yet.
+This branch continues the native migration from stable 0.94.0 (234), commit
+82ef444. Read `docs/native-migration.md` and `native/document/README.md`.
+The owner wants most of the app migrated to C++ and Rust. The current backend
+changes do NOT achieve that yet: Compose screens and the ink controller still
+account for much of the app. Do not pad source, count external/generated code,
+or hide Kotlin in a dependency to claim the goal is complete.
 
-This branch builds **Notesis Lab** (`com.notesis.lab`) alongside stable Notesis.
-Keep the latest stable Material UI and motion, the file format and the signing
-lineage. Preview tags must end in `-preview` and stay excluded from the stable
-feed. Do not merge its package and update routing into main. Source stays
-private; only release assets and the migration progress document are public.
+The standard-library-only Rust crate owns streaming NTSS I/O, full replacement,
+append and Markdown text history. C++ owns the existing geometric kernels and
+JNI. AndroidX Ink object creation and current Kotlin/Compose screens remain.
+Preserve current features and Material motion while migrating; a native UI
+rewrite with partial feature restoration is a separate product tradeoff.
 
-Run `bash tools/performance-lab/check-native.sh` before
-`./gradlew testDebugUnitTest -Pnotesis.hostNativeDir="$PWD/build/host-native"`.
-The script checks C++ kernels with address/undefined sanitizers and compiles
-JNI bridges for tests. Host benchmark results are not device results.
-The own-buffer display remains experimental and disabled by default.
+Keep com.notesis.lab isolated from stable, preview tags ending in -preview and
+source private. Do not merge this branch's package or feed routing into main.
+The own-buffer presenter remains experimental and disabled by default.
 
-Dispatch `apk.yml` with `update=manual` once per new Lab version to build,
-test, sign and publish a prerelease without changing the latest stable release.
-Use `update=check` for build-only validation. Native code loading honours the
-existing crash guard; the diagnostics offer a C++ bulk-processing A/B switch.
+Run Rust tests and clippy, then tools/performance-lab/check-native.sh before
+Gradle JVM tests with -Pnotesis.hostNativeDir pointing to build/host-native.
+CMake builds Rust 1.100.0 for aarch64-linux-android or x86_64-linux-android;
+its static archive links into notesis_core. JNI strings use UTF-16 for editor
+selections and UTF-8 byte paths for files. Native IDs are ownership tokens,
+never Java-visible addresses. Close handles at their actual lifecycle boundary.
+
+No device test or performance claim follows from a host test or APK build.
+A manual Lab dispatch must pass all tests before signing and publishing.
