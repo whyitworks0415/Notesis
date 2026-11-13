@@ -20,11 +20,23 @@ internal const val TERMUX_PACKAGE = "com.termux"
 internal const val TERMUX_DOWNLOAD = "https://f-droid.org/packages/com.termux/"
 
 /** An agent the setup can install, its npm package, and how it is told about the Notesis bridge. */
-internal enum class AgentCli(val label: String, val npm: String, val command: String) {
-    CLAUDE("Claude Code", "@anthropic-ai/claude-code", "claude"),
-    CODEX("Codex", "@openai/codex", "codex"),
-    OPENCODE("OpenCode", "opencode-ai", "opencode"),
+internal enum class AgentCli(val label: String, val npm: String, val command: String, /** Its instructions file, from the home folder. */ val guide: String) {
+    CLAUDE("Claude Code", "@anthropic-ai/claude-code", "claude", ".claude/CLAUDE.md"),
+    CODEX("Codex", "@openai/codex", "codex", ".codex/AGENTS.md"),
+    OPENCODE("OpenCode", "opencode-ai", "opencode", ".config/opencode/AGENTS.md"),
 }
+
+/**
+ * Puts the guide file (argument 2) into an instructions file (argument 1)
+ * between the markers, as [withGuide] does: node, because Debian has it by
+ * then and sed would trip over the guide's own characters.
+ */
+private val GUIDE_MERGE_JS = """const fs=require("fs"),path=require("path"),[p,g]=process.argv.slice(1);""" +
+    """let t="";try{t=fs.readFileSync(p,"utf8")}catch(e){}""" +
+    """const A="$GUIDE_START",B="$GUIDE_END",b=A+"\n"+fs.readFileSync(g,"utf8").trim()+"\n"+B;""" +
+    """const s=t.indexOf(A),e=t.indexOf(B);""" +
+    """t=(s>=0&&e>s)?t.slice(0,s)+b+t.slice(e+B.length):(t.trim()?t.replace(/\n*${'$'}/,"\n\n")+b+"\n":b+"\n");""" +
+    """fs.mkdirSync(path.dirname(p),{recursive:true});fs.writeFileSync(p,t)"""
 
 private val SAFE_TOKEN = Regex("^[A-Za-z0-9_-]{16,128}$")
 private val SAFE_URL = Regex("^http://[A-Za-z0-9.:\\[\\]-]+/mcp$")
@@ -39,6 +51,7 @@ internal fun termuxSetupScript(agents: Set<AgentCli>, url: String, token: String
     require(SAFE_TOKEN.matches(token)) { "A token is letters, digits, - and _" }
     require(SAFE_URL.matches(url)) { "Not an address of this server" }
     require(bridge.lines().none { it.trim() == "NOTESIS_BRIDGE" || it.trim() == "NOTESIS_DEBIAN" }) { "The bridge would end the script early" }
+    require(AGENT_GUIDE.lines().none { it.trim() in setOf("NOTESIS_GUIDE", "NOTESIS_DEBIAN") } && '\'' !in GUIDE_MERGE_JS) { "The guide would end the script early" }
     val chosen = AgentCli.entries.filter { it in agents }
     val names = chosen.joinToString(", ") { it.label }
     return buildString {
@@ -67,6 +80,11 @@ internal fun termuxSetupScript(agents: Set<AgentCli>, url: String, token: String
         append(bridge.trimEnd('\n')).append('\n')
         appendLine("NOTESIS_BRIDGE")
         appendLine("BRIDGE=\"\$HOME/.notesis/notesis-mcp.js\"")
+        // What each agent is told about the notes, in its own instructions file; setting up again replaces only this part.
+        appendLine("cat > \"\$HOME/.notesis/guide.md\" <<'NOTESIS_GUIDE'")
+        append(AGENT_GUIDE.trimEnd('\n')).append('\n')
+        appendLine("NOTESIS_GUIDE")
+        appendLine("notesis_guide() { node -e '$GUIDE_MERGE_JS' \"\$1\" \"\$HOME/.notesis/guide.md\"; }")
         // One at a time: one that fails to install must not take the others with it.
         appendLine("FAILED=''")
         for (agent in chosen) {
@@ -91,6 +109,7 @@ internal fun termuxSetupScript(agents: Set<AgentCli>, url: String, token: String
                         "\"\$HOME/.config/opencode/opencode.json\" \"\$BRIDGE\" || FAILED=\"\$FAILED ${agent.label}(connect)\"")
                 }
             }
+            appendLine("  notesis_guide \"\$HOME/${agent.guide}\" || FAILED=\"\$FAILED ${agent.label}(guide)\"")
             appendLine("else")
             appendLine("  FAILED=\"\$FAILED ${agent.label}\"")
             appendLine("fi")

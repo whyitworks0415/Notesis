@@ -5,6 +5,11 @@ import androidx.ink.brush.Brush
 import androidx.ink.brush.InputToolType
 import androidx.ink.strokes.MutableStrokeInputBatch
 import androidx.ink.strokes.Stroke
+import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
+import com.tom_roush.pdfbox.io.MemoryUsageSetting
+import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.text.PDFTextStripper
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.UUID
 
@@ -18,7 +23,9 @@ import java.util.UUID
 internal class NoteStoreWorkspace(
     private val context: Context,
     private val store: NoteStore,
-    /** Whether a note is on screen now (see [OpenNotes]), so it is read but not changed. */
+    /** The notes on screen now, for `status`. */
+    private val openNotes: () -> Set<String> = { emptySet() },
+    /** Whether a note is on screen now (see [OpenNotes]), so it is read but not changed. Last, so a call can end with it as a lambda. */
     private val isOpenNote: (String) -> Boolean,
 ) : NoteWorkspace {
     private val kept = File(context.cacheDir, "command-undo").apply { deleteRecursively(); mkdirs() }
@@ -149,5 +156,183 @@ internal class NoteStoreWorkspace(
         val pages = File(note, "pages")
         pages.deleteRecursively()
         File(copy, "pages").takeIf { it.isDirectory }?.copyRecursively(pages, overwrite = true) ?: pages.mkdirs()
+    }
+
+    // ---- for the agent commands (Todo.md Q1-Q5) ----
+
+    override fun pdfOutline(id: String): List<PdfMark> = store.pdfOutline(id).map { PdfMark(it.title, it.pdfPage, it.level) }
+
+    /**
+     * The text of each PDF page: from the page's search text when it has some,
+     * else read out of the PDF with PDFBox and kept there for next time (and for
+     * search). Android itself gives PDF text only from Android 15, so on older
+     * tablets the search text of a PDF page is empty and this is where it comes from.
+     */
+    override fun pdfText(id: String, pages: List<Page>): List<String?> {
+        var document: PDDocument? = null
+        try {
+            return pages.map { page ->
+                if (page.pdfPageIndex < 0) return@map null
+                val file = File(store.noteDir(id), "pages/${page.id}.txt")
+                file.takeIf { it.isFile }?.let { runCatching { it.readText() }.getOrNull() }?.takeIf { it.isNotBlank() }?.let { return@map it }
+                val pdf = document ?: run {
+                    val source = store.pdfFile(id).takeIf { it.isFile } ?: return@map null
+                    PDFBoxResourceLoader.init(context)
+                    PDDocument.load(source, MemoryUsageSetting.setupTempFileOnly().setTempDir(context.cacheDir)).also { document = it }
+                }
+                if (page.pdfPageIndex >= pdf.numberOfPages) return@map null
+                val text = runCatching {
+                    PDFTextStripper().apply { startPage = page.pdfPageIndex + 1; endPage = page.pdfPageIndex + 1 }.getText(pdf)
+                }.getOrNull().orEmpty()
+                if (text.isNotBlank()) runCatching { file.parentFile?.mkdirs(); file.writeText(text) }
+                text
+            }
+        } catch (error: Exception) {
+            throw CommandError("The PDF could not be read: ${error.message ?: error.javaClass.simpleName}")
+        } finally {
+            runCatching { document?.close() }
+        }
+    }
+
+    override fun pageImage(id: String, pageIndex: Int, width: Int): ByteArray? {
+        var out: ByteArray? = null
+        val written = store.exportPng(id, PageExportOptions(pageIndex + 1, pageIndex + 1)) { _, picture ->
+            val height = (picture.height * width.toFloat() / picture.width).toInt().coerceAtLeast(1)
+            val scaled = android.graphics.Bitmap.createScaledBitmap(picture, width, height, true)
+            try {
+                val bytes = ByteArrayOutputStream()
+                scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, JPEG_QUALITY, bytes)
+                out = bytes.toByteArray()
+            } finally {
+                if (scaled !== picture) scaled.recycle()
+            }
+            true
+        }
+        return out.takeIf { written }
+    }
+
+    override fun search(query: String, limit: Int): List<SearchHit> {
+        val out = ArrayList<SearchHit>()
+        for ((meta, hits) in store.searchWithPages(query)) {
+            if (hits.isEmpty()) out += SearchHit(meta.id, meta.title, -1, "")
+            else hits.forEach { out += SearchHit(meta.id, meta.title, it.pageIndex, it.snippet) }
+            if (out.size >= limit) break
+        }
+        return out.take(limit)
+    }
+
+    override fun saveMarkdown(id: String, title: String, text: String) = store.saveMarkdown(id, title, text)
+
+    override fun createNote(title: String, folder: String, background: PageBackground, pages: Int): String? = runCatching {
+        val meta = store.create(title, background)
+        if (pages > 1) {
+            val document = store.load(meta.id)
+            val first = document.pages.first()
+            repeat(pages - 1) { document.pages += Page(width = first.width, height = first.height, background = background) }
+            store.save(meta.id, title, document)
+        }
+        if (folder.isNotEmpty()) store.setFolder(meta.id, folder)
+        meta.id
+    }.getOrNull()
+
+    override fun createMarkdown(title: String, folder: String, text: String): String? =
+        runCatching { store.createMarkdown(title, text, folder).id }.getOrNull()
+
+    /** A copy of the note's folder under a new id: its pages, pictures and PDF, but not its place among the favourites. */
+    override fun duplicateNote(id: String, title: String): String? = runCatching {
+        store.settled()
+        val newId = UUID.randomUUID().toString()
+        val target = store.noteDir(newId)
+        check(store.noteDir(id).copyRecursively(target))
+        File(target, FAVORITE_MARKER).delete()
+        if (!store.renameNote(newId, title)) { target.deleteRecursively(); error("rename") }
+        newId
+    }.getOrNull()
+
+    override fun mergeNotes(ids: List<String>, title: String): String? { store.settled(); return store.mergeNotes(ids, title).getOrNull()?.id }
+    override fun setFavorite(id: String, on: Boolean) = store.setFavorite(id, on)
+    override fun setLabel(id: String, color: Int) = store.setLabel(id, color)
+    override fun folders(): List<String> = store.folders()
+    override fun createFolder(path: String): Boolean = store.createFolder(path)
+    override fun removeEmptyFolder(path: String): Boolean {
+        if (store.list().any { isInFolder(it.folder, path) }) return false
+        store.deleteFolder(path, keepNotes = true)
+        return true
+    }
+    override fun renameFolder(from: String, to: String): Boolean = store.renameFolder(from, to)
+    override fun openNotes(): Set<String> = openNotes.invoke()
+    override fun appVersion(): String =
+        runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull().orEmpty()
+
+    override fun copyInk(id: String, document: Document, from: Page, to: Page) {
+        loaded(id, from)
+        if (from.strokes.isEmpty()) return
+        // A stroke cannot be changed, so the copy may share it; its layer and lock ride along with it.
+        to.strokes.addAll(from.strokes)
+        to.loaded = true
+        to.dirty = true
+    }
+
+    override fun copyImage(id: String, imageId: String): String? {
+        val source = store.imageFile(id, imageId).takeIf { it.isFile } ?: return null
+        val newId = UUID.randomUUID().toString()
+        return runCatching { source.copyTo(store.imageFile(id, newId)); newId }.getOrNull()
+    }
+
+    override fun recognize(id: String, document: Document, page: Page): String? {
+        loaded(id, page)
+        val visible = page.strokes.filter { document.layers.isVisible(StrokeLayers.of(it)) }
+        if (visible.isEmpty()) return null
+        val reader = InkIndexer(context)
+        try {
+            return reader.textOf(visible, firstReading = true)
+                ?: throw CommandError("Handwriting cannot be read yet: the reading models are not downloaded. " +
+                    "Connect to the internet and try again.", code = "NOT_READY")
+        } finally {
+            reader.close()
+        }
+    }
+
+    /** Where each shared file went, so taking it away again finds it. */
+    private val shared = java.util.concurrent.ConcurrentHashMap<String, android.net.Uri>()
+
+    /**
+     * Copies a file the commands made into Download/Notesis, through the media
+     * store: no storage permission is needed for it, and Termux (after
+     * termux-setup-storage) and every other app can read it there.
+     */
+    override fun shareFile(path: String): String? = runCatching {
+        val file = File(path)
+        val resolver = context.contentResolver
+        val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, file.name)
+            put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/Notesis")
+            put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return null
+        try {
+            resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out) } } ?: error("no stream")
+            resolver.update(uri, android.content.ContentValues().apply { put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
+        } catch (error: Exception) {
+            resolver.delete(uri, null, null)
+            throw error
+        }
+        // The name it was given: the store adds " (1)" when the name is taken.
+        val name = resolver.query(uri, arrayOf(android.provider.MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) cursor.getString(0) else null
+        } ?: file.name
+        val out = "/storage/emulated/0/${android.os.Environment.DIRECTORY_DOWNLOADS}/Notesis/$name"
+        shared[out] = uri
+        out
+    }.getOrNull()
+
+    override fun unshareFile(path: String) {
+        shared.remove(path)?.let { uri -> runCatching { context.contentResolver.delete(uri, null, null) } }
+    }
+
+    private companion object {
+        const val JPEG_QUALITY = 82
+        /** The favourite marker's file name in a note's folder; see NoteStore.setFavorite. */
+        const val FAVORITE_MARKER = "favorite"
     }
 }

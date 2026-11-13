@@ -53,7 +53,8 @@ class TerminalTest {
     fun `answers print as indented results, errors with their usage`() {
         val ok = terminalOutput("{\"ok\":true,\"result\":{\"file\":\"/data/x.pdf\"},\"undo\":\"notesis undo takes back: rename\"}")
         assertEquals(TerminalTone.OUTPUT, ok[0].tone)
-        assertTrue(ok[0].text.contains("\"file\": \"/data/x.pdf\""))
+        assertEquals("file: /data/x.pdf", ok[0].text)
+        assertTrue(terminalOutput("{\"ok\":true,\"result\":{\"file\":\"/data/x.pdf\"}}", asJson = true)[0].text.contains("\"file\": \"/data/x.pdf\""))
         assertEquals(TerminalTone.HINT, ok[1].tone)
         val bad = terminalOutput("{\"ok\":false,\"error\":\"No note\",\"usage\":\"note read NOTE\",\"line\":2,\"of\":3,\"undone\":\"Taken back.\"}")
         assertEquals("error: No note", bad[0].text)
@@ -71,5 +72,33 @@ class TerminalTest {
         assertNull(terminalBuiltin("notes list"))
         assertEquals("1\n2\n… 3 more lines", clipLines("1\n2\n3\n4\n5", 2))
         assertEquals("1\n2", clipLines("1\n2", 2))
+    }
+
+    @Test
+    fun `answers read as text - notes, hits, outlines and plain results`() {
+        val list = readable(org.json.JSONObject("{\"total\":5,\"count\":1,\"notes\":[{\"id\":\"abcdef123456\",\"title\":\"Maths\"," +
+            "\"folder\":\"School\",\"tags\":[\"exam\"],\"pages\":3}],\"next\":\"--offset 1\"}"))
+        assertEquals("abcdef12  Maths   School  #exam  3 p\n1 of 5   more: --offset 1", list)
+        val hits = readable(org.json.JSONObject("{\"query\":\"x\",\"count\":1,\"hits\":[{\"id\":\"a\",\"title\":\"Maths\",\"page\":2,\"snippet\":\"x = 3\"}]}"))
+        assertEquals("Maths p.2:  x = 3\n1 found", hits)
+        val toc = readable(org.json.JSONObject("{\"note\":\"Maths\",\"toc\":[{\"page\":1,\"title\":\"Start\",\"level\":0},{\"page\":4,\"title\":\"Part\",\"level\":1}]}"))
+        assertEquals("Maths\np.1     Start\np.4       Part", toc)
+        assertEquals("id: n1\ntags: exam, maths", readable(org.json.JSONObject("{\"id\":\"n1\",\"tags\":[\"exam\",\"maths\"]}")))
+        // A picture is said to be there, not printed.
+        val picture = terminalOutput("{\"ok\":true,\"result\":{\"page\":1,\"image\":{\"mime\":\"image/jpeg\",\"data\":\"${"A".repeat(4096)}\"}}}")
+        assertTrue(picture[0].text, picture[0].text.contains("picture, 3 KB image/jpeg"))
+        // A failure lists the notes it may have meant.
+        val missed = terminalOutput("{\"ok\":false,\"error\":\"No note\",\"code\":\"NOT_FOUND\",\"candidates\":[\"n1 Maths\"]}")
+        assertEquals("  n1 Maths", missed.last().text)
+    }
+
+    @Test
+    fun `history kept from before comes back under what was typed since`() {
+        val history = TerminalHistory(limit = 3)
+        history.add("status")
+        history.restore(listOf("notes list", "help", "notes list"))
+        assertEquals(listOf("help", "notes list", "status"), history.all)
+        assertEquals("status", history.up(""))
+        assertEquals(TerminalBuiltin.JSON, terminalBuiltin("json"))
     }
 }

@@ -14,6 +14,7 @@ import org.json.JSONObject
 internal enum class TerminalBuiltin(val word: String, val about: String) {
     CLEAR("clear", "clear the screen"),
     HISTORY("history", "the lines run before"),
+    JSON("json", "answers as JSON, or as text again"),
     EXIT("exit", "close the terminal"),
 }
 
@@ -104,6 +105,15 @@ internal class TerminalHistory(private val limit: Int = 200) {
 
     val all: List<String> get() = lines
 
+    /** Puts back lines kept from before, oldest first, under any typed since. */
+    fun restore(saved: List<String>) {
+        val typed = lines.toList()
+        lines.clear()
+        (saved + typed).map { it.trim() }.filter { it.isNotEmpty() }.forEach { if (lines.lastOrNull() != it) lines += it }
+        while (lines.size > limit) lines.removeAt(0)
+        at = -1
+    }
+
     fun add(line: String) {
         val clean = line.trim()
         if (clean.isEmpty()) return
@@ -138,19 +148,23 @@ internal data class TerminalLine(val text: String, val tone: TerminalTone)
  * A command's JSON answer as the terminal prints it: what it found or did,
  * indented, with the undo hint and a failure's usage on lines of their own.
  */
-internal fun terminalOutput(answer: String): List<TerminalLine> {
+internal fun terminalOutput(answer: String, asJson: Boolean = false): List<TerminalLine> {
     val json = runCatching { JSONObject(answer) }.getOrNull() ?: return listOf(TerminalLine(answer, TerminalTone.OUTPUT))
     if (!json.optBoolean("ok")) {
         val out = mutableListOf(TerminalLine("error: " + json.optString("error"), TerminalTone.ERROR))
         if (json.has("line")) out += TerminalLine("on line ${json.optInt("line")}" +
             (json.optString("undone").takeIf { it.isNotEmpty() }?.let { ". $it" } ?: ""), TerminalTone.ERROR)
+        json.optJSONArray("candidates")?.let { candidates ->
+            out += TerminalLine("did you mean:", TerminalTone.HINT)
+            for (i in 0 until candidates.length()) out += TerminalLine("  " + candidates.optString(i), TerminalTone.HINT)
+        }
         json.optString("usage").takeIf { it.isNotEmpty() }?.let { usage ->
             out += usage.split('\n').map { TerminalLine("  $it", TerminalTone.HINT) }
         }
         return out
     }
-    val body = json.opt("result") ?: json.opt("results")
-    val out = mutableListOf(TerminalLine(prettyJson(body), TerminalTone.OUTPUT))
+    val body = withoutPictureData(json.opt("result") ?: json.opt("results"))
+    val out = mutableListOf(TerminalLine(if (asJson) prettyJson(body) else readable(body), TerminalTone.OUTPUT))
     json.optString("undo").takeIf { it.isNotEmpty() }?.let { out += TerminalLine(it, TerminalTone.HINT) }
     return out
 }
@@ -174,4 +188,104 @@ internal fun clipLines(text: String, max: Int): String {
     val lines = text.split('\n')
     if (lines.size <= max) return text
     return lines.take(max).joinToString("\n") + "\n… {0} more lines".replace("{0}", (lines.size - max).toString())
+}
+
+/** [value] with each picture's data put as its size: a page as base64 is a screenful of letters no one reads. */
+internal fun withoutPictureData(value: Any?): Any? = when (value) {
+    is JSONArray -> JSONArray().also { out -> for (i in 0 until value.length()) out.put(withoutPictureData(value.opt(i))) }
+    is JSONObject -> JSONObject().also { out ->
+        for (key in value.keys()) {
+            val item = value.opt(key)
+            val data = (item as? JSONObject)?.optString("data").orEmpty()
+            if (key == "image" && data.isNotEmpty()) out.put(key, "picture, ${data.length * 3 / 4 / 1024} KB ${(item as JSONObject).optString("mime")}")
+            else out.put(key, withoutPictureData(item))
+        }
+    }
+    else -> value
+}
+
+/**
+ * An answer as text for a person: notes, search hits and outlines as lines,
+ * a page's text as text, anything else as `key: value` lines, and what has
+ * no plainer form as indented JSON. `json` in the terminal shows the JSON.
+ */
+internal fun readable(value: Any?): String = when (value) {
+    is JSONArray -> (0 until value.length()).joinToString("\n\n") { readable(value.opt(it)) }
+    is JSONObject -> readableObject(value)
+    null -> ""
+    else -> value.toString()
+}
+
+private fun readableObject(json: JSONObject): String {
+    val lines = mutableListOf<String>()
+    fun rest(vararg shown: String) {
+        for (key in json.keys()) if (key !in shown) json.opt(key)?.let { lines += "$key: ${flat(it)}" }
+    }
+    val notes = json.optJSONArray("notes")
+    val hits = json.optJSONArray("hits")
+    val toc = json.optJSONArray("toc") ?: json.optJSONArray("pdfBookmarks")
+    val commands = json.optJSONArray("commands")
+    when {
+        notes != null -> {
+            for (i in 0 until notes.length()) notes.optJSONObject(i)?.let { note ->
+                val about = listOfNotNull(
+                    note.optString("folder").takeIf { it.isNotEmpty() },
+                    note.optJSONArray("tags")?.let { tags -> (0 until tags.length()).joinToString(" ") { "#" + tags.optString(it) } }?.takeIf { it.isNotEmpty() },
+                    if (note.has("pages")) "${note.optInt("pages")} p" else note.optString("kind").takeIf { it == "markdown" }?.let { "md" },
+                ).joinToString("  ")
+                lines += "${note.optString("id").take(8)}  ${note.optString("title")}" + (if (about.isNotEmpty()) "   $about" else "")
+            }
+            lines += buildString {
+                append(notes.length()).append(" of ").append(json.optInt("total", json.optInt("count", notes.length())))
+                json.optString("next").takeIf { it.isNotEmpty() }?.let { append("   more: ").append(it) }
+            }
+        }
+        hits != null -> {
+            for (i in 0 until hits.length()) hits.optJSONObject(i)?.let { hit ->
+                val where = listOfNotNull(hit.optString("title").takeIf { it.isNotEmpty() }, if (hit.has("page")) "p.${hit.optInt("page")}" else null)
+                lines += where.joinToString(" ") + (hit.optString("snippet").takeIf { it.isNotEmpty() }?.let { ":  $it" } ?: "")
+            }
+            lines += "${hits.length()} found" + (json.optString("more").takeIf { it.isNotEmpty() && it != "false" }?.let { "   $it" } ?: "")
+        }
+        toc != null -> {
+            json.optString("note").takeIf { it.isNotEmpty() }?.let { lines += it }
+            for (i in 0 until toc.length()) toc.optJSONObject(i)?.let { entry ->
+                val page = if (entry.has("page")) "p.${entry.optInt("page")}" else "pdf ${entry.optInt("pdfPage")}"
+                lines += page.padEnd(8) + "  ".repeat(entry.optInt("level")) + entry.optString("title")
+            }
+            if (toc.length() == 0) lines += "(no entries)"
+        }
+        commands != null -> {
+            for (i in 0 until commands.length()) lines += commands.optString(i)
+            json.optString("notes").takeIf { it.isNotEmpty() }?.let { lines += ""; lines += it }
+        }
+        json.has("chars") && json.optJSONArray("pages") != null -> {
+            val pages = json.getJSONArray("pages")
+            for (i in 0 until pages.length()) pages.optJSONObject(i)?.let { page ->
+                lines += "--- p.${page.optInt("page")} (pdf ${page.optInt("pdfPage")}) ---"
+                lines += page.optString("text")
+            }
+            rest("pages", "chars", "note")
+        }
+        json.optJSONArray("folders") != null -> {
+            val folders = json.getJSONArray("folders")
+            for (i in 0 until folders.length()) folders.optJSONObject(i)?.let { lines += "${it.optString("path")}  (${it.optInt("notes")})" }
+            lines += "top level  (${json.optInt("topLevel")})"
+        }
+        json.optJSONArray("tags") != null && json.length() == 1 -> {
+            val tags = json.getJSONArray("tags")
+            for (i in 0 until tags.length()) tags.optJSONObject(i)?.let { lines += "#${it.optString("tag")}  (${it.optInt("notes")})" }
+            if (tags.length() == 0) lines += "(no tags)"
+        }
+        json.keys().asSequence().all { key -> json.opt(key).let { it !is JSONObject && (it !is JSONArray || it.isFlat()) } } -> rest()
+        else -> return prettyJson(json)
+    }
+    return lines.joinToString("\n")
+}
+
+private fun JSONArray.isFlat(): Boolean = (0 until length()).none { opt(it) is JSONObject || opt(it) is JSONArray }
+
+private fun flat(value: Any): String = when (value) {
+    is JSONArray -> if (value.length() == 0) "-" else (0 until value.length()).joinToString(", ") { value.opt(it).toString() }
+    else -> value.toString()
 }

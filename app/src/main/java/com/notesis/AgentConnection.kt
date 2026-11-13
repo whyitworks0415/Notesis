@@ -93,6 +93,9 @@ internal fun agentHelp(): String = buildString {
     append("Several lines run as one batch: if one fails, the ones before it are taken back.\n")
     append("A note open on the screen can only be read. Deleting only moves a note to the trash.\n")
     append("`undo` takes back the latest change. The owner may be asked before a change; a refusal is final for that request.\n")
+    append("A failure carries a code: NOT_FOUND, AMBIGUOUS (with candidates), OPEN_ON_SCREEN, LOCKED, BAD_PAGE, NO_PDF, NO_OUTLINE, ")
+    append("NOT_SUPPORTED, NOT_READY, UNKNOWN_COMMAND or INVALID.\n\n")
+    append(AGENT_GUIDE.substringAfter("## Recipes").let { "Recipes" + it }).append('\n')
 }
 
 /** Runs the server for as long as the connection is on, and says how it is doing. */
@@ -138,7 +141,8 @@ internal object AgentRuntime {
             override fun help(): String = agentHelp()
         }
         val version = runCatching { app.packageManager.getPackageInfo(app.packageName, 0).versionName }.getOrNull() ?: "0"
-        val candidate = AgentServer({ AgentSettings.token(app) }, McpProtocol(tools, version), lan)
+        val protocol = McpProtocol(tools, version) { _, sent, answered, images -> AgentUsage.add(sent, answered, images) }
+        val candidate = AgentServer({ AgentSettings.token(app) }, protocol, lan)
         val first = AgentSettings.port(app)
         var bound = 0
         for (attempt in 0 until PORT_TRIES) {

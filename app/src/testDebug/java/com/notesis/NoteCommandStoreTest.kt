@@ -91,4 +91,82 @@ class NoteCommandStoreTest {
         commands.run("undo"); commands.run("undo")
         assertTrue(store.list().any { it.id == "command-fixture" && it.title == "Physics" })
     }
+
+    /** A note over a two-page PDF with text and one bookmark, made with PDFBox as a scanner's or a publisher's would be. */
+    private fun pdfNote(): File {
+        val dir = File(context.filesDir, "notes/pdf-fixture").apply { deleteRecursively(); File(this, "pages").mkdirs() }
+        com.tom_roush.pdfbox.android.PDFBoxResourceLoader.init(context)
+        com.tom_roush.pdfbox.pdmodel.PDDocument().use { pdf ->
+            val pages = listOf("Contents", "Chapter One begins here").map { words ->
+                com.tom_roush.pdfbox.pdmodel.PDPage().also { page ->
+                    pdf.addPage(page)
+                    com.tom_roush.pdfbox.pdmodel.PDPageContentStream(pdf, page).use { out ->
+                        out.beginText()
+                        out.setFont(com.tom_roush.pdfbox.pdmodel.font.PDType1Font.HELVETICA, 14f)
+                        out.newLineAtOffset(72f, 700f)
+                        out.showText(words)
+                        out.endText()
+                    }
+                }
+            }
+            val outline = com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.outline.PDDocumentOutline()
+            pdf.documentCatalog.documentOutline = outline
+            outline.addLast(com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineItem().apply {
+                title = "Chapter One"
+                destination = com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.destination.PDPageFitDestination().apply { page = pages[1] }
+            })
+            pdf.save(File(dir, "doc.pdf"))
+        }
+        File(dir, "meta.json").writeText("""{"title":"Textbook","modified":2,"pages":[""" +
+            """{"id":"q1","w":612,"h":792,"bg":"PDF","pdf":0},{"id":"q2","w":612,"h":792,"bg":"PDF","pdf":1}]}""")
+        for (id in listOf("q1", "q2")) DataOutputStream(File(dir, "pages/$id.bin").outputStream()).use {
+            it.writeInt(0x4E545353); it.writeInt(4); it.writeInt(0)
+        }
+        // As Android before 15 leaves it: a search text for each page, empty.
+        for (id in listOf("q1", "q2")) File(dir, "pages/$id.txt").writeText("")
+        return dir
+    }
+
+    @Test fun aPdfIsReadForItsTextAndBookmarks() {
+        val dir = pdfNote()
+        try {
+            val commands = NoteCommands(NoteStoreWorkspace(context, NoteStore(context)) { false })
+            val text = JSONObject(commands.run("pdf text Textbook"))
+            assertTrue(text.toString(), text.getBoolean("ok"))
+            assertEquals("Chapter One begins here", text.getJSONObject("result").getJSONArray("pages").getJSONObject(1).getString("text"))
+            // What was read is kept as the page's search text, so search finds it from now on.
+            assertTrue(File(dir, "pages/q2.txt").readText().contains("Chapter One"))
+            val info = JSONObject(commands.run("pdf info Textbook")).getJSONObject("result")
+            assertEquals(1, info.getInt("bookmarks"))
+            assertEquals("yes", info.getString("textLayer"))
+            assertTrue(JSONObject(commands.run("toc import-pdf Textbook")).getBoolean("ok"))
+            assertEquals("Chapter One", NoteStore(context).load("pdf-fixture").pages[1].tocTitle)
+            val found = JSONObject(commands.run("pdf find Textbook begins")).getJSONObject("result")
+            assertEquals(2, found.getJSONArray("hits").getJSONObject(0).getInt("page"))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test fun notesAreMadeAndCopiedOnDiskAndUndoSendsThemToTheTrash() {
+        val store = NoteStore(context)
+        val commands = NoteCommands(NoteStoreWorkspace(context, store) { false })
+        val made = JSONObject(commands.run("note new Algebra --folder School --pages 3 --paper lined"))
+        assertTrue(made.toString(), made.getBoolean("ok"))
+        val id = made.getJSONObject("result").getString("id")
+        val loaded = store.load(id)
+        assertEquals(3, loaded.pages.size)
+        assertEquals(PageBackground.LINED, loaded.pages[2].background)
+        assertEquals("School", store.list().first { it.id == id }.folder)
+        val copy = JSONObject(commands.run("note dup Physics --title \"Physics 2\"")).getJSONObject("result").getString("id")
+        assertEquals(listOf("p1", "p2", "p3"), store.load(copy).pages.map { it.id })
+        assertEquals("Physics 2", store.list().first { it.id == copy }.title)
+        val md = JSONObject(commands.run("note new-md Ideas --text \"# Ideas\\n- one\"")).getJSONObject("result").getString("id")
+        assertTrue(JSONObject(commands.run("md append Ideas \"- two\"")).getBoolean("ok"))
+        assertEquals("# Ideas\n- one\n- two\n", store.loadMarkdown(md))
+        repeat(4) { assertTrue(JSONObject(commands.run("undo")).getBoolean("ok")) }
+        val trashed = store.trashed().map { it.id }
+        assertTrue(trashed.containsAll(listOf(id, copy, md)))
+        for (gone in listOf(id, copy, md)) File(context.filesDir, "notes/$gone").deleteRecursively()
+    }
 }

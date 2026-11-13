@@ -106,7 +106,11 @@ S6 Lite, SM-P61x/P62x). Kotlin, Jetpack Compose for the chrome, a custom
   about first or made at once as the owner chose, never on a note on screen
   (`OpenNotes`), always undoable. A command added to `NoteCommands` must also be
   described in `describeCommand` (a test fails otherwise), or it would run
-  without asking. Do not add a way around any of this.
+  without asking; only reading goes in `READ_COMMANDS`, and anything that
+  puts a note's content outside the app (`export --to shared`) is a change.
+  Answers stay small: a read that can be long takes `--max-chars` and says
+  `truncated` with the `next` command, and the guide (`AGENT_GUIDE`) names
+  only commands that exist (a test checks). Do not add a way around any of this.
 - Large files: `MainActivity.kt` (screens) and `InkCanvasView.kt` (canvas).
   Search before adding; most features already have a home.
 - Commit messages: a short summary line, then what and why. No model names
@@ -128,7 +132,7 @@ S6 Lite, SM-P61x/P62x). Kotlin, Jetpack Compose for the chrome, a custom
 | Page panel, Internet panel | `PageSidebar.kt`, `WebPanel.kt` |
 | Folders, smart folders, templates | `FolderPaths.kt` (paths `School/Maths`), `SmartFolders.kt`, `PaperPicker.kt` |
 | Note commands (`notesis ...`), terminal | `NoteCommands.kt` (pure: words, paths, undo), `NoteCommandStore.kt` (on disk), `Terminal.kt` (pure: completion, history, printing), `TerminalPanel.kt` (`TerminalHost`, `TerminalSession`) |
-| Agent connection (MCP) | `McpProtocol.kt` (pure JSON-RPC), `AgentServer.kt` (HTTP and its checks), `AgentGateway.kt` (ask or make at once), `ChangeCards.kt` (what a command says it does, the log, the questions waiting), `AgentConnection.kt` (settings, `AgentRuntime`, `AgentService`), `AgentPanel.kt` (setup panel, approval card), `OpenNotes.kt` (notes on screen, `SharedNotes`) |
+| Agent connection (MCP) | `AgentGuide.kt` (the guide and MCP prompts every agent gets), `McpProtocol.kt` (pure JSON-RPC, pictures, prompts), `AgentServer.kt` (HTTP and its checks), `AgentGateway.kt` (ask or make at once), `ChangeCards.kt` (what a command says it does, the log, the questions waiting), `AgentConnection.kt` (settings, `AgentRuntime`, `AgentService`), `AgentPanel.kt` (setup panel, approval card), `OpenNotes.kt` (notes on screen, `SharedNotes`) |
 | Backup, widget, updates | `AutoBackup.kt` (off by default), `NotesWidget.kt`, `AppUpdate.kt` (beta code) |
 | Look, popups | `Skin.kt`, `SkinSettings.kt` (the corner's saved key still says `spotiglass…`), `PopupGrowth.kt`, `PopupReveal.kt`, `AppDialog.kt`, `AppMenu.kt` |
 | Roadmap, archive | `Todo.md` (work in order), `archive/` (glass looks, not built) |

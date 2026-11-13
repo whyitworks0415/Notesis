@@ -31,10 +31,14 @@ internal val MCP_VERSIONS = listOf("2025-06-18", "2025-03-26", "2024-11-05")
 /** The most command lines in one call, and the longest one. */
 internal const val MCP_MAX_LINES = 50
 internal const val MCP_MAX_LINE = 8_000
+/** The most pictures one answer carries; more are left out, with a word saying so. */
+internal const val MCP_MAX_IMAGES = 4
 
 internal class McpProtocol(
     private val tools: McpTools,
     private val appVersion: String,
+    /** Hears of each tool call: who, how many characters came in and went out, how many pictures. For the panel's count. */
+    private val counted: (client: String, sent: Int, answered: Int, images: Int) -> Unit = { _, _, _, _ -> },
 ) {
     private val random = SecureRandom()
 
@@ -101,6 +105,8 @@ internal class McpProtocol(
             "ping" -> Single(result(id, JSONObject()))
             "tools/list" -> Single(result(id, JSONObject().put("tools", toolList())))
             "tools/call" -> Single(call(id, params, client))
+            "prompts/list" -> Single(result(id, JSONObject().put("prompts", promptList())))
+            "prompts/get" -> Single(prompt(id, params))
             else -> Single(errorObject(id, -32601, "Method not found: $method"))
         }
     }
@@ -113,7 +119,9 @@ internal class McpProtocol(
         synchronized(sessions) { sessions[session] = name.ifEmpty { "Agent" } }
         return Single(result(id, JSONObject()
             .put("protocolVersion", version)
-            .put("capabilities", JSONObject().put("tools", JSONObject().put("listChanged", false)))
+            .put("capabilities", JSONObject()
+                .put("tools", JSONObject().put("listChanged", false))
+                .put("prompts", JSONObject().put("listChanged", false)))
             .put("serverInfo", JSONObject().put("name", "notesis").put("title", "Notesis").put("version", appVersion))
             .put("instructions", INSTRUCTIONS)), session)
     }
@@ -122,14 +130,15 @@ internal class McpProtocol(
         .put(JSONObject()
             .put("name", "notesis_help")
             .put("title", "Notesis commands")
-            .put("description", "Lists the Notesis note commands and how each is written. Read this first.")
+            .put("description", "Lists the Notesis note commands, the rules and recipes for common tasks (such as outlining a PDF). Read this first.")
             .put("inputSchema", JSONObject().put("type", "object").put("properties", JSONObject()).put("additionalProperties", false))
             .put("annotations", JSONObject().put("readOnlyHint", true)))
         .put(JSONObject()
             .put("name", "notesis_run")
             .put("title", "Run Notesis commands")
-            .put("description", "Runs note commands on the notes in this app: list and read notes, add, remove and move pages, " +
-                "set a note's outline, add text and ink, rename, tag and file notes, move them to the trash, and undo. " +
+            .put("description", "Runs note commands on the notes in this app: list, search and read notes (in parts), read a PDF's text " +
+                "and bookmarks, see a page as a picture, add, remove and move pages, set a note's outline, add and edit text and ink, " +
+                "write Markdown notes, make, copy, rename, tag and file notes, move them to the trash, and undo. " +
                 "Several lines run as one batch: if one fails the ones before it are taken back. " +
                 "A note that is open on the screen can only be read. The owner may be asked to allow a change first.")
             .put("inputSchema", JSONObject()
@@ -147,16 +156,66 @@ internal class McpProtocol(
         val name = params.optString("name", "")
         val args = params.optJSONObject("arguments") ?: JSONObject()
         return when (name) {
-            "notesis_help" -> result(id, text(tools.help(), isError = false))
+            "notesis_help" -> tools.help().let { help -> counted(client, 0, help.length, 0); result(id, text(help, isError = false)) }
             "notesis_run" -> {
                 val lines = linesOf(args) ?: return errorObject(id, -32602,
                     "commands is a list of 1 to $MCP_MAX_LINES strings of up to $MCP_MAX_LINE characters.")
                 val answer = tools.run(lines, client)
-                val ok = runCatching { JSONObject(answer).optBoolean("ok") }.getOrDefault(false)
-                result(id, text(answer, isError = !ok))
+                val json = runCatching { JSONObject(answer) }.getOrNull()
+                val ok = json?.optBoolean("ok") ?: false
+                val images = json?.let(::takeImages).orEmpty()
+                val shown = if (images.isEmpty()) answer else json.toString()
+                counted(client, lines.sumOf { it.length }, shown.length, images.size)
+                result(id, text(shown, isError = !ok).also { content ->
+                    val list = content.getJSONArray("content")
+                    for ((mime, data) in images) list.put(JSONObject().put("type", "image").put("mimeType", mime).put("data", data))
+                })
             }
             else -> errorObject(id, -32602, "Unknown tool: ${name.take(60)}")
         }
+    }
+
+    /**
+     * The pictures in an answer (`page image`), taken out of its JSON so they go
+     * to the agent as pictures rather than as text it would have to read as
+     * letters; each leaves a word in its place.
+     */
+    private fun takeImages(answer: JSONObject): List<Pair<String, String>> {
+        val found = mutableListOf<Pair<String, String>>()
+        fun visit(value: Any?) {
+            when (value) {
+                is JSONArray -> for (i in 0 until value.length()) visit(value.opt(i))
+                is JSONObject -> {
+                    val image = value.optJSONObject("image")
+                    val data = image?.optString("data").orEmpty()
+                    if (image != null && data.isNotEmpty()) {
+                        if (found.size < MCP_MAX_IMAGES) {
+                            found += image.optString("mime", "image/jpeg") to data
+                            value.put("image", "attached as picture ${found.size}")
+                        } else value.put("image", "left out: at most $MCP_MAX_IMAGES pictures in one call")
+                    }
+                    value.keys().asSequence().toList().forEach { if (it != "image") visit(value.opt(it)) }
+                }
+            }
+        }
+        visit(answer.opt("result") ?: answer.opt("results"))
+        return found
+    }
+
+    private fun promptList(): JSONArray = JSONArray(AGENT_PROMPTS.map { prompt ->
+        JSONObject().put("name", prompt.name).put("title", prompt.title).put("description", prompt.description).also { json ->
+            if (prompt.noteArgument) json.put("arguments", JSONArray().put(JSONObject()
+                .put("name", "note").put("description", "The note's title or id").put("required", true)))
+        }
+    })
+
+    private fun prompt(id: Any, params: JSONObject): JSONObject {
+        val name = params.optString("name", "")
+        val prompt = AGENT_PROMPTS.firstOrNull { it.name == name } ?: return errorObject(id, -32602, "Unknown prompt: ${name.take(60)}")
+        val note = params.optJSONObject("arguments")?.optString("note").orEmpty().filter { !it.isISOControl() }.take(200).trim()
+        if (prompt.noteArgument && note.isEmpty()) return errorObject(id, -32602, "This prompt needs the note.")
+        return result(id, JSONObject().put("description", prompt.description).put("messages", JSONArray().put(JSONObject()
+            .put("role", "user").put("content", JSONObject().put("type", "text").put("text", prompt.text(note))))))
     }
 
     /** The lines asked for, or null when they are not 1 to [MCP_MAX_LINES] strings. A lone "command" string is taken too. */
@@ -175,7 +234,8 @@ internal class McpProtocol(
         JSONObject().put("content", JSONArray().put(JSONObject().put("type", "text").put("text", text))).put("isError", isError)
 
     private companion object {
-        const val INSTRUCTIONS = "Notesis is a handwriting and Markdown note app. Call notesis_help for the commands, then notesis_run. " +
+        const val INSTRUCTIONS = "Notesis is a handwriting and Markdown note app. Call notesis_help for the commands and recipes, then notesis_run. " +
+            "Ask for little at a time (notes list --brief, note read --outline, then --pages); long answers give the next command. " +
             "A note open on the screen is only read, never changed; deleting only moves a note to the trash; every change can be undone " +
             "with the \"undo\" command. The owner may be asked before a change, so a refusal is normal: do not retry it."
     }

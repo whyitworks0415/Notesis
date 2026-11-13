@@ -28,7 +28,11 @@ internal data class ChangeLine(val template: String, val args: List<String> = em
 
 /** Options that take the word after them, and those that stand alone: so a word that is a value is not taken for a note. */
 private val VALUED_OPTIONS = setOf("after", "count", "level", "x", "y", "size", "color", "width", "path", "points", "rect",
-    "format", "pages", "folder", "tag", "search")
+    "format", "pages", "folder", "tag", "search", "limit", "offset", "max-chars", "from", "paper", "text", "title", "under", "to")
+
+/** The commands that only read: never asked about, whatever the owner chose. */
+internal val READ_COMMANDS = setOf("help", "status", "preview", "search", "notes list", "note read", "tags list", "folder list",
+    "page image", "toc show", "pdf info", "pdf text", "pdf find", "text list", "ink read", "md outline", "md links")
 
 private fun snippet(text: String, max: Int = 60): String {
     val one = text.replace('\n', ' ').trim()
@@ -42,7 +46,7 @@ private fun snippet(text: String, max: Int = 60): String {
  */
 internal fun describeCommand(words: List<String>, notes: List<NoteMeta>): ChangeLine {
     if (words.isEmpty()) return ChangeLine("Not a command: {0}", listOf(""), changes = false)
-    val single = words[0] in setOf("undo", "help", "export")
+    val single = words[0] in SINGLE_WORD_COMMANDS
     val name = if (single || words.size < 2) words[0] else "${words[0]} ${words[1]}"
     val rest = words.drop(if (single || words.size < 2) 1 else 2)
     val positional = ArrayList<String>()
@@ -93,8 +97,31 @@ internal fun describeCommand(words: List<String>, notes: List<NoteMeta>): Change
         "ink erase" ->
             if ("all" in flags) ChangeLine("Erase all the ink on page {1} of “{0}”", listOf(title, page(1)), true)
             else ChangeLine("Erase the ink in an area of page {1} of “{0}”", listOf(title, page(1)), true)
+        "note new" -> ChangeLine("Make a handwritten note “{0}”", listOf(positional.joinToString(" ")), true)
+        "note new-md" -> ChangeLine("Make a Markdown note “{0}”", listOf(positional.joinToString(" ")), true)
+        "note dup" -> ChangeLine("Copy “{0}” as a new note", listOf(title), true)
+        "note merge" -> ChangeLine("Join {0} notes into a new note “{1}”",
+            listOf(positional.size.toString(), valueOf("title") ?: "?"), true)
+        "note fav" -> if ("off" in flags) ChangeLine("Unpin “{0}” from the favourites", listOf(title), true)
+            else ChangeLine("Pin “{0}” to the favourites", listOf(title), true)
+        "note label" -> ChangeLine("Set the colour label of “{0}”: {1}", listOf(title, page(1)), true)
+        "folder new" -> ChangeLine("Make the folder “{0}”", listOf(positional.joinToString(" ")), true)
+        "folder rename" -> ChangeLine("Move the folder “{0}” to “{1}”", listOf(ref.ifEmpty { "?" }, page(1)), true)
+        "page dup" -> ChangeLine("Copy page {1} of “{0}”", listOf(title, page(1)), true)
+        "page paper" -> ChangeLine("Change the paper of pages {1} of “{0}” to {2}", listOf(title, page(1), page(2)), true)
+        "page bookmark" -> if ("off" in flags) ChangeLine("Take the bookmark off page {1} of “{0}”", listOf(title, page(1)), true)
+            else ChangeLine("Bookmark page {1} of “{0}”", listOf(title, page(1)), true)
+        "toc import-pdf" -> ChangeLine("Set the outline of “{0}” from its PDF's bookmarks", listOf(title), true)
+        "text edit" -> ChangeLine("Change text box {2} on page {1} of “{0}” to “{3}”",
+            listOf(title, page(1), page(2), snippet(positional.drop(3).joinToString(" "))), true)
+        "text rm" -> ChangeLine("Remove text box {2} from page {1} of “{0}”", listOf(title, page(1), page(2)), true)
+        "md write" -> ChangeLine("Replace all the text of “{0}”", listOf(title), true)
+        "md append" -> ChangeLine("Add to “{0}”: “{1}”", listOf(title, snippet(positional.drop(1).joinToString(" "))), true)
+        "md replace" -> ChangeLine("In “{0}”, change “{1}” to “{2}”", listOf(title, snippet(page(1), 40), snippet(page(2), 40)), true)
+        "export" -> if (valueOf("to") == "shared") ChangeLine("Put a copy of “{0}” in Download/Notesis, where other apps can read it", listOf(title), true)
+            else ChangeLine("Read: {0}", listOf(name), changes = false)
         "undo" -> ChangeLine("Undo the last change", emptyList(), true)
-        "notes list", "note read", "toc show", "export", "help" -> ChangeLine("Read: {0}", listOf(name), changes = false)
+        in READ_COMMANDS -> ChangeLine("Read: {0}", listOf(name), changes = false)
         else -> ChangeLine("Not a command: {0}", listOf(words.joinToString(" ").take(80)), changes = false)
     }
 }
@@ -217,4 +244,32 @@ internal object AgentApprovals {
             decide(pending, false)
         }
     }
+}
+
+/**
+ * How much the agents asked and were answered since the app started, in
+ * characters, which is what an agent pays for in tokens (Todo.md, Q1): for
+ * the panel, so a habit of reading whole notes shows.
+ */
+internal object AgentUsage {
+    var calls by mutableIntStateOf(0)
+        private set
+    var sent by mutableIntStateOf(0)
+        private set
+    var answered by mutableIntStateOf(0)
+        private set
+    var largest by mutableIntStateOf(0)
+        private set
+    var images by mutableIntStateOf(0)
+        private set
+
+    @Synchronized fun add(sent: Int, answered: Int, images: Int) {
+        calls++
+        this.sent += sent
+        this.answered += answered
+        largest = maxOf(largest, answered)
+        this.images += images
+    }
+
+    @Synchronized fun reset() { calls = 0; sent = 0; answered = 0; largest = 0; images = 0 }
 }

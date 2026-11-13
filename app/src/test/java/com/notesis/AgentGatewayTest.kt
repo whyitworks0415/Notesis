@@ -45,6 +45,7 @@ class AgentGatewayTest {
         for (read in listOf("notes list --folder X", "note read Maths", "toc show Maths", "export Maths --format md", "help")) {
             assertFalse(read, line(read).changes)
         }
+        assertTrue(line("export Maths --to shared").changes)
         assertFalse(line("explode everything").changes)
         assertEquals("Not a command: explode everything", line("explode everything").text())
     }
@@ -52,7 +53,10 @@ class AgentGatewayTest {
     @Test
     fun `every command is classified, and only reading is not a change`() {
         // If a command is added to the commands and not described, it would run without asking: this fails first.
-        val reads = setOf("notes list", "note read", "toc show", "export", "help")
+        // Written out here rather than taken from READ_COMMANDS, so moving a change into the reads fails this test.
+        val reads = setOf("help", "status", "preview", "search", "notes list", "note read", "tags list", "folder list",
+            "page image", "toc show", "pdf info", "pdf text", "pdf find", "text list", "ink read", "md outline", "md links", "export")
+        assertEquals(reads - "export", READ_COMMANDS)
         for (name in COMMAND_USAGE.keys) {
             val line = describeCommand(name.split(' ') + "Maths", notes)
             assertEquals(name, name !in reads, line.changes)

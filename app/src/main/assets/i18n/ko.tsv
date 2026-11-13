@@ -1800,3 +1800,32 @@ Copy setup script	설정 스크립트 복사
 Open Termux	Termux 열기
 Copy token update	토큰 갱신 명령 복사
 After making a new token, run the token update in Termux; the agents keep their setup.	새 토큰을 만든 뒤에는 Termux에서 토큰 갱신 명령을 실행하세요. 에이전트 설정은 그대로 남습니다.
+Add to “{0}”: “{1}”	“{0}”에 추가: “{1}”
+Answers are shown as JSON.	답을 JSON으로 보여 줍니다.
+Answers are shown as text.	답을 글로 보여 줍니다.
+Bookmark page {1} of “{0}”	“{0}”의 {1}쪽에 책갈피 달기
+Change text box {2} on page {1} of “{0}” to “{3}”	“{0}” {1}쪽의 글상자 {2}를 “{3}”(으)로 바꾸기
+Change the paper of pages {1} of “{0}” to {2}	“{0}”의 {1}쪽 종이를 {2}(으)로 바꾸기
+Copy guide	안내 복사
+Copy page {1} of “{0}”	“{0}”의 {1}쪽 복제
+Copy “{0}” as a new note	“{0}”을(를) 새 노트로 복제
+In “{0}”, change “{1}” to “{2}”	“{0}”에서 “{1}”을(를) “{2}”(으)로 바꾸기
+Join {0} notes into a new note “{1}”	노트 {0}개를 새 노트 “{1}”(으)로 합치기
+Largest answer: {0} characters · {1} pictures	가장 긴 답: {0}자 · 그림 {1}장
+Make a Markdown note “{0}”	Markdown 노트 “{0}” 만들기
+Make a handwritten note “{0}”	손글씨 노트 “{0}” 만들기
+Make the folder “{0}”	폴더 “{0}” 만들기
+Move the folder “{0}” to “{1}”	폴더 “{0}”을(를) “{1}”(으)로 옮기기
+No calls since the app started.	앱을 켠 뒤로 호출이 없습니다.
+Pin “{0}” to the favourites	“{0}”을(를) 즐겨찾기에 고정
+Put a copy of “{0}” in Download/Notesis, where other apps can read it	“{0}”의 사본을 다른 앱도 읽을 수 있는 Download/Notesis에 두기
+Remove text box {2} from page {1} of “{0}”	“{0}” {1}쪽의 글상자 {2} 지우기
+Replace all the text of “{0}”	“{0}”의 글 전체를 바꾸기
+Reset count	집계 초기화
+Set the colour label of “{0}”: {1}	“{0}”의 색 라벨 정하기: {1}
+Set the outline of “{0}” from its PDF's bookmarks	“{0}”의 목차를 PDF 책갈피로 정하기
+Take the bookmark off page {1} of “{0}”	“{0}”의 {1}쪽 책갈피 떼기
+The guide tells an agent the rules and the shortest way to common tasks. The Termux setup puts it in each agent's instructions.	안내는 에이전트에게 규칙과 자주 하는 일의 가장 빠른 방법을 알려 줍니다. Termux 설정이 각 에이전트의 지침 파일에 넣어 둡니다.
+Unpin “{0}” from the favourites	“{0}”을(를) 즐겨찾기에서 빼기
+{0} calls · {1} characters asked · {2} characters answered	호출 {0}번 · 보낸 글자 {1}자 · 받은 글자 {2}자
+Use	사용량

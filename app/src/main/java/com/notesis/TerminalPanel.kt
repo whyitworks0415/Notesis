@@ -93,6 +93,25 @@ internal object TerminalSession {
     val lines = mutableStateListOf<TerminalLine>()
     val history = TerminalHistory()
     var running by mutableStateOf(false)
+    /** Answers shown as the JSON an agent gets, rather than as text. */
+    var asJson by mutableStateOf(false)
+    private var historyRead = false
+
+    /** The lines run before this start of the app, read once; kept in the app's own settings, not in the notes. */
+    fun readHistory(context: android.content.Context) {
+        if (historyRead) return
+        historyRead = true
+        val prefs = context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
+        asJson = prefs.getBoolean("json", false)
+        val saved = runCatching { org.json.JSONArray(prefs.getString("history", "[]")) }.getOrNull() ?: return
+        history.restore((0 until saved.length()).map { saved.optString(it) })
+    }
+
+    fun saveHistory(context: android.content.Context) {
+        context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE).edit()
+            .putString("history", org.json.JSONArray(history.all.takeLast(KEEP_HISTORY)).toString())
+            .putBoolean("json", asJson).apply()
+    }
 
     private var commands: NoteCommands? = null
 
@@ -102,7 +121,7 @@ internal object TerminalSession {
      */
     @Synchronized
     fun commands(context: android.content.Context): NoteCommands =
-        commands ?: NoteCommands(NoteStoreWorkspace(context.applicationContext, SharedNotes.store(context)) { OpenNotes.isOpen(it) })
+        commands ?: NoteCommands(NoteStoreWorkspace(context.applicationContext, SharedNotes.store(context), { OpenNotes.all() }) { OpenNotes.isOpen(it) })
             .also { commands = it }
 
     /** For tests: a fresh set of commands, for the store the next asking finds. */
@@ -118,6 +137,8 @@ internal object TerminalSession {
     }
 
     private const val MAX_LINES = 2_000
+    private const val PREFS = "terminal"
+    private const val KEEP_HISTORY = 200
 }
 
 /**
@@ -154,6 +175,7 @@ private fun TerminalPanel(store: NoteStore) {
         names = withContext(Dispatchers.IO) { runCatching { (store.list() + store.trashed()).map { it.title }.distinct() }.getOrDefault(emptyList()) }
     }
     LaunchedEffect(Unit) {
+        session.readHistory(context)
         if (session.lines.isEmpty()) {
             session.print("Notesis terminal. `help` lists the commands, Tab completes, ↑ ↓ go back through what was run. A note open on screen is only read.".tr, TerminalTone.HINT)
         }
@@ -173,6 +195,7 @@ private fun TerminalPanel(store: NoteStore) {
         set("")
         if (lines.isEmpty()) { session.print("$ ", TerminalTone.INPUT); return }
         for (line in lines) { session.print("$ $line", TerminalTone.INPUT); session.history.add(line) }
+        session.saveHistory(context)
         if (lines.size == 1) when (terminalBuiltin(lines[0])) {
             TerminalBuiltin.CLEAR -> { session.lines.clear(); return }
             TerminalBuiltin.HISTORY -> {
@@ -180,6 +203,12 @@ private fun TerminalPanel(store: NoteStore) {
                 return
             }
             TerminalBuiltin.EXIT -> { onClose(); return }
+            TerminalBuiltin.JSON -> {
+                session.asJson = !session.asJson
+                session.saveHistory(context)
+                session.print(if (session.asJson) "Answers are shown as JSON.".tr else "Answers are shown as text.".tr, TerminalTone.HINT)
+                return
+            }
             null -> Unit
         }
         session.running = true
@@ -188,7 +217,7 @@ private fun TerminalPanel(store: NoteStore) {
                 runCatching { session.commands(context).runAll(lines) }
                     .getOrElse { "{\"ok\":false,\"error\":${org.json.JSONObject.quote(it.message ?: it.javaClass.simpleName)}}" }
             }
-            for (out in terminalOutput(answer)) session.print(clipLines(out.text, 400), out.tone)
+            for (out in terminalOutput(answer, session.asJson)) session.print(clipLines(out.text, 400), out.tone)
             if (terminalChangedNotes(answer)) LibraryChanges.changed()
             session.running = false
             readNames()

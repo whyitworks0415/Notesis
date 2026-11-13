@@ -18,6 +18,8 @@ class NoteCommandsTest {
         assertEquals(listOf("it's", "x y"), commandWords("it\\'s 'x y'"))
         assertEquals(listOf("empty", ""), commandWords("empty \"\""))
         assertNull(commandWords("open \"quote"))
+        // A new line and a tab stay written as \n and \t, for the text commands to make.
+        assertEquals(listOf("a\\nb", "c\\td"), commandWords("\"a\\nb\" c\\td"))
     }
 
     @Test
@@ -66,7 +68,7 @@ class NoteCommandsTest {
         val commands = NoteCommands(MemoryNotes().apply { add("n1", "Maths") })
         val unknown = json(commands.run("page explode Maths"))
         assertFalse(unknown.getBoolean("ok"))
-        assertTrue(unknown.has("usage"))
+        assertEquals("UNKNOWN_COMMAND", unknown.getString("code"))
         val option = json(commands.run("page add Maths --colour red"))
         assertTrue(option.getString("error").contains("--colour"))
         assertEquals(COMMAND_USAGE["page add"], option.getString("usage"))
@@ -184,7 +186,9 @@ class NoteCommandsTest {
         assertEquals("# Ideas", json(commands.run("note read Ideas")).getJSONObject("result").getString("text"))
         assertFalse(json(commands.run("page add Ideas")).getBoolean("ok"))
         assertTrue(json(commands.run("export Ideas --format md")).getBoolean("ok"))
-        assertFalse(json(commands.run("export Ideas")).getBoolean("ok"))
+        // A Markdown note goes out as Markdown unless told otherwise, and only as that.
+        assertEquals("md", json(commands.run("export Ideas")).getJSONObject("result").getString("format"))
+        assertFalse(json(commands.run("export Ideas --format pdf")).getBoolean("ok"))
     }
 
     @Test

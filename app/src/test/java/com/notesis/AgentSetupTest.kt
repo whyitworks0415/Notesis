@@ -89,6 +89,9 @@ class AgentSetupTest {
                 while [ "$1" != "--" ]; do shift; done; shift; exec "$@"
             """.trimIndent())
             val script = File(root, "setup.sh").apply { writeText(termuxSetupScript(AgentCli.entries.toSet(), url, token, bridge)) }
+            // The owner's own instructions for Claude Code, which the guide must sit beside, not replace.
+            File(home, ".claude").mkdirs()
+            File(home, ".claude/CLAUDE.md").writeText("Answer in Korean.\n")
             fun run() {
                 val p = ProcessBuilder("bash", script.path).redirectErrorStream(true)
                 p.environment().apply { put("HOME", home.path); put("PREFIX", prefix.path); put("PATH", bin.path + ":" + get("PATH")) }
@@ -117,6 +120,13 @@ class AgentSetupTest {
             assertEquals("local", opencode.getString("type"))
             assertEquals(bridgePath, opencode.getJSONArray("command").getString(1))
             assertEquals(1, File(home, ".bashrc").readLines().count { it.contains("alias notesis-agents=") })
+            // Each agent's instructions hold the guide once, however often the setup ran, and the owner's lines stay.
+            val claudeMd = File(home, ".claude/CLAUDE.md").readText()
+            assertTrue(claudeMd.startsWith("Answer in Korean.\n"))
+            assertEquals(1, claudeMd.split(GUIDE_START).size - 1)
+            assertTrue(claudeMd.contains("toc import-pdf"))
+            for (agent in AgentCli.entries - AgentCli.CLAUDE) assertEquals(agent.guide, withGuide(""), File(home, agent.guide).readText())
+            assertEquals(withGuide("Answer in Korean.\n"), claudeMd)
             // The temporary folder the installs used is gone.
             assertFalse(File(home, ".notesis/tmp").exists())
         } finally {
@@ -223,4 +233,18 @@ class AgentSetupTest {
     }
 
     private fun assertNotNullAndGet(line: String?): String { assertNotNull("no answer from the bridge", line); return line!! }
+
+    @Test
+    fun `the guide replaces its old self and leaves the owner's lines`() {
+        val first = withGuide("Mine.\n", "old guide")
+        assertEquals("Mine.\n\n$GUIDE_START\nold guide\n$GUIDE_END\n", first)
+        val again = withGuide(first + "More of mine.\n", "new guide")
+        assertEquals("Mine.\n\n$GUIDE_START\nnew guide\n$GUIDE_END\nMore of mine.\n", again)
+        assertEquals("$GUIDE_START\ng\n$GUIDE_END\n", withGuide("", "g"))
+        // Every command the guide names is one there is.
+        for (command in Regex("`([a-z]+(?: [a-z-]+)?)[ `]").findAll(AGENT_GUIDE).map { it.groupValues[1] }) {
+            if (command in setOf("notesis_help", "notesis_run", "termux-setup-storage", "next")) continue
+            assertTrue(command, COMMAND_USAGE.containsKey(command) || COMMAND_USAGE.containsKey(command.substringBefore(' ')))
+        }
+    }
 }

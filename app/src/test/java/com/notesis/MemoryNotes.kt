@@ -9,15 +9,30 @@ internal class MemoryNotes : NoteWorkspace {
     val texts = mutableMapOf<String, String>()
     var open: String? = null
     var saves = 0
+    /** Each PDF note's page texts, by PDF page, and its bookmarks. */
+    val pdfTexts = mutableMapOf<String, List<String>>()
+    val outlines = mutableMapOf<String, List<PdfMark>>()
+    val folderSet = sortedSetOf<String>()
+    val shared = mutableListOf<String>()
+    private var made = 0
 
     fun add(id: String, title: String, pageCount: Int = 3, folder: String = "", tags: List<String> = emptyList(),
-            kind: NoteKind = NoteKind.INK) {
-        metas[id] = NoteMeta(id, title, 0L, pageCount, 0, folder = folder, tags = tags, kind = kind)
-        pages[id] = MutableList(pageCount) { Page(id = "$id-p${it + 1}") }
+            kind: NoteKind = NoteKind.INK, modified: Long = 0L) {
+        metas[id] = NoteMeta(id, title, modified, pageCount, 0, folder = folder, tags = tags, kind = kind)
+        pages[id] = if (kind == NoteKind.MARKDOWN) mutableListOf() else MutableList(pageCount) { Page(id = "$id-p${it + 1}") }
+    }
+
+    /** A note whose pages each show a page of a PDF holding [texts], after [before] pages of its own. */
+    fun addPdf(id: String, title: String, texts: List<String>, before: Int = 0, outline: List<PdfMark> = emptyList()) {
+        add(id, title, pageCount = before + texts.size)
+        pages.getValue(id).drop(before).forEachIndexed { i, page -> page.pdfPageIndex = i; page.background = PageBackground.PDF }
+        pdfTexts[id] = texts
+        outlines[id] = outline
     }
 
     private fun copy(page: Page) = Page(id = page.id, width = page.width, height = page.height,
-        background = page.background, tocTitle = page.tocTitle, tocLevel = page.tocLevel, besideOf = page.besideOf)
+        background = page.background, templateId = page.templateId, pdfPageIndex = page.pdfPageIndex, tocTitle = page.tocTitle,
+        tocLevel = page.tocLevel, bookmarked = page.bookmarked, besideOf = page.besideOf)
         .also { it.images.addAll(page.images) }
 
     override fun notes() = metas.values.filter { it.id !in trash }
@@ -55,4 +70,49 @@ internal class MemoryNotes : NoteWorkspace {
         pages[id] = savedPages.map(::copy).toMutableList()
         ink.clear(); ink.putAll(savedInk)
     }
+
+    override fun pdfOutline(id: String) = outlines[id].orEmpty()
+    override fun pdfText(id: String, pages: List<Page>) = pages.map { page -> pdfTexts[id]?.getOrNull(page.pdfPageIndex) }
+    override fun pageImage(id: String, pageIndex: Int, width: Int) = byteArrayOf(1, 2, 3, 4)
+    override fun search(query: String, limit: Int) = notes().filter { it.title.contains(query, true) || texts[it.id].orEmpty().contains(query, true) }
+        .map { SearchHit(it.id, it.title, -1, "") }.take(limit)
+    override fun saveMarkdown(id: String, title: String, text: String) { texts[id] = text; saves++ }
+    override fun createNote(title: String, folder: String, background: PageBackground, pages: Int): String {
+        val id = "new${++made}"; add(id, title, pages, folder); return id
+    }
+    override fun createMarkdown(title: String, folder: String, text: String): String {
+        val id = "md${++made}"; add(id, title, folder = folder, kind = NoteKind.MARKDOWN); texts[id] = text; return id
+    }
+    override fun duplicateNote(id: String, title: String): String {
+        val copy = "copy${++made}"
+        metas[copy] = metas.getValue(id).copy(id = copy, title = title)
+        pages[copy] = pages.getValue(id).map(::copy).toMutableList()
+        return copy
+    }
+    override fun mergeNotes(ids: List<String>, title: String): String {
+        val merged = "merged${++made}"
+        add(merged, title, 0)
+        pages[merged] = ids.flatMap { pages.getValue(it).map(::copy) }.toMutableList()
+        return merged
+    }
+    override fun setFavorite(id: String, on: Boolean) { metas[id] = metas.getValue(id).copy(favorite = on) }
+    override fun setLabel(id: String, color: Int) { metas[id] = metas.getValue(id).copy(label = color) }
+    override fun folders() = (folderSet + notes().map { it.folder }).filter { it.isNotEmpty() }
+        .flatMap { path -> path.split('/').indices.map { path.split('/').take(it + 1).joinToString("/") } }.toSortedSet().toList()
+    override fun createFolder(path: String): Boolean { folderSet += path; return true }
+    override fun removeEmptyFolder(path: String): Boolean {
+        if (notes().any { isInFolder(it.folder, path) }) return false
+        folderSet.remove(path); return true
+    }
+    override fun renameFolder(from: String, to: String): Boolean {
+        if (to in folders()) return false
+        for (meta in notes().filter { isInFolder(it.folder, from) }) setFolder(meta.id, movedFolderPath(meta.folder, from, to))
+        if (folderSet.remove(from)) folderSet += to
+        return true
+    }
+    override fun openNotes() = setOfNotNull(open)
+    override fun appVersion() = "test"
+    override fun copyImage(id: String, imageId: String) = "copy-$imageId"
+    override fun shareFile(path: String): String { val out = "/shared/" + path.substringAfterLast('/'); shared += out; return out }
+    override fun unshareFile(path: String) { shared -= path }
 }

@@ -130,4 +130,49 @@ class McpProtocolTest {
     fun `ping answers an empty result`() {
         assertEquals(0, json(send("{\"jsonrpc\":\"2.0\",\"id\":\"p\",\"method\":\"ping\"}")).getJSONObject("result").length())
     }
+
+    @Test
+    fun `a page picture goes to the agent as a picture, not as letters`() {
+        tools.answer = "{\"ok\":true,\"result\":{\"page\":2,\"image\":{\"mime\":\"image/jpeg\",\"data\":\"QUJD\"}}}"
+        val counted = mutableListOf<Int>()
+        val mcp = McpProtocol(tools, "9.9") { _, _, answered, images -> counted += answered; counted += images }
+        val content = JSONObject(mcp.handle("{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"notesis_run\"," +
+            "\"arguments\":{\"commands\":[\"page image Maths 2\"]}}}", null).body!!).getJSONObject("result").getJSONArray("content")
+        assertEquals(2, content.length())
+        val text = content.getJSONObject(0).getString("text")
+        assertFalse(text, text.contains("QUJD"))
+        assertTrue(text.contains("attached as picture 1"))
+        assertEquals("image", content.getJSONObject(1).getString("type"))
+        assertEquals("image/jpeg", content.getJSONObject(1).getString("mimeType"))
+        assertEquals("QUJD", content.getJSONObject(1).getString("data"))
+        assertEquals(listOf(text.length, 1), counted)
+    }
+
+    @Test
+    fun `no more than four pictures go in one answer`() {
+        val picture = "{\"image\":{\"mime\":\"image/jpeg\",\"data\":\"QUJD\"}}"
+        tools.answer = "{\"ok\":true,\"results\":[" + List(6) { picture }.joinToString(",") + "]}"
+        val content = json(send("{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{\"name\":\"notesis_run\"," +
+            "\"arguments\":{\"commands\":[\"page image A 1\"]}}}")).getJSONObject("result").getJSONArray("content")
+        assertEquals(1 + MCP_MAX_IMAGES, content.length())
+        assertTrue(content.getJSONObject(0).getString("text").contains("left out"))
+        assertFalse(content.getJSONObject(0).getString("text").contains("QUJD"))
+    }
+
+    @Test
+    fun `prompts are listed and filled in with the note`() {
+        assertTrue(json(initialize()).getJSONObject("result").getJSONObject("capabilities").has("prompts"))
+        val prompts = json(send("{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"prompts/list\"}")).getJSONObject("result").getJSONArray("prompts")
+        val names = (0 until prompts.length()).map { prompts.getJSONObject(it).getString("name") }
+        assertTrue(names.containsAll(listOf("build_toc_from_pdf", "summarize_note", "organize_notes")))
+        val got = json(send("{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"prompts/get\",\"params\":{\"name\":\"build_toc_from_pdf\"," +
+            "\"arguments\":{\"note\":\"Calculus\"}}}")).getJSONObject("result")
+        val message = got.getJSONArray("messages").getJSONObject(0)
+        assertEquals("user", message.getString("role"))
+        assertTrue(message.getJSONObject("content").getString("text").contains("pdf info Calculus"))
+        val missing = json(send("{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"prompts/get\",\"params\":{\"name\":\"build_toc_from_pdf\"}}"))
+        assertEquals(-32602, missing.getJSONObject("error").getInt("code"))
+        assertEquals(-32602, json(send("{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"prompts/get\",\"params\":{\"name\":\"nope\"}}"))
+            .getJSONObject("error").getInt("code"))
+    }
 }

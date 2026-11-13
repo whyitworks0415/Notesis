@@ -114,50 +114,51 @@
 
 우선순위 제안: **Q5(PDF 노트 자동 처리: 실제로 실패한 사례) → Q1 재기 → Q4의 검색·Markdown 편집·글 고치기 → Q3 지침 파일 → 나머지.** Q2의 "export를 에이전트가 받을 수 있게"는 Q5와 같은 일이라 Q5에서 함께 함.
 
-- [ ] **Q1** 토큰 사용량 (줄이기 전에 먼저 재기: 재지 않은 숫자는 말하지 않음)
-  - [ ] 재기: 에이전트 패널에 최근 요청·응답의 **글자 수**를 기록(명령, 응답 크기). 모델별 토큰 수는 다르므로 글자 수로 재고, 토큰은 "추정"이라고 표시
-  - [ ] 응답 크기 제한과 이어 보기: `notes list --limit N --offset N`, `note read --max-chars N`, 기본값은 처음 몇 쪽·몇 글자만. 잘렸으면 `truncated: true`와 이어서 읽는 방법을 응답에 적음
-  - [ ] 간단히 보기: `notes list --brief`(id·제목·쪽 수만), `note read --outline`(목차·쪽별 글자 수만), `--text-only`(필기 인식 글만)
-  - [ ] 응답에서 에이전트에게 필요 없는 항목 줄이기(쪽 크기 같은 것은 요청할 때만)
-  - [ ] 바뀌지 않은 노트를 다시 읽을 때는 `not modified`(수정 시각 비교)로 짧게 답함
-  - [ ] 도구 설명과 `instructions`는 세션마다 들어가므로 길이를 재고 줄임
-- [ ] **Q2** 정확성
-  - [ ] **export를 에이전트가 받을 수 있게**(Q5와 같은 일, 급함): MCP 이미지·리소스로 돌려주기(쪽 그림 한 장을 직접 보게 하면 손글씨 인식의 오인식을 에이전트가 눈으로 확인할 수 있음). 원격·Termux는 앱 캐시를 못 읽음
-  - [ ] 손글씨 인식 결과(`handwriting`)에 "오인식 가능" 표시와 인식 시각, 아직 인식하지 않은 쪽은 `ink recognize`(Q4)로 요청
-  - [ ] 노트·쪽을 못 찾을 때 후보를 함께 돌려줌(한글 정규화, 띄어쓰기 무시, 비슷한 제목 제안)
-  - [ ] 변경 응답에 **바뀐 뒤의 상태**(쪽 수, 목차 등)를 요약해 넣어 에이전트가 스스로 검증하게 함
-  - [ ] 미리 보기(`--dry-run`): 이미 내부에 `preview`가 있으니 에이전트에게도 열어 줌
-  - [ ] 오류를 구조화: `code`, `hint`, `candidates`. 좌표 오류에는 쪽 크기(1240×1754, A4 150dpi)를 함께 알려 줌
-  - [ ] **에이전트 없이 도는 시나리오 시험**: "목차를 지우고 새로 만들기", "페이지 추가 후 글 넣기", "필기 읽고 분류" 같은 명령 열을 실제 노트 파일로 시험
-- [ ] **Q3** 지침
-  - [ ] 설정 스크립트가 에이전트별 지침 파일을 만듦: Claude Code `~/.claude/CLAUDE.md`, Codex `~/.codex/AGENTS.md`, OpenCode `AGENTS.md`. 내용은 도구 사용법·좌표계·한 번에 여러 줄 묶기·열린 노트는 못 바꿈·거절되면 다시 시도하지 않기·한국어로 답하기. 다시 실행해도 **사용자가 고친 부분은 덮어쓰지 않음**
-  - [ ] `notesis_help`에 작업별 요령 추가: 목차 새로 만들기, 필기 읽고 정리하기, 노트 분류하기, 쪽 정리하기
-  - [ ] MCP `prompts`로 슬래시 명령 제공(예: `/notesis:organize`)
-  - [ ] 지침의 버전을 앱 버전과 맞추고, 앱 패널에서 지침을 보고 복사할 수 있게 함
-- [ ] **Q4** 명령 늘리기
-  - [ ] **검색**: `search WORDS [--in title|text|ink|all]`. 제목뿐 아니라 글 상자·Markdown·손글씨 인식 결과 안을 찾고 쪽 번호와 앞뒤 글을 돌려줌
-  - [ ] **Markdown 편집**: `md write|append NOTE TEXT`, `md replace NOTE FIND REPLACE`, `md insert NOTE --after-heading H TEXT`, `md outline NOTE`(제목 목록), `md links|backlinks NOTE`
-  - [ ] **글 고치기·지우기**: `text list NOTE PAGE`(글 상자 id·위치·글), `text edit ID TEXT`, `text rm ID`
-  - [ ] **필기**: `ink list NOTE PAGE`(획 수·영역), `ink recognize NOTE [--pages]`(손글씨 인식 실행)
-  - [ ] **만들기·정리**: `note new TITLE [--folder F] [--paper blank|grid|lined] [--pages N]`, `note new-md TITLE [--text]`, `note dup`, `note merge A B --title T`, `note fav NOTE +|-`, `note label NOTE COLOR`
-  - [ ] **폴더**: `folder list|new|rename|mv`(폴더를 지워 노트가 위로 올라가는 것은 노트를 어떻게 할지 골라야 해서 에이전트용으로는 보류)
-  - [ ] **쪽**: `page dup`, `page paper PAGE blank|grid|lined`, `page bookmark PAGE`
-  - [ ] **그림**: `image add NOTE PAGE --file PATH`, `image rm ID`(파일 접근 방식을 먼저 정해야 함)
-  - [ ] **상태**: `status`(앱 버전, 지금 화면에 열려 있는 노트 목록, 명령 기록 수). 열린 노트라서 못 바꾸는 상황을 미리 알 수 있게 함
-  - [ ] 태그·스마트 폴더 목록: `tags list`, `smart list`
-  - 만들지 않음: 영구 삭제, 휴지통 비우기, 잠금 해제(AGENTS.md의 안전 규칙)
+2026-11-13에 Q1~Q5의 대부분을 만들었습니다(브랜치에만, 릴리스 전). 명령 한 줄 한 줄은 메모리 노트와 실제 노트 파일(PDFBox로 만든 시험 PDF 포함)로 시험했고, **태블릿의 실제 에이전트로는 아직 해 보지 않았습니다.**
 
-- [ ] **Q5** PDF 노트를 에이전트가 알아서 처리하게 (예: "이 노트의 PDF를 보고 목차를 추가해 줘")
-  - 실제 실패 사례 (2026-11-13, Termux의 Claude Code, 수능완성 PDF 노트): 요청했더니 목차를 못 만들고 멈춤. 원인 셋: ① `note read`가 PDF에 인쇄된 글자를 주지 않음(1쪽에서 나온 것은 필기 인식 결과 "이 y"뿐) ② `export`가 앱 안 캐시에 써서 에이전트가 열 수 없음 ③ 원본 PDF에 접근할 길이 없음. 에이전트는 기억으로 쪽수를 지어내지 않고 사용자에게 물어봤음(올바른 동작). **도구가 없어서 못 한 것**이라, 사용자가 캡처를 보내거나 파일을 옮기지 않아도 되게 하는 것이 목표
-  - [ ] **PDF 북마크 가져오기**(가장 쌈): 앱에 PDF 북마크를 읽는 `pdfOutline`이 이미 있음. `toc import-pdf NOTE [--offset N]`로 북마크를 노트 목차로 넣음(되돌릴 수 있게), `toc show --pdf`로 미리 보기. 노트의 쪽은 `pdfPage`로 PDF 쪽과 이어져 있어 쪽 대응이 자동. 북마크가 있는 PDF는 에이전트 없이 한 줄로 끝남
-  - [ ] **PDF 글자 읽기**: `pdf text NOTE [--pages 1-5] [--max-chars N]`로 PDF의 글자 층을 쪽별로. 글자 층이 없으면(스캔본) `text_layer: false`와 다음 방법을 알려 줌. `note read`에도 쪽마다 "PDF 글자 있음/없음"과 글자 수만 표시. 앱에 있는 PDFBox로 글자 뽑기가 되는지 먼저 확인(지금은 글자를 뽑는 코드가 없음)
-  - [ ] **PDF 안에서 찾기**: `pdf find NOTE 목차 [--max N]`로 낱말이 나오는 쪽을 알려 줌. `search`(Q4)도 PDF 글자까지 찾게 함
-  - [ ] **쪽 그림 주기**: `page image NOTE PAGE [--width PX] [--ink|--no-ink]`를 MCP 이미지로 결과에 직접 담음. 글자 층이 없는 책(스캔본)의 목차 쪽을 에이전트가 눈으로 읽는 길이고, Q2의 손글씨 오인식 확인에도 씀. 그림은 토큰이 크므로 기본 폭은 작게, 한 번에 몇 쪽까지만, 먼저 재기(Q1)
-  - [ ] **스캔본 글자 인식(OCR)**: 글자 층이 없을 때 앱이 쪽 그림을 글자로 바꿈(ML Kit 글자 인식 한국어). 새 의존성과 모델 크기, 내려받기 조건을 먼저 확인. 먼저 위의 쪽 그림을 에이전트가 직접 읽게 하고, 그래도 부족할 때만
-  - [ ] **책 쪽수와 노트 쪽 대응**: 인쇄된 쪽 번호와 PDF 쪽 순서가 다름(머리말 등). 글자 층에서 인쇄 쪽 번호를 찾아 오프셋을 추정해 알려 주고, 일정하지 않으면(부록 등) "확인 필요"로 표시. 글자 층이 없으면 쪽 그림 한두 장으로 에이전트가 확인
-  - [ ] **파일 주고받기 길(대안)**: MCP로 주기 큰 것(원본 PDF, 여러 쪽 그림)은 Termux가 읽을 수 있는 공유 폴더(예: 다운로드의 `Notesis/agent/`)에 내보냄: `export --to shared`. Termux는 `termux-setup-storage`로 읽음. 저장소 권한 방식을 먼저 확인
-  - [ ] **지침에 요령 넣기**(Q3): "PDF 노트 목차 만들기" ① `toc import-pdf` ② 안 되면 `pdf find 목차` ③ 그 쪽의 글자나 그림 읽기 ④ 쪽 대응 확인 ⑤ `toc set`을 한 묶음으로 ⑥ `toc show`로 확인해 보고. **확실하지 않은 쪽수는 지어내지 않고 알림**(이번에 에이전트가 한 대로)
-  - [ ] **합격 기준 시험**: (a) 북마크 있는 PDF 노트는 한 요청으로 목차가 들어감 (b) 북마크 없고 글자 층만 있는 PDF는 목차 쪽 글자로 (c) 스캔본은 쪽 그림으로. 작은 샘플 PDF 몇 개로 명령 열을 시험하고, 실제 에이전트로는 기기에서 확인
+- [x] **Q1** 토큰 사용량
+  - [x] 재기: 에이전트 패널 "사용량"에 호출 수, 보낸·받은 글자 수, 가장 긴 답, 그림 수(앱을 켠 뒤로). 토큰은 모델마다 달라 글자 수로만 보여 줌
+  - [x] 나눠 받기: `notes list --limit --offset`(최근 수정 순, `total`·`next`), `note read --max-chars`(기본 2만 자, 넘으면 `truncated`와 이어 읽을 `next` 명령), Markdown은 `--from`
+  - [x] 간단히: `notes list --brief`, `note read --outline`, `--text-only`. 쪽 크기는 `--sizes`일 때만
+  - [ ] 바뀌지 않은 노트를 다시 읽을 때 `not modified`로 짧게 답하기
+  - [ ] 도구 설명·`instructions` 길이를 실제로 재고 줄이기
+- [ ] **Q2** 정확성
+  - [x] 쪽 그림을 MCP 그림으로 직접 돌려줌(`page image`, 한 번에 4장까지). 파일은 `export --to shared`로 Download/Notesis에
+  - [x] 못 찾으면 후보: 한글 조합(NFC) 정규화, 띄어쓰기·대소문자 무시, 비슷한 제목 제안
+  - [x] 오류에 `code`(NOT_FOUND, AMBIGUOUS, OPEN_ON_SCREEN, LOCKED, BAD_PAGE, NO_PDF, NO_OUTLINE, NOT_SUPPORTED, NOT_READY, UNKNOWN_COMMAND, INVALID)와 `candidates`
+  - [x] 미리 보기: `preview 명령…`(하는 일만 말하고 아무것도 바꾸지 않음)
+  - [x] 시나리오 시험: 메모리 노트(AgentCommandsTest)와 실제 파일(NoteCommandStoreTest)로 명령 열을 시험
+  - [ ] 손글씨 인식 결과에 "오인식 가능"·인식 시각 표시
+  - [ ] 바꾼 뒤의 상태 요약을 모든 변경 응답에(지금은 쪽 수 등 일부만)
+- [x] **Q3** 지침 (`AgentGuide.kt`)
+  - [x] 설정 스크립트가 `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.config/opencode/AGENTS.md`의 `<!-- notesis:start -->`~`<!-- notesis:end -->` 사이에만 지침을 넣음. 다시 실행해도 그 사이만 바뀌고 사용자가 쓴 줄은 그대로
+  - [x] `notesis_help`에 요령(찾기, PDF 목차, 필기 요약, 쓰기, 정리, 파일 넘기기)
+  - [x] MCP `prompts`: `build_toc_from_pdf`, `summarize_note`, `organize_notes` (Claude Code에서는 `/mcp__notesis__…`로 보임)
+  - [x] 에이전트 패널의 "안내 복사"
+  - [ ] 지침의 버전을 앱 버전과 맞추기
+- [ ] **Q4** 명령 늘리기
+  - [x] `search WORDS`(제목·글 상자·PDF 글자·필기 인식·Markdown, 쪽 번호와 앞뒤 글)
+  - [x] Markdown: `md write|append [--under 제목]|replace [--all]|outline|links`(링크와 백링크). 목록 끝에 붙이면 빈 줄 없이 같은 목록으로
+  - [x] 글 상자: `text list`, `text edit NOTE PAGE BOX TEXT`, `text rm`
+  - [x] 필기: `ink read NOTE PAGE`(손글씨를 글로 읽음, 모델이 없으면 NOT_READY)
+  - [x] 만들기·정리: `note new|new-md|dup|merge|fav|label` (만든 노트를 되돌리면 휴지통으로)
+  - [x] 폴더: `folder list|new|rename`, 태그: `tags list`, 상태: `status`
+  - [x] 쪽: `page dup|paper|bookmark`
+  - [ ] `search --in`, `ink list`, `smart list`
+  - [ ] 그림: `image add|rm`(파일 접근 방식을 먼저 정해야 함)
+  - 만들지 않음: 영구 삭제, 휴지통 비우기, 잠금 해제, 폴더 지우기(AGENTS.md의 안전 규칙)
+- [ ] **Q5** PDF 노트를 에이전트가 알아서 처리하게
+  - 실제 실패 사례 (2026-11-13, Termux의 Claude Code, 수능완성 PDF 노트): 목차를 못 만들고 멈춤. 원인 셋: ① `note read`가 PDF에 인쇄된 글자를 주지 않음 ② `export`가 앱 안 캐시에 써서 에이전트가 열 수 없음 ③ 원본 PDF에 접근할 길이 없음
+  - 더 찾은 원인: 앱의 PDF 글자 뽑기(PdfRenderer)는 **Android 15부터만** 됨. S6 Lite처럼 그 아래에서는 PDF 쪽의 검색 글이 비어 있었음. 이제 비어 있으면 PDFBox로 뽑고, 뽑은 글을 검색 글로 남겨 앱 검색도 PDF 글자를 찾게 됨
+  - [x] `toc import-pdf NOTE [--keep]`(PDF 책갈피를 목차로, 되돌리기 가능), `toc show --pdf`
+  - [x] `pdf info`(책갈피 수, 글자 층 있음/일부/없음, 인쇄 쪽 번호 오프셋 추정, 다음에 할 명령), `pdf text [--pages] [--max-chars]`, `pdf find`
+  - [x] `toc set … --pdf`: PDF 쪽 번호로 목차 넣기 (인쇄 쪽 + 오프셋)
+  - [x] `page image NOTE PAGE [--width]`: JPEG를 MCP 그림으로 (스캔본의 목차 쪽을 에이전트가 눈으로 읽는 길)
+  - [x] `export --to shared`: Download/Notesis에 사본(바깥에 두는 일이라 변경으로 묻고, 되돌리면 지움)
+  - [x] 지침에 "PDF 노트 목차 만들기" 요령
+  - [x] 합격 기준 시험 (a) 책갈피 있는 PDF (b) 글자 층만 있는 PDF: 시험 PDF로 확인. (c) 스캔본: 쪽 그림이 나오는 것까지만 메모리 노트로 확인
+  - [ ] 스캔본 글자 인식(OCR): 쪽 그림을 에이전트가 직접 읽는 길을 먼저 써 보고, 부족하면
+  - [ ] 기기에서 실제 에이전트로 (a)(b)(c) 확인
 
 ## 6. 문서 편집 (E)
 

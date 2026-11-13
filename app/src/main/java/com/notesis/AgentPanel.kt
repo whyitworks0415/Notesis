@@ -164,7 +164,10 @@ private fun AgentPanel() {
                 TextButton(onClick = { copySecret(context, "Claude Code command", claudeCodeCommand(url, token)) }) { Text("Copy Claude Code command") }
                 TextButton(onClick = { copySecret(context, "MCP settings", mcpClientJson(url, token)) }) { Text("Copy settings as JSON") }
                 TextButton(onClick = { copySecret(context, "Address", url) }) { Text("Copy address") }
+                TextButton(onClick = { copySecret(context, "Notesis guide", AGENT_GUIDE) }) { Text("Copy guide") }
             }
+            Text("The guide tells an agent the rules and the shortest way to common tasks. The Termux setup puts it in each agent's instructions.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
             AgentsOnThisTablet(url, token)
 
@@ -187,6 +190,20 @@ private fun AgentPanel() {
                         record.id == latest -> TextButton(onClick = { AgentRuntime.undo(context, record) }, modifier = Modifier.heightIn(min = Ui.Size.touchCompact)) { Text("Undo") }
                     }
                 }
+            }
+
+            PanelSectionHeader("Use")
+            // What agents read is what they pay for: a count, so whole notes read again and again show up.
+            if (AgentUsage.calls == 0) {
+                Text("No calls since the app started.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                Text("{0} calls · {1} characters asked · {2} characters answered".tr
+                    .replace("{0}", AgentUsage.calls.toString()).replace("{1}", "%,d".format(AgentUsage.sent))
+                    .replace("{2}", "%,d".format(AgentUsage.answered)), style = MaterialTheme.typography.bodySmall)
+                Text("Largest answer: {0} characters · {1} pictures".tr.replace("{0}", "%,d".format(AgentUsage.largest))
+                    .replace("{1}", AgentUsage.images.toString()), style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(onClick = { AgentUsage.reset() }) { Text("Reset count") }
             }
         }
     }
