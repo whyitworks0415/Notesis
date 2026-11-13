@@ -18,6 +18,8 @@
         <intent>
             <action android:name="android.speech.RecognitionService" />
         </intent>
+        <!-- Agents on this tablet are set up in Termux: whether it is installed decides what the agent panel offers. -->
+        <package android:name="com.termux" />
     </queries>
     <application
         android:label="Notesis"

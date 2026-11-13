@@ -49,7 +49,13 @@ S6 Lite, SM-P61x/P62x). Kotlin, Jetpack Compose for the chrome, a custom
    testers); everyone else is offered `automatic` releases only. The code
    itself is never written in the repository - only its SHA-256, in
    `AppUpdate.kt`.
-6. The account's Actions artifact storage has filled before. Artifacts are
+6. Version numbers (the owner's plan): **0.100.0 is kept for the release the
+   owner calls complete ("완벽하다")**, and nothing reaches it before. Until
+   then a release with new features raises the minor while it is below 0.99
+   (0.95.0, 0.96.0 …), a release of fixes only raises the patch (0.95.1); from
+   0.99 on, every release raises the patch (0.99.1, 0.99.2 …). `versionCode`
+   is always +1.
+7. The account's Actions artifact storage has filled before. Artifacts are
    kept 3 days and a failed upload does not stop the release; the release
    carries the APK.
 

@@ -166,6 +166,8 @@ private fun AgentPanel() {
                 TextButton(onClick = { copySecret(context, "Address", url) }) { Text("Copy address") }
             }
 
+            AgentsOnThisTablet(url, token)
+
             PanelSectionHeader("Recent changes")
             val recent = remember(ChangeLog.version) { ChangeLog.all().take(8) }
             if (recent.isEmpty()) {
@@ -233,4 +235,49 @@ private fun ApprovalCard(pending: PendingChange, more: Int) {
             Button(onClick = { answer(true) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Allow") }
         }
     }
+}
+
+/**
+ * Setting an agent up on this tablet (Todo.md, T2): in Termux, a separate app, since Android
+ * does not let Notesis run programs it downloads. The script is copied whole, to be read
+ * and pasted there; it fetches Debian, Node.js and the agents and connects them here.
+ */
+@Composable
+private fun AgentsOnThisTablet(url: String, token: String) {
+    val context = LocalContext.current
+    val termux = remember { context.packageManager.getLaunchIntentForPackage(TERMUX_PACKAGE) }
+    var agents by remember { mutableStateOf(setOf(AgentCli.CLAUDE)) }
+    PanelSectionHeader("On this tablet")
+    Text(
+        "Claude Code, Codex and OpenCode run in Termux, a separate app, in Debian: Android does not let an app run programs it downloads. " +
+            "The setup script installs them there and connects them to your notes.",
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.xs)) {
+        for (agent in AgentCli.entries) {
+            SettingsChoiceChip(agent in agents, { agents = if (agent in agents) agents - agent else agents + agent }, agent.label)
+        }
+    }
+    Text(
+        "1. Copy the setup script, then open Termux.\n2. Paste it, press Enter and wait until it says done.\n" +
+            "3. In a new Termux session, type notesis-agents, then the agent's name.",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.xs)) {
+        if (termux == null) {
+            TextButton(onClick = {
+                runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(TERMUX_DOWNLOAD))) }
+            }) { Text("Get Termux") }
+        }
+        TextButton(enabled = agents.isNotEmpty(), onClick = {
+            runCatching {
+                val bridge = context.assets.open("agent/notesis-mcp.js").bufferedReader().use { it.readText() }
+                copySecret(context, "Notesis setup", termuxSetupScript(agents, url, token, bridge))
+            }
+        }) { Text("Copy setup script") }
+        if (termux != null) TextButton(onClick = { runCatching { context.startActivity(termux) } }) { Text("Open Termux") }
+        TextButton(onClick = { copySecret(context, "Notesis token update", termuxTokenUpdate(token)) }) { Text("Copy token update") }
+    }
+    Text("After making a new token, run the token update in Termux; the agents keep their setup.", style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
