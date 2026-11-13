@@ -41,9 +41,9 @@ S6 Lite, SM-P61x/P62x). Kotlin, Jetpack Compose for the chrome, a custom
    branch prefix (for example `codex/**`) either adds that prefix to the
    workflow or asks for a manual run.
 4. Push to `main` only after the build on the work branch passed.
-   When to release (the owner's rule): bug fixes and changes to existing
-   features are released as soon as they pass, without asking; new features
-   are released only when the owner says so.
+   When to release (the owner's rule, changed 2026-11-13): every change is
+   released as soon as it passes, new features included, without asking;
+   a change is held back only when the owner says not to release it.
 5. Who gets a release: a `manual` release (or a GitHub pre-release) reaches
    only copies with the developer code entered in About · Help (beta
    testers); everyone else is offered `automatic` releases only. The code
