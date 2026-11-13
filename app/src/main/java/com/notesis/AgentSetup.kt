@@ -40,7 +40,6 @@ internal fun termuxSetupScript(agents: Set<AgentCli>, url: String, token: String
     require(SAFE_URL.matches(url)) { "Not an address of this server" }
     require(bridge.lines().none { it.trim() == "NOTESIS_BRIDGE" || it.trim() == "NOTESIS_DEBIAN" }) { "The bridge would end the script early" }
     val chosen = AgentCli.entries.filter { it in agents }
-    val packages = chosen.joinToString(" ") { it.npm }
     val names = chosen.joinToString(", ") { it.label }
     return buildString {
         appendLine("# Notesis: sets up $names in Debian on Termux, connected to your notes.")
@@ -49,43 +48,63 @@ internal fun termuxSetupScript(agents: Set<AgentCli>, url: String, token: String
         appendLine("pkg update -y")
         appendLine("pkg install -y proot-distro")
         appendLine("if [ ! -d \"\$PREFIX/var/lib/proot-distro/installed-rootfs/debian\" ]; then proot-distro install debian; fi")
-        appendLine("proot-distro login debian -- bash -s <<'NOTESIS_DEBIAN'")
+        appendLine("STATUS=0")
+        appendLine("proot-distro login debian -- bash -s <<'NOTESIS_DEBIAN' || STATUS=\$?")
         appendLine("set -e")
         appendLine("export DEBIAN_FRONTEND=noninteractive")
+        // The agents are large and some unpack a program into the temporary folder: keep that in the home folder, where the room is.
+        appendLine("export TMPDIR=\"\$HOME/.notesis/tmp\"")
+        appendLine("mkdir -p \"\$HOME/.notesis\" && chmod 700 \"\$HOME/.notesis\" && mkdir -p \"\$TMPDIR\"")
+        appendLine("FREE_KB=\$(df -Pk \"\$HOME\" | awk 'NR==2{print \$4}')")
+        appendLine("if [ \"\${FREE_KB:-0}\" -lt 1000000 ]; then echo \"Notesis: only \$((\${FREE_KB:-0}/1024)) MB free. The agents are large; if an install fails, free some space and run this again.\"; fi")
         appendLine("apt-get update")
         appendLine("apt-get install -y nodejs npm ca-certificates git")
-        appendLine("mkdir -p \"\$HOME/.notesis\" && chmod 700 \"\$HOME/.notesis\"")
         appendLine("printf '%s' '$url' > \"\$HOME/.notesis/url\"")
         appendLine("( umask 077; printf '%s' '$token' > \"\$HOME/.notesis/token\" )")
         appendLine("cat > \"\$HOME/.notesis/notesis-mcp.js\" <<'NOTESIS_BRIDGE'")
         append(bridge.trimEnd('\n')).append('\n')
         appendLine("NOTESIS_BRIDGE")
         appendLine("BRIDGE=\"\$HOME/.notesis/notesis-mcp.js\"")
-        appendLine("npm install -g $packages")
-        for (agent in chosen) when (agent) {
-            AgentCli.CLAUDE -> {
-                appendLine("claude mcp remove --scope user notesis >/dev/null 2>&1 || true")
-                appendLine("claude mcp add --scope user notesis -- node \"\$BRIDGE\"")
+        // One at a time: one that fails to install must not take the others with it.
+        appendLine("FAILED=''")
+        for (agent in chosen) {
+            appendLine("echo \"Notesis: installing ${agent.label}…\"")
+            appendLine("if npm install -g ${agent.npm} && command -v ${agent.command} >/dev/null 2>&1; then")
+            when (agent) {
+                AgentCli.CLAUDE -> {
+                    appendLine("  claude mcp remove --scope user notesis >/dev/null 2>&1 || true")
+                    appendLine("  claude mcp add --scope user notesis -- node \"\$BRIDGE\" || FAILED=\"\$FAILED ${agent.label}(connect)\"")
+                }
+                AgentCli.CODEX -> {
+                    appendLine("  mkdir -p \"\$HOME/.codex\"")
+                    appendLine("  if ! grep -q '^\\[mcp_servers.notesis\\]' \"\$HOME/.codex/config.toml\" 2>/dev/null; then")
+                    appendLine("    printf '\\n[mcp_servers.notesis]\\ncommand = \"node\"\\nargs = [\"%s\"]\\n' \"\$BRIDGE\" >> \"\$HOME/.codex/config.toml\"")
+                    appendLine("  fi")
+                }
+                AgentCli.OPENCODE -> {
+                    appendLine("  node -e 'const fs=require(\"fs\"),path=require(\"path\"),p=process.argv[1];let c={};" +
+                        "try{c=JSON.parse(fs.readFileSync(p,\"utf8\"))}catch(e){}c.mcp=c.mcp||{};" +
+                        "c.mcp.notesis={type:\"local\",command:[\"node\",process.argv[2]],enabled:true};" +
+                        "fs.mkdirSync(path.dirname(p),{recursive:true});fs.writeFileSync(p,JSON.stringify(c,null,2)+\"\\n\")' " +
+                        "\"\$HOME/.config/opencode/opencode.json\" \"\$BRIDGE\" || FAILED=\"\$FAILED ${agent.label}(connect)\"")
+                }
             }
-            AgentCli.CODEX -> {
-                appendLine("mkdir -p \"\$HOME/.codex\"")
-                appendLine("if ! grep -q '^\\[mcp_servers.notesis\\]' \"\$HOME/.codex/config.toml\" 2>/dev/null; then")
-                appendLine("  printf '\\n[mcp_servers.notesis]\\ncommand = \"node\"\\nargs = [\"%s\"]\\n' \"\$BRIDGE\" >> \"\$HOME/.codex/config.toml\"")
-                appendLine("fi")
-            }
-            AgentCli.OPENCODE -> {
-                appendLine("node -e 'const fs=require(\"fs\"),path=require(\"path\"),p=process.argv[1];let c={};" +
-                    "try{c=JSON.parse(fs.readFileSync(p,\"utf8\"))}catch(e){}c.mcp=c.mcp||{};" +
-                    "c.mcp.notesis={type:\"local\",command:[\"node\",process.argv[2]],enabled:true};" +
-                    "fs.mkdirSync(path.dirname(p),{recursive:true});fs.writeFileSync(p,JSON.stringify(c,null,2)+\"\\n\")' " +
-                    "\"\$HOME/.config/opencode/opencode.json\" \"\$BRIDGE\"")
-            }
+            appendLine("else")
+            appendLine("  FAILED=\"\$FAILED ${agent.label}\"")
+            appendLine("fi")
         }
+        appendLine("rm -rf \"\$TMPDIR\"")
+        appendLine("if [ -n \"\$FAILED\" ]; then echo \"Notesis: not set up:\$FAILED\"; fi")
+        appendLine("[ -z \"\$FAILED\" ]")
         appendLine("NOTESIS_DEBIAN")
         // A short way back in, from Termux.
         appendLine("grep -q 'alias notesis-agents=' \"\$HOME/.bashrc\" 2>/dev/null || echo \"alias notesis-agents='proot-distro login debian'\" >> \"\$HOME/.bashrc\"")
         appendLine("echo")
-        appendLine("echo 'Notesis: done. Open a new Termux session, type notesis-agents, then ${chosen.joinToString(" or ") { it.command }}.'")
+        appendLine("if [ \"\$STATUS\" = 0 ]; then")
+        appendLine("  echo 'Notesis: done. Open a new Termux session, type notesis-agents, then ${chosen.joinToString(" or ") { it.command }}.'")
+        appendLine("else")
+        appendLine("  echo 'Notesis: finished, but not everything was set up (see above). What did install is ready: open a new Termux session and type notesis-agents. Run the setup again to retry the rest.'")
+        appendLine("fi")
     }
 }
 

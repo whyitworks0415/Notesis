@@ -93,7 +93,8 @@
   - 먼저 확인한 것: 앱 안에 proot와 Debian을 넣는 방식은 안 됨. Android 10부터 targetSdk 29 이상 앱은 자기 저장소에 쓴 프로그램을 실행할 수 없음(Notesis는 36). Termux는 이 때문에 28에 머묾. 그래서 proot(GPL)를 앱에 넣지 않고, 소스 제공 의무도 생기지 않음
   - 에이전트 패널의 "이 태블릿에서": 고를 에이전트, 설정 스크립트 복사(읽어 볼 수 있게 전부 복사), Termux 열기·받기, 토큰 갱신 명령 복사
   - 스크립트: proot-distro로 Debian, Node.js, 고른 CLI 설치, 각 CLI에 Notesis 다리(`assets/agent/notesis-mcp.js`, 의존성 없음)를 MCP 서버로 등록, `notesis-agents` 별칭. 다시 실행해도 겹치지 않음
-  - 아직: 실제 Termux·기기에서 돌려 보지 않음, 각 CLI 로그인은 사용자가 직접
+  - (0.95.1) 에이전트를 하나씩 설치하고 하나가 실패해도 나머지는 계속, 끝에 설정 안 된 것을 알림, 임시 파일은 홈 폴더에
+  - 아직: 실제 Termux·기기에서 돌려 보지 않음, 각 CLI 로그인은 사용자가 직접. OpenCode가 태블릿에서 "Binary not found"로 실패한 원인은 미확인
 
 ## 6. 문서 편집 (E)
 

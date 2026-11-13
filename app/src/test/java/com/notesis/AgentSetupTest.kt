@@ -27,8 +27,12 @@ class AgentSetupTest {
     @Test
     fun `the script installs what was chosen and points each at the bridge`() {
         val script = termuxSetupScript(setOf(AgentCli.CODEX, AgentCli.CLAUDE), url, token, bridge)
-        assertTrue(script.contains("npm install -g @anthropic-ai/claude-code @openai/codex\n"))
+        // One at a time, so one that will not install cannot take the others with it.
+        assertTrue(script.contains("if npm install -g @anthropic-ai/claude-code && command -v claude"))
+        assertTrue(script.contains("if npm install -g @openai/codex && command -v codex"))
+        assertFalse(script.contains("npm install -g @anthropic-ai/claude-code @openai/codex"))
         assertTrue(script.contains("claude mcp add --scope user notesis -- node \"\$BRIDGE\""))
+        assertTrue(script.contains("export TMPDIR=\"\$HOME/.notesis/tmp\""))
         assertTrue(script.contains("[mcp_servers.notesis]"))
         assertFalse(script.contains("opencode"))
         assertTrue(script.contains(bridge.trimEnd('\n')))
@@ -72,6 +76,7 @@ class AgentSetupTest {
             stub("npm", "")
             stub("claude", "")
             stub("codex", "")
+            stub("opencode", "")
             // proot-distro: install makes the folder; login runs what follows "--" here, with the same input.
             stub("proot-distro", """
                 if [ "$1" = install ]; then mkdir -p "${'$'}PREFIX/var/lib/proot-distro/installed-rootfs/debian"; exit 0; fi
@@ -91,7 +96,7 @@ class AgentSetupTest {
             val calls = log.readLines()
             assertEquals(1, calls.count { it == "proot-distro install debian" })
             assertTrue(calls.contains("pkg install -y proot-distro"))
-            assertEquals(2, calls.count { it == "npm install -g @anthropic-ai/claude-code @openai/codex opencode-ai" })
+            for (npm in listOf("@anthropic-ai/claude-code", "@openai/codex", "opencode-ai")) assertEquals(npm, 2, calls.count { it == "npm install -g $npm" })
             val bridgePath = File(home, ".notesis/notesis-mcp.js").path
             assertTrue(calls.contains("claude mcp add --scope user notesis -- node $bridgePath"))
             assertEquals(bridge.trimEnd('\n') + "\n", File(home, ".notesis/notesis-mcp.js").readText())
@@ -106,6 +111,47 @@ class AgentSetupTest {
             assertEquals("local", opencode.getString("type"))
             assertEquals(bridgePath, opencode.getJSONArray("command").getString(1))
             assertEquals(1, File(home, ".bashrc").readLines().count { it.contains("alias notesis-agents=") })
+            // The temporary folder the installs used is gone.
+            assertFalse(File(home, ".notesis/tmp").exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    /** One agent that will not install (as OpenCode did on a tablet) must not stop the others being set up. */
+    @Test
+    fun `an agent that fails to install does not stop the others`() {
+        assumeTrue(has("bash") && has("node"))
+        val root = Files.createTempDirectory("notesis-setup-fail").toFile()
+        try {
+            val bin = File(root, "bin").apply { mkdirs() }
+            val home = File(root, "home").apply { mkdirs() }
+            val prefix = File(root, "prefix").apply { mkdirs() }
+            val log = File(root, "log")
+            fun stub(name: String, body: String) = File(bin, name).apply { writeText("#!/bin/bash\necho \"$name \$*\" >> '${log.path}'\n$body\n"); setExecutable(true) }
+            stub("pkg", ""); stub("apt-get", ""); stub("claude", ""); stub("codex", "")
+            // npm fails for opencode-ai, as its postinstall did; and so no opencode program exists.
+            stub("npm", "if [ \"${'$'}3\" = opencode-ai ]; then echo 'npm ERR! Binary not found' >&2; exit 1; fi")
+            stub("proot-distro", """
+                if [ "$1" = install ]; then mkdir -p "${'$'}PREFIX/var/lib/proot-distro/installed-rootfs/debian"; exit 0; fi
+                while [ "$1" != "--" ]; do shift; done; shift; exec "$@"
+            """.trimIndent())
+            val script = File(root, "setup.sh").apply { writeText(termuxSetupScript(AgentCli.entries.toSet(), url, token, bridge)) }
+            val pb = ProcessBuilder("bash", script.path).redirectErrorStream(true)
+            pb.environment().apply { put("HOME", home.path); put("PREFIX", prefix.path); put("PATH", bin.path + ":" + get("PATH")) }
+            val proc = pb.start()
+            val out = proc.inputStream.readBytes().toString(Charsets.UTF_8)
+            assertEquals(out, 0, proc.waitFor())
+            assertTrue(out, out.contains("Notesis: not set up: OpenCode"))
+            assertTrue(out, out.contains("not everything was set up"))
+            assertFalse(out, out.contains("Notesis: done."))
+            // The two that installed are connected; the one that did not has no config written for a program that is not there.
+            val calls = log.readLines()
+            assertTrue(calls.contains("claude mcp add --scope user notesis -- node ${File(home, ".notesis/notesis-mcp.js").path}"))
+            assertTrue(File(home, ".codex/config.toml").readText().contains("[mcp_servers.notesis]"))
+            assertFalse(File(home, ".config/opencode/opencode.json").exists())
+            assertEquals(token, File(home, ".notesis/token").readText())
+            assertTrue(File(home, ".bashrc").readText().contains("alias notesis-agents="))
         } finally {
             root.deleteRecursively()
         }
