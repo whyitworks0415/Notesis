@@ -17,7 +17,7 @@
         </intent>
     </queries>
     <application
-        android:label="Notesis"
+        android:label="Notesis Lab"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"

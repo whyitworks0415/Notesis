@@ -1725,3 +1725,10 @@ No block by that name	그런 이름의 블록이 없습니다
 Couldn't add the picture	그림을 넣지 못했습니다
 (no text)	(내용 없음)
 The reading view stopped. Switch to Live or Source to keep writing.	읽기 화면이 멈췄습니다. 계속 쓰려면 Live나 Source로 바꾸세요.
+
+C++ bulk processing	C++ 일괄 처리
+Stage 1 of 4. Compare stroke cleanup and page record decoding with the original Kotlin path. Reopen the note after changing this.	4단계 중 1단계입니다. 획 후처리와 페이지 레코드 해석을 기존 Kotlin 경로와 비교합니다. 변경 후 노트를 다시 여세요.
+C++ core status	C++ 코어 상태
+C++ cleanup calls	C++ 획 후처리 횟수
+C++ page reads	C++ 페이지 해석 횟수
+Safe mode	안전 모드

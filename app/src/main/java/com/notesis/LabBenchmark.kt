@@ -69,7 +69,7 @@ internal class LabBenchmark(private val view: InkCanvasView) {
                                     device = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} · Android " +
                                         "${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})",
                                     app = appVersion(),
-                                    switches = "performance hint ${view.writingBoostStatus} · own buffers ${view.nativePresentStatus} · " +
+                                    switches = "C++ core ${if (CppCore.active) "on" else "off"} · performance hint ${view.writingBoostStatus} · own buffers ${view.nativePresentStatus} · " +
                                         "efficient glass ${if (LabPerformance.efficientGlass) "on" else "off"}",
                                     written = written, writing = writing, scrolling = scrolling,
                                     opens = NoteOpenClock.render(),

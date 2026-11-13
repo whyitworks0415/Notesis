@@ -7,6 +7,11 @@ SOURCE="$ROOT/app/src/main/cpp"
 CXX="${CXX:-g++}"
 COMMON=(-ffp-contract=off -std=c++17 -Wall -Wextra -Werror -I"$SOURCE")
 "$CXX" "${COMMON[@]}" -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
+  "$SOURCE/note_core.cpp" "$ROOT/tools/performance-lab/note_core_test.cpp" -o "$OUTPUT/core-sanitized"
+"$OUTPUT/core-sanitized" > "$OUTPUT/core-sanitized.txt"
+"$CXX" "${COMMON[@]}" -O3 "$SOURCE/note_core.cpp" "$ROOT/tools/performance-lab/note_core_test.cpp" -o "$OUTPUT/core-benchmark"
+"$OUTPUT/core-benchmark" benchmark | tee "$OUTPUT/core-benchmark.txt"
+"$CXX" "${COMMON[@]}" -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
   "$SOURCE/spatial_index.cpp" "$ROOT/tools/performance-lab/spatial_test.cpp" -o "$OUTPUT/spatial-sanitized"
 "$OUTPUT/spatial-sanitized" > "$OUTPUT/sanitized.txt"
 "$CXX" "${COMMON[@]}" -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
@@ -26,5 +31,7 @@ if [[ ! -f "$JNI_INCLUDE/jni.h" ]]; then
   mkdir -p "$JNI_INCLUDE"
   cp "${ANDROID_HOME:?}/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/jni.h" "$JNI_INCLUDE/jni.h"
 fi
+"$CXX" "${COMMON[@]}" -O3 -fPIC -shared -I"$JNI_INCLUDE" -I"$JNI_INCLUDE/linux" \
+  "$SOURCE/note_core.cpp" "$SOURCE/note_core_jni.cpp" -o "$OUTPUT/libnotesis_core.so"
 "$CXX" "${COMMON[@]}" -O3 -fPIC -shared -I"$JNI_INCLUDE" -I"$JNI_INCLUDE/linux" \
   "$SOURCE/spatial_index.cpp" "$SOURCE/erase_geometry.cpp" "$SOURCE/continuous_erase.cpp" "$SOURCE/spatial_jni.cpp" -o "$OUTPUT/libnotesis_spatial.so"

@@ -400,7 +400,9 @@ internal fun penTidyKeepMask(
  */
 internal fun tidiedPenInputs(inputs: StrokeInputBatch, width: Float): StrokeInputBatch {
     if (inputs.size < 3) return inputs
-    val keep = withSamples(inputs) { count, xs, ys, ts -> penTidyKeepMask(count, width, xs, ys, ts) }
+    val keep = withSamples(inputs) { count, xs, ys, ts ->
+        CppCore.keepMask(count, width, xs, ys, ts, 0) { penTidyKeepMask(count, width, xs, ys, ts) }
+    }
         ?: return inputs
     return keptInputs(inputs) { keep[it] }
 }
@@ -488,7 +490,11 @@ private inline fun keepAfterSpurs(
  * two steps in turn would keep.
  */
 internal fun tidiedPenStroke(stroke: Stroke): Stroke =
-    rebuiltKeeping(stroke) { count, xs, ys, ts -> tidiedPenKeepMask(count, stroke.brush.size, xs, ys, ts) }
+    rebuiltKeeping(stroke) { count, xs, ys, ts ->
+        CppCore.keepMask(count, stroke.brush.size, xs, ys, ts, 1) {
+            tidiedPenKeepMask(count, stroke.brush.size, xs, ys, ts)
+        }
+    }
 
 /**
  * A finished freehand stroke with its contact spurs and dwells folded away:
@@ -496,7 +502,11 @@ internal fun tidiedPenStroke(stroke: Stroke): Stroke =
  * stroke. [stroke] itself when nothing is dropped.
  */
 internal fun withoutSpursAndDwells(stroke: Stroke): Stroke =
-    rebuiltKeeping(stroke) { count, xs, ys, ts -> spurAndDwellKeepMask(count, stroke.brush.size, xs, ys, ts) }
+    rebuiltKeeping(stroke) { count, xs, ys, ts ->
+        CppCore.keepMask(count, stroke.brush.size, xs, ys, ts, 2) {
+            spurAndDwellKeepMask(count, stroke.brush.size, xs, ys, ts)
+        }
+    }
 
 /** [stroke] rebuilt from the samples [keepMask] keeps, or [stroke] itself when it keeps them all. */
 private inline fun rebuiltKeeping(

@@ -7,6 +7,8 @@ import androidx.compose.runtime.setValue
 
 /** A visible quality tradeoff, saved only inside this separate installation. */
 internal object LabPerformance {
+    var cppCore by mutableStateOf(true)
+        private set
     var efficientGlass by mutableStateOf(false)
         private set
 
@@ -39,6 +41,17 @@ internal object LabPerformance {
         efficientGlass = prefs.getBoolean("efficientGlass", false)
         writingBoost = prefs.getBoolean("writingBoost", true)
         nativePresent = prefs.getBoolean("nativePresent", false)
+        cppCore = prefs.getBoolean("cppCoreStage1", true)
+        CppCore.enabled = cppCore
+        AppUpdate.labInstall = isLabInstall(context)
+    }
+
+    fun setCppCore(context: Context, enabled: Boolean) {
+        cppCore = enabled
+        CppCore.enabled = enabled
+        if (!enabled) CppPageReader.trim()
+        context.getSharedPreferences("lab", Context.MODE_PRIVATE).edit().putBoolean("cppCoreStage1", enabled).apply()
+        if (enabled && !LabGuard.nativeOff) CppCore.prepare()
     }
 
     fun setWritingBoost(context: Context, enabled: Boolean) {
