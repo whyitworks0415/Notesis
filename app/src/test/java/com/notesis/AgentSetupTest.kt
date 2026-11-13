@@ -79,7 +79,13 @@ class AgentSetupTest {
             stub("opencode", "")
             // proot-distro: install makes the folder; login runs what follows "--" here, with the same input.
             stub("proot-distro", """
-                if [ "$1" = install ]; then mkdir -p "${'$'}PREFIX/var/lib/proot-distro/installed-rootfs/debian"; exit 0; fi
+                D="${'$'}PREFIX/debian-here"
+                if [ "$1" = install ]; then
+                  # Like the newer proot-distro: installing what exists is an error.
+                  if [ -d "${'$'}D" ]; then echo "Error: container 'debian' already exists." >&2; exit 1; fi
+                  mkdir -p "${'$'}D"; exit 0
+                fi
+                [ -d "${'$'}D" ] || exit 1
                 while [ "$1" != "--" ]; do shift; done; shift; exec "$@"
             """.trimIndent())
             val script = File(root, "setup.sh").apply { writeText(termuxSetupScript(AgentCli.entries.toSet(), url, token, bridge)) }
@@ -133,7 +139,13 @@ class AgentSetupTest {
             // npm fails for opencode-ai, as its postinstall did; and so no opencode program exists.
             stub("npm", "if [ \"${'$'}3\" = opencode-ai ]; then echo 'npm ERR! Binary not found' >&2; exit 1; fi")
             stub("proot-distro", """
-                if [ "$1" = install ]; then mkdir -p "${'$'}PREFIX/var/lib/proot-distro/installed-rootfs/debian"; exit 0; fi
+                D="${'$'}PREFIX/debian-here"
+                if [ "$1" = install ]; then
+                  # Like the newer proot-distro: installing what exists is an error.
+                  if [ -d "${'$'}D" ]; then echo "Error: container 'debian' already exists." >&2; exit 1; fi
+                  mkdir -p "${'$'}D"; exit 0
+                fi
+                [ -d "${'$'}D" ] || exit 1
                 while [ "$1" != "--" ]; do shift; done; shift; exec "$@"
             """.trimIndent())
             val script = File(root, "setup.sh").apply { writeText(termuxSetupScript(AgentCli.entries.toSet(), url, token, bridge)) }

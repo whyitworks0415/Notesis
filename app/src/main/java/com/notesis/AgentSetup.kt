@@ -47,7 +47,9 @@ internal fun termuxSetupScript(agents: Set<AgentCli>, url: String, token: String
         appendLine("set -e")
         appendLine("pkg update -y")
         appendLine("pkg install -y proot-distro")
-        appendLine("if [ ! -d \"\$PREFIX/var/lib/proot-distro/installed-rootfs/debian\" ]; then proot-distro install debian; fi")
+        // Whether Debian is there is asked by going in, not by looking for its folder: where proot-distro keeps it changed between versions,
+        // and installing over one that exists is an error.
+        appendLine("if ! proot-distro login debian -- true >/dev/null 2>&1; then proot-distro install debian; fi")
         appendLine("STATUS=0")
         appendLine("proot-distro login debian -- bash -s <<'NOTESIS_DEBIAN' || STATUS=\$?")
         appendLine("set -e")
