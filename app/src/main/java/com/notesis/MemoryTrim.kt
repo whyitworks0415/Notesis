@@ -32,6 +32,7 @@ internal object MemoryTrim {
         val severe = isSevere(level) ?: return false
         val targets = synchronized(held) { held.toList() }
         val before = heldBytes()
+        CppPageReader.trim()
         for (target in targets) runCatching { target.trimMemory(severe) }
         lastTrim = TrimRecord(System.currentTimeMillis(), level, severe, before, heldBytes())
         return true

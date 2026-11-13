@@ -261,6 +261,7 @@ class MainActivity : ComponentActivity() {
         LabGuard.load(this)
         if (!LabGuard.nativeOff) SpatialNative.prepare()
         LabPerformance.load(this)
+        if (LabPerformance.cppCore && !LabGuard.nativeOff) CppCore.prepare()
         // Android 15+ draws behind the system bars whether or not you ask, so
         // opt in properly and let the insets be dispatched instead of guessed.
         enableEdgeToEdge()

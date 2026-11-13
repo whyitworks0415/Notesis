@@ -22,3 +22,4 @@
 
 # The JNI entry points use this stable class name.
 -keep class com.notesis.SpatialNative { *; }
+-keep class com.notesis.CppCore { *; }

@@ -47,6 +47,7 @@ internal data class AppRelease(
  * tag alone says whether it is newer than what is running.
  */
 internal object AppUpdate {
+    @Volatile internal var labInstall = false
     /**
      * Where releases are looked for, in this order. The releases-only
      * repository holds the public APKs; the source repository stays private.
@@ -68,7 +69,7 @@ internal object AppUpdate {
 
     private fun prefs(context: Context) = context.getSharedPreferences("updates", Context.MODE_PRIVATE)
 
-    fun autoCheck(context: Context): Boolean = prefs(context).getBoolean("autoCheck", true)
+    fun autoCheck(context: Context): Boolean = prefs(context).getBoolean("autoCheck", !isLabInstall(context))
     fun setAutoCheck(context: Context, on: Boolean) = prefs(context).edit().putBoolean("autoCheck", on).apply()
 
     /**
@@ -76,7 +77,7 @@ internal object AppUpdate {
      * the ones still being tried; everyone else gets only the automatic
      * ones, announced as the app opens. Turned on with the developer code.
      */
-    fun isBeta(context: Context): Boolean = prefs(context).getBoolean("beta", false)
+    fun isBeta(context: Context): Boolean = prefs(context).getBoolean("beta", isLabInstall(context))
     fun setBeta(context: Context, on: Boolean) = prefs(context).edit().putBoolean("beta", on).apply()
 
     /**
@@ -152,11 +153,11 @@ internal object AppUpdate {
 
     /** The newest releases, newest first, each that carries an APK. Network: call off the main thread. */
     fun fetchRecent(): List<AppRelease> = mergeReleases(REPOS.map { repo ->
-        collectReleasePages { page -> fetch(recentUrl(repo, page)) }
+        collectReleasePages(lab = labInstall) { page -> fetch(recentUrl(repo, page)) }
     }).take(20)
 
     /** GitHub's order can bury previews under normal releases; select by version only after filtering. */
-    internal fun collectReleasePages(read: (Int) -> String?): List<AppRelease> {
+    internal fun collectReleasePages(lab: Boolean = false, read: (Int) -> String?): List<AppRelease> {
         val found = ArrayList<AppRelease>()
         // A bounded scan prevents one manual check from fetching an unlimited history.
         for (page in 1..5) {
@@ -164,7 +165,7 @@ internal object AppUpdate {
             val array = runCatching { org.json.JSONArray(json) }.getOrNull() ?: break
             for (i in 0 until array.length()) {
                 val release = array.optJSONObject(i) ?: continue
-                runCatching { parseRelease(release) }.getOrNull()?.let(found::add)
+                runCatching { if (lab) parseLabRelease(release) else parseRelease(release) }.getOrNull()?.let(found::add)
             }
             if (array.length() < 100) break
         }
@@ -227,6 +228,21 @@ internal object AppUpdate {
             // A pre-release on GitHub is a test build as well as one marked in its notes.
             manual = release.optBoolean("prerelease") || isManual(release.optString("body")),
         )
+    }
+
+    /** The separate installation accepts preview APKs only, never the stable package. */
+    internal fun parseLabRelease(release: JSONObject): AppRelease? {
+        if (release.optBoolean("draft")) return null
+        val match = Regex("lab-v(.+)-(\\d+)-preview").matchEntire(release.optString("tag_name")) ?: return null
+        val code = match.groupValues[2].toLongOrNull() ?: return null
+        val assets = release.optJSONArray("assets") ?: return null
+        val apk = (0 until assets.length()).mapNotNull { assets.optJSONObject(it) }
+            .firstOrNull { it.optString("name").let { name -> name.startsWith("Notesis-Lab-") && name.endsWith(".apk") } }
+            ?: return null
+        val url = apk.optString("browser_download_url").takeIf { it.isNotBlank() } ?: return null
+        return AppRelease(match.groupValues[1], code, url, apk.optLong("size"),
+            apk.optString("digest").takeIf { it.startsWith("sha256:") }?.removePrefix("sha256:")?.lowercase(),
+            plainNotes(release.optString("body")), manual = true)
     }
 
     private fun updateDir(context: Context) = File(context.cacheDir, "updates")

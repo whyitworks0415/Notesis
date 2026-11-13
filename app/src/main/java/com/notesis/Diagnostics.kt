@@ -461,6 +461,17 @@ internal fun DiagnosticsSettings(
     }
     SettingsCard {
         SettingsSectionHeader("Native code")
+        SettingsToggle("C++ bulk processing", LabPerformance.cppCore,
+            { LabPerformance.setCppCore(context, it) },
+            hint = "Stage 1 of 4. Compare stroke cleanup and page record decoding with the original Kotlin path. Reopen the note after changing this.")
+        DiagnosticRow("C++ core status", when {
+            LabGuard.nativeOff -> "Safe mode"
+            !LabPerformance.cppCore -> "Off"
+            CppCore.ready -> "Loaded"
+            else -> "Not loaded"
+        })
+        DiagnosticRow("C++ cleanup calls", CppCore.tidyCalls.get().toString())
+        DiagnosticRow("C++ page reads", CppCore.pageCalls.get().toString())
         if (LabGuard.nativeOff) {
             SettingsNote("Left out for this run: the app did not close cleanly several times in a row. " +
                 "The Kotlin paths are doing the work. Switch it back on to load it at the next start.")
@@ -592,7 +603,7 @@ internal fun perfConditions(context: Context, view: InkCanvasView?): String {
         if (InteractionGovernor.decorationsAllowed) "" else ", held off",
         MotionPrefs.speed * 100f,
         view?.wetInkPathLabel ?: "no note open",
-        "",
+        " · C++ core ${if (CppCore.active) "on" else "off"}",
     )
 }
 
