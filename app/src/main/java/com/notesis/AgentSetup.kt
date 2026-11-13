@@ -24,6 +24,7 @@ internal enum class AgentCli(val label: String, val npm: String, val command: St
     CLAUDE("Claude Code", "@anthropic-ai/claude-code", "claude", ".claude/CLAUDE.md"),
     CODEX("Codex", "@openai/codex", "codex", ".codex/AGENTS.md"),
     OPENCODE("OpenCode", "opencode-ai", "opencode", ".config/opencode/AGENTS.md"),
+    GEMINI("Gemini CLI", "@google/gemini-cli", "gemini", ".gemini/GEMINI.md"),
 }
 
 /**
@@ -89,7 +90,11 @@ internal fun termuxSetupScript(agents: Set<AgentCli>, url: String, token: String
         appendLine("FAILED=''")
         for (agent in chosen) {
             appendLine("echo \"Notesis: installing ${agent.label}…\"")
-            appendLine("if npm install -g ${agent.npm} && command -v ${agent.command} >/dev/null 2>&1; then")
+            // Gemini CLI wants Node 20 or newer, and Debian's own is older: fetch a newer one for it if need be.
+            val prepare = if (agent == AgentCli.GEMINI)
+                "[ \"\$(node -p 'process.versions.node.split(\".\")[0]')\" -ge 20 ] || { echo 'Notesis: Gemini CLI needs Node 20 or newer; getting it…'; npm install -g n && n 20 && hash -r; } && "
+                else ""
+            appendLine("if ${prepare}npm install -g ${agent.npm} && command -v ${agent.command} >/dev/null 2>&1; then")
             when (agent) {
                 AgentCli.CLAUDE -> {
                     appendLine("  claude mcp remove --scope user notesis >/dev/null 2>&1 || true")
@@ -100,6 +105,13 @@ internal fun termuxSetupScript(agents: Set<AgentCli>, url: String, token: String
                     appendLine("  if ! grep -q '^\\[mcp_servers.notesis\\]' \"\$HOME/.codex/config.toml\" 2>/dev/null; then")
                     appendLine("    printf '\\n[mcp_servers.notesis]\\ncommand = \"node\"\\nargs = [\"%s\"]\\n' \"\$BRIDGE\" >> \"\$HOME/.codex/config.toml\"")
                     appendLine("  fi")
+                }
+                AgentCli.GEMINI -> {
+                    appendLine("  node -e 'const fs=require(\"fs\"),path=require(\"path\"),p=process.argv[1];let c={};" +
+                        "try{c=JSON.parse(fs.readFileSync(p,\"utf8\"))}catch(e){}c.mcpServers=c.mcpServers||{};" +
+                        "c.mcpServers.notesis={command:\"node\",args:[process.argv[2]]};" +
+                        "fs.mkdirSync(path.dirname(p),{recursive:true});fs.writeFileSync(p,JSON.stringify(c,null,2)+\"\\n\")' " +
+                        "\"\$HOME/.gemini/settings.json\" \"\$BRIDGE\" || FAILED=\"\$FAILED ${agent.label}(connect)\"")
                 }
                 AgentCli.OPENCODE -> {
                     appendLine("  node -e 'const fs=require(\"fs\"),path=require(\"path\"),p=process.argv[1];let c={};" +

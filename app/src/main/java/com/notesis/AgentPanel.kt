@@ -266,7 +266,7 @@ private fun AgentsOnThisTablet(url: String, token: String) {
     var agents by remember { mutableStateOf(setOf(AgentCli.CLAUDE)) }
     PanelSectionHeader("On this tablet")
     Text(
-        "Claude Code, Codex and OpenCode run in Termux, a separate app, in Debian: Android does not let an app run programs it downloads. " +
+        "Claude Code, Codex, OpenCode and Gemini CLI run in Termux, a separate app, in Debian: Android does not let an app run programs it downloads. " +
             "The setup script installs them there and connects them to your notes.",
         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
     )

@@ -77,6 +77,9 @@ class AgentSetupTest {
             stub("claude", "")
             stub("codex", "")
             stub("opencode", "")
+            stub("gemini", "")
+            // Node 20 or newer is there already in this run; the fetching of a newer one is for a tablet.
+
             // proot-distro: install makes the folder; login runs what follows "--" here, with the same input.
             stub("proot-distro", """
                 D="${'$'}PREFIX/debian-here"
@@ -105,7 +108,7 @@ class AgentSetupTest {
             val calls = log.readLines()
             assertEquals(1, calls.count { it == "proot-distro install debian" })
             assertTrue(calls.contains("pkg install -y proot-distro"))
-            for (npm in listOf("@anthropic-ai/claude-code", "@openai/codex", "opencode-ai")) assertEquals(npm, 2, calls.count { it == "npm install -g $npm" })
+            for (npm in listOf("@anthropic-ai/claude-code", "@openai/codex", "opencode-ai", "@google/gemini-cli")) assertEquals(npm, 2, calls.count { it == "npm install -g $npm" })
             val bridgePath = File(home, ".notesis/notesis-mcp.js").path
             assertTrue(calls.contains("claude mcp add --scope user notesis -- node $bridgePath"))
             assertEquals(bridge.trimEnd('\n') + "\n", File(home, ".notesis/notesis-mcp.js").readText())
@@ -116,6 +119,9 @@ class AgentSetupTest {
             val codex = File(home, ".codex/config.toml").readText()
             assertEquals(1, Regex("\\[mcp_servers.notesis]").findAll(codex).count())
             assertTrue(codex.contains("args = [\"$bridgePath\"]"))
+            val gemini = JSONObject(File(home, ".gemini/settings.json").readText()).getJSONObject("mcpServers").getJSONObject("notesis")
+            assertEquals("node", gemini.getString("command"))
+            assertEquals(bridgePath, gemini.getJSONArray("args").getString(0))
             val opencode = JSONObject(File(home, ".config/opencode/opencode.json").readText()).getJSONObject("mcp").getJSONObject("notesis")
             assertEquals("local", opencode.getString("type"))
             assertEquals(bridgePath, opencode.getJSONArray("command").getString(1))

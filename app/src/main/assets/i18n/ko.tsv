@@ -1793,7 +1793,7 @@ Erase the ink in an area of page {1} of “{0}”	“{0}”의 {1}쪽 일부 영
 Undo the last change	마지막 변경을 되돌림
 Read: {0}	읽기: {0}
 Not a command: {0}	명령이 아님: {0}
-Claude Code, Codex and OpenCode run in Termux, a separate app, in Debian: Android does not let an app run programs it downloads. The setup script installs them there and connects them to your notes.	Claude Code, Codex, OpenCode는 별도 앱인 Termux 안의 Debian에서 돌아갑니다. Android는 앱이 내려받은 프로그램을 직접 실행하지 못하게 하기 때문입니다. 설정 스크립트가 거기에 설치하고 노트에 연결합니다.
+Claude Code, Codex, OpenCode and Gemini CLI run in Termux, a separate app, in Debian: Android does not let an app run programs it downloads. The setup script installs them there and connects them to your notes.	Claude Code, Codex, OpenCode, Gemini CLI는 별도 앱인 Termux 안의 Debian에서 돌아갑니다. Android는 앱이 내려받은 프로그램을 직접 실행하지 못하게 하기 때문입니다. 설정 스크립트가 거기에 설치하고 노트에 연결합니다.
 1. Copy the setup script, then open Termux.\n2. Paste it, press Enter and wait until it says done.\n3. In a new Termux session, type notesis-agents, then the agent's name.	1. 설정 스크립트를 복사하고 Termux를 여세요.\n2. 붙여 넣고 Enter를 누른 뒤 done이 나올 때까지 기다리세요.\n3. 새 Termux 세션에서 notesis-agents를 입력하고 에이전트 이름을 입력하세요.
 Get Termux	Termux 받기
 Copy setup script	설정 스크립트 복사
