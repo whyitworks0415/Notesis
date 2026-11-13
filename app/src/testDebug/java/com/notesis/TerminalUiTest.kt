@@ -71,12 +71,12 @@ class TerminalUiTest {
         compose.onNodeWithContentDescription("Command line").performTextInput("page add Chem")
         compose.onNodeWithText("Tab").performClick()
         compose.onNodeWithText("Run").performClick()
-        waitFor("\"pages\": 2")
+        waitFor("pages: 2")
         assertTrue(TerminalSession.lines.any { it.text == "$ page add Chemistry" })
         assertEquals(before + 1, LibraryChanges.version)
         compose.onRoot().captureRoboImage("build/outputs/roborazzi/terminal.png")
         compose.onNodeWithContentDescription("Command line").performTextInput("undo\n")
-        waitFor("\"undone\"")
+        waitFor("undone: ")
         assertEquals(1, NoteStore(context).load("terminal-fixture").pages.size)
     }
 
