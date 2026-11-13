@@ -97,6 +97,55 @@
   - (미릴리스) Debian이 이미 있는지는 폴더가 아니라 `proot-distro login debian -- true`로 확인: 새 proot-distro에서는 폴더 위치가 달라 "container 'debian' already exists"로 스크립트가 멈췄음
   - 아직: 실제 Termux·기기에서 돌려 보지 않음, 각 CLI 로그인은 사용자가 직접. OpenCode가 태블릿에서 "Binary not found"로 실패한 원인은 미확인
 
+### 에이전트 품질 (Q): 토큰 사용량, 정확성, 지침, 명령 늘리기
+
+0.95에서 Termux의 Claude Code가 Notesis에 붙어 실제로 동작하는 것을 확인했습니다(2026-11-13). 다음은 그것을 더 싸고, 더 정확하고, 더 쓰기 쉽게 만드는 일입니다.
+
+지금 코드의 한계(확인한 것):
+- `note read`는 모든 페이지의 글 상자와 손글씨 인식 결과를 **길이 제한 없이** 한 번에 돌려줌. `notes list`도 전부 돌려줌
+- `notes list --search`는 **제목만** 찾음. 손글씨·글 안의 내용은 앱의 검색(`searchWithPages`)에는 있는데 명령으로는 못 찾음
+- `export`는 앱 안 캐시(`cache/shared/commands`)에 쓰고 그 경로만 돌려줌. **Termux·원격 에이전트는 그 파일을 읽을 수 없음**
+- Markdown 노트는 읽기·이름·폴더·태그·휴지통만 됨. **내용을 고치는 명령이 없음**
+- 글 상자는 `text add`만 있음. **고치기·지우기가 없어서** 틀리면 `undo`밖에 방법이 없음
+- 오류는 문장뿐이라 에이전트가 스스로 고치기 어려움. 지침은 MCP `instructions`와 `notesis_help`의 짧은 글이 전부
+
+원칙: 새 명령은 (1) `describeCommand`에 설명을 달고(안 달면 시험이 실패함), (2) 되돌릴 수 있고, (3) 화면에 열린 노트는 읽기만 하고, (4) 터미널 Tab 완성과 한국어 카드 문구를 갖추고, (5) 영구 삭제는 만들지 않음(AGENTS.md).
+
+우선순위 제안: **Q1 재기 → Q4의 검색·Markdown 편집·글 고치기 → Q2의 export 전달 → Q3 지침 파일 → 나머지.**
+
+- [ ] **Q1** 토큰 사용량 (줄이기 전에 먼저 재기: 재지 않은 숫자는 말하지 않음)
+  - [ ] 재기: 에이전트 패널에 최근 요청·응답의 **글자 수**를 기록(명령, 응답 크기). 모델별 토큰 수는 다르므로 글자 수로 재고, 토큰은 "추정"이라고 표시
+  - [ ] 응답 크기 제한과 이어 보기: `notes list --limit N --offset N`, `note read --max-chars N`, 기본값은 처음 몇 쪽·몇 글자만. 잘렸으면 `truncated: true`와 이어서 읽는 방법을 응답에 적음
+  - [ ] 간단히 보기: `notes list --brief`(id·제목·쪽 수만), `note read --outline`(목차·쪽별 글자 수만), `--text-only`(필기 인식 글만)
+  - [ ] 응답에서 에이전트에게 필요 없는 항목 줄이기(쪽 크기 같은 것은 요청할 때만)
+  - [ ] 바뀌지 않은 노트를 다시 읽을 때는 `not modified`(수정 시각 비교)로 짧게 답함
+  - [ ] 도구 설명과 `instructions`는 세션마다 들어가므로 길이를 재고 줄임
+- [ ] **Q2** 정확성
+  - [ ] **export를 에이전트가 받을 수 있게**: MCP 이미지·리소스로 돌려주기(쪽 그림 한 장을 직접 보게 하면 손글씨 인식의 오인식을 에이전트가 눈으로 확인할 수 있음). 원격·Termux는 앱 캐시를 못 읽음
+  - [ ] 손글씨 인식 결과(`handwriting`)에 "오인식 가능" 표시와 인식 시각, 아직 인식하지 않은 쪽은 `ink recognize`(Q4)로 요청
+  - [ ] 노트·쪽을 못 찾을 때 후보를 함께 돌려줌(한글 정규화, 띄어쓰기 무시, 비슷한 제목 제안)
+  - [ ] 변경 응답에 **바뀐 뒤의 상태**(쪽 수, 목차 등)를 요약해 넣어 에이전트가 스스로 검증하게 함
+  - [ ] 미리 보기(`--dry-run`): 이미 내부에 `preview`가 있으니 에이전트에게도 열어 줌
+  - [ ] 오류를 구조화: `code`, `hint`, `candidates`. 좌표 오류에는 쪽 크기(1240×1754, A4 150dpi)를 함께 알려 줌
+  - [ ] **에이전트 없이 도는 시나리오 시험**: "목차를 지우고 새로 만들기", "페이지 추가 후 글 넣기", "필기 읽고 분류" 같은 명령 열을 실제 노트 파일로 시험
+- [ ] **Q3** 지침
+  - [ ] 설정 스크립트가 에이전트별 지침 파일을 만듦: Claude Code `~/.claude/CLAUDE.md`, Codex `~/.codex/AGENTS.md`, OpenCode `AGENTS.md`. 내용은 도구 사용법·좌표계·한 번에 여러 줄 묶기·열린 노트는 못 바꿈·거절되면 다시 시도하지 않기·한국어로 답하기. 다시 실행해도 **사용자가 고친 부분은 덮어쓰지 않음**
+  - [ ] `notesis_help`에 작업별 요령 추가: 목차 새로 만들기, 필기 읽고 정리하기, 노트 분류하기, 쪽 정리하기
+  - [ ] MCP `prompts`로 슬래시 명령 제공(예: `/notesis:organize`)
+  - [ ] 지침의 버전을 앱 버전과 맞추고, 앱 패널에서 지침을 보고 복사할 수 있게 함
+- [ ] **Q4** 명령 늘리기
+  - [ ] **검색**: `search WORDS [--in title|text|ink|all]`. 제목뿐 아니라 글 상자·Markdown·손글씨 인식 결과 안을 찾고 쪽 번호와 앞뒤 글을 돌려줌
+  - [ ] **Markdown 편집**: `md write|append NOTE TEXT`, `md replace NOTE FIND REPLACE`, `md insert NOTE --after-heading H TEXT`, `md outline NOTE`(제목 목록), `md links|backlinks NOTE`
+  - [ ] **글 고치기·지우기**: `text list NOTE PAGE`(글 상자 id·위치·글), `text edit ID TEXT`, `text rm ID`
+  - [ ] **필기**: `ink list NOTE PAGE`(획 수·영역), `ink recognize NOTE [--pages]`(손글씨 인식 실행)
+  - [ ] **만들기·정리**: `note new TITLE [--folder F] [--paper blank|grid|lined] [--pages N]`, `note new-md TITLE [--text]`, `note dup`, `note merge A B --title T`, `note fav NOTE +|-`, `note label NOTE COLOR`
+  - [ ] **폴더**: `folder list|new|rename|mv`(폴더를 지워 노트가 위로 올라가는 것은 노트를 어떻게 할지 골라야 해서 에이전트용으로는 보류)
+  - [ ] **쪽**: `page dup`, `page paper PAGE blank|grid|lined`, `page bookmark PAGE`
+  - [ ] **그림**: `image add NOTE PAGE --file PATH`, `image rm ID`(파일 접근 방식을 먼저 정해야 함)
+  - [ ] **상태**: `status`(앱 버전, 지금 화면에 열려 있는 노트 목록, 명령 기록 수). 열린 노트라서 못 바꾸는 상황을 미리 알 수 있게 함
+  - [ ] 태그·스마트 폴더 목록: `tags list`, `smart list`
+  - 만들지 않음: 영구 삭제, 휴지통 비우기, 잠금 해제(AGENTS.md의 안전 규칙)
+
 ## 6. 문서 편집 (E)
 
 항상 사본으로 저장하고, 원본 XML에서 바뀐 부분만 고칩니다.
