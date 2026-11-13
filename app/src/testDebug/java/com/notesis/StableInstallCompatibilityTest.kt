@@ -25,13 +25,13 @@ class StableInstallCompatibilityTest {
     }
     @After fun clean() { updates.edit().clear().commit(); fixture.deleteRecursively() }
 
-    @Test fun ordinaryInstallUsesTheExistingPackageAndStableUpdateDefaults() {
-        assertEquals("com.notesis", context.packageName)
-        assertFalse(isLabInstall(context))
-        assertTrue(AppUpdate.autoCheck(context))
-        assertFalse(AppUpdate.isBeta(context))
-        assertEquals("com.notesis.widget.OPEN_NOTE", NotesWidget.ACTION_OPEN)
-        assertEquals("com.notesis.widget.NEW_NOTE", NotesWidget.ACTION_NEW)
+    @Test fun labInstallKeepsItsPackageActionsAndUpdateDefaultsSeparate() {
+        assertEquals("com.notesis.lab", context.packageName)
+        assertTrue(isLabInstall(context))
+        assertFalse(AppUpdate.autoCheck(context))
+        assertTrue(AppUpdate.isBeta(context))
+        assertEquals("com.notesis.lab.widget.OPEN_NOTE", NotesWidget.ACTION_OPEN)
+        assertEquals("com.notesis.lab.widget.NEW_NOTE", NotesWidget.ACTION_NEW)
     }
 
     @Test fun explicitUpdatePreferencesSurviveThePerformanceSettingsLoad() {

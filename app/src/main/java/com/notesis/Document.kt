@@ -2698,6 +2698,23 @@ class NoteStore(context: Context) {
         // One Brush per tool, colour and size: a page of the same pen
         // otherwise made a native brush for every stroke.
         val brushes = HashMap<BrushKey, Brush>()
+        val framed = CppPageReader.read(file)
+        if (Thread.currentThread().isInterrupted) return emptyList()
+        if (framed != null) {
+            runCatching {
+                for (record in framed.records) {
+                    val storedTool = Tool.entries[StrokeTags.ordinalOf(record.rawTool)]
+                    val tool = if (framed.version == 1 && storedTool == Tool.HIGHLIGHTER && record.color ushr 24 == 255)
+                        Tool.PEN else storedTool
+                    val brush = brushes.getOrPut(BrushKey(tool.ordinal, record.color, record.size, 0f, 0, record.nib)) {
+                        val family = tool.brushFamily(record.nib.takeIf { it != Tool.NO_NIB })
+                        Brush.createWithColorIntArgb(family, record.color, record.size, inkEpsilon(family, record.size, epsilon))
+                    }
+                    records += StoredStroke(tool, record.rawTool, brush, record.inputs, record.layer)
+                }
+            }
+            return StrokeBuilder.buildAll(records)
+        }
         runCatching {
             DataInputStream(file.inputStream().buffered()).use { input ->
                 if (input.readInt() != MAGIC) return emptyList()

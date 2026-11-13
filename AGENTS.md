@@ -113,21 +113,26 @@ S6 Lite, SM-P61x/P62x). Kotlin, Jetpack Compose for the chrome, a custom
 | Look, popups | `Skin.kt`, `SkinSettings.kt` (the corner's saved key still says `spotiglass…`), `PopupGrowth.kt`, `PopupReveal.kt`, `AppDialog.kt`, `AppMenu.kt` |
 | Roadmap, archive | `Todo.md` (work in order), `archive/` (glass looks, not built) |
 
-## Stable release and native checks
+## C++ Lab release and native checks
 
-This branch builds the original **Notesis** (`com.notesis`), promoted from the
-validated Lab work at the owner's request. Keep its existing data directory,
-widget actions, signing lineage and ordinary update channel. Lab stays in the
-separate `com.notesis.lab` installation and its preview tags must remain excluded
-from the normal feed. Source stays private; only release assets are public.
+This is stage 1 of the owner's four-stage C++ migration, based on stable
+0.92.1 (232), commit 9cf592c. Read `docs/cpp-migration.md` for the exact scope.
+Do not describe this as an all-C++ app: the UI, platform bridge, Ink mesh
+construction and document ownership have not been ported yet.
+
+This branch builds **Notesis Lab** (`com.notesis.lab`) alongside stable Notesis.
+Keep the latest stable Material UI and motion, the file format and the signing
+lineage. Preview tags must end in `-preview` and stay excluded from the stable
+feed. Do not merge its package and update routing into main. Source stays
+private; only release assets and the migration progress document are public.
 
 Run `bash tools/performance-lab/check-native.sh` before
 `./gradlew testDebugUnitTest -Pnotesis.hostNativeDir="$PWD/build/host-native"`.
-The script checks the same C++ kernel with address/undefined sanitizers and
-compiles a JNI bridge for tests. Host benchmark results are not device results.
+The script checks C++ kernels with address/undefined sanitizers and compiles
+JNI bridges for tests. Host benchmark results are not device results.
 The own-buffer display remains experimental and disabled by default.
 
-Dispatch `apk.yml` with `update=automatic` once per new stable version to build,
-test, sign and publish a non-prerelease to the ordinary update feed. There is no
-push trigger: fast-forwarding the tested release commit to main does not produce
-a second release. Lab source branches keep their own Lab workflow.
+Dispatch `apk.yml` with `update=manual` once per new Lab version to build,
+test, sign and publish a prerelease without changing the latest stable release.
+Use `update=check` for build-only validation. Native code loading honours the
+existing crash guard; the diagnostics offer a C++ bulk-processing A/B switch.
