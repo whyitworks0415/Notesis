@@ -1,13 +1,13 @@
 package com.notesis
 
-import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -15,12 +15,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -29,13 +25,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -48,7 +45,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
@@ -58,9 +54,8 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.nativeKeyCode
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
@@ -119,67 +114,25 @@ internal object TerminalSession {
     private const val MAX_LINES = 2_000
 }
 
-/** How tall the panel is, as a share of the screen above the keyboard; dragging its handle changes it. */
-private const val MIN_SHARE = 0.25f
-private const val MAX_SHARE = 0.92f
-
 /**
- * The terminal over everything, at the foot of the window, while it is open.
- * [openNoteId] is the note on screen now.
+ * The terminal, while it is open: on the panel every tool opens on
+ * ([ToolPanel]), grown out of the point that opened it and folded back into
+ * it. [openNoteId] is the note on screen now.
  */
 @Composable
 internal fun TerminalHost(store: NoteStore, openNoteId: String?) {
     SideEffect { TerminalSession.openNoteId = openNoteId }
-    val open = TerminalSession.open
-    val moves = rememberMotionAllowed()
-    val shown = remember { Animatable(if (open) 1f else 0f) }
-    var present by remember { mutableStateOf(open) }
-    LaunchedEffect(open, moves) {
-        if (open) {
-            present = true
-            if (moves) shown.animateTo(1f, MaterialMotion.rawContainer<Float>().paced()) else shown.snapTo(1f)
-        } else {
-            if (moves) shown.animateTo(0f, MaterialMotion.rawExit<Float>().paced()) else shown.snapTo(0f)
-            present = false
-        }
-    }
-    if (!present) return
-    var share by remember { mutableFloatStateOf(0.45f) }
-    BoxWithConstraints(Modifier.fillMaxSize().imePadding(), contentAlignment = Alignment.BottomCenter) {
-        val total = maxHeight
-        val density = LocalDensity.current
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .widthIn(max = 1100.dp)
-                .height(total * share)
-                // Up out of the foot of the screen, the edge it belongs to, and back down into it.
-                .graphicsLayer { translationY = (1f - shown.value) * size.height }
-                .skinMaterial(RoundedCornerShape(topStart = Ui.Corner.card, topEnd = Ui.Corner.card), panel = true)
-                .clip(RoundedCornerShape(topStart = Ui.Corner.card, topEnd = Ui.Corner.card)),
-        ) {
-            // The handle: dragged, the panel grows or shrinks.
-            Box(
-                Modifier.fillMaxWidth().height(20.dp)
-                    .pointerInput(total) {
-                        detectVerticalDragGestures { _, drag ->
-                            val totalPx = with(density) { total.toPx() }
-                            share = (share - drag / totalPx).coerceIn(MIN_SHARE, MAX_SHARE)
-                        }
-                    }
-                    .semantics { contentDescription = "Resize the terminal" },
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(Modifier.size(width = 40.dp, height = 4.dp).clip(RoundedCornerShape(2.dp))
-                    .background(MaterialTheme.colorScheme.outlineVariant))
-            }
-            TerminalPanel(store, onClose = { TerminalSession.open = false })
-        }
-    }
+    if (TerminalSession.open) TerminalPanel(store)
 }
 
+/** How tall the terminal's screen is at most, and what the panel takes round it (header, keys, insets). */
+private val TERMINAL_HEIGHT = 520.dp
+private val TERMINAL_CHROME = 150.dp
+
 @Composable
-private fun TerminalPanel(store: NoteStore, onClose: () -> Unit) {
+private fun TerminalPanel(store: NoteStore) {
+    val state = rememberToolPanelState()
+    val onClose = { state.close { TerminalSession.open = false } }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val scheme = MaterialTheme.colorScheme
@@ -284,91 +237,85 @@ private fun TerminalPanel(store: NoteStore, onClose: () -> Unit) {
         }
     }
 
-    Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Terminal", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-            if (session.running) Text("Running…", style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant,
-                modifier = Modifier.padding(end = 8.dp))
-            TextButton(onClick = { session.lines.clear() }) { Text("Clear") }
-            TextButton(onClick = onClose) { Text("Close") }
-        }
-        SelectionContainer(Modifier.weight(1f).fillMaxWidth()) {
-            LazyColumn(state = list, modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-                itemsIndexed(session.lines) { _, line ->
-                    Text(AnnotatedString(line.text), style = mono, color = when (line.tone) {
-                        TerminalTone.INPUT -> scheme.primary
-                        TerminalTone.OUTPUT -> scheme.onSurface
-                        TerminalTone.ERROR -> scheme.error
-                        TerminalTone.HINT -> scheme.onSurfaceVariant
-                    }, fontWeight = if (line.tone == TerminalTone.INPUT) FontWeight.SemiBold else null,
-                        modifier = Modifier.padding(vertical = 2.dp))
+    ToolPanel(
+        title = "Terminal",
+        state = state,
+        onOutside = onClose,
+        maxWidth = 760.dp,
+        actions = {
+            if (session.running) Text("Running…", style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant)
+            TextButton(onClick = { session.lines.clear() }, modifier = Modifier.heightIn(min = Ui.Size.touchCompact)) { Text("Clear") }
+            IconButton(onClick = onClose) { Icon(Reicons.Close, contentDescription = "Close") }
+        },
+    ) {
+        // One height whatever is on it, the keyboard's room taken off, so the panel stands still as lines come in.
+        val keyboard = WindowInsets.ime.asPaddingValues().calculateBottomPadding()
+        val room = LocalConfiguration.current.screenHeightDp.dp * 0.9f - keyboard - TERMINAL_CHROME
+        val inner = RoundedCornerShape(Ui.concentric(chromeCorner(), TOOL_PANEL_INSET))
+        Column(
+            Modifier.fillMaxWidth().height(room.coerceIn(160.dp, TERMINAL_HEIGHT))
+                .clip(inner).background(scheme.surfaceContainerLowest),
+        ) {
+            SelectionContainer(Modifier.weight(1f).fillMaxWidth()) {
+                LazyColumn(state = list, modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(horizontal = Ui.Space.m, vertical = Ui.Space.s)) {
+                    itemsIndexed(session.lines) { _, line ->
+                        Text(AnnotatedString(line.text), style = mono, color = when (line.tone) {
+                            TerminalTone.INPUT -> scheme.primary
+                            TerminalTone.OUTPUT -> scheme.onSurface
+                            TerminalTone.ERROR -> scheme.error
+                            TerminalTone.HINT -> scheme.onSurfaceVariant
+                        }, fontWeight = if (line.tone == TerminalTone.INPUT) FontWeight.SemiBold else null,
+                            modifier = Modifier.padding(vertical = 2.dp))
+                    }
                 }
             }
+            HorizontalDivider(color = scheme.outlineVariant)
+            // The line being written.
+            Row(Modifier.fillMaxWidth().padding(start = Ui.Space.m, end = Ui.Space.xs), verticalAlignment = Alignment.CenterVertically) {
+                Text(AnnotatedString("notesis ›"), style = mono, color = scheme.primary, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.width(Ui.Space.s))
+                BasicTextField(
+                    value = value,
+                    onValueChange = { next ->
+                        val grew = next.text.length > value.text.length && next.selection.collapsed
+                        val char = if (grew) next.text.getOrNull(next.selection.start - 1) else null
+                        when {
+                            // Ctrl from the key row, then a letter from the keyboard.
+                            ctrl && char != null && char.isLetter() && next.text.length == value.text.length + 1 -> { ctrl = false; control(char) }
+                            // A line break just before the cursor is Enter, or a pasted block that ends in one, and runs
+                            // what is there, as a shell does; a pasted block without one waits for Enter.
+                            char == '\n' -> { value = next.copy(text = next.text.removeRange(next.selection.start - 1, next.selection.start)); run() }
+                            else -> value = next
+                        }
+                    },
+                    textStyle = mono.copy(color = scheme.onSurface),
+                    cursorBrush = SolidColor(scheme.primary),
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false,
+                        imeAction = ImeAction.None),
+                    modifier = Modifier.weight(1f).heightIn(min = 22.dp).focusRequester(focus).onPreviewKeyEvent(::key)
+                        .semantics { contentDescription = "Command line" },
+                )
+                // Always in reach at the line's end, whatever the keys beside it scroll to.
+                TextButton(onClick = { run() }, enabled = !session.running,
+                    modifier = Modifier.heightIn(min = Ui.Size.touchCompact)) { Text("Run") }
+            }
         }
-        // The line being written.
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.Top) {
-            Text(AnnotatedString("notesis ›"), style = mono, color = scheme.primary, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.width(8.dp))
-            BasicTextField(
-                value = value,
-                onValueChange = { next ->
-                    val grew = next.text.length > value.text.length && next.selection.collapsed
-                    val char = if (grew) next.text.getOrNull(next.selection.start - 1) else null
-                    when {
-                        // Ctrl from the key row, then a letter from the keyboard.
-                        ctrl && char != null && char.isLetter() && next.text.length == value.text.length + 1 -> { ctrl = false; control(char) }
-                        // A line break just before the cursor is Enter, or a pasted block that ends in one, and runs
-                        // what is there, as a shell does; a pasted block without one waits for Enter.
-                        char == '\n' -> { value = next.copy(text = next.text.removeRange(next.selection.start - 1, next.selection.start)); run() }
-                        else -> value = next
-                    }
-                },
-                textStyle = mono.copy(color = scheme.onSurface),
-                cursorBrush = SolidColor(scheme.primary),
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false,
-                    imeAction = ImeAction.None),
-                modifier = Modifier.weight(1f).heightIn(min = 22.dp).focusRequester(focus).onPreviewKeyEvent(::key)
-                    .semantics { contentDescription = "Command line" },
-            )
-        }
-        // The keys a tablet's keyboard lacks.
-        Row(
-            Modifier.fillMaxWidth().background(scheme.surfaceContainerHigh).horizontalScroll(rememberScrollState())
-                .navigationBarsPadding().padding(horizontal = 8.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            TerminalKey("Tab") { complete() }
-            TerminalKey("Ctrl", selected = ctrl) { ctrl = !ctrl }
-            TerminalKey("Esc") { set(""); ctrl = false }
-            TerminalKey("←") { move(-1) }
-            TerminalKey("→") { move(1) }
-            TerminalKey("↑") { history(up = true) }
-            TerminalKey("↓") { history(up = false) }
-            TerminalKey("Home") { set(value.text, 0) }
-            TerminalKey("End") { set(value.text) }
-            for (sign in listOf("--", "\"", "-", "/", "|", ",")) TerminalKey(sign) {
+        // The keys a tablet's keyboard lacks, as the panels' own chips.
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.xs)) {
+            SettingsChoiceChip(false, { complete() }, "Tab")
+            SettingsChoiceChip(ctrl, { ctrl = !ctrl }, "Ctrl")
+            SettingsChoiceChip(false, { set(""); ctrl = false }, "Esc")
+            SettingsChoiceChip(false, { move(-1) }, "←")
+            SettingsChoiceChip(false, { move(1) }, "→")
+            SettingsChoiceChip(false, { history(up = true) }, "↑")
+            SettingsChoiceChip(false, { history(up = false) }, "↓")
+            SettingsChoiceChip(false, { set(value.text, 0) }, "Home")
+            SettingsChoiceChip(false, { set(value.text) }, "End")
+            for (sign in listOf("--", "\"", "-", "/", "|", ",")) SettingsChoiceChip(false, {
                 val at = value.selection.start
                 set(value.text.substring(0, at) + sign + value.text.substring(value.selection.end), at + sign.length)
-            }
-            TerminalKey("↵ Run") { run() }
+            }, sign)
         }
-    }
-}
-
-@Composable
-private fun TerminalKey(label: String, selected: Boolean = false, onClick: () -> Unit) {
-    val scheme = MaterialTheme.colorScheme
-    Box(
-        Modifier
-            .heightIn(min = 40.dp)
-            .widthIn(min = 44.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (selected) scheme.primaryContainer else scheme.surface)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(AnnotatedString(label), fontFamily = FontFamily.Monospace, fontSize = 14.sp,
-            color = if (selected) scheme.onPrimaryContainer else scheme.onSurface)
     }
 }

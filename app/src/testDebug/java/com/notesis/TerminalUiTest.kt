@@ -68,7 +68,7 @@ class TerminalUiTest {
         val before = LibraryChanges.version
         compose.onNodeWithContentDescription("Command line").performTextInput("page add Chem")
         compose.onNodeWithText("Tab").performClick()
-        compose.onNodeWithText("↵ Run").performClick()
+        compose.onNodeWithText("Run").performClick()
         waitFor("\"pages\": 2")
         assertTrue(TerminalSession.lines.any { it.text == "$ page add Chemistry" })
         assertEquals(before + 1, LibraryChanges.version)
@@ -82,6 +82,6 @@ class TerminalUiTest {
         show()
         compose.onNodeWithContentDescription("Command line").performTextInput("page explode\n")
         waitFor("error: There is no command")
-        compose.onNodeWithText("Close").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Close").assertIsDisplayed()
     }
 }
