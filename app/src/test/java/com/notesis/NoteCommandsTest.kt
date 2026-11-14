@@ -147,13 +147,13 @@ class NoteCommandsTest {
     }
 
     @Test
-    fun `a note open on screen is read but not changed`() {
-        val memory = MemoryNotes().apply { add("n1", "Maths"); open = "n1" }
+    fun `a note open where it cannot be held is read but not changed`() {
+        val memory = MemoryNotes().apply { add("n1", "Maths"); open = "n1"; live = false }
         val commands = NoteCommands(memory)
         assertTrue(json(commands.run("note read Maths")).getBoolean("ok"))
         val refused = json(commands.run("page add Maths"))
         assertFalse(refused.getBoolean("ok"))
-        assertTrue(refused.getString("error").contains("open on screen"))
+        assertEquals("OPEN_ON_SCREEN", refused.getString("code"))
         assertEquals(0, memory.saves)
         assertEquals(0, commands.undoable)
     }

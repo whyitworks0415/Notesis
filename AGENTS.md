@@ -96,15 +96,20 @@ S6 Lite, SM-P61x/P62x). Kotlin, Jetpack Compose for the chrome, a custom
   pointer or Claude handwriting reading. Do not bring their code or strings
   back. The old agent runtime stays out as well; at the owner's request its
   place is taken by the note commands (`NoteCommands.kt`, Todo.md section 5):
-  an agent or terminal changes notes only through them, never a note open on
-  screen, deletes only to the trash, and every change can be undone.
+  an agent or terminal changes notes only through them, deletes only to the
+  trash, and every change can be undone. A note open on screen is changed
+  only through its screen (`LiveNotes` in `OpenNotes.kt`, at the owner's
+  request 2026-11-14): the screen writes what it shows and holds still, the
+  change is made, and it reads the note again in place. A note on a screen
+  that cannot be held (a split part, the reference panel) is only read, and
+  one on screen is never put in the trash.
 - The agent connection (Todo.md C3) is off until the owner turns it on, listens on
   127.0.0.1 (private networks only when the owner switches that on too), and
   answers nothing without its token: the token is made on the device, shown only
   on the owner's screen, kept out of backups, and never logged, printed or
   written in the repository. An agent's changes go through `AgentGateway`: asked
-  about first or made at once as the owner chose, never on a note on screen
-  (`OpenNotes`), always undoable. A command added to `NoteCommands` must also be
+  about first or made at once as the owner chose, on a note on screen only
+  through `LiveNotes`, always undoable. A command added to `NoteCommands` must also be
   described in `describeCommand` (a test fails otherwise), or it would run
   without asking; only reading goes in `READ_COMMANDS`, and anything that
   puts a note's content outside the app (`export --to shared`) is a change.
@@ -132,6 +137,7 @@ S6 Lite, SM-P61x/P62x). Kotlin, Jetpack Compose for the chrome, a custom
 | Page panel, Internet panel | `PageSidebar.kt`, `WebPanel.kt` |
 | Folders, smart folders, templates | `FolderPaths.kt` (paths `School/Maths`), `SmartFolders.kt`, `PaperPicker.kt` |
 | Note commands (`notesis ...`), terminal | `NoteCommands.kt` (pure: words, paths, undo), `NoteCommandStore.kt` (on disk), `Terminal.kt` (pure: completion, history, printing), `TerminalPanel.kt` (`TerminalHost`, `TerminalSession`) |
+| Agent sidebar | `AgentChat.kt` (requests to Termux by its RUN_COMMAND, the `ask` helper, answers), `AgentSidebar.kt` (the side sheet, opening Termux beside or in a window) |
 | Agent connection (MCP) | `AgentGuide.kt` (the guide and MCP prompts every agent gets), `McpProtocol.kt` (pure JSON-RPC, pictures, prompts), `AgentServer.kt` (HTTP and its checks), `AgentGateway.kt` (ask or make at once), `ChangeCards.kt` (what a command says it does, the log, the questions waiting), `AgentConnection.kt` (settings, `AgentRuntime`, `AgentService`), `AgentPanel.kt` (setup panel, approval card), `OpenNotes.kt` (notes on screen, `SharedNotes`) |
 | Backup, widget, updates | `AutoBackup.kt` (off by default), `NotesWidget.kt`, `AppUpdate.kt` (beta code) |
 | Look, popups | `Skin.kt`, `SkinSettings.kt` (the corner's saved key still says `spotiglass…`), `PopupGrowth.kt`, `PopupReveal.kt`, `AppDialog.kt`, `AppMenu.kt` |

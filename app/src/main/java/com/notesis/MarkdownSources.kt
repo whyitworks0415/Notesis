@@ -42,7 +42,8 @@ internal class StoreMarkdownSource(
     private fun markdownNotes() = store.list().filter { it.kind == NoteKind.MARKDOWN }
 
     override suspend fun load(): String = store.loadMarkdown(note.id)
-    override suspend fun save(text: String) = store.saveMarkdown(note.id, note.title, text)
+    // The title on disk, not the one it was opened with: an agent may have renamed it since.
+    override suspend fun save(text: String) = store.saveMarkdown(note.id, null, text)
     override suspend fun names(): List<String> = withContext(Dispatchers.IO) { markdownNotes().map { it.title }.distinct() }
 
     override suspend fun backlinks(): List<String> = withContext(Dispatchers.IO) {

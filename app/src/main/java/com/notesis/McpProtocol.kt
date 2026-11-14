@@ -19,7 +19,8 @@ import org.json.JSONTokener
 internal interface McpTools {
     /** [lines] as one batch for [client]; the commands' JSON answer. Blocks while an owner is asked. */
     fun run(lines: List<String>, client: String): String
-    fun help(): String
+    /** The help, all of it with a blank [topic], else only that part ("recipes", or a command's first word). */
+    fun help(topic: String = ""): String
 }
 
 /** An answer: the HTTP status, the JSON text (null when there is nothing to say back), the session the client is to use from now on. */
@@ -130,8 +131,11 @@ internal class McpProtocol(
         .put(JSONObject()
             .put("name", "notesis_help")
             .put("title", "Notesis commands")
-            .put("description", "Lists the Notesis note commands, the rules and recipes for common tasks (such as outlining a PDF). Read this first.")
-            .put("inputSchema", JSONObject().put("type", "object").put("properties", JSONObject()).put("additionalProperties", false))
+            .put("description", "Lists the Notesis note commands and rules. Read this first. topic \"recipes\" gives step-by-step ways " +
+                "to common tasks (such as outlining a PDF); a command's first word (\"pdf\", \"md\") gives just those.")
+            .put("inputSchema", JSONObject().put("type", "object").put("properties", JSONObject()
+                .put("topic", JSONObject().put("type", "string").put("description", "Optional: \"recipes\", or a command's first word.")))
+                .put("additionalProperties", false))
             .put("annotations", JSONObject().put("readOnlyHint", true)))
         .put(JSONObject()
             .put("name", "notesis_run")
@@ -156,7 +160,10 @@ internal class McpProtocol(
         val name = params.optString("name", "")
         val args = params.optJSONObject("arguments") ?: JSONObject()
         return when (name) {
-            "notesis_help" -> tools.help().let { help -> counted(client, 0, help.length, 0); result(id, text(help, isError = false)) }
+            "notesis_help" -> tools.help(args.optString("topic", "").take(40)).let { help ->
+                counted(client, 0, help.length, 0)
+                result(id, text(help, isError = false))
+            }
             "notesis_run" -> {
                 val lines = linesOf(args) ?: return errorObject(id, -32602,
                     "commands is a list of 1 to $MCP_MAX_LINES strings of up to $MCP_MAX_LINE characters.")
@@ -236,7 +243,7 @@ internal class McpProtocol(
     private companion object {
         const val INSTRUCTIONS = "Notesis is a handwriting and Markdown note app. Call notesis_help for the commands and recipes, then notesis_run. " +
             "Ask for little at a time (notes list --brief, note read --outline, then --pages); long answers give the next command. " +
-            "A note open on the screen is only read, never changed; deleting only moves a note to the trash; every change can be undone " +
+            "A note open on screen takes changes and shows them at once; deleting only moves a note to the trash; every change can be undone " +
             "with the \"undo\" command. The owner may be asked before a change, so a refusal is normal: do not retry it."
     }
 }

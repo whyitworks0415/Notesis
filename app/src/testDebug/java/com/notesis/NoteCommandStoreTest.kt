@@ -169,4 +169,31 @@ class NoteCommandStoreTest {
         assertTrue(trashed.containsAll(listOf(id, copy, md)))
         for (gone in listOf(id, copy, md)) File(context.filesDir, "notes/$gone").deleteRecursively()
     }
+
+    @Test fun aNoteOnScreenWritesWhatItShowsFirstAndIsToldToReadItAgain() {
+        val store = NoteStore(context)
+        val events = mutableListOf<String>()
+        // A screen showing the note with an outline entry it has not saved yet.
+        val screen = object : LiveNoteScreen {
+            override fun hold(): Boolean {
+                val shown = store.load("command-fixture").also { it.pages[0].tocTitle = "Drawn on screen" }
+                store.save("command-fixture", "Physics", shown)
+                events += "hold"
+                return true
+            }
+            override fun letGo(changed: Boolean, done: () -> Unit) { events += "let go $changed"; done() }
+        }
+        LiveNotes.register("command-fixture", screen)
+        try {
+            val commands = NoteCommands(NoteStoreWorkspace(context, store) { it == "command-fixture" })
+            assertTrue(JSONObject(commands.run("toc set Physics 2 Waves")).getBoolean("ok"))
+            assertEquals(listOf("hold", "let go true"), events)
+            // The change was made on what the screen showed, not over it.
+            val after = store.load("command-fixture")
+            assertEquals("Drawn on screen", after.pages[0].tocTitle)
+            assertEquals("Waves", after.pages[1].tocTitle)
+        } finally {
+            LiveNotes.unregister("command-fixture", screen)
+        }
+    }
 }

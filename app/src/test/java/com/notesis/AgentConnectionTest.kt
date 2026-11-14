@@ -43,7 +43,7 @@ class AgentConnectionTest {
     fun `the help lists every command and the rules`() {
         val help = agentHelp()
         for (usage in COMMAND_USAGE.values) assertTrue(usage, help.contains(usage))
-        assertTrue(help.contains("open on the screen can only be read"))
+        assertTrue(help.contains("open on screen takes changes and shows them at once"))
         assertTrue(help.contains("trash"))
         assertNotEquals("", help)
     }

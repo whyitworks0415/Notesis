@@ -1285,13 +1285,15 @@ class NoteStore(context: Context) {
         chosen
     }.getOrNull()
 
-    internal fun saveMarkdown(id: String, title: String, text: String) {
+    /** [title] null keeps the title it has: the editor's saves, so a rename made while it is open stands. */
+    internal fun saveMarkdown(id: String, title: String?, text: String) {
         val metaFile = File(root, "$id/meta.json")
         val meta = JSONObject(metaFile.readText())
         check(meta.optString("kind") == NoteKind.MARKDOWN.name)
         atomicText(File(root, "$id/note.md"), text)
         writeMarkdownPreview(File(root, id), text)
-        meta.put("title", title).put("modified", System.currentTimeMillis())
+        if (title != null) meta.put("title", title)
+        meta.put("modified", System.currentTimeMillis())
         atomicText(metaFile, meta.toString())
     }
 

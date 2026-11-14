@@ -2832,6 +2832,25 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     /**
+     * The same note read again after a change made under it (an agent's or the
+     * terminal's command; see LiveNotes): its pages as they are now, with the
+     * view left where it was rather than fitted again to the first page. The
+     * history of this screen goes with the old pages, as on any opening.
+     */
+    fun reload(document: Document) {
+        val view = Matrix(documentToScreen)
+        val wasFitted = fitted
+        open(document, pdf, initialPage = currentPageIndex())
+        if (wasFitted && width > 0) {
+            fitted = true
+            pageToRestore = null
+            documentToScreen.set(view)
+            clampTransform()
+            onTransformChanged()
+        }
+    }
+
+    /**
      * A pen stroke that starts at the screen's edge is writing, not the system's
      * back gesture. Android honours up to 200dp of each edge; ask for the middle.
      */

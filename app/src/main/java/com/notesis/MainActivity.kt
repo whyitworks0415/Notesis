@@ -529,8 +529,9 @@ class MainActivity : ComponentActivity() {
                 if (note != null) Box(Modifier.fillMaxSize().grownOutOfCard(note.id).followingBack()) {
                 if (note.kind == NoteKind.MARKDOWN) {
                     key(note.id) {
-                        // On screen, so the note commands only read it.
+                        // On screen: the note commands change it through its editor (LiveNotes), and the sidebar names it.
                         HoldOpenNotes(setOf(note.id))
+                        AgentChatNote(note)
                         MarkdownNoteScreen(
                             source = remember(note.id) {
                                 StoreMarkdownSource(store, note) { next -> markdownBack += note; requestOpen(next) }
@@ -556,6 +557,7 @@ class MainActivity : ComponentActivity() {
                         onOpenNote = { requestOpen(it) },
                         onLookChange = { look = it; lookStore.save(it) },
                         onBack = { closeNote(note) },
+                        onNoteChanged = { fresh -> if (openNote?.id == fresh.id) openNote = fresh },
                     )
                     }
                     }
@@ -573,6 +575,8 @@ class MainActivity : ComponentActivity() {
                 NoteFlightLayer(if (look.themeMode == AppThemeMode.DARK) MaterialTheme.colorScheme.surfaceContainerHigh else Color(0xFFFDFCF8))
                 // The terminal, from the library's menu or a note's quick actions, over whatever is open.
                 TerminalHost(store)
+                // The agent sidebar: asking an agent in Termux from here, beside the note it changes.
+                AgentSidebarHost()
                 AgentPanelHost()
                 // An agent's change waiting for the owner's word comes over whatever is open.
                 ChangeApprovalHost()
@@ -1562,6 +1566,11 @@ private fun HomeScreen(
                                             text = { Text("Terminal") },
                                             leadingIcon = { Icon(AppIcons.terminal, contentDescription = null) },
                                             onClick = { homeMore = false; TerminalSession.show() },
+                                        )
+                                        GlassMenuItem(
+                                            text = { Text("Ask an agent") },
+                                            leadingIcon = { Icon(AppIcons.ai, contentDescription = null) },
+                                            onClick = { homeMore = false; AgentChat.show(context) },
                                         )
                                         GlassMenuItem(
                                             text = { Text("Agent connection") },
@@ -4100,6 +4109,8 @@ private fun NoteScreen(
     onOpenNote: (NoteMeta) -> Unit,
     onLookChange: (SkinSettings) -> Unit,
     onBack: () -> Unit,
+    /** The note as it is on disk after a change made under this screen (a new title, say). */
+    onNoteChanged: (NoteMeta) -> Unit = {},
 ) {
     val context = LocalContext.current
     // Cleared when the page is touched; see InkCanvasView.onTouchDown.
@@ -4506,6 +4517,7 @@ private fun NoteScreen(
         }
     }
     var referenceNoteId by remember { mutableStateOf(initialReferenceNoteId) }
+    AgentChatNote(note)
     // The notes on screen: this one, each part of a split, the reference panel's. The note commands leave them be.
     HoldOpenNotes(buildSet {
         add(note.id)
@@ -5556,6 +5568,8 @@ private fun NoteScreen(
                 },
             )
         }
+        // An agent's change being made under the page: the hand is kept off it for that moment.
+        if (note.id in LiveNotes.holding) AgentChangeVeil()
         }
 
         // The other parts of a split screen: a note each, where the split
@@ -5731,8 +5745,11 @@ private fun NoteScreen(
         val latestNote by rememberUpdatedState(note)
         // When the last autosave was taken, so recognition keeps clear of it.
         val lastSaveAt = remember { longArrayOf(0L) }
+        // While an agent's change is made under the screen, nothing it holds is written: that would undo the change.
+        val heldForChange = remember { booleanArrayOf(false) }
         LaunchedEffect(Unit) {
             autosaveLoop(edits = { edits }) {
+                if (heldForChange[0]) return@autosaveLoop
                 val view = canvas ?: return@autosaveLoop
                 lastSaveAt[0] = android.os.SystemClock.uptimeMillis()
                 // Snapshot on the UI thread before the serial worker writes it.
@@ -5786,7 +5803,8 @@ private fun NoteScreen(
             fun flushLatest() {
                 val view = canvas ?: return
                 penStore.setLastPage(note.id, view.currentPageIndex())
-                store.flushSave(note.id, note.title, view.document)
+                // The title as it is now: an agent may have renamed the note while it was open.
+                store.flushSave(note.id, latestNote.title, view.document)
                 // After that save: a picture of the page in view, for the next opening.
                 // Not for a locked note: its pages are not to be lying about as pictures.
                 if (!store.isLocked(note.id)) store.keepPagePictures(note.id, view.pagePictureRequests())
@@ -5805,6 +5823,48 @@ private fun NoteScreen(
                     opened?.second?.close()
                 }
             }
+        }
+
+        // A change made to this note by an agent or the terminal while it is open
+        // (OpenNotes.kt, LiveNotes): written out, held still while it is made,
+        // then read again in place, so it shows at once and nothing is written over.
+        DisposableEffect(note.id) {
+            val screen = object : LiveNoteScreen {
+                override fun hold(): Boolean {
+                    val view = canvas ?: return false
+                    // Not in the middle of a stroke: it would be lost when the note is read again.
+                    if (InteractionGovernor.state == Interaction.WRITING) return false
+                    heldForChange[0] = true
+                    store.flushSave(latestNote.id, latestNote.title, view.document)
+                    return true
+                }
+
+                override fun letGo(changed: Boolean, done: () -> Unit) {
+                    if (!changed) { heldForChange[0] = false; done(); return }
+                    scope.launch {
+                        try {
+                            val fresh = runCatching {
+                                withContext(Dispatchers.IO) {
+                                    store.load(note.id) to store.list().firstOrNull { it.id == note.id }
+                                }
+                            }.getOrNull()
+                            val view = canvas
+                            if (fresh != null && view != null) {
+                                fresh.first.layoutMode = pageLayout
+                                view.reload(fresh.first)
+                                pageCount = fresh.first.pages.size
+                                fresh.second?.let(onNoteChanged)
+                            }
+                        } finally {
+                            // Whatever happened, the screen is not left held.
+                            heldForChange[0] = false
+                            done()
+                        }
+                    }
+                }
+            }
+            LiveNotes.register(note.id, screen)
+            onDispose { LiveNotes.unregister(note.id, screen) }
         }
 
         if (showLatency) {
@@ -6038,6 +6098,7 @@ private fun NoteScreen(
                     GlassToolbarAction("Pages & search", AppIcons.search, selected = showPages) { showPages = !showPages },
                     // The calculator, the clock, the calendar and the to-do list, one panel.
                     GlassToolbarAction("Tools", AppIcons.tools) { Planner.show(Planner.lastPanel) },
+                    GlassToolbarAction("Ask an agent", AppIcons.ai) { AgentChat.show(context) },
                     GlassToolbarAction("Terminal", AppIcons.terminal) { TerminalSession.show() },
                     GlassToolbarAction("Split notes", AppIcons.split, selected = split != null) {
                         settingsNav = null

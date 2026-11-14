@@ -11,6 +11,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -31,6 +32,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -292,9 +294,44 @@ private fun AgentsOnThisTablet(url: String, token: String) {
                 copySecret(context, "Notesis setup", termuxSetupScript(agents, url, token, bridge))
             }
         }) { Text("Copy setup script") }
-        if (termux != null) TextButton(onClick = { runCatching { context.startActivity(termux) } }) { Text("Open Termux") }
+        if (termux != null) {
+            // Beside the notes, so the agent's work and the notes it changes are both in view.
+            TextButton(onClick = { openTermux(context, TermuxWindow.BESIDE) }) { Text("Open Termux beside") }
+            TextButton(onClick = { openTermux(context, TermuxWindow.WINDOW) }) { Text("Open in a window") }
+            TextButton(onClick = { AgentPanelState.open = false; AgentChat.show(context) }) { Text("Ask from Notesis") }
+        }
         TextButton(onClick = { copySecret(context, "Notesis token update", termuxTokenUpdate(token)) }) { Text("Copy token update") }
     }
+    Text("The setup also lets Termux take requests from Notesis's agent sidebar (allow-external-apps). Only apps you give the " +
+        "\"Run commands in Termux\" permission can use that.",
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     Text("After making a new token, run the token update in Termux; the agents keep their setup.", style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+/**
+ * Over a note while an agent's change is made under it (LiveNotes): touches go
+ * nowhere for that moment, so nothing drawn is lost when the note is read again,
+ * and a word says why.
+ */
+@Composable
+internal fun AgentChangeVeil() {
+    androidx.compose.foundation.layout.Box(
+        Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } }
+            },
+        contentAlignment = Alignment.TopCenter,
+    ) {
+        androidx.compose.material3.Surface(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(50),
+            color = MaterialTheme.colorScheme.inverseSurface,
+            contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+            modifier = Modifier.padding(top = 72.dp),
+        ) {
+            Text("Applying an agent's change…", style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+        }
+    }
 }

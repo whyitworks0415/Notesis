@@ -160,13 +160,14 @@ class AgentServiceTest {
         assertTrue(run(port, session, "notes list").getBoolean("ok"))
     }
 
-    @Test fun aNoteOnScreenIsOnlyReadWhateverTheOwnerAllowed() {
+    // On screen where no screen can be held (a part of a split, the reference panel): only read.
+    @Test fun aNoteOnScreenThatCannotBeHeldIsOnlyReadWhateverTheOwnerAllowed() {
         AgentSettings.setPolicy(context, AgentPolicy.AUTO)
         val port = startService()
         OpenNotes.set(owner, setOf("agent-fixture"))
         val refused = run(port, null, "page add Fixture")
         assertFalse(refused.getBoolean("ok"))
-        assertTrue(refused.getString("error"), refused.getString("error").contains("open on screen"))
+        assertEquals(refused.toString(), "OPEN_ON_SCREEN", refused.getString("code"))
         assertEquals(1, pageCount())
         assertTrue(run(port, null, "note read Fixture").getBoolean("ok"))
         OpenNotes.clear(owner)

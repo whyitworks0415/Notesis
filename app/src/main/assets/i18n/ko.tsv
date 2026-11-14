@@ -1829,3 +1829,21 @@ The guide tells an agent the rules and the shortest way to common tasks. The Ter
 Unpin “{0}” from the favourites	“{0}”을(를) 즐겨찾기에서 빼기
 {0} calls · {1} characters asked · {2} characters answered	호출 {0}번 · 보낸 글자 {1}자 · 받은 글자 {2}자
 Use	사용량
+Applying an agent's change…	에이전트의 변경을 반영하는 중…
+Ask about your notes…	노트에 대해 물어보세요…
+Ask an agent	에이전트에게 묻기
+Ask from Notesis	Notesis에서 묻기
+Notesis may not ask Termux to run commands. Allow it under Settings → Apps → Notesis → Permissions (Run commands in Termux).	Notesis가 Termux에 명령 실행을 요청할 수 없습니다. 설정 → 애플리케이션 → Notesis → 권한(Termux에서 명령 실행)에서 허용해 주세요.
+Open Termux beside	Termux를 옆에 열기
+Open in a window	창으로 열기
+Stop waiting	그만 기다리기
+Stopped waiting. If the agent is still working in Termux, its changes still come through.	기다리기를 멈췄습니다. 에이전트가 Termux에서 아직 일하고 있다면 그 변경은 계속 들어옵니다.
+Termux does not take commands from other apps yet. Run the setup script again in Termux (Agent connection → On this tablet); it turns that on.	Termux가 아직 다른 앱의 명령을 받지 않습니다. Termux에서 설정 스크립트를 다시 실행하세요(에이전트 연결 → 이 태블릿에서). 그러면 켜집니다.
+The agent helper is not in Debian yet. Run the setup script again in Termux (Agent connection → On this tablet).	Debian에 에이전트 도우미가 아직 없습니다. Termux에서 설정 스크립트를 다시 실행하세요(에이전트 연결 → 이 태블릿에서).
+{0} is working in Termux · {1}	{0}이(가) Termux에서 일하는 중 · {1}
+Ask in your own words: “put an outline in this note from its PDF”, “sum up today's notes”. The agent runs in Termux and changes notes through Notesis, so each change shows at once and can be undone.	편하게 물어보세요: “이 노트의 PDF로 목차를 넣어 줘”, “오늘 노트를 요약해 줘”. 에이전트는 Termux에서 돌고 Notesis를 통해 노트를 바꾸므로, 바뀐 것이 바로 보이고 되돌릴 수 있습니다.
+The agents run in Termux. Set them up first: Agent connection → On this tablet.	에이전트는 Termux에서 돌아갑니다. 먼저 설정하세요: 에이전트 연결 → 이 태블릿에서.
+The next request carries on this conversation.	다음 요청은 이 대화를 이어 갑니다.
+The next request starts afresh.	다음 요청은 새로 시작합니다.
+(No answer.)	(답이 없습니다.)
+The setup also lets Termux take requests from Notesis's agent sidebar (allow-external-apps). Only apps you give the "Run commands in Termux" permission can use that.	설정은 Termux가 Notesis의 에이전트 사이드바 요청을 받게도 합니다(allow-external-apps). "Termux에서 명령 실행" 권한을 준 앱만 이것을 쓸 수 있습니다.

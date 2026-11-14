@@ -77,6 +77,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextRange
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -200,6 +201,37 @@ internal fun MarkdownNoteScreen(
                 }
             }
         }
+    }
+    // A change made by an agent or the terminal while the note is open (LiveNotes): the typing so far is
+    // written first, and the text read again after, in place, as an edit undo can step back over.
+    val liveId = source.key.takeIf { it.startsWith("store:") }?.removePrefix("store:")
+    if (liveId != null) DisposableEffect(liveId) {
+        val screen = object : LiveNoteScreen {
+            override fun hold(): Boolean {
+                if (!loaded) return false
+                saveNow()
+                return true
+            }
+            // Saves go one at a time on this queue; an empty task behind them ends after the last.
+            override fun settle() { kotlinx.coroutines.runBlocking(MarkdownIo.serial) {} }
+            override fun letGo(changed: Boolean, done: () -> Unit) {
+                if (!changed) { done(); return }
+                scope.launch {
+                    try { reread() } finally { done() }
+                }
+            }
+            suspend fun reread() {
+                val text = runCatching { withContext(MarkdownIo.serial) { source.load() } }.getOrNull() ?: return
+                val old = value
+                if (text == old.text) return
+                val next = TextFieldValue(text, TextRange(old.selection.start.coerceAtMost(text.length), old.selection.end.coerceAtMost(text.length)))
+                history.record(old.state(), next.state(), typed = false, now = SystemClock.uptimeMillis())
+                saved = text
+                value = next
+            }
+        }
+        LiveNotes.register(liveId, screen)
+        onDispose { LiveNotes.unregister(liveId, screen) }
     }
     // Saved a moment after the typing stops, and on the way out.
     LaunchedEffect(value.text, loaded) {

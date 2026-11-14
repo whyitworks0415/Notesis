@@ -20,7 +20,7 @@ class AgentServerTest {
     private val ran = java.util.Collections.synchronizedList(mutableListOf<List<String>>())
     private val tools = object : McpTools {
         override fun run(lines: List<String>, client: String): String { ran += lines; return "{\"ok\":true,\"result\":{\"n\":${lines.size}}}" }
-        override fun help() = "help"
+        override fun help(topic: String) = "help"
     }
     private var server = AgentServer({ token }, McpProtocol(tools, "1"), lan = false)
     private var port = 0
@@ -164,7 +164,7 @@ class AgentServerTest {
         val gate = CountDownLatch(1)
         val waiting = object : McpTools {
             override fun run(lines: List<String>, client: String): String { gate.await(10, TimeUnit.SECONDS); return "{\"ok\":true}" }
-            override fun help() = ""
+            override fun help(topic: String) = ""
         }
         server.stop()
         server = AgentServer({ token }, McpProtocol(waiting, "1"), lan = false)

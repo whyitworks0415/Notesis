@@ -19,11 +19,12 @@ internal val AGENT_GUIDE = """
 Tools: `notesis_help` lists the commands; `notesis_run` runs command lines. The lines of one call are one batch: all are done, or none.
 
 ## Rules
-- A note open on the tablet's screen is only read. A change to it fails with OPEN_ON_SCREEN: ask the owner to close it.
+- A note open on the tablet's screen takes changes and shows them at once. One in a split part or the reference panel cannot (OPEN_ON_SCREEN); nor is a note on screen put in the trash.
 - Deleting moves a note to the trash. `undo` takes back the latest change.
 - The owner may be asked before a change. A refusal ("denied") is their answer: do not send it again.
 - Once you know a note's id, use it. A title that fits several notes fails with AMBIGUOUS and lists them; one not found lists likely ones.
 - Ask for little at a time: `notes list --brief`, then `note read NOTE --outline`, then `--pages`. A long answer says "truncated" and gives the `next` command.
+- A note read before: `note read NOTE --since MODIFIED` answers "unchanged" instead of the note again.
 - `preview LINE` says what a line would do without doing it.
 - Answer the owner in the language they write to you in. Never make up page numbers you could not read: say so.
 

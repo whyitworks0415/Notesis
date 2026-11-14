@@ -28,7 +28,7 @@ internal data class ChangeLine(val template: String, val args: List<String> = em
 
 /** Options that take the word after them, and those that stand alone: so a word that is a value is not taken for a note. */
 private val VALUED_OPTIONS = setOf("after", "count", "level", "x", "y", "size", "color", "width", "path", "points", "rect",
-    "format", "pages", "folder", "tag", "search", "limit", "offset", "max-chars", "from", "paper", "text", "title", "under", "to")
+    "format", "pages", "folder", "tag", "search", "limit", "offset", "max-chars", "from", "paper", "text", "title", "under", "to", "since")
 
 /** The commands that only read: never asked about, whatever the owner chose. */
 internal val READ_COMMANDS = setOf("help", "status", "preview", "search", "notes list", "note read", "tags list", "folder list",

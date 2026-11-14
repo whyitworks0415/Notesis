@@ -11,9 +11,11 @@ import kotlin.math.hypot
  * that a terminal, or an agent working in one, can read and change notes the
  * way the screens do.
  *
- * They work on notes as they are stored, never on one open on screen: the
- * screen keeps its own copy and would write over the change, so a note that
- * is open is only read. Every change keeps what it replaced, and `undo` puts
+ * They work on notes as they are stored. A note open on screen keeps its
+ * own copy and would write over a change, so the screen is held first: it
+ * writes what it shows and waits, the change is made, and it reads the note
+ * again (OpenNotes.kt, LiveNotes). A note open where it cannot be held (a
+ * part of a split, the reference panel) is only read. Every change keeps what it replaced, and `undo` puts
  * back the last line (or batch of lines) whole. Nothing is ever deleted for
  * good: a note goes to the trash, and a page taken out comes back with undo.
  *
@@ -55,6 +57,15 @@ internal interface NoteWorkspace {
     fun bring(id: String, kept: Any)
     /** Lets go of a copy from [keep] that will not be brought back: its change was taken back, or is too old to be. */
     fun release(kept: Any) {}
+
+    /**
+     * Asks the screen showing [id] to write what it shows and wait, so a change
+     * can be made under it; false when it cannot (it is not a screen that
+     * takes changes, or a stroke is being drawn and did not end in time).
+     */
+    fun hold(id: String): Boolean = false
+    /** Lets the screen held for [id] go on; [changed]: it reads the note again first. */
+    fun letGo(id: String, changed: Boolean) {}
 
     // What the commands added for agents (Todo.md Q1-Q5) need. Each has a do-nothing default, so a
     // workspace for tests gives only what its tests use.
@@ -334,6 +345,9 @@ private class Args(val positional: List<String>, val options: Map<String, String
         if (value !in range) throw CommandError("--$name goes from ${range.start.clean()} to ${range.endInclusive.clean()}.")
         value
     }
+    fun long(name: String): Long? = options[name]?.let { raw ->
+        raw.toLongOrNull()?.takeIf { it >= 0 } ?: throw CommandError("--$name wants a time as the \"modified\" number a note gives, not \"$raw\".")
+    }
     fun int(name: String, range: IntRange): Int? = options[name]?.let { raw ->
         val value = raw.toIntOrNull() ?: throw CommandError("--$name wants a whole number, not \"$raw\".")
         if (value !in range) throw CommandError("--$name goes from ${range.first} to ${range.last}.")
@@ -372,9 +386,9 @@ private fun Float.clean(): String = if (this == toInt().toFloat()) toInt().toStr
 internal val COMMAND_USAGE = linkedMapOf(
     "help" to "help [COMMAND]",
     "status" to "status",
-    "notes list" to "notes list [--folder PATH] [--tag TAG] [--search WORDS] [--trash] [--limit N] [--offset N] [--brief]",
+    "notes list" to "notes list [--folder PATH] [--tag TAG] [--search WORDS] [--since TIME] [--trash] [--limit N] [--offset N] [--brief]",
     "search" to "search WORDS [--limit N]   (titles, typed text, PDF text, handwriting read for search)",
-    "note read" to "note read NOTE [--pages 1-3,5] [--outline] [--text-only] [--sizes] [--max-chars N] [--from N]",
+    "note read" to "note read NOTE [--pages 1-3,5] [--outline] [--text-only] [--sizes] [--max-chars N] [--from N] [--since TIME]",
     "note new" to "note new TITLE [--folder PATH] [--paper blank|lined|grid|dot|narrow|cornell] [--pages N]",
     "note new-md" to "note new-md TITLE [--folder PATH] [--text TEXT]",
     "note dup" to "note dup NOTE [--title TITLE]",
@@ -437,7 +451,9 @@ internal val PAPER_NAMES = linkedMapOf(
  * serves; undo does not outlast it.
  */
 internal class NoteCommands(private val workspace: NoteWorkspace) {
-    private class Step(val id: Long, val label: String, val reverts: List<() -> Unit>, val releases: List<() -> Unit>)
+    private class Step(val id: Long, val label: String, val reverts: List<() -> Unit>, val releases: List<() -> Unit>,
+        /** The notes whose content it changed, for undo to hold their screens too. */
+        val notes: Set<String>)
     private class Done(
         val result: Any, val label: String? = null,
         /** Lets go of what [revert] kept, once it can no longer be called. */
@@ -447,6 +463,10 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
     )
 
     private val history = ArrayDeque<Step>()
+    /** Notes on screen held while this batch runs; let go, and read again if changed, when it ends. */
+    private val held = LinkedHashSet<String>()
+    /** Notes whose content this batch changed. */
+    private val touched = LinkedHashSet<String>()
     private var lastStepId = 0L
 
     /** How many changes [undo] can still take back. */
@@ -490,6 +510,21 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
      */
     @Synchronized
     fun runAll(lines: List<String>): String {
+        held.clear()
+        touched.clear()
+        var ok = false
+        try {
+            val answer = runBatch(lines)
+            ok = runCatching { JSONObject(answer).optBoolean("ok") }.getOrDefault(false)
+            return answer
+        } finally {
+            // A batch that failed was taken back on disk, which is what the screen still shows.
+            for (id in held) runCatching { workspace.letGo(id, changed = ok && id in touched) }
+            held.clear()
+        }
+    }
+
+    private fun runBatch(lines: List<String>): String {
         val commands = cleanLines(lines)
         if (commands.isEmpty()) return failure(CommandError("Nothing to do. `notesis help` lists the commands."))
         val done = mutableListOf<Done>()
@@ -514,7 +549,7 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
         if (changes.isNotEmpty()) {
             step = ++lastStepId
             history.addLast(Step(step, changes.joinToString("; ") { it.label.orEmpty() }, changes.map { it.revert!! },
-                changes.mapNotNull { it.release }))
+                changes.mapNotNull { it.release }, touched.toSet()))
             // A change too old to take back no longer needs the copy kept for it.
             while (history.size > UNDO_STEPS) history.removeFirst().releases.forEach { runCatching(it) }
         }
@@ -558,8 +593,8 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
             "status" -> status()
             "preview" -> preview(rest, usage)
             "search" -> search(args(setOf("limit")), usage)
-            "notes list" -> listNotes(args(setOf("folder", "tag", "search", "limit", "offset"), setOf("trash", "brief")))
-            "note read" -> readNote(args(setOf("pages", "max-chars", "from"), setOf("outline", "text-only", "sizes")), usage)
+            "notes list" -> listNotes(args(setOf("folder", "tag", "search", "limit", "offset", "since"), setOf("trash", "brief")))
+            "note read" -> readNote(args(setOf("pages", "max-chars", "from", "since"), setOf("outline", "text-only", "sizes")), usage)
             "note new" -> newNote(args(setOf("folder", "paper", "pages")), usage)
             "note new-md" -> newMarkdown(args(setOf("folder", "text")), usage)
             "note dup" -> duplicateNote(args(setOf("title")), usage)
@@ -618,7 +653,7 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
         return Done(JSONObject().apply {
             put("commands", JSONArray(shown))
             put("notes", "NOTE is a note's id or title. PAGE is a page number from 1, or last. " +
-                "Lines change stored notes only: a note open on screen is read, not changed. " +
+                "A note open on screen takes the change and shows it at once; one in a split part or the reference panel is only read. " +
                 "`undo` takes back the last change. A failure has a code (NOT_FOUND, AMBIGUOUS, OPEN_ON_SCREEN, ...) " +
                 "and, for a note not found, the notes it may have meant.")
         })
@@ -668,7 +703,12 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
         val search = args.text("search")?.let(::noteKey)
         val limit = args.int("limit", 1..MAX_LIST) ?: LIST_LIMIT
         val offset = args.int("offset", 0..Int.MAX_VALUE) ?: 0
-        val notes = (if (args.has("trash")) workspace.trashed() else workspace.notes()).filter { meta ->
+        val since = args.long("since")
+        val all = if (args.has("trash")) workspace.trashed() else workspace.notes()
+        // Ids shortened as far as they stay unique: a list of notes is mostly ids otherwise. Every command takes them.
+        val ids = shortIds(all.map { it.id })
+        val notes = all.filter { meta ->
+            (since == null || meta.modified > since) &&
             (folder == null || meta.folder == folder || meta.folder.startsWith("$folder/")) &&
                 (tag == null || meta.tags.any { it.equals(tag, ignoreCase = true) }) &&
                 (search == null || noteKey(meta.title).contains(search))
@@ -678,7 +718,7 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
             put("total", notes.size)
             put("count", shown.size)
             if (offset > 0) put("offset", offset)
-            put("notes", JSONArray(shown.map { if (args.has("brief")) briefJson(it) else noteJson(it) }))
+            put("notes", JSONArray(shown.map { (if (args.has("brief")) briefJson(it) else noteJson(it)).put("id", ids[it.id] ?: it.id) }))
             if (offset + shown.size < notes.size) put("next", "--offset ${offset + shown.size}")
         })
     }
@@ -690,12 +730,13 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
         if (meta.folder.isNotEmpty()) put("folder", meta.folder)
     }
 
+    // What is empty or usual is left out: an agent pays for every field of every note.
     private fun noteJson(meta: NoteMeta): JSONObject = JSONObject().apply {
         put("id", meta.id)
         put("title", meta.title)
-        put("kind", meta.kind.name.lowercase())
-        put("folder", meta.folder)
-        put("tags", JSONArray(meta.tags))
+        if (meta.kind == NoteKind.MARKDOWN) put("kind", "markdown")
+        if (meta.folder.isNotEmpty()) put("folder", meta.folder)
+        if (meta.tags.isNotEmpty()) put("tags", JSONArray(meta.tags))
         if (meta.kind == NoteKind.INK) put("pages", meta.pageCount)
         put("modified", meta.modified)
         if (meta.favorite) put("favorite", true)
@@ -705,6 +746,10 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
     private fun readNote(args: Args, usage: String): Done {
         val meta = note(args, usage)
         if (meta.locked) throw CommandError("\"${meta.title}\" is locked. Open it in the app with the password.", code = "LOCKED")
+        // Read before and not changed since: said in a word rather than given again.
+        args.long("since")?.let { since ->
+            if (meta.modified in 1..since) return Done(JSONObject().put("id", meta.id).put("unchanged", true).put("modified", meta.modified))
+        }
         val json = noteJson(meta)
         val budget = args.int("max-chars", MIN_BUDGET..MAX_BUDGET) ?: READ_BUDGET
         if (meta.kind == NoteKind.MARKDOWN) {
@@ -979,7 +1024,10 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
     // ---- changing ------------------------------------------------------------
 
     private fun undo(): Done {
-        val step = history.removeLastOrNull() ?: throw CommandError("There is nothing to undo.")
+        val step = history.lastOrNull() ?: throw CommandError("There is nothing to undo.")
+        // A note on screen is held as for any change, before anything is taken back.
+        for (id in step.notes) workspace.notes().firstOrNull { it.id == id }?.let(::holdIfOpen)
+        history.removeLast()
         for (revert in step.reverts.asReversed()) revert()
         step.releases.forEach { runCatching(it) }
         return Done(JSONObject().put("undone", step.label))
@@ -996,7 +1044,7 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
     }
 
     private fun moveNote(args: Args, usage: String): Done {
-        val meta = changeable(args, usage)
+        val meta = filable(args, usage)
         val raw = args.positional.getOrNull(1) ?: throw CommandError("Give the folder, or / for the top level.", usage)
         val folder = normalizeFolderPath(raw) ?: ""
         workspace.setFolder(meta.id, folder)
@@ -1005,7 +1053,7 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
     }
 
     private fun tagNote(args: Args, usage: String): Done {
-        val meta = changeable(args, usage)
+        val meta = filable(args, usage)
         val tags = if (args.has("clear")) mutableListOf() else meta.tags.toMutableList()
         val changes = args.positional.drop(1)
         if (changes.isEmpty() && !args.has("clear")) throw CommandError("Give tags to add (+tag) or take off (-tag).", usage)
@@ -1022,7 +1070,9 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
     }
 
     private fun trashNote(args: Args, usage: String): Done {
-        val meta = changeable(args, usage)
+        val meta = filable(args, usage)
+        if (workspace.isOpen(meta.id)) throw CommandError("\"${meta.title}\" is open on screen; a note being looked at is not put in the trash. " +
+            "Ask the owner to close it.", code = "OPEN_ON_SCREEN")
         workspace.trash(meta.id)
         return Done(JSONObject().put("id", meta.id).put("trashed", true)
             .put("note", "In the trash: `notesis note restore` or undo brings it back."),
@@ -1223,7 +1273,7 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
     }
 
     private fun favoriteNote(args: Args, usage: String): Done {
-        val meta = changeable(args, usage)
+        val meta = filable(args, usage)
         val on = !args.has("off")
         workspace.setFavorite(meta.id, on)
         return Done(JSONObject().put("id", meta.id).put("favorite", on),
@@ -1231,7 +1281,7 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
     }
 
     private fun labelNote(args: Args, usage: String): Done {
-        val meta = changeable(args, usage)
+        val meta = filable(args, usage)
         val raw = args.positional.getOrNull(1) ?: throw CommandError("Give the colour, or none.", usage)
         val color = if (raw.equals("none", ignoreCase = true)) 0 else commandColor(raw)
         workspace.setLabel(meta.id, color)
@@ -1265,10 +1315,7 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
         val folders = workspace.folders()
         if (from !in folders) throw CommandError("There is no folder \"$from\".", code = "NOT_FOUND",
             candidates = folders.filter { noteKey(it).contains(noteKey(from.substringAfterLast('/'))) }.take(5))
-        // Moving a folder rewrites each of its notes' files; one open on screen would write its old folder back.
-        workspace.notes().firstOrNull { isInFolder(it.folder, from) && workspace.isOpen(it.id) }?.let {
-            throw CommandError("\"${it.title}\" in that folder is open on screen. Close it first.", code = "OPEN_ON_SCREEN")
-        }
+        // A note on screen in it is fine: its saves read its folder back from disk rather than writing their own.
         if (!workspace.renameFolder(from, to)) throw CommandError("The folder could not be moved to \"$to\"; is there one already?")
         return Done(JSONObject().put("from", from).put("to", to), "move the folder \"$from\" to \"$to\"") { workspace.renameFolder(to, from) }
     }
@@ -1416,11 +1463,31 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
         if (it.locked) throw CommandError("\"${it.title}\" is locked.")
     }
 
-    /** A note this line may change: not locked, and not open on screen. */
-    private fun changeable(args: Args, usage: String): NoteMeta = note(args, usage).also {
+    /** A note whose content this line may change: not locked, and, when it is on screen, with its screen held (see [holdIfOpen]). */
+    private fun changeable(args: Args, usage: String): NoteMeta = filable(args, usage).also(::holdIfOpen)
+
+    /**
+     * A note this line may file (folder, tags, favourite, label): not locked.
+     * These live beside the note and its screen's saves read them back, so
+     * one on screen needs no holding.
+     */
+    private fun filable(args: Args, usage: String): NoteMeta = note(args, usage).also {
         if (it.locked) throw CommandError("\"${it.title}\" is locked.", code = "LOCKED")
-        if (workspace.isOpen(it.id)) throw CommandError("\"${it.title}\" is open on screen. Close it first; it would write over the change.",
+    }
+
+    /**
+     * When [meta] is on screen, holds its screen for the rest of the batch: it
+     * writes what it shows and waits, so the change is made on what the owner
+     * sees and is not written over; the screen reads the note again when the
+     * batch ends. A screen that cannot be held refuses the change.
+     */
+    private fun holdIfOpen(meta: NoteMeta) {
+        touched += meta.id
+        if (meta.id in held || !workspace.isOpen(meta.id)) return
+        if (!workspace.hold(meta.id)) throw CommandError("\"${meta.title}\" is on screen where it cannot take a change now: in a part of a split " +
+            "or the reference panel, or a stroke is being written. Try again in a moment, or ask the owner to open it on its own.",
             code = "OPEN_ON_SCREEN")
+        held += meta.id
     }
 
     /**
@@ -1446,11 +1513,11 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
     companion object {
         const val UNDO_STEPS = 20
         /** How much a read gives at once, in characters, unless asked for more or less: about what an agent can take in without trouble. */
-        const val READ_BUDGET = 20_000
+        const val READ_BUDGET = 12_000
         const val PDF_TEXT_BUDGET = 12_000
         const val MIN_BUDGET = 500
         const val MAX_BUDGET = 200_000
-        const val LIST_LIMIT = 50
+        const val LIST_LIMIT = 30
         const val MAX_LIST = 500
         const val SEARCH_LIMIT = 30
         const val MAX_SEARCH = 200
@@ -1579,4 +1646,18 @@ internal fun commandQuote(text: String): String =
 private fun snippetOf(text: String, max: Int = 60): String {
     val one = text.replace('\n', ' ').trim()
     return if (one.length <= max) one else one.take(max - 1) + "…"
+}
+
+/**
+ * Each of [ids] cut to the shortest start that no other one shares, and no
+ * shorter than [min]: "3f9c2a71" for a 36-letter id. Any command takes a start
+ * of an id of four letters or more, so the short one names the note as well.
+ */
+internal fun shortIds(ids: List<String>, min: Int = 8): Map<String, String> {
+    val sorted = ids.distinct().sorted()
+    fun shared(a: String, b: String): Int { var n = 0; while (n < a.length && n < b.length && a[n] == b[n]) n++; return n }
+    return sorted.withIndex().associate { (i, id) ->
+        val need = maxOf(sorted.getOrNull(i - 1)?.let { shared(it, id) } ?: 0, sorted.getOrNull(i + 1)?.let { shared(it, id) } ?: 0) + 1
+        id to id.take(maxOf(min, need).coerceAtMost(id.length))
+    }
 }

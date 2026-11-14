@@ -8,6 +8,10 @@ internal class MemoryNotes : NoteWorkspace {
     val ink = mutableMapOf<String, Int>()
     val texts = mutableMapOf<String, String>()
     var open: String? = null
+    /** Whether the screen showing [open] can be held for a change (the note screen can; a split part cannot). */
+    var live = true
+    /** Each hold and letting go of a screen, in order: "hold n1", "let go n1 changed". */
+    val screen = mutableListOf<String>()
     var saves = 0
     /** Each PDF note's page texts, by PDF page, and its bookmarks. */
     val pdfTexts = mutableMapOf<String, List<String>>()
@@ -115,4 +119,6 @@ internal class MemoryNotes : NoteWorkspace {
     override fun copyImage(id: String, imageId: String) = "copy-$imageId"
     override fun shareFile(path: String): String { val out = "/shared/" + path.substringAfterLast('/'); shared += out; return out }
     override fun unshareFile(path: String) { shared -= path }
+    override fun hold(id: String): Boolean { if (!live) return false; screen += "hold $id"; return true }
+    override fun letGo(id: String, changed: Boolean) { screen += "let go $id" + if (changed) " changed" else "" }
 }

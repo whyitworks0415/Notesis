@@ -86,16 +86,33 @@ internal fun deviceAddresses(): List<String> = runCatching {
 }.getOrDefault(emptyList())
 
 /** The command help an agent is given: how each line is written, and the rules the app keeps. */
-internal fun agentHelp(): String = buildString {
+/**
+ * The help an agent reads: with no [topic], the commands and the rules, kept
+ * short since every new session reads it; "recipes" for the step-by-step
+ * ways to common tasks; any other word, the commands that start with it.
+ */
+internal fun agentHelp(topic: String = ""): String = buildString {
+    val wanted = topic.trim().lowercase()
+    if (wanted == "recipes") {
+        append(AGENT_GUIDE.substringAfter("## Recipes").let { "Recipes" + it }).append('\n')
+        return@buildString
+    }
+    if (wanted.isNotEmpty()) {
+        val shown = COMMAND_USAGE.filterKeys { it.startsWith(wanted) }.values
+        if (shown.isEmpty()) append("No command starts with \"$topic\". notesis_help with no topic lists them all.\n")
+        for (usage in shown) append(usage).append('\n')
+        return@buildString
+    }
     append("Notesis note commands. Pass them, one per string, in the commands list of notesis_run.\n\n")
     for (usage in COMMAND_USAGE.values) append("  ").append(usage).append('\n')
-    append("\nNOTE is a note's id or title. PAGE is a page number from 1, or last.\n")
+    append("\nNOTE is a note's id (or its first 8 letters) or title. PAGE is a page number from 1, or last.\n")
     append("Several lines run as one batch: if one fails, the ones before it are taken back.\n")
-    append("A note open on the screen can only be read. Deleting only moves a note to the trash.\n")
+    append("A note open on screen takes changes and shows them at once (not one in a split part or the reference panel). ")
+    append("Deleting only moves a note to the trash.\n")
     append("`undo` takes back the latest change. The owner may be asked before a change; a refusal is final for that request.\n")
     append("A failure carries a code: NOT_FOUND, AMBIGUOUS (with candidates), OPEN_ON_SCREEN, LOCKED, BAD_PAGE, NO_PDF, NO_OUTLINE, ")
-    append("NOT_SUPPORTED, NOT_READY, UNKNOWN_COMMAND or INVALID.\n\n")
-    append(AGENT_GUIDE.substringAfter("## Recipes").let { "Recipes" + it }).append('\n')
+    append("NOT_SUPPORTED, NOT_READY, UNKNOWN_COMMAND or INVALID.\n")
+    append("Read a note again only if it changed: note read NOTE --since MODIFIED. Recipes for common tasks: notesis_help with topic \"recipes\".\n")
 }
 
 /** Runs the server for as long as the connection is on, and says how it is doing. */
@@ -134,11 +151,13 @@ internal object AgentRuntime {
         val tools = object : McpTools {
             override fun run(lines: List<String>, client: String): String {
                 val answer = gateway.run(lines, client)
+                // Shown in the sidebar while it waits: what the agent is doing with the notes.
+                AgentActivity.add(lines, runCatching { org.json.JSONObject(answer).optBoolean("ok") }.getOrDefault(false))
                 // The library reads its notes again, whoever changed them.
                 if (terminalChangedNotes(answer)) main.post { LibraryChanges.changed() }
                 return answer
             }
-            override fun help(): String = agentHelp()
+            override fun help(topic: String): String = agentHelp(topic)
         }
         val version = runCatching { app.packageManager.getPackageInfo(app.packageName, 0).versionName }.getOrNull() ?: "0"
         val protocol = McpProtocol(tools, version) { _, sent, answered, images -> AgentUsage.add(sent, answered, images) }

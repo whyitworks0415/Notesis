@@ -10,6 +10,8 @@
     <!-- The agent connection (note commands over MCP) is kept alive by a foreground service while another app is in front. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- The agent sidebar asks Termux to run the agent there (AgentChat.kt); the owner allows it once. -->
+    <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <!-- An update downloaded from the GitHub releases is handed to the system installer. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
@@ -80,6 +82,11 @@
             android:foregroundServiceType="microphone" />
 
         <!-- Listens on this device for an agent that reads and changes notes through the note commands. Off until switched on. -->
+        <!-- Termux's answer to a request from the agent sidebar, sent back by the PendingIntent it was given. -->
+        <receiver
+            android:name=".AgentChatResultReceiver"
+            android:exported="false" />
+
         <service
             android:name=".AgentService"
             android:exported="false"

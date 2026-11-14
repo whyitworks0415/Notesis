@@ -33,6 +33,9 @@ internal class NoteStoreWorkspace(
     override fun notes(): List<NoteMeta> = store.list()
     override fun trashed(): List<NoteMeta> = store.trashed()
     override fun isOpen(id: String): Boolean = isOpenNote(id)
+    // The screen writes what it shows; what it wrote is on disk before anything is copied for undo or changed.
+    override fun hold(id: String): Boolean = LiveNotes.hold(id).also { if (it) store.settled() }
+    override fun letGo(id: String, changed: Boolean) = LiveNotes.letGo(id, changed)
     // A note closed a moment ago may still be on its way to disk; what is read is what it was left as.
     override fun load(id: String): Document { store.settled(); return store.load(id) }
     override fun save(id: String, title: String, document: Document) = store.save(id, title, document)

@@ -40,10 +40,37 @@ class AgentCommandsTest {
     }
 
     @Test
-    fun `a note open on screen fails with its own code`() {
-        val memory = MemoryNotes().apply { add("n1", "Maths"); open = "n1" }
-        val refused = failure(NoteCommands(memory), "page add Maths")
-        assertEquals("OPEN_ON_SCREEN", refused.getString("code"))
+    fun `a change to a note on screen holds the screen, and it reads the note again after`() {
+        val memory = MemoryNotes().apply { add("n1", "Maths"); add("n2", "Diary"); open = "n1" }
+        val commands = NoteCommands(memory)
+        assertTrue(json(commands.runAll(listOf("page add Maths", "toc set Maths 1 Start", "page add Diary"))).getBoolean("ok"))
+        // Held once for the whole batch, before anything was changed, and let go after with word to read it again.
+        assertEquals(listOf("hold n1", "let go n1 changed"), memory.screen)
+        assertEquals(4, memory.pages.getValue("n1").size)
+        memory.screen.clear()
+        commands.run("undo")
+        assertEquals(listOf("hold n1", "let go n1 changed"), memory.screen)
+        assertEquals(3, memory.pages.getValue("n1").size)
+        // A batch that fails is taken back, which is what the screen shows still: it is not read again.
+        memory.screen.clear()
+        assertFalse(json(commands.runAll(listOf("page add Maths", "page rm Maths 40"))).getBoolean("ok"))
+        assertEquals(listOf("hold n1", "let go n1"), memory.screen)
+        // Reading holds nothing.
+        memory.screen.clear()
+        commands.run("note read Maths")
+        assertTrue(memory.screen.isEmpty())
+    }
+
+    @Test
+    fun `filing a note on screen needs no hold, and one on screen is not put in the trash`() {
+        val memory = MemoryNotes().apply { add("n1", "Maths"); open = "n1"; live = false }
+        val commands = NoteCommands(memory)
+        assertTrue(json(commands.run("note mv Maths School")).getBoolean("ok"))
+        assertTrue(json(commands.run("note tag Maths exam")).getBoolean("ok"))
+        assertTrue(json(commands.run("note fav Maths")).getBoolean("ok"))
+        assertTrue(memory.screen.isEmpty())
+        assertEquals("OPEN_ON_SCREEN", failure(commands, "note trash Maths").getString("code"))
+        assertFalse("n1" in memory.trash)
     }
 
     @Test
@@ -251,8 +278,10 @@ class AgentCommandsTest {
         assertFalse("Home/Recipes" in memory.folders())
         assertEquals(0, memory.metas.getValue("n1").label)
         assertFalse(memory.metas.getValue("n1").favorite)
+        // A note on screen in the folder moves with it: its saves read its folder back.
         memory.open = "n1"
-        assertEquals("OPEN_ON_SCREEN", failure(commands, "folder rename School Uni").getString("code"))
+        assertTrue(json(commands.run("folder rename School Uni")).getBoolean("ok"))
+        assertEquals("Uni/Maths", memory.metas.getValue("n1").folder)
     }
 
     @Test
@@ -387,5 +416,72 @@ class AgentCommandsTest {
                 commands.run("undo")
             }
         }
+    }
+
+    // ---- fewer tokens ----
+
+    @Test
+    fun `ids are cut as short as they stay apart`() {
+        val ids = shortIds(listOf("3f9c2a71-aaaa", "3f9c2a71-bbbb", "77aa0000-cccc", "ab"))
+        assertEquals("3f9c2a71-a", ids["3f9c2a71-aaaa"])
+        assertEquals("3f9c2a71-b", ids["3f9c2a71-bbbb"])
+        assertEquals("77aa0000", ids["77aa0000-cccc"])
+        assertEquals("ab", ids["ab"])
+        // A cut id names its note.
+        val notes = listOf(NoteMeta("77aa0000-cccc-dddd", "Maths", 0, 1, 0))
+        assertEquals("Maths", findNote(shortIds(notes.map { it.id }).values.single(), notes).title)
+    }
+
+    @Test
+    fun `a note read before and not changed since is said to be unchanged`() {
+        val memory = MemoryNotes().apply { add("n1", "Maths", modified = 500L); add("n2", "Diary", modified = 900L) }
+        val commands = NoteCommands(memory)
+        val same = result(commands, "note read Maths --since 500")
+        assertTrue(same.getBoolean("unchanged"))
+        assertFalse(same.has("pages"))
+        assertTrue(result(commands, "note read Maths --since 400").has("pages"))
+        val newer = result(commands, "notes list --since 600").getJSONArray("notes")
+        assertEquals(1, newer.length())
+        assertEquals("Diary", newer.getJSONObject(0).getString("title"))
+    }
+
+    @Test
+    fun `empty fields are left out of a note`() {
+        val note = result(NoteCommands(MemoryNotes().apply { add("n1", "Maths") }), "notes list").getJSONArray("notes").getJSONObject(0)
+        assertFalse(note.has("folder"))
+        assertFalse(note.has("tags"))
+        assertFalse(note.has("kind"))
+        assertEquals(3, note.getInt("pages"))
+    }
+
+    @Test
+    fun `help comes whole, by command, or as recipes`() {
+        val all = agentHelp()
+        for (usage in COMMAND_USAGE.values) assertTrue(usage, all.contains(usage))
+        assertFalse(all.contains("Outline a PDF note"))
+        val pdf = agentHelp("pdf")
+        assertTrue(pdf.contains("pdf text") && !pdf.contains("note read"))
+        assertTrue(agentHelp("recipes").contains("Outline a PDF note"))
+        assertTrue(agentHelp("nothing").startsWith("No command"))
+    }
+
+    // ---- the agent sidebar's requests ----
+
+    @Test
+    fun `a request goes to Termux as fixed words, the owner's words on its input`() {
+        val words = agentAskArguments(AgentCli.CLAUDE, carryOn = true)
+        assertEquals(listOf("login", "debian", "--", "bash", ASK_HELPER, "claude", "continue"), words)
+        assertTrue(words.none { it.contains(' ') })
+        assertEquals(listOf("login", "debian", "--", "bash", ASK_HELPER, "gemini"), agentAskArguments(AgentCli.GEMINI, carryOn = false))
+        assertEquals("[Notesis: the note on screen is \"Maths\" (id 3f9c2a71).]\nAdd an outline", askText(" Add an outline ", "Maths", "3f9c2a71-aaaa"))
+        assertEquals("Hi", askText("Hi", null, null))
+    }
+
+    @Test
+    fun `Termux's answers are put in words`() {
+        assertEquals("Done." to false, askReply("Done.\n", "", 0, 0, ""))
+        assertTrue(askReply("", "", -1, 2, "Termux RUN_COMMAND: allow-external-apps is not true").first.contains("setup script"))
+        assertTrue(askReply("", "bash: /root/.notesis/ask: No such file or directory", 127, 0, "").first.contains("helper"))
+        assertEquals("boom" to true, askReply("", "boom", 1, 0, ""))
     }
 }

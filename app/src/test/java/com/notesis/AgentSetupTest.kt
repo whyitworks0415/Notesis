@@ -34,7 +34,7 @@ class AgentSetupTest {
         assertTrue(script.contains("claude mcp add --scope user notesis -- node \"\$BRIDGE\""))
         assertTrue(script.contains("export TMPDIR=\"\$HOME/.notesis/tmp\""))
         assertTrue(script.contains("[mcp_servers.notesis]"))
-        assertFalse(script.contains("opencode"))
+        assertFalse(script.contains("npm install -g opencode-ai"))
         assertTrue(script.contains(bridge.trimEnd('\n')))
         assertTrue(script.contains("printf '%s' '$token'"))
         assertTrue(script.contains("then claude or codex."))
@@ -133,6 +133,18 @@ class AgentSetupTest {
             assertTrue(claudeMd.contains("toc import-pdf"))
             for (agent in AgentCli.entries - AgentCli.CLAUDE) assertEquals(agent.guide, withGuide(""), File(home, agent.guide).readText())
             assertEquals(withGuide("Answer in Korean.\n"), claudeMd)
+            // Termux takes the sidebar's requests, set once however often the setup ran, and the helper they go through is there.
+            assertEquals(1, File(home, ".termux/termux.properties").readLines().count { it == "allow-external-apps = true" })
+            assertEquals(ASK_HELPER_SCRIPT + "\n", File(home, ".notesis/ask").readText())
+            assertTrue(JSONObject(File(home, ".gemini/settings.json").readText()).getJSONObject("mcpServers").getJSONObject("notesis").getBoolean("trust"))
+            // The helper hands the request to the agent as one word, whatever is in it.
+            val asked = ProcessBuilder("bash", File(home, ".notesis/ask").path, "claude", "continue").redirectErrorStream(true)
+            asked.environment().apply { put("HOME", home.path); put("PATH", bin.path + ":" + get("PATH")) }
+            val ask = asked.start()
+            ask.outputStream.use { it.write("Add \"an\" outline; \$(rm -rf ~)".toByteArray()) }
+            assertEquals(0, ask.waitFor())
+            assertTrue(log.readLines().last(), log.readLines().last() == "claude -p Add \"an\" outline; \$(rm -rf ~) " +
+                "--allowedTools mcp__notesis__notesis_run,mcp__notesis__notesis_help --continue")
             // The temporary folder the installs used is gone.
             assertFalse(File(home, ".notesis/tmp").exists())
         } finally {
@@ -192,7 +204,7 @@ class AgentSetupTest {
         val seen = java.util.Collections.synchronizedList(mutableListOf<Pair<List<String>, String>>())
         val tools = object : McpTools {
             override fun run(lines: List<String>, client: String): String { seen += lines to client; return "{\"ok\":true,\"result\":{\"lines\":${lines.size}}}" }
-            override fun help() = "the help"
+            override fun help(topic: String) = "the help"
         }
         val server = AgentServer({ token }, McpProtocol(tools, "1"), lan = false)
         val port = server.start(0)

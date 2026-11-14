@@ -61,6 +61,12 @@ internal fun termuxSetupScript(agents: Set<AgentCli>, url: String, token: String
         appendLine("set -e")
         appendLine("pkg update -y")
         appendLine("pkg install -y proot-distro")
+        // So the agent sidebar in Notesis can ask Termux to run an agent: only apps the owner gave the
+        // "run commands in Termux" permission may, and Notesis is the one this is for.
+        appendLine("mkdir -p \"\$HOME/.termux\"")
+        appendLine("grep -q '^allow-external-apps *= *true' \"\$HOME/.termux/termux.properties\" 2>/dev/null || " +
+            "echo 'allow-external-apps = true' >> \"\$HOME/.termux/termux.properties\"")
+        appendLine("termux-reload-settings >/dev/null 2>&1 || true")
         // Whether Debian is there is asked by going in, not by looking for its folder: where proot-distro keeps it changed between versions,
         // and installing over one that exists is an error.
         appendLine("if ! proot-distro login debian -- true >/dev/null 2>&1; then proot-distro install debian; fi")
@@ -81,6 +87,11 @@ internal fun termuxSetupScript(agents: Set<AgentCli>, url: String, token: String
         append(bridge.trimEnd('\n')).append('\n')
         appendLine("NOTESIS_BRIDGE")
         appendLine("BRIDGE=\"\$HOME/.notesis/notesis-mcp.js\"")
+        // The helper the sidebar's requests go through (AgentChat.kt): the request on its input, never on a command line.
+        appendLine("cat > \"\$HOME/.notesis/ask\" <<'NOTESIS_ASK'")
+        append(ASK_HELPER_SCRIPT.trimEnd('\n')).append('\n')
+        appendLine("NOTESIS_ASK")
+        appendLine("chmod 700 \"\$HOME/.notesis/ask\"")
         // What each agent is told about the notes, in its own instructions file; setting up again replaces only this part.
         appendLine("cat > \"\$HOME/.notesis/guide.md\" <<'NOTESIS_GUIDE'")
         append(AGENT_GUIDE.trimEnd('\n')).append('\n')
@@ -109,7 +120,7 @@ internal fun termuxSetupScript(agents: Set<AgentCli>, url: String, token: String
                 AgentCli.GEMINI -> {
                     appendLine("  node -e 'const fs=require(\"fs\"),path=require(\"path\"),p=process.argv[1];let c={};" +
                         "try{c=JSON.parse(fs.readFileSync(p,\"utf8\"))}catch(e){}c.mcpServers=c.mcpServers||{};" +
-                        "c.mcpServers.notesis={command:\"node\",args:[process.argv[2]]};" +
+                        "c.mcpServers.notesis={command:\"node\",args:[process.argv[2]],trust:true};" +
                         "fs.mkdirSync(path.dirname(p),{recursive:true});fs.writeFileSync(p,JSON.stringify(c,null,2)+\"\\n\")' " +
                         "\"\$HOME/.gemini/settings.json\" \"\$BRIDGE\" || FAILED=\"\$FAILED ${agent.label}(connect)\"")
                 }

@@ -14,7 +14,7 @@ class McpProtocolTest {
         val calls = mutableListOf<Pair<List<String>, String>>()
         var answer = "{\"ok\":true,\"result\":{}}"
         override fun run(lines: List<String>, client: String): String { calls += lines to client; return answer }
-        override fun help() = "help text"
+        override fun help(topic: String) = "help text"
     }
 
     private val tools = Tools()

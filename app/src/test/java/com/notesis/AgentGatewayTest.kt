@@ -150,12 +150,17 @@ class AgentGatewayTest {
     }
 
     @Test
-    fun `a note on screen is still only read, whatever the owner allowed`() {
-        val memory = memory().apply { open = "n1" }
+    fun `a note on screen that cannot be held is only read, whatever the owner allowed`() {
+        val memory = memory().apply { open = "n1"; live = false }
         val out = JSONObject(gateway(memory, AgentPolicy.AUTO).run(listOf("page add Maths"), "Agent"))
         assertFalse(out.getBoolean("ok"))
-        assertTrue(out.getString("error").contains("open on screen"))
+        assertEquals("OPEN_ON_SCREEN", out.getString("code"))
         assertTrue(ChangeLog.all().isEmpty())
+        // On a screen that takes changes it goes through like any other, and is kept for its card.
+        memory.live = true
+        assertTrue(JSONObject(gateway(memory, AgentPolicy.AUTO).run(listOf("page add Maths"), "Agent")).getBoolean("ok"))
+        assertEquals(listOf("hold n1", "let go n1 changed"), memory.screen)
+        assertEquals(1, ChangeLog.all().size)
     }
 
     @Test
