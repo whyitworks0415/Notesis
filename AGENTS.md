@@ -149,7 +149,11 @@ This branch builds the original **Notesis** (`com.notesis`), promoted from the
 validated Lab work at the owner's request. Keep its existing data directory,
 widget actions, signing lineage and ordinary update channel. Lab stays in the
 separate `com.notesis.lab` installation and its preview tags must remain excluded
-from the normal feed. Source stays private; only release assets are public.
+from the normal feed. The source repository was made public by the owner on
+2026-11-14 (Actions minutes for a private one ran out); releases still go to
+`Notesis-releases` as well. Nothing secret goes in it: the signing key and its
+password, tokens and the developer code live only in GitHub secrets or on the
+device. The key in old history (before 0.83.0) was retired then.
 
 Run `bash tools/performance-lab/check-native.sh` before
 `./gradlew testDebugUnitTest -Pnotesis.hostNativeDir="$PWD/build/host-native"`.
