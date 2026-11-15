@@ -709,6 +709,17 @@ class PenStore(context: Context) {
         get() = prefs.getString(REFERENCE_NOTE, null)
         set(value) = prefs.edit().putString(REFERENCE_NOTE, value).apply()
 
+    /**
+     * The size the owner last gave the reference panel, in dp (so it holds when the
+     * screen's density changes); 0 for the size it starts at.
+     */
+    var referenceWidthDp: Float
+        get() = prefs.getFloat(REFERENCE_WIDTH, 0f)
+        set(value) = prefs.edit().putFloat(REFERENCE_WIDTH, value).apply()
+    var referenceHeightDp: Float
+        get() = prefs.getFloat(REFERENCE_HEIGHT, 0f)
+        set(value) = prefs.edit().putFloat(REFERENCE_HEIGHT, value).apply()
+
     /** Whether the reference panel refits its page whenever it is resized. */
     var referenceFit: Boolean
         get() = prefs.getBoolean(REFERENCE_FIT, true)
@@ -776,6 +787,8 @@ class PenStore(context: Context) {
         private const val LAST_PAGE = "lastPage:"
         private const val REFERENCE_NOTE = "referenceNote"
         private const val REFERENCE_FIT = "referenceFit"
+        private const val REFERENCE_WIDTH = "referenceWidthDp"
+        private const val REFERENCE_HEIGHT = "referenceHeightDp"
 
         /** How many whole pens [savedPens] keeps for one tool. */
         const val MAX_SAVED_PENS = 12

@@ -76,13 +76,18 @@ internal fun askText(words: String, noteTitle: String?, noteId: String?): String
     if (noteTitle == null || noteId == null) words.trim()
     else "[Notesis: the note on screen is \"$noteTitle\" (id ${noteId.take(8)}).]\n" + words.trim()
 
+/** What Termux reports for a command it ran (Activity.RESULT_OK). */
+internal const val TERMUX_OK = -1
+
 /** What came back from Termux, as the sidebar says it. */
 internal fun askReply(stdout: String, stderr: String, exitCode: Int, error: Int, errorMessage: String): Pair<String, Boolean> {
     val out = stdout.trim()
+    // Termux says a command ran with Android's RESULT_OK, -1, not with 0; either is no error of Termux's own.
+    val termuxFailed = error != TERMUX_OK && error != 0
     return when {
-        error != 0 && errorMessage.contains("allow-external-apps", ignoreCase = true) ->
+        termuxFailed && errorMessage.contains("allow-external-apps", ignoreCase = true) ->
             "Termux does not take commands from other apps yet. Run the setup script again in Termux (Agent connection → On this tablet); it turns that on." to true
-        error != 0 -> ("Termux could not run it: " + errorMessage.ifBlank { "error $error" }) to true
+        termuxFailed && out.isEmpty() -> ("Termux could not run it: " + errorMessage.ifBlank { "error $error" }) to true
         exitCode == 127 || stderr.contains("No such file") && stderr.contains(".notesis/ask") ->
             "The agent helper is not in Debian yet. Run the setup script again in Termux (Agent connection → On this tablet)." to true
         exitCode != 0 && out.isEmpty() -> (stderr.trim().takeLast(800).ifBlank { "The agent stopped with code $exitCode." }) to true
@@ -230,7 +235,7 @@ class AgentChatResultReceiver : BroadcastReceiver() {
         val stdout = result.getString("stdout").orEmpty()
         val stderr = result.getString("stderr").orEmpty()
         val exit = result.getInt("exitCode", -1)
-        val err = result.getInt("err", 0)
+        val err = result.getInt("err", TERMUX_OK)
         val errmsg = result.getString("errmsg").orEmpty()
         android.os.Handler(android.os.Looper.getMainLooper()).post {
             AgentChat.finish(context, id, stdout, stderr, exit, err, errmsg)

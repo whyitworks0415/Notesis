@@ -4529,9 +4529,16 @@ private fun NoteScreen(
     // keeps whatever zoom it was put at.
     var referenceFit by remember { mutableStateOf(penStore.referenceFit) }
     var referenceOffset by remember { mutableStateOf(Offset.Zero) }
-    var referenceSize by remember {
-        mutableStateOf(with(density) { Size(340.dp.toPx(), 440.dp.toPx()) })
+    // The size the owner gave it, kept between openings; what is shown is that, made to fit the window.
+    // Kept apart, so a window made smaller for a moment (a sidebar, the keyboard, a split) does not
+    // leave the panel small once it is big again.
+    var referenceWanted by remember {
+        mutableStateOf(with(density) {
+            Size(penStore.referenceWidthDp.takeIf { it > 0f }?.dp?.toPx() ?: 340.dp.toPx(),
+                penStore.referenceHeightDp.takeIf { it > 0f }?.dp?.toPx() ?: 440.dp.toPx())
+        })
     }
+    var referenceSize by remember { mutableStateOf(referenceWanted) }
     // A resize from one of the panel's four corners: the outline of where it
     // will be, and the drag so far. Folded into the place and size when the
     // hand lifts, so the page inside is laid out once, at its new size.
@@ -4555,7 +4562,7 @@ private fun NoteScreen(
         if (containerSize.width <= 0 || containerSize.height <= 0) return@LaunchedEffect
         val minSize = with(density) { REFERENCE_MIN_SIZE.toPx() }
         val kept = clampPanel(
-            PanelBounds(referenceOffset.x, referenceOffset.y, referenceSize.width, referenceSize.height),
+            PanelBounds(referenceOffset.x, referenceOffset.y, referenceWanted.width, referenceWanted.height),
             containerSize.width.toFloat(), containerSize.height.toFloat(), minSize,
         )
         referenceOffset = Offset(kept.left, kept.top)
@@ -7595,6 +7602,12 @@ private fun NoteScreen(
                         val widthFactor = draft.width / referenceSize.width
                         referenceOffset = Offset(draft.left, draft.top)
                         referenceSize = Size(draft.width, draft.height)
+                        // The size chosen by hand is the one kept, and the one the panel opens at next time.
+                        referenceWanted = referenceSize
+                        with(density) {
+                            penStore.referenceWidthDp = draft.width.toDp().value
+                            penStore.referenceHeightDp = draft.height.toDp().value
+                        }
                         // Spent by the view when the new size arrives.
                         if (abs(widthFactor - 1f) > 0.001f) view?.onNextResize(widthFactor, fitInstead = referenceFit)
                     }

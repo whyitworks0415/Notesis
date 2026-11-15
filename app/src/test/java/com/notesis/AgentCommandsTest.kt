@@ -480,6 +480,9 @@ class AgentCommandsTest {
     @Test
     fun `Termux's answers are put in words`() {
         assertEquals("Done." to false, askReply("Done.\n", "", 0, 0, ""))
+        // Termux reports a command it ran as -1 (Android's RESULT_OK): the agent's answer, not an error.
+        assertEquals("Put 12 entries in the outline." to false, askReply("Put 12 entries in the outline.\n", "", 0, TERMUX_OK, ""))
+        assertTrue(askReply("", "", -1, 1, "Failed to execute").second)
         assertTrue(askReply("", "", -1, 2, "Termux RUN_COMMAND: allow-external-apps is not true").first.contains("setup script"))
         assertTrue(askReply("", "bash: /root/.notesis/ask: No such file or directory", 127, 0, "").first.contains("helper"))
         assertEquals("boom" to true, askReply("", "boom", 1, 0, ""))
