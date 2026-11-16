@@ -4271,6 +4271,11 @@ private fun NoteScreen(
     var linkPreview by remember { mutableStateOf<Triple<String, Float, Float>?>(null) }
     var textMarkdown by remember { mutableStateOf(penStore.textMarkdown) }
     var captured by remember { mutableStateOf<Bitmap?>(null) }
+    // The canvas a capture was taken on - the note's own, a part of a split or the pop-up panel - and its
+    // note: the dialog renders the capture again from that canvas, not from this note's.
+    var captureView by remember { mutableStateOf<InkCanvasView?>(null) }
+    var captureNoteId by remember { mutableStateOf<String?>(null) }
+    var referenceView by remember { mutableStateOf<InkCanvasView?>(null) }
     // How captures come out, kept between them: picking 4x once is picking it.
     val captureOptionPrefs = remember { context.getSharedPreferences("capture", android.content.Context.MODE_PRIVATE) }
     var captureOptions by remember { mutableStateOf(CaptureOptions.decode(captureOptionPrefs.getString("options", null))) }
@@ -5394,7 +5399,13 @@ private fun NoteScreen(
                         templateLoader = imagePreviews::originalTemplate
                         templatePreviewLoader = imagePreviews::template
                         // Rendered on a worker; the dialog is a UI thing.
-                        onCaptured = { bitmap -> post { if (captureToAi) sendCaptureToAi() else captured = bitmap } }
+                        onCaptured = { bitmap ->
+                            post {
+                                captureView = this
+                                captureNoteId = null
+                                if (captureToAi) sendCaptureToAi() else captured = bitmap
+                            }
+                        }
                         canvas = this
                     }
                 },
@@ -5650,7 +5661,11 @@ private fun NoteScreen(
                         val quarter = (now / 90f).roundToInt() * 90f
                         if (abs(now - quarter) <= ROTATION_SNAP_DEGREES) paneRotations[id] = quarter % 360f
                     },
-                    onCaptured = { bitmap -> captured = bitmap },
+                    onCaptured = { bitmap ->
+                        captureView = paneViews[id]
+                        captureNoteId = paneNotes[id]
+                        captured = bitmap
+                    },
                     onView = { v -> if (v != null) paneViews[id] = v else paneViews.remove(id) },
                     onActive = { activePane = id },
                     onEdited = { paneEdits++ },
@@ -6482,7 +6497,7 @@ private fun NoteScreen(
              * is a visible pause. Dropped if the dialog was closed meanwhile.
              */
             fun withOutput(use: (Bitmap) -> Unit) {
-                val view = canvas
+                val view = captureView ?: canvas
                 val region = view?.lastCapture
                 if (view == null || region == null) { use(preview); return }
                 val options = captureOptions
@@ -6499,7 +6514,7 @@ private fun NoteScreen(
             }
             CaptureDialog(
                 bitmap = preview,
-                region = canvas?.lastCapture,
+                region = (captureView ?: canvas)?.lastCapture,
                 options = captureOptions,
                 onOptions = {
                     captureOptions = it
@@ -6519,11 +6534,13 @@ private fun NoteScreen(
                 },
                 onCarryLinked = {
                     withOutput { bitmap ->
-                        val view = canvas
+                        val view = captureView ?: canvas
                         val source = view?.lastCapturePage ?: -1
                         val pageId = view?.pageIdAt(source)
+                        // Linked back to the note it was taken from, which in a split or the panel is not this one.
+                        val from = captureNoteId?.let { id -> referenceNotes.firstOrNull { it.id == id } } ?: note
                         if (pageId != null) {
-                            SnipLink.pending = SnipLink.Snip(bitmap, note.id, note.title, pageId, source)
+                            SnipLink.pending = SnipLink.Snip(bitmap, from.id, from.title, pageId, source)
                             KToast.makeText(context, "Go to the note and page to paste it into, then tap \"Paste here\"",
                                 Toast.LENGTH_LONG).show()
                         }
@@ -7573,6 +7590,12 @@ private fun NoteScreen(
                 // The remembered note may have been deleted since; fall back to
                 // the one being written on rather than to a blank panel.
                 noteId = activeReferenceNoteId,
+                onView = { referenceView = it },
+                onCaptured = { bitmap ->
+                    captureView = referenceView
+                    captureNoteId = activeReferenceNoteId
+                    captured = bitmap
+                },
                 page = referencePage,
                 mode = mode,
                 tool = tool,
@@ -8700,8 +8723,8 @@ private fun ReferencePanel(
                             v.tool = tool
                             v.flatPressure = mode == EditMode.PEN && !pen.pressure
                             v.viewRotation = rotation
-                            // A part of a split captures as the note's own part does; a floating panel does not.
-                            v.captureMode = pinned && onCaptured != null && mode == EditMode.CAPTURE
+                            // A part of a split and the pop-up panel capture as the note's own part does.
+                            v.captureMode = onCaptured != null && mode == EditMode.CAPTURE
                             v.readMode = mode == EditMode.READ
                             v.maskMode = mode == EditMode.MASK
                             v.lassoMode = mode == EditMode.LASSO

@@ -22,9 +22,18 @@ class CaptureRegion internal constructor(
     internal val pdfIndex: Int,
     internal val strokes: List<Stroke>,
     internal val images: List<Pair<PageImage, Bitmap?>>,
+    /**
+     * For a capture taken off the pages (the whiteboard, [pageIndex] being the
+     * board's): the pages it reaches over, each a region of its own placed at
+     * its corner in the document, drawn first; [strokes] are then the board's.
+     */
+    internal val pieces: List<CapturePiece> = emptyList(),
 ) {
     val onPdf: Boolean get() = pdfIndex >= 0
 }
+
+/** A page's part of a capture taken off the pages: its region, and where the page's corner is in the document. */
+internal class CapturePiece(val left: Float, val top: Float, val region: CaptureRegion)
 
 /**
  * How big a capture comes out. [SCREEN] is the region as it was seen; the

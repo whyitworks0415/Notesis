@@ -4566,6 +4566,11 @@ class InkCanvasView @JvmOverloads constructor(
                 val pageIndex = pageUnder(event, event.actionIndex)
                 // Off the pages: the whiteboard takes ink and the eraser, when it is on.
                 val onBoard = pageIndex < 0
+                // Reading, a tap on tape off the pages lifts it, as on a page.
+                if (onBoard && whiteboard && readMode) {
+                    if (!contactErases) toggleMaskAt(event.getX(event.actionIndex), event.getY(event.actionIndex), BOARD_INDEX)
+                    return true
+                }
                 if (onBoard && !boardTakes(event)) return true
                 val index = if (onBoard) BOARD_INDEX else pageIndex
                 val pointerId = event.getPointerId(event.actionIndex)
@@ -4589,7 +4594,6 @@ class InkCanvasView @JvmOverloads constructor(
                 val buttonHeld = samsungSideButton || (event.getToolType(event.actionIndex) != MotionEvent.TOOL_TYPE_ERASER &&
                     event.isEraserGesture())
                 if (buttonHeld && !readMode && penButton == PEN_BUTTON_LASSO) {
-                    if (onBoard) return true
                     onDrawingChanged?.invoke(true)
                     beginLasso(event, index)
                     return true
@@ -4858,7 +4862,7 @@ class InkCanvasView @JvmOverloads constructor(
                     appendLassoSamples(event, index)
                     return true
                 }
-                if (polyPoints.isNotEmpty() && polyPage >= 0 && shapeKind == ShapeKind.POLYGON) {
+                if (polyPoints.isNotEmpty() && polyPage != -1 && shapeKind == ShapeKind.POLYGON) {
                     pageLocalInto(event.getX(index), event.getY(index), polyPage, polyPoints.last())
                     dry.postInvalidateOnAnimation()
                     return true
@@ -6239,8 +6243,12 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** Whether a pen down off the pages writes on the whiteboard: ink or the eraser, nothing else. */
     private fun boardTakes(event: MotionEvent): Boolean {
-        if (!whiteboard || readMode || lassoMode || imageMode || captureMode || maskMode) return false
-        if (shapeKind != null) return false
+        // Off the pages takes what the pages take - ink, tape, the lasso, shapes, a capture - but
+        // pictures and text, which belong to a page and would be lost between them.
+        if (!whiteboard || readMode || imageMode) return false
+        if (lassoMode || captureMode || maskMode) return true
+        if (shapeKind == ShapeKind.CHECKBOX) return false
+        if (shapeKind != null) return true
         val eraserGesture = event.isEraserGesture() || samsungSideButton
         return eraserGesture || tool == Tool.ERASER || tool.isFreehandPen() || tool == Tool.HIGHLIGHTER
     }
@@ -6286,6 +6294,12 @@ class InkCanvasView @JvmOverloads constructor(
         if (!canvas.isHardwareAccelerated || !dry.pageNode.hasDisplayList()) return
         canvas.drawRenderNode(dry.pageNode)
     }
+
+    /**
+     * The page at [index], or the whiteboard for [BOARD_INDEX]: what the lasso,
+     * shapes, tape and capture work on, so each works off the pages as on them.
+     */
+    private fun pageOf(index: Int): Page? = if (index == BOARD_INDEX) document.board else document.pages.getOrNull(index)
 
     private fun screenToPage(index: Int): Matrix {
         strokeTransform.set(screenToDocument)
@@ -7113,7 +7127,7 @@ class InkCanvasView @JvmOverloads constructor(
      */
     private fun finishShape() {
         val kind = shapeKind
-        val page = document.pages.getOrNull(shapePage)
+        val page = pageOf(shapePage)
         drawingShape = false
         if (kind == null || page == null) {
             dry.invalidate()
@@ -7363,7 +7377,7 @@ class InkCanvasView @JvmOverloads constructor(
     private fun refreshLassoPreview(time: Long, force: Boolean = false) {
         if (!force && time - lassoPreviewAt < LASSO_PREVIEW_MS) return
         lassoPreviewAt = time
-        val page = document.pages.getOrNull(lassoPage) ?: return
+        val page = pageOf(lassoPage) ?: return
         if (lassoPath.size < LASSO_MIN_POINTS) {
             lassoPreviewStrokes.clear()
             lassoPreviewImages.clear()
@@ -7480,7 +7494,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** Selects what [lassoPath] goes round on [lassoPage], leaving the path. True when that is anything. */
     private fun selectInsideLasso(): Boolean {
-        val page = document.pages[lassoPage]
+        val page = pageOf(lassoPage)!!
         lassoBounds.setEmpty()
         collectInsideLasso(page, lassoStrokes, lassoImages)
         for (container in lassoImages.filter { it.box != PageImage.BOX_NONE }) addContainedBy(page, container)
@@ -7622,7 +7636,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** Locks or unlocks everything selected, then lets go of it: locked objects are not selectable. */
     fun lockLassoSelection(locked: Boolean) {
-        val page = document.pages.getOrNull(lassoPage) ?: return
+        val page = pageOf(lassoPage) ?: return
         if (!hasLassoSelection()) return
         for (stroke in lassoStrokes) StrokeTags.set(stroke, StrokeTags.tag(locked, StrokeTags.group(stroke)))
         for (image in lassoImages) image.locked = locked
@@ -7637,7 +7651,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** Puts everything selected in one group, or takes the selection's groups apart. */
     fun groupLassoSelection(grouped: Boolean) {
-        val page = document.pages.getOrNull(lassoPage) ?: return
+        val page = pageOf(lassoPage) ?: return
         if (!hasLassoSelection()) return
         val group = if (grouped) StrokeTags.newGroup() else 0
         for (stroke in lassoStrokes) StrokeTags.set(stroke, StrokeTags.tag(StrokeTags.locked(stroke), group))
@@ -7658,7 +7672,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** The link on the selection's group, if it has one. */
     fun lassoLink(): String? {
-        val page = document.pages.getOrNull(lassoPage) ?: return null
+        val page = pageOf(lassoPage) ?: return null
         return sharedLassoGroup()?.let { page.links[it] }
     }
 
@@ -7674,7 +7688,7 @@ class InkCanvasView @JvmOverloads constructor(
      * they are moved.
      */
     fun setLassoLink(target: String?) {
-        val page = document.pages.getOrNull(lassoPage) ?: return
+        val page = pageOf(lassoPage) ?: return
         if (!hasLassoSelection()) return
         val group = sharedLassoGroup() ?: run {
             groupLassoSelection(true)
@@ -8201,7 +8215,7 @@ class InkCanvasView @JvmOverloads constructor(
      * a page edge, the page's middle, or a picture's edge when within reach.
      */
     private fun snapLassoMove() {
-        val page = document.pages.getOrNull(lassoPage) ?: return
+        val page = pageOf(lassoPage) ?: return
         val reach = SNAP_ALIGN_PX / currentScale()
         val xs = ArrayList<Float>()
         val ys = ArrayList<Float>()
@@ -8222,7 +8236,7 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun dragVertex(event: MotionEvent, pointerIndex: Int) {
-        val page = document.pages.getOrNull(lassoPage) ?: return
+        val page = pageOf(lassoPage) ?: return
         val inputs = vertexInputs ?: return
         val current = vertexCurrent ?: return
         pageLocalInto(event.getX(pointerIndex), event.getY(pointerIndex), lassoPage, shapeEnd)
@@ -8244,7 +8258,7 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun finishVertexDrag() {
-        val page = document.pages.getOrNull(lassoPage)
+        val page = pageOf(lassoPage)
         val before = vertexOriginal
         val after = vertexCurrent
         vertexInputs = null
@@ -8277,7 +8291,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** Commits the polygon tapped out so far, closed back to its first corner or left open. */
     fun finishPolygon(close: Boolean) {
-        val page = document.pages.getOrNull(polyPage)
+        val page = pageOf(polyPage)
         val points = ArrayList(polyPoints)
         polyPoints.clear()
         polyPage = -1
@@ -8297,7 +8311,7 @@ class InkCanvasView @JvmOverloads constructor(
         guideY = Float.NaN
         movingLasso = false
         liftedLassoStrokes = null
-        val page = document.pages.getOrNull(lassoPage) ?: return
+        val page = pageOf(lassoPage) ?: return
         val dx = lassoDx
         val dy = lassoDy
         lassoDx = 0f
@@ -8359,7 +8373,7 @@ class InkCanvasView @JvmOverloads constructor(
      * like the same hand wrote it smaller.
      */
     fun transformLassoSelection(factor: Float, degrees: Float) {
-        val page = document.pages.getOrNull(lassoPage) ?: return
+        val page = pageOf(lassoPage) ?: return
         if (!hasLassoSelection() || lassoBounds.isEmpty || factor <= 0f || !factor.isFinite() || !degrees.isFinite()) return
         if (factor == 1f && degrees == 0f) return
         val cx = lassoBounds.centerX()
@@ -8394,7 +8408,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** Gives the selection [colorArgb], keeping each stroke's own transparency. */
     fun recolorLassoSelection(colorArgb: Int) {
-        val page = document.pages.getOrNull(lassoPage) ?: return
+        val page = pageOf(lassoPage) ?: return
         if (lassoStrokes.isEmpty()) return
         val before = lassoStrokes.toList()
         val after = before.map { stroke ->
@@ -8408,7 +8422,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** Copies the selection a little down and right, and selects the copy. */
     fun duplicateLassoSelection() {
-        val page = document.pages.getOrNull(lassoPage) ?: return
+        val page = pageOf(lassoPage) ?: return
         if (!hasLassoSelection()) return
         val offset = LASSO_DUPLICATE_OFFSET
         // Copies stay on their originals' layers, which the selection says are editable.
@@ -8444,7 +8458,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** The selection as a clip and a small picture of it, for keeping in the library. */
     internal fun lassoClipWithPreview(): Pair<InkClipboard.Clip, Bitmap?>? {
-        val page = document.pages.getOrNull(lassoPage) ?: return null
+        val page = pageOf(lassoPage) ?: return null
         if (!hasLassoSelection()) return null
         val pictures = lassoImages.map { it.copy() to imageLoader?.invoke(it.id) }
         val clip = InkClipboard.Clip(lassoStrokes.toList(), RectF(lassoBounds), pictures)
@@ -8538,7 +8552,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** Throws away what the loop caught. */
     fun deleteLassoSelection() {
-        val page = document.pages.getOrNull(lassoPage) ?: return
+        val page = pageOf(lassoPage) ?: return
         if (!hasLassoSelection()) return
         val group = nextEditGroup++
         val gone = lassoStrokes.toList()
@@ -8590,7 +8604,7 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun toggleMaskAt(screenX: Float, screenY: Float, index: Int): Boolean {
-        val page = document.pages[index]
+        val page = pageOf(index) ?: return false
         if (page.masks.isEmpty()) return false
         pageLocalInto(screenX, screenY, index, maskProbe)
         // The tape is a stroke, so what counts as a hit is the same question the
@@ -9044,7 +9058,9 @@ class InkCanvasView @JvmOverloads constructor(
         val rect = RectF(captureRect)
         captureRect.setEmpty()
         dry.invalidate()
-        if (page == null || rect.width() < 8f || rect.height() < 8f) return
+        if (rect.width() < 8f || rect.height() < 8f) return
+        if (capturePage == BOARD_INDEX) { finishBoardCapture(rect); return }
+        if (page == null) return
 
         // Snapshot on the UI thread: the render runs on a worker, and a stroke
         // arriving on the page mid-render would otherwise be a concurrent
@@ -9070,13 +9086,97 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     /**
+     * A capture taken off the pages: [rect] in document units, with each page it
+     * reaches over taken as a region of its own, and the board's ink over them.
+     */
+    private fun finishBoardCapture(rect: RectF) {
+        val pieces = document.pages.indices.mapNotNull { index ->
+            val page = document.pages[index]
+            val left = document.leftOf(index)
+            val top = document.topOf(index)
+            val local = RectF(rect.left - left, rect.top - top, rect.right - left, rect.bottom - top)
+            if (!local.intersect(0f, 0f, page.width, page.height)) return@mapNotNull null
+            CapturePiece(left, top, CaptureRegion(index, local, currentScale(), page.width, page.height,
+                if (page.background == PageBackground.PDF) page.pdfPageIndex else -1,
+                page.strokes.toList(), page.images.map { it to imageLoader?.invoke(it.id) }))
+        }
+        val region = CaptureRegion(BOARD_INDEX, rect, currentScale(), rect.width(), rect.height(), -1,
+            boardStrokesIn(rect.left, rect.top, rect.right, rect.bottom) +
+                document.board.masks.filter { !it.revealed }.map { it.stroke },
+            emptyList(), pieces)
+        lastCapture = region
+        val preview = (CAPTURE_PREVIEW_PX / max(rect.width(), rect.height())).coerceAtMost(CAPTURE_MAX_SCALE)
+        refiner.execute {
+            val bitmap = renderCapture(region, preview)
+            if (bitmap != null) onCaptured?.invoke(bitmap)
+        }
+    }
+
+    /**
      * Renders [region] at [scale] pixels per page unit - from the vectors and
      * the PDF, never by enlarging a smaller picture. Blocking: call it off the
      * main thread. The size should come from [planCapture]; the bitmap budget
      * is applied again here as a backstop.
      */
-    fun renderCapture(region: CaptureRegion, scale: Float): Bitmap? = renderRegion(
-        region.rect, region.pageWidth, region.pageHeight, region.pdfIndex, region.strokes, region.images, scale)
+    fun renderCapture(region: CaptureRegion, scale: Float): Bitmap? =
+        if (region.pageIndex == BOARD_INDEX) renderBoardRegion(region, scale)
+        else renderRegion(region.rect, region.pageWidth, region.pageHeight, region.pdfIndex, region.strokes, region.images, scale)
+
+    /**
+     * A capture off the pages: the desk white, each page piece drawn as a page's
+     * capture is, then the board's ink, built near the region's corner (the
+     * board's numbers are large; see the board's own drawing).
+     */
+    private fun renderBoardRegion(region: CaptureRegion, requestedScale: Float): Bitmap? = runCatching {
+        val rect = region.rect
+        val wanted = requestedScale.takeIf { it.isFinite() && it > 0f } ?: 1f
+        val scale = wanted * BitmapBudget.scaleFor(capturePixels(rect.width(), wanted), capturePixels(rect.height(), wanted))
+        val width = capturePixels(rect.width(), scale)
+        val height = capturePixels(rect.height(), scale)
+        val paint = { canvas: Canvas, spent: MutableList<Bitmap> ->
+            canvas.drawColor(Color.WHITE)
+            for (piece in region.pieces) {
+                val local = piece.region.rect
+                val w = capturePixels(local.width(), scale)
+                val h = capturePixels(local.height(), scale)
+                canvas.save()
+                canvas.translate((piece.left + local.left - rect.left) * scale, (piece.top + local.top - rect.top) * scale)
+                canvas.clipRect(0f, 0f, local.width() * scale, local.height() * scale)
+                paintRegion(canvas, local, piece.region.pageWidth, piece.region.pageHeight, piece.region.pdfIndex,
+                    piece.region.strokes, piece.region.images, scale, w, h, spent)
+                canvas.restore()
+            }
+            val renderer = CanvasStrokeRenderer.create(PencilTextureStore)
+            val transform = Matrix()
+            val epsilon = epsilonFor(scale)
+            canvas.save()
+            canvas.scale(scale, scale)
+            for (stroke in region.strokes) {
+                val near = nearOrigin(stroke, rect.left, rect.top, epsilon) ?: continue
+                renderer.draw(canvas, near, transform)
+            }
+            canvas.restore()
+        }
+        renderOnGpu(width, height, paint) ?: run {
+            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            val spent = ArrayList<Bitmap>()
+            paint(Canvas(bitmap), spent)
+            spent.forEach { it.recycle() }
+            bitmap
+        }
+    }.getOrNull()
+
+    /** [stroke] built again moved by (-[dx], -[dy]), at [epsilon]: small numbers for a board stroke far down a note. */
+    private fun nearOrigin(stroke: Stroke, dx: Float, dy: Float, epsilon: Float): Stroke? = runCatching {
+        val scratch = StrokeInput()
+        val inputs = MutableStrokeInputBatch()
+        for (i in 0 until stroke.inputs.size) {
+            val input = stroke.inputs.populate(i, scratch)
+            inputs.add(type = input.toolType, x = input.x - dx, y = input.y - dy, elapsedTimeMillis = input.elapsedTimeMillis,
+                pressure = input.pressure, tiltRadians = input.tiltRadians, orientationRadians = input.orientationRadians)
+        }
+        Stroke(stroke.brush.copy(epsilon = inkEpsilon(stroke.brush.family, stroke.brush.size, epsilon)), inputs.toImmutable())
+    }.getOrNull()
 
     /**
      * Draws one page's [rect] into a bitmap at [requestedScale]: background,
@@ -9821,6 +9921,8 @@ class InkCanvasView @JvmOverloads constructor(
         fun discardInkNodes() {
             for (ink in inkNodes.values) ink.node.discardDisplayList()
             inkNodes.clear()
+            for (cell in boardCells.values) cell.node.discardDisplayList()
+            boardCells.clear()
             inkTiles.clear()
         }
 
@@ -9929,6 +10031,178 @@ class InkCanvasView @JvmOverloads constructor(
 
         /** Each whiteboard stroke as drawn; see [boardStroke]. */
         private val boardDrawn = java.util.IdentityHashMap<Stroke, BoardDrawn>()
+
+        /**
+         * The whiteboard's ink recorded a square of [BOARD_ORIGIN_STEP] at a time, as a
+         * page's is recorded whole (see [inkNodeFor]): drawn stroke by stroke every frame,
+         * a board with a lot on it made every scroll and zoom slow, where a page with as
+         * much on it was one draw. A square is recorded again when its strokes change or,
+         * once the hand is off, when the zoom has; while zooming it is replayed scaled.
+         */
+        private inner class BoardCell(val node: android.graphics.RenderNode) {
+            var scale = 0f
+            var epsilon = 0f
+            var strokes: List<Stroke> = emptyList()
+            var meshInk = false
+            /** Where the recording's corner sits, in the square's own units. */
+            var left = 0f
+            var top = 0f
+        }
+
+        private val boardCells = HashMap<Long, BoardCell>()
+        /** The board's strokes by the square each is drawn from, and the board they were sorted for. */
+        private var boardGroups: Map<Long, List<Stroke>> = emptyMap()
+        private var boardGroupsRevision = Long.MIN_VALUE
+        private var boardGroupsSize = -1
+        private val boardOrigins = java.util.IdentityHashMap<Stroke, Long>()
+        private val boardScratch = StrokeInput()
+
+        /** The square a board stroke is drawn from: where its first point falls, as [boardStroke] places it. */
+        private fun boardKey(stroke: Stroke): Long = boardOrigins.getOrPut(stroke) {
+            if (stroke.inputs.size == 0) return@getOrPut 0L
+            val first = stroke.inputs.populate(0, boardScratch)
+            val cx = kotlin.math.floor(first.x / BOARD_ORIGIN_STEP).toInt()
+            val cy = kotlin.math.floor(first.y / BOARD_ORIGIN_STEP).toInt()
+            (cx.toLong() shl 32) or (cy.toLong() and 0xffffffffL)
+        }
+
+        private fun boardGroupsFor(board: Page): Map<Long, List<Stroke>> {
+            if (boardGroupsRevision == board.revision && boardGroupsSize == board.strokes.size) return boardGroups
+            val alive = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Stroke, Boolean>()).apply { addAll(board.strokes) }
+            boardOrigins.keys.retainAll(alive)
+            boardGroups = board.strokes.groupBy(::boardKey)
+            boardGroupsRevision = board.revision
+            boardGroupsSize = board.strokes.size
+            val keys = boardGroups.keys
+            boardCells.entries.removeAll { (key, cell) -> (key !in keys).also { if (it) cell.node.discardDisplayList() } }
+            return boardGroups
+        }
+
+        /**
+         * Draws the board's squares that meet the viewport (document units, [canvas]
+         * in document units); false when a square could not be recorded yet, its
+         * strokes then drawn as they are.
+         */
+        private fun drawBoardCells(
+            canvas: Canvas, scope: androidx.ink.rendering.android.canvas.StrokeDrawScope, board: Page, epsilon: Float, budget: IntArray,
+            /** Strokes the lasso has lifted: drawn where they are being carried, so left out here. */
+            lifted: Set<Stroke>?,
+        ): Int {
+            var drawnCount = 0
+            val interacting = zooming || viewportInteracting || flinging
+            val scale = currentScale()
+            for ((key, strokes) in boardGroupsFor(board)) {
+                val cx = (key shr 32).toInt() * BOARD_ORIGIN_STEP
+                val cy = key.toInt() * BOARD_ORIGIN_STEP
+                val cell = boardCells.getOrPut(key) { BoardCell(android.graphics.RenderNode("board")) }
+                val same = cell.node.hasDisplayList() && cell.meshInk == meshInk && cell.strokes.size == strokes.size &&
+                    cell.strokes.indices.all { cell.strokes[it] === strokes[it] }
+                // Off screen is skipped. A recorded square knows how far its ink runs; one not recorded yet
+                // is given room round its square, since a stroke may run on well past where it began.
+                val l: Float; val t: Float; val r: Float; val b: Float
+                if (same) {
+                    l = cx + cell.left; t = cy + cell.top
+                    r = l + cell.node.width / cell.scale; b = t + cell.node.height / cell.scale
+                } else {
+                    l = cx - BOARD_ORIGIN_STEP * 2; t = cy - BOARD_ORIGIN_STEP * 2
+                    r = cx + BOARD_ORIGIN_STEP * 3; b = cy + BOARD_ORIGIN_STEP * 3
+                }
+                if (l > viewport[2] || t > viewport[3] || r < viewport[0] || b < viewport[1]) continue
+                // A square with strokes being carried is drawn stroke by stroke without them until they are put down.
+                if (lifted != null && strokes.any { it in lifted }) {
+                    for (stroke in strokes) if (stroke !in lifted) drawBoardStroke(canvas, scope, stroke, epsilon, budget, 0f, 0f)
+                    drawnCount += strokes.size
+                    continue
+                }
+                val stale = !same || (!interacting && (abs(cell.scale / scale - 1f) >= 0.001f || abs(cell.epsilon - epsilon) >= EPSILON_SLOP))
+                if (stale && (!same || !interacting)) {
+                    // Built at this zoom's fidelity, each near the square's corner; all of them, or it waits a frame.
+                    val built = strokes.map { boardStroke(it, epsilon, budget) }
+                    if (built.any { it == null || it.dx != cx || it.dy != cy }) {
+                        if (!same) {
+                            for (stroke in strokes) {
+                                val drawn = boardDrawn[stroke]
+                                if (drawn == null) scope.drawStroke(onScreen(stroke)) else {
+                                    canvas.save(); canvas.translate(drawn.dx, drawn.dy); scope.drawStroke(drawn.stroke); canvas.restore()
+                                }
+                            }
+                            drawnCount += strokes.size
+                            continue
+                        }
+                    } else recordBoardCell(cell, built.map { it!!.stroke }, strokes, scale, epsilon)
+                }
+                if (!cell.node.hasDisplayList()) continue
+                canvas.save()
+                canvas.translate(cx + cell.left, cy + cell.top)
+                val inverse = 1f / cell.scale
+                canvas.scale(inverse, inverse)
+                canvas.drawRenderNode(cell.node)
+                canvas.restore()
+                drawnCount += strokes.size
+            }
+            return drawnCount
+        }
+
+        /** One board stroke, built near its square's corner for precision (see [boardStroke]), moved by ([dx], [dy]). */
+        private fun drawBoardStroke(
+            canvas: Canvas, scope: androidx.ink.rendering.android.canvas.StrokeDrawScope, stroke: Stroke,
+            epsilon: Float, budget: IntArray, dx: Float, dy: Float,
+        ) {
+            val drawn = boardStroke(stroke, epsilon, budget)
+            canvas.save()
+            if (drawn == null) {
+                canvas.translate(dx, dy)
+                scope.drawStroke(onScreen(stroke))
+            } else {
+                canvas.translate(drawn.dx + dx, drawn.dy + dy)
+                scope.drawStroke(drawn.stroke)
+            }
+            canvas.restore()
+        }
+
+        /** The board's tape, over its ink, as [drawMasks] draws a page's: whole, or only its edge when lifted. */
+        private fun drawBoardMasks(
+            canvas: Canvas, scope: androidx.ink.rendering.android.canvas.StrokeDrawScope, epsilon: Float, budget: IntArray,
+        ) {
+            val masks = document.board.masks
+            if (masks.isEmpty()) return
+            for (mask in masks) {
+                val box = mask.stroke.shape.computeBoundingBox()
+                if (box != null && (box.xMax < viewport[0] || box.xMin > viewport[2] || box.yMax < viewport[1] || box.yMin > viewport[3])) continue
+                if (!mask.revealed) { drawBoardStroke(canvas, scope, mask.stroke, epsilon, budget, 0f, 0f); continue }
+                val path = outlineOf(mask.stroke)
+                if (path.isEmpty) continue
+                overlay.color = mask.stroke.brush.colorIntArgb
+                overlay.strokeWidth = MASK_OUTLINE_PX / currentScale()
+                canvas.drawPath(path, overlay)
+            }
+        }
+
+        private fun recordBoardCell(cell: BoardCell, drawn: List<Stroke>, strokes: List<Stroke>, scale: Float, epsilon: Float) {
+            var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE; var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+            for (stroke in drawn) stroke.shape.computeBoundingBox()?.let { box ->
+                minX = minOf(minX, box.xMin); minY = minOf(minY, box.yMin); maxX = maxOf(maxX, box.xMax); maxY = maxOf(maxY, box.yMax)
+            }
+            if (minX > maxX) { minX = 0f; minY = 0f; maxX = 1f; maxY = 1f }
+            val width = kotlin.math.ceil((maxX - minX) * scale).toInt().coerceIn(1, MAX_BOARD_NODE_PX)
+            val height = kotlin.math.ceil((maxY - minY) * scale).toInt().coerceIn(1, MAX_BOARD_NODE_PX)
+            cell.node.setPosition(0, 0, width, height)
+            val canvas = cell.node.beginRecording(width, height)
+            try {
+                canvas.scale(scale, scale)
+                canvas.translate(-minX, -minY)
+                nodeTransform.setScale(scale, scale)
+                for (stroke in drawn) nodeRenderer.draw(canvas, stroke, nodeTransform)
+            } finally {
+                cell.node.endRecording()
+            }
+            cell.scale = scale
+            cell.epsilon = epsilon
+            cell.strokes = strokes.toList()
+            cell.meshInk = meshInk
+            cell.left = minX
+            cell.top = minY
+        }
 
         /**
          * A whiteboard stroke as it should be drawn: built afresh from its own
@@ -10071,7 +10345,9 @@ class InkCanvasView @JvmOverloads constructor(
         }
 
         fun strokesIn(page: Page, left: Float, top: Float, right: Float, bottom: Float): List<Stroke> =
-            strokeIndexes.getOrPut(page) { StrokeGrid() }.visible(page, left, top, right, bottom)
+            // The board has no edges: a page's grid would leave out everything past an A4 sheet.
+            if (page === document.board) boardStrokesIn(left, top, right, bottom)
+            else strokeIndexes.getOrPut(page) { StrokeGrid() }.visible(page, left, top, right, bottom)
 
         fun removeStrokesFromIndex(page: Page, strokes: Collection<Stroke>) {
             strokeIndexes[page]?.remove(page, strokes)
@@ -10379,28 +10655,49 @@ class InkCanvasView @JvmOverloads constructor(
                     scoped.restore()
                 }
                 // The whiteboard's ink, over the pages it may run onto, in
-                // document units. Few strokes, drawn directly; only the ones
-                // whose box is on screen.
+                // document units: recorded a square at a time (drawBoardCells),
+                // then its tape and what the lasso, a shape or a capture is
+                // doing off the pages, as each page draws its own.
                 val board = document.board.strokes
-                if (whiteboard && board.isNotEmpty()) {
+                if (whiteboard) {
                     scoped.save()
                     scoped.concat(documentToScreen)
                     val boardEpsilon = epsilonFor(tessellationBucket(currentScale()))
                     val rebuilds = intArrayOf(BOARD_REBUILDS_PER_FRAME)
-                    val visibleBoard = boardStrokesIn(viewport[0], viewport[1], viewport[2], viewport[3])
-                    for (stroke in visibleBoard) {
-                        val drawn = boardStroke(stroke, boardEpsilon, rebuilds)
-                        if (drawn == null) {
-                            scope.drawStroke(onScreen(stroke))
-                        } else {
-                            scoped.save()
-                            scoped.translate(drawn.dx, drawn.dy)
-                            scope.drawStroke(drawn.stroke)
-                            scoped.restore()
+                    val boardLifted = lassoPage == BOARD_INDEX && movingLasso
+                    val visibleBoard = when {
+                        board.isEmpty() -> emptyList()
+                        scoped.isHardwareAccelerated -> {
+                            visibleCount += drawBoardCells(scoped, scope, document.board, boardEpsilon, rebuilds,
+                                if (boardLifted) lassoStrokes else null)
+                            emptyList()
                         }
+                        else -> boardStrokesIn(viewport[0], viewport[1], viewport[2], viewport[3])
+                            .filter { !(boardLifted && it in lassoStrokes) }
                     }
-                    if (boardDrawn.size > board.size * 2 + 32) {
-                        val kept = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Stroke, Boolean>()).apply { addAll(board) }
+                    for (stroke in visibleBoard) drawBoardStroke(scoped, scope, stroke, boardEpsilon, rebuilds, 0f, 0f)
+                    if (boardLifted) for (stroke in lassoStrokes) drawBoardStroke(scoped, scope, stroke, boardEpsilon, rebuilds, lassoDx, lassoDy)
+                    drawBoardMasks(scoped, scope, boardEpsilon, rebuilds)
+                    if (lassoPage == BOARD_INDEX) drawLasso(scoped)
+                    if (shapePage == BOARD_INDEX && drawingShape) drawShapePreview(scoped)
+                    if (polyPage == BOARD_INDEX && polyPoints.isNotEmpty()) {
+                        overlay.color = previewArgb(colorArgb)
+                        overlay.strokeWidth = strokeWidth
+                        for (k in 1 until polyPoints.size) {
+                            scoped.drawLine(polyPoints[k - 1][0], polyPoints[k - 1][1], polyPoints[k][0], polyPoints[k][1], overlay)
+                        }
+                        scoped.drawCircle(polyPoints[0][0], polyPoints[0][1], VERTEX_HANDLE_PX / currentScale(), vertexPaint)
+                    }
+                    if (capturePage == BOARD_INDEX && capturing) {
+                        scoped.drawRect(captureRect, marqueeFill)
+                        marquee.strokeWidth = 2f / currentScale()
+                        scoped.drawRect(captureRect, marquee)
+                    }
+                    val masks = document.board.masks
+                    if (boardDrawn.size > (board.size + masks.size) * 2 + 32) {
+                        val kept = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Stroke, Boolean>()).apply {
+                            addAll(board); masks.forEach { add(it.stroke) }
+                        }
                         boardDrawn.keys.retainAll(kept)
                     }
                     scoped.restore()
@@ -10463,7 +10760,7 @@ class InkCanvasView @JvmOverloads constructor(
             if (page.images.isEmpty()) return
             val loader = (if (canvas.isHardwareAccelerated) imagePreviewLoader else null) ?: imageLoader ?: return
             val liftedPage = movingLasso && lassoImages.isNotEmpty() &&
-                document.pages.getOrNull(lassoPage) === page
+                pageOf(lassoPage) === page
             for (image in page.images) {
                 // Before anything is decoded: a page of pictures zoomed in on
                 // one corner read and uploaded every one of them.
@@ -10709,7 +11006,7 @@ class InkCanvasView @JvmOverloads constructor(
             canvas.drawRect(selectionBox, overlay)
             overlay.pathEffect = null
             if (movingLasso && (!guideX.isNaN() || !guideY.isNaN())) {
-                val page = document.pages.getOrNull(lassoPage) ?: return
+                val page = pageOf(lassoPage) ?: return
                 overlay.color = 0xFFE91E63.toInt()
                 overlay.strokeWidth = 1f / scale
                 if (!guideX.isNaN()) canvas.drawLine(guideX, 0f, guideX, page.height, overlay)
@@ -11057,6 +11354,8 @@ class InkCanvasView @JvmOverloads constructor(
         const val MAX_SCREEN_BRUSHES = 256
         /** How many whiteboard strokes may be built afresh in one frame; see boardStroke. */
         const val BOARD_REBUILDS_PER_FRAME = 24
+        /** The widest a recorded square of the board is drawn at; past it the recording is cut, never the ink lost. */
+        const val MAX_BOARD_NODE_PX = 8192
         /** The grid whiteboard strokes are moved to an origin on: see boardStroke. */
         const val BOARD_ORIGIN_STEP = 512f
         /** A few pens, colours and zoom levels; see [currentBrush]. */

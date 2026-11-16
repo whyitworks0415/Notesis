@@ -216,7 +216,14 @@ private fun ChatBubble(message: ChatMessage) {
         SelectionContainer {
             // The app's own words (a failure, a hint) are translated; the agent's and the owner's are shown as written.
             Text(
-                if (message.failed) AnnotatedString(message.text.tr) else AnnotatedString(message.text),
+                when {
+                    message.failed -> AnnotatedString(message.text.tr)
+                    message.mine -> AnnotatedString(message.text)
+                    // Agents answer in Markdown: headings, lists, bold and code read as they are meant to.
+                    else -> remember(message.text, scheme.primary) {
+                        markdownPreviewText(markdownPreview(message.text, maxChars = Int.MAX_VALUE), 14.sp, scheme.primary, scheme.onSurfaceVariant)
+                    }
+                },
                 style = MaterialTheme.typography.bodyMedium,
                 color = when { message.failed -> scheme.onErrorContainer; message.mine -> scheme.onPrimaryContainer; else -> scheme.onSurface },
                 modifier = Modifier

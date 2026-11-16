@@ -487,4 +487,13 @@ class AgentCommandsTest {
         assertTrue(askReply("", "bash: /root/.notesis/ask: No such file or directory", 127, 0, "").first.contains("helper"))
         assertEquals("boom" to true, askReply("", "boom", 1, 0, ""))
     }
+
+    @Test
+    fun `an agent's Markdown answer reads as it is meant to`() {
+        val shown = markdownPreview("## Done\n- Put **12** entries in the outline\n- `toc show` to check", maxChars = Int.MAX_VALUE)
+        assertEquals("Done\n• Put 12 entries in the outline\n• toc show to check", shown.text)
+        assertTrue(shown.spans.any { it.kind == MdKind.HEADING })
+        assertTrue(shown.spans.any { it.kind == MdKind.BOLD && shown.text.substring(it.start, it.end) == "12" })
+        assertTrue(shown.spans.any { it.kind == MdKind.CODE })
+    }
 }

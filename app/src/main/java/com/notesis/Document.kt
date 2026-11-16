@@ -635,6 +635,7 @@ class Document(val pages: MutableList<Page>) {
         /** The whiteboard's page id and file; see [board]. */
         const val BOARD_PAGE_ID = "board"
         const val BOARD_FILE = "board.bin"
+        const val BOARD_MASK_FILE = "board.mask"
         /** The margin a row keeps for its comments, in page units: about a third of an A4 page. */
         const val MEMO_COLUMN = 400f
         private val nextSaveSession = AtomicLong(1L)
@@ -1700,6 +1701,8 @@ class NoteStore(context: Context) {
         return Document(pages).also {
             it.layers.copyFrom(NoteLayers.fromJson(json.optJSONObject("layers")))
             it.board.strokes.addAll(readStrokes(File(root, "$id/${Document.BOARD_FILE}")))
+            // The tape laid off the pages, beside the board's ink.
+            it.board.masks.addAll(readStrokes(File(root, "$id/${Document.BOARD_MASK_FILE}")).map { stroke -> PageMask(stroke) })
             it.board.dirty = false
         }
     }
@@ -1765,6 +1768,8 @@ class NoteStore(context: Context) {
         if (document.board.dirty) {
             val boardFile = File(root, "$id/${Document.BOARD_FILE}")
             if (document.board.strokes.isEmpty()) boardFile.delete() else writeStrokes(boardFile, document.board.strokes)
+            val maskFile = File(root, "$id/${Document.BOARD_MASK_FILE}")
+            if (document.board.masks.isEmpty()) maskFile.delete() else writeStrokes(maskFile, document.board.masks.map { it.stroke })
             document.board.dirty = false
         }
         writeMeta(id, title, document)
@@ -1880,6 +1885,7 @@ class NoteStore(context: Context) {
         val board = document.board
         if (board.dirty) {
             copy.board.strokes.addAll(board.strokes)
+            copy.board.masks.addAll(board.masks.map { PageMask(it.stroke) })
             copy.board.dirty = true
         }
         document.latency?.record(PerformanceMetric.SAVE_SNAPSHOT, System.nanoTime() - started)
