@@ -88,6 +88,13 @@ internal val OPEN_SOURCE_COMPONENTS = listOf(
         "https://www.npmjs.com/package/@rhwp/core",
         listOf("viewer/THIRD_PARTY_NOTICES.txt", "viewer/viewer.js.LEGAL.txt"),
     ),
+    OpenSourceComponent(
+        "Markdown reading: marked · github-markdown-css · KaTeX · highlight.js",
+        "MarkedJS · Sindre Sorhus · Khan Academy and KaTeX contributors · highlight.js contributors",
+        "MIT · BSD 3-Clause",
+        "https://github.com/markedjs/marked",
+        listOf("viewer/md/THIRD_PARTY_NOTICES.txt"),
+    ),
 )
 
 /** Google's on-device recognizer is not open source; it comes under its own terms, linked rather than reproduced. */
