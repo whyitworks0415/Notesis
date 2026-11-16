@@ -55,8 +55,10 @@ internal object SharedNotes {
 internal interface LiveNoteScreen {
     /** Writes what is on screen and stops writing until [letGo]; false when it cannot now (a stroke is being drawn). */
     fun hold(): Boolean
-    /** Off the main thread, after [hold]: waits until what it wrote is on disk. */
+    /** Off the main thread, after [hold] or [flush]: waits until what it wrote is on disk. */
     fun settle() {}
+    /** Writes what is on screen and goes on, for a read that is to see it; nothing is held. */
+    fun flush() {}
     /** Goes on; [changed]: reads the note again first, keeping the view where it was. Calls [done] once it is showing it. */
     fun letGo(changed: Boolean, done: () -> Unit)
 }
@@ -93,6 +95,12 @@ internal object LiveNotes {
             if (System.currentTimeMillis() >= deadline) return false
             Thread.sleep(HOLD_RETRY_MS)
         }
+    }
+
+    /** From a worker thread: the screen showing [id] writes what it shows, so a read sees what is on screen. */
+    fun flush(id: String) {
+        val screen = screen(id) ?: return
+        if (onMain { screen.flush() } != null) screen.settle()
     }
 
     fun letGo(id: String, changed: Boolean) {

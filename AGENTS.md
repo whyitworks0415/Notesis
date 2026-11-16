@@ -100,9 +100,10 @@ S6 Lite, SM-P61x/P62x). Kotlin, Jetpack Compose for the chrome, a custom
   trash, and every change can be undone. A note open on screen is changed
   only through its screen (`LiveNotes` in `OpenNotes.kt`, at the owner's
   request 2026-11-14): the screen writes what it shows and holds still, the
-  change is made, and it reads the note again in place. A note on a screen
-  that cannot be held (a split part, the reference panel) is only read, and
-  one on screen is never put in the trash.
+  change is made, and it reads the note again in place; the note's own
+  screen, each part of a split and the pop-up panel all do this, and a read
+  of a note on screen first has its screen write what is new. A note on
+  screen is never put in the trash.
 - The agent connection (Todo.md C3) is off until the owner turns it on, listens on
   127.0.0.1 (private networks only when the owner switches that on too), and
   answers nothing without its token: the token is made on the device, shown only

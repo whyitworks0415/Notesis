@@ -2,6 +2,7 @@ package com.notesis
 
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.hypot
 
@@ -14,8 +15,9 @@ import kotlin.math.hypot
  * They work on notes as they are stored. A note open on screen keeps its
  * own copy and would write over a change, so the screen is held first: it
  * writes what it shows and waits, the change is made, and it reads the note
- * again (OpenNotes.kt, LiveNotes). A note open where it cannot be held (a
- * part of a split, the reference panel) is only read. Every change keeps what it replaced, and `undo` puts
+ * again (OpenNotes.kt, LiveNotes): its own screen, a part of a split or the
+ * pop-up panel. A read of a note on screen first has its screen write what
+ * is new, so it reads what the owner sees. Every change keeps what it replaced, and `undo` puts
  * back the last line (or batch of lines) whole. Nothing is ever deleted for
  * good: a note goes to the trash, and a page taken out comes back with undo.
  *
@@ -423,9 +425,9 @@ internal val COMMAND_USAGE = linkedMapOf(
     "text add" to "text add NOTE PAGE TEXT [--x X] [--y Y] [--size PT] [--color #RRGGBB] [--width W] [--md]",
     "text edit" to "text edit NOTE PAGE BOX TEXT   (BOX is its number in text list)",
     "text rm" to "text rm NOTE PAGE BOX",
-    "ink add" to "ink add NOTE PAGE (--path \"M 10 10 L 200 80\" | --points \"x,y x,y; x,y ...\") [--color #RRGGBB] [--width W]",
-    "ink erase" to "ink erase NOTE PAGE (--rect X,Y,W,H | --all)",
-    "ink read" to "ink read NOTE PAGE   (the handwriting read as text)",
+    "ink add" to "ink add NOTE PAGE|board (--path \"M 10 10 L 200 80\" | --points \"x,y x,y; x,y ...\") [--color #RRGGBB] [--width W] [--near PAGE]",
+    "ink erase" to "ink erase NOTE PAGE|board (--rect X,Y,W,H | --all) [--near PAGE]",
+    "ink read" to "ink read NOTE PAGE|board   (the handwriting read as text)",
     "md outline" to "md outline NOTE",
     "md links" to "md links NOTE",
     "md write" to "md write NOTE TEXT",
@@ -629,8 +631,8 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
             "text add" -> addText(args(setOf("x", "y", "size", "color", "width"), setOf("md")), usage)
             "text edit" -> editText(args(), usage)
             "text rm" -> removeText(args(), usage)
-            "ink add" -> addInk(args(setOf("path", "points", "color", "width")), usage)
-            "ink erase" -> eraseInk(args(setOf("rect"), setOf("all")), usage)
+            "ink add" -> addInk(args(setOf("path", "points", "color", "width", "near")), usage)
+            "ink erase" -> eraseInk(args(setOf("rect", "near"), setOf("all")), usage)
             "ink read" -> readInk(args(), usage)
             "md outline" -> markdownOutline(args(), usage)
             "md links" -> markdownLinks(args(), usage)
@@ -653,7 +655,7 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
         return Done(JSONObject().apply {
             put("commands", JSONArray(shown))
             put("notes", "NOTE is a note's id or title. PAGE is a page number from 1, or last. " +
-                "A note open on screen takes the change and shows it at once; one in a split part or the reference panel is only read. " +
+                "A note open on screen takes the change and shows it at once. PAGE board is the ink beside the pages. " +
                 "`undo` takes back the last change. A failure has a code (NOT_FOUND, AMBIGUOUS, OPEN_ON_SCREEN, ...) " +
                 "and, for a note not found, the notes it may have meant.")
         })
@@ -792,6 +794,13 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
             used += size
         }
         json.put("pages", pages)
+        // The ink off the pages (the whiteboard), when there is any: how much, and what it was read as.
+        val boardInk = workspace.inkCount(meta.id, document.board)
+        val boardText = workspace.handwriting(meta.id, document.board)?.trim()?.takeIf { it.isNotEmpty() }
+        if (boardInk > 0 || boardText != null) json.put("board", JSONObject().apply {
+            put("ink", boardInk)
+            boardText?.let { put("handwriting", it) }
+        })
         if (stopped >= 0) {
             json.put("truncated", true)
             val flags = (if (textOnly) " --text-only" else "") + (if (args.has("sizes")) " --sizes" else "")
@@ -962,7 +971,14 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
     private fun readInk(args: Args, usage: String): Done {
         val meta = inkNote(args, usage)
         val document = workspace.load(meta.id)
-        val index = pageIndex(args.positional.getOrNull(1) ?: throw CommandError("Give the page.", usage), document.pages.size)
+        val word = args.positional.getOrNull(1) ?: throw CommandError("Give the page, or board for the ink off the pages.", usage)
+        if (isBoard(word)) {
+            val text = workspace.recognize(meta.id, document, document.board)
+            return Done(JSONObject().put("page", "board").put("text", text?.trim().orEmpty()).also {
+                if (text.isNullOrBlank()) it.put("hint", "Nothing was read off the pages.")
+            })
+        }
+        val index = pageIndex(word, document.pages.size)
         val text = workspace.recognize(meta.id, document, document.pages[index])
         return Done(JSONObject().put("page", index + 1).put("text", text?.trim().orEmpty()).also {
             if (text.isNullOrBlank()) it.put("hint", "No handwriting was read on this page.")
@@ -1176,7 +1192,9 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
     }
 
     private fun addInk(args: Args, usage: String): Done = changePages(args, usage, "add ink") { document ->
-        val index = pageIndex(args.positional.getOrNull(1) ?: throw CommandError("Give the page.", usage), document.pages.size)
+        val word = args.positional.getOrNull(1) ?: throw CommandError("Give the page, or board for off the pages.", usage)
+        val board = isBoard(word)
+        val index = if (board) -1 else pageIndex(word, document.pages.size)
         val lines = when {
             args.has("path") -> svgPolylines(args.text("path")!!)
             args.has("points") -> pointLines(args.text("points")!!)
@@ -1185,10 +1203,24 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
         if (lines.isEmpty()) throw CommandError("The path draws nothing.")
         val total = lines.sumOf { it.size }
         if (total > MAX_INK_POINTS) throw CommandError("That is $total points; one line takes up to $MAX_INK_POINTS.")
+        if (board) {
+            // Off the pages, in the note's own units: from page --near's corner when one is named, so "right of
+            // page 3" is x past that page's width; else from the first page's corner.
+            val (dx, dy) = boardOrigin(args, document)
+            val placed = lines.map { line -> line.map { floatArrayOf(it[0] + dx, it[1] + dy) } }
+            if (placed.any { line -> line.any { abs(it[0]) > MAX_BOARD_REACH || abs(it[1]) > MAX_BOARD_REACH } }) {
+                throw CommandError("That is too far off the pages.")
+            }
+            val made = workspace.addInk(meta(args).id, document, document.board, placed,
+                args.text("color")?.let(::commandColor) ?: 0xFF000000.toInt(), args.float("width", 0.5f..100f) ?: 4f)
+            return@changePages JSONObject().put("page", "board").put("strokes", made)
+                .put("note", "Off the pages shows when the note's whiteboard is on (note settings).")
+        }
         val page = document.pages[index]
         val margin = INK_MARGIN
         if (lines.any { line -> line.any { it[0] !in -margin..page.width + margin || it[1] !in -margin..page.height + margin } }) {
-            throw CommandError("The ink goes off the page, which is ${page.width.clean()} by ${page.height.clean()}.")
+            throw CommandError("The ink goes off the page, which is ${page.width.clean()} by ${page.height.clean()}. " +
+                "To write beside the pages, use board for the page.")
         }
         val made = workspace.addInk(meta(args).id, document, page, lines,
             args.text("color")?.let(::commandColor) ?: 0xFF000000.toInt(), args.float("width", 0.5f..100f) ?: 4f)
@@ -1196,7 +1228,9 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
     }
 
     private fun eraseInk(args: Args, usage: String): Done = changePages(args, usage, "erase ink") { document ->
-        val index = pageIndex(args.positional.getOrNull(1) ?: throw CommandError("Give the page.", usage), document.pages.size)
+        val word = args.positional.getOrNull(1) ?: throw CommandError("Give the page, or board for off the pages.", usage)
+        val board = isBoard(word)
+        val index = if (board) -1 else pageIndex(word, document.pages.size)
         val area = when {
             args.has("all") -> null
             args.has("rect") -> args.text("rect")!!.split(',').map { it.trim().toFloatOrNull()?.takeIf(Float::isFinite) }.let { n ->
@@ -1204,6 +1238,11 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
                 floatArrayOf(n[0]!!, n[1]!!, n[0]!! + n[2]!!, n[1]!! + n[3]!!)
             }
             else -> throw CommandError("Give --rect X,Y,W,H, or --all for the whole page.", usage)
+        }
+        if (board) {
+            val (dx, dy) = boardOrigin(args, document)
+            val moved = area?.let { floatArrayOf(it[0] + dx, it[1] + dy, it[2] + dx, it[3] + dy) }
+            return@changePages JSONObject().put("page", "board").put("erased", workspace.eraseInk(meta(args).id, document, document.board, moved))
         }
         val removed = workspace.eraseInk(meta(args).id, document, document.pages[index], area)
         JSONObject().put("page", index + 1).put("erased", removed)
@@ -1442,6 +1481,14 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
 
     private fun textBoxes(page: Page): List<PageImage> = page.images.filter { it.textContent != null }
 
+    private fun isBoard(word: String) = word.equals("board", ignoreCase = true)
+
+    /** Where board coordinates start: page --near's top-left corner in the note, or the first page's. */
+    private fun boardOrigin(args: Args, document: Document): Pair<Float, Float> {
+        val near = args.text("near")?.let { pageIndex(it, document.pages.size) } ?: 0
+        return document.leftOf(near) to document.topOf(near)
+    }
+
     /** The page and text box a line names: NOTE PAGE BOX. */
     private fun textBoxAt(args: Args, usage: String, document: Document): Pair<Page, PageImage> {
         val index = pageIndex(args.positional.getOrNull(1) ?: throw CommandError("Give the page.", usage), document.pages.size)
@@ -1484,9 +1531,8 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
     private fun holdIfOpen(meta: NoteMeta) {
         touched += meta.id
         if (meta.id in held || !workspace.isOpen(meta.id)) return
-        if (!workspace.hold(meta.id)) throw CommandError("\"${meta.title}\" is on screen where it cannot take a change now: in a part of a split " +
-            "or the reference panel, or a stroke is being written. Try again in a moment, or ask the owner to open it on its own.",
-            code = "OPEN_ON_SCREEN")
+        if (!workspace.hold(meta.id)) throw CommandError("\"${meta.title}\" is on screen and could not take the change just now " +
+            "(a stroke was being written). Try again in a moment.", code = "OPEN_ON_SCREEN")
         held += meta.id
     }
 
@@ -1529,6 +1575,8 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
         const val PDF_CHUNK = 16
         const val IMAGE_WIDTH = 800
         const val MAX_MARKDOWN = 500_000
+        /** How far from the pages ink may be put on the board, in page units: far past any note, not past reason. */
+        const val MAX_BOARD_REACH = 200_000f
         const val MAX_ADDED_PAGES = 50
         const val MAX_TOC_LEVEL = 5
         const val MAX_TOC_TITLE = 200

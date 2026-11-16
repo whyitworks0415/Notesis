@@ -5818,6 +5818,31 @@ private fun NoteScreen(
             }
         }
 
+        // The ink off the pages (the whiteboard) is read too, for search and for agents, in the same
+        // quiet spells; once on opening when it has never been read, then after it changes.
+        val boardIndexed = remember { longArrayOf(Long.MIN_VALUE) }
+        LaunchedEffect(Unit) {
+            snapshotFlow { edits }.collectLatest { count ->
+                if (count == 0 && withContext(Dispatchers.IO) { store.inkIndexFile(latestNote.id, Document.BOARD_PAGE_ID).isFile }) {
+                    return@collectLatest
+                }
+                delay(UiScheduling.INK_INDEX_IDLE_MS * 2)
+                while (!(InteractionGovernor.mayRunOptional(UiScheduling.INK_INDEX_IDLE_MS) && !InteractionGovernor.optionalWorkHeld)) {
+                    delay(INK_INDEX_RECHECK_MS)
+                }
+                val view = canvas ?: return@collectLatest
+                val board = view.document.board
+                if (board.revision == boardIndexed[0]) return@collectLatest
+                val revision = board.revision
+                val strokes = board.strokes.toList()
+                val text = if (strokes.isEmpty()) "" else withContext(Dispatchers.IO) {
+                    indexer.textOf(strokes, keepGoing = { InteractionGovernor.state == Interaction.IDLE })
+                } ?: return@collectLatest
+                withContext(Dispatchers.IO) { store.writeInkIndex(latestNote.id, Document.BOARD_PAGE_ID, text) }
+                boardIndexed[0] = revision
+            }
+        }
+
         // Anything still unsaved when the screen goes away gets written now. If
         // the note was closed before it finished opening, the canvas never took
         // ownership of the PdfSource, so close it here instead of leaking it.
@@ -5859,6 +5884,11 @@ private fun NoteScreen(
                     heldForChange[0] = true
                     store.flushSave(latestNote.id, latestNote.title, view.document)
                     return true
+                }
+
+                // A read made while the note is open sees what is on screen: written out first, if anything is new.
+                override fun flush() {
+                    if (!heldForChange[0]) canvas?.let { store.flushSave(latestNote.id, latestNote.title, it.document) }
                 }
 
                 override fun letGo(changed: Boolean, done: () -> Unit) {
@@ -8449,13 +8479,54 @@ private fun ReferencePanel(
     // from a coroutine rather than keyed on popupEdits, so a stroke in the
     // panel does not recompose the panel.
     val latestTitle by rememberUpdatedState(title)
+    // While a change from an agent or the terminal is made under this pane, nothing it holds is written.
+    val heldForChange = remember(noteId) { booleanArrayOf(false) }
     LaunchedEffect(noteId) {
         autosaveLoop(edits = { popupEdits }) {
+            if (heldForChange[0]) return@autosaveLoop
             val v = view ?: return@autosaveLoop
             val started = System.nanoTime()
             store.saveLater(noteId, latestTitle, v.document)
             v.latency.record(PerformanceMetric.SAVE_SNAPSHOT, System.nanoTime() - started)
         }
+    }
+    // A part of a split or the pop-up panel takes changes made under it as the note's own screen does
+    // (LiveNotes). Not when it shows the note open beside it: that one's screen holds the document for both.
+    val paneScope = rememberCoroutineScope()
+    DisposableEffect(noteId, sharedDocument) {
+        if (sharedDocument != null) return@DisposableEffect onDispose {}
+        val screen = object : LiveNoteScreen {
+            override fun hold(): Boolean {
+                val v = view ?: return false
+                if (InteractionGovernor.state == Interaction.WRITING) return false
+                heldForChange[0] = true
+                store.flushSave(noteId, latestTitle, v.document)
+                return true
+            }
+
+            override fun flush() {
+                if (!heldForChange[0]) view?.let { store.flushSave(noteId, latestTitle, it.document) }
+            }
+
+            override fun letGo(changed: Boolean, done: () -> Unit) {
+                if (!changed) { heldForChange[0] = false; done(); return }
+                paneScope.launch {
+                    try {
+                        val fresh = runCatching { withContext(Dispatchers.IO) { store.load(noteId) } }.getOrNull()
+                        val v = view
+                        if (fresh != null && v != null) {
+                            fresh.layoutMode = v.document.layoutMode
+                            v.reload(fresh)
+                        }
+                    } finally {
+                        heldForChange[0] = false
+                        done()
+                    }
+                }
+            }
+        }
+        LiveNotes.register(noteId, screen)
+        onDispose { LiveNotes.unregister(noteId, screen) }
     }
 
     val pageCount = opened?.first?.pages?.size ?: 0
@@ -8769,6 +8840,7 @@ private fun ReferencePanel(
                             modifier = Modifier.align(Alignment.BottomCenter),
                         )
                     }
+                    if (noteId in LiveNotes.holding) AgentChangeVeil()
                 }
             }
         }

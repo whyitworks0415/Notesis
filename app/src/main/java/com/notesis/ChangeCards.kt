@@ -28,7 +28,7 @@ internal data class ChangeLine(val template: String, val args: List<String> = em
 
 /** Options that take the word after them, and those that stand alone: so a word that is a value is not taken for a note. */
 private val VALUED_OPTIONS = setOf("after", "count", "level", "x", "y", "size", "color", "width", "path", "points", "rect",
-    "format", "pages", "folder", "tag", "search", "limit", "offset", "max-chars", "from", "paper", "text", "title", "under", "to", "since")
+    "format", "pages", "folder", "tag", "search", "limit", "offset", "max-chars", "from", "paper", "text", "title", "under", "to", "since", "near")
 
 /** The commands that only read: never asked about, whatever the owner chose. */
 internal val READ_COMMANDS = setOf("help", "status", "preview", "search", "notes list", "note read", "tags list", "folder list",
@@ -93,8 +93,9 @@ internal fun describeCommand(words: List<String>, notes: List<NoteMeta>): Change
         "toc clear" -> ChangeLine("Clear the outline of “{0}”", listOf(title), true)
         "text add" -> ChangeLine("Add text to page {1} of “{0}”: “{2}”",
             listOf(title, page(1), snippet(positional.drop(2).joinToString(" "))), true)
-        "ink add" -> ChangeLine("Draw on page {1} of “{0}”", listOf(title, page(1)), true)
-        "ink erase" ->
+        "ink add" -> if (page(1).equals("board", true)) ChangeLine("Draw beside the pages of “{0}”", listOf(title), true)
+            else ChangeLine("Draw on page {1} of “{0}”", listOf(title, page(1)), true)
+        "ink erase" -> if (page(1).equals("board", true)) ChangeLine("Erase ink beside the pages of “{0}”", listOf(title), true) else
             if ("all" in flags) ChangeLine("Erase all the ink on page {1} of “{0}”", listOf(title, page(1)), true)
             else ChangeLine("Erase the ink in an area of page {1} of “{0}”", listOf(title, page(1)), true)
         "note new" -> ChangeLine("Make a handwritten note “{0}”", listOf(positional.joinToString(" ")), true)

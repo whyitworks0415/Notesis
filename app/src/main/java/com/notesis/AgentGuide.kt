@@ -19,7 +19,7 @@ internal val AGENT_GUIDE = """
 Tools: `notesis_help` lists the commands; `notesis_run` runs command lines. The lines of one call are one batch: all are done, or none.
 
 ## Rules
-- A note open on the tablet's screen takes changes and shows them at once. One in a split part or the reference panel cannot (OPEN_ON_SCREEN); nor is a note on screen put in the trash.
+- A note open on the tablet - on its own, in a split or in the pop-up panel - takes changes and shows them at once, and is read as it is on screen. While a stroke is being written a change waits a moment (OPEN_ON_SCREEN if it waited too long: try again). A note on screen is not put in the trash.
 - Deleting moves a note to the trash. `undo` takes back the latest change.
 - The owner may be asked before a change. A refusal ("denied") is their answer: do not send it again.
 - Once you know a note's id, use it. A title that fits several notes fails with AMBIGUOUS and lists them; one not found lists likely ones.
@@ -39,6 +39,8 @@ Outline a PDF note (its table of contents):
 4. No text layer (a scan): `page image NOTE N` shows a page as a picture.
 
 Summarise a handwritten note: `note read NOTE --text-only`. A page with ink but no text: `ink read NOTE PAGE`.
+
+Beside the pages (the whiteboard): `ink add NOTE board --near 3 --path "..."` draws from page 3's corner (x past the page's width is to its right); `ink read NOTE board` reads it; `note read` gives its ink count and handwriting under "board".
 
 Write into notes: a Markdown note takes `md append NOTE "TEXT" --under HEADING` or `md replace NOTE OLD NEW`;
 a handwritten page takes `text add NOTE PAGE "TEXT" --md`. In TEXT, \n starts a new line.

@@ -1853,3 +1853,5 @@ Carrying on an earlier conversation: {0}	이전 대화를 이어 갑니다: {0}
 Asking Termux for {0}'s earlier conversations…	Termux에 {0}의 이전 대화를 묻는 중…
 No earlier conversations were found. If you used this agent before, run the setup script again in Termux: it adds what lists them.	이전 대화를 찾지 못했습니다. 이 에이전트를 써 본 적이 있다면 Termux에서 설정 스크립트를 다시 실행하세요. 목록을 읽는 도우미가 들어갑니다.
 Termux could not be asked. Is it installed and up to date?	Termux에 요청하지 못했습니다. 설치되어 있고 최신인가요?
+Draw beside the pages of “{0}”	“{0}”의 쪽 밖에 그리기
+Erase ink beside the pages of “{0}”	“{0}”의 쪽 밖 필기 지우기

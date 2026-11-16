@@ -37,9 +37,15 @@ internal class NoteStoreWorkspace(
     override fun hold(id: String): Boolean = LiveNotes.hold(id).also { if (it) store.settled() }
     override fun letGo(id: String, changed: Boolean) = LiveNotes.letGo(id, changed)
     // A note closed a moment ago may still be on its way to disk; what is read is what it was left as.
-    override fun load(id: String): Document { store.settled(); return store.load(id) }
+    override fun load(id: String): Document { fresh(id); return store.load(id) }
+
+    /** A note on screen is read as it is on screen: its screen writes what is new first (LiveNotes). */
+    private fun fresh(id: String) {
+        if (isOpenNote(id)) LiveNotes.flush(id)
+        store.settled()
+    }
     override fun save(id: String, title: String, document: Document) = store.save(id, title, document)
-    override fun markdown(id: String): String? = runCatching { store.loadMarkdown(id) }.getOrNull()
+    override fun markdown(id: String): String? = runCatching { fresh(id); store.loadMarkdown(id) }.getOrNull()
     override fun rename(id: String, title: String): Boolean = store.renameNote(id, title)
     override fun setFolder(id: String, folder: String) = store.setFolder(id, folder)
     override fun setTags(id: String, tags: List<String>) = store.setTags(id, tags)
@@ -147,6 +153,8 @@ internal class NoteStoreWorkspace(
         val note = store.noteDir(id)
         File(note, "meta.json").takeIf { it.isFile }?.copyTo(File(copy, "meta.json"))
         File(note, "pages").takeIf { it.isDirectory }?.copyRecursively(File(copy, "pages"))
+        // The ink and tape off the pages live beside them, not among them.
+        for (name in BOARD_FILES) File(note, name).takeIf { it.isFile }?.copyTo(File(copy, name))
         return copy
     }
 
@@ -159,6 +167,10 @@ internal class NoteStoreWorkspace(
         val pages = File(note, "pages")
         pages.deleteRecursively()
         File(copy, "pages").takeIf { it.isDirectory }?.copyRecursively(pages, overwrite = true) ?: pages.mkdirs()
+        for (name in BOARD_FILES) {
+            val kept = File(copy, name)
+            if (kept.isFile) kept.copyTo(File(note, name), overwrite = true) else File(note, name).delete()
+        }
     }
 
     // ---- for the agent commands (Todo.md Q1-Q5) ----
@@ -334,6 +346,7 @@ internal class NoteStoreWorkspace(
     }
 
     private companion object {
+        val BOARD_FILES = listOf(Document.BOARD_FILE, Document.BOARD_MASK_FILE)
         const val JPEG_QUALITY = 82
         /** The favourite marker's file name in a note's folder; see NoteStore.setFavorite. */
         const val FAVORITE_MARKER = "favorite"

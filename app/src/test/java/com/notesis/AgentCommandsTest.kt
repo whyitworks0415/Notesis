@@ -509,4 +509,21 @@ class AgentCommandsTest {
         assertEquals("Outline of the PDF", sessions[0].title)
         assertEquals("2026-11-15 09:30", sessions[0].at)
     }
+
+    @Test
+    fun `ink goes beside the pages, is erased and read there, and undo takes it back`() {
+        val memory = MemoryNotes().apply { add("n1", "Maths") }
+        val commands = NoteCommands(memory)
+        val drawn = result(commands, "ink add Maths board --near 2 --points \"1300,10 1400,20\"")
+        assertEquals("board", drawn.getString("page"))
+        assertEquals(1, memory.ink[Document.BOARD_PAGE_ID])
+        assertEquals(1, result(commands, "note read Maths").getJSONObject("board").getInt("ink"))
+        assertEquals(1, result(commands, "ink erase Maths board --all").getInt("erased"))
+        commands.run("undo"); commands.run("undo")
+        assertEquals(0, memory.ink[Document.BOARD_PAGE_ID] ?: 0)
+        assertFalse(result(commands, "note read Maths").has("board"))
+        // On a page the ink stays on it, and the answer says where else it can go.
+        assertTrue(failure(commands, "ink add Maths 1 --points \"1300,10 1400,20\"").getString("error").contains("board"))
+        assertEquals("Draw beside the pages of “Maths”", result(commands, "preview ink add Maths board --path \"M 0 0 L 5 5\"").getString("does"))
+    }
 }

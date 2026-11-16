@@ -107,7 +107,7 @@ internal fun agentHelp(topic: String = ""): String = buildString {
     for (usage in COMMAND_USAGE.values) append("  ").append(usage).append('\n')
     append("\nNOTE is a note's id (or its first 8 letters) or title. PAGE is a page number from 1, or last.\n")
     append("Several lines run as one batch: if one fails, the ones before it are taken back.\n")
-    append("A note open on screen takes changes and shows them at once (not one in a split part or the reference panel). ")
+    append("A note open on screen (alone, in a split or in the pop-up panel) takes changes and shows them at once, and is read as shown. ")
     append("Deleting only moves a note to the trash.\n")
     append("`undo` takes back the latest change. The owner may be asked before a change; a refusal is final for that request.\n")
     append("A failure carries a code: NOT_FOUND, AMBIGUOUS (with candidates), OPEN_ON_SCREEN, LOCKED, BAD_PAGE, NO_PDF, NO_OUTLINE, ")

@@ -212,6 +212,7 @@ internal fun MarkdownNoteScreen(
                 saveNow()
                 return true
             }
+            override fun flush() { if (loaded) saveNow() }
             // Saves go one at a time on this queue; an empty task behind them ends after the last.
             override fun settle() { kotlinx.coroutines.runBlocking(MarkdownIo.serial) {} }
             override fun letGo(changed: Boolean, done: () -> Unit) {

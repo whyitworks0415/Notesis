@@ -1762,7 +1762,8 @@ class NoteStore(context: Context) {
             .flatMap {
                 listOf("${it.id}.bin", "${it.id}.mask", "${it.id}.txt", "${it.id}$INK_INDEX", "${it.id}$BOX_INDEX")
             }
-            .toSet()
+            .toSet() + "${Document.BOARD_PAGE_ID}$INK_INDEX"
+        // The whiteboard's handwriting as read, kept beside the pages' for search.
         dir.listFiles()?.forEach { if (it.name !in live) it.delete() }
         // The whiteboard, whole, when it changed: it is small next to the pages.
         if (document.board.dirty) {
