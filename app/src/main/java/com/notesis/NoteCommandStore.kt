@@ -35,7 +35,16 @@ internal class NoteStoreWorkspace(
     override fun isOpen(id: String): Boolean = isOpenNote(id)
     // The screen writes what it shows; what it wrote is on disk before anything is copied for undo or changed.
     override fun hold(id: String): Boolean = LiveNotes.hold(id).also { if (it) store.settled() }
-    override fun letGo(id: String, changed: Boolean) = LiveNotes.letGo(id, changed)
+    override fun letGo(id: String, changed: Boolean) {
+        // Which pages' ink this batch rewrote, so the screen reads only those again; not known after an undo.
+        val pages = if (id in inkUnknown) null else inkTouched[id].orEmpty()
+        inkTouched.remove(id)
+        inkUnknown.remove(id)
+        LiveNotes.letGo(id, changed, pages)
+    }
+
+    private val inkTouched = HashMap<String, MutableSet<String>>()
+    private val inkUnknown = HashSet<String>()
     // A note closed a moment ago may still be on its way to disk; what is read is what it was left as.
     override fun load(id: String): Document { fresh(id); return store.load(id) }
 
@@ -44,7 +53,12 @@ internal class NoteStoreWorkspace(
         if (isOpenNote(id)) LiveNotes.flush(id)
         store.settled()
     }
-    override fun save(id: String, title: String, document: Document) = store.save(id, title, document)
+    override fun save(id: String, title: String, document: Document) {
+        val touched = inkTouched.getOrPut(id) { HashSet() }
+        for (page in document.pages) if (page.loaded && page.dirty) touched += page.id
+        if (document.board.dirty) touched += Document.BOARD_PAGE_ID
+        store.save(id, title, document)
+    }
     override fun markdown(id: String): String? = runCatching { fresh(id); store.loadMarkdown(id) }.getOrNull()
     override fun rename(id: String, title: String): Boolean = store.renameNote(id, title)
     override fun setFolder(id: String, folder: String) = store.setFolder(id, folder)
@@ -161,6 +175,7 @@ internal class NoteStoreWorkspace(
     override fun release(kept: Any) { (kept as? File)?.deleteRecursively() }
 
     override fun bring(id: String, kept: Any) {
+        inkUnknown += id
         val copy = kept as File
         val note = store.noteDir(id)
         File(copy, "meta.json").takeIf { it.isFile }?.copyTo(File(note, "meta.json"), overwrite = true)

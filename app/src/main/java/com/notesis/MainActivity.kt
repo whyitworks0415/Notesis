@@ -5882,16 +5882,18 @@ private fun NoteScreen(
                     // Not in the middle of a stroke: it would be lost when the note is read again.
                     if (InteractionGovernor.state == Interaction.WRITING) return false
                     heldForChange[0] = true
-                    store.flushSave(latestNote.id, latestNote.title, view.document)
+                    store.flushSave(latestNote.id, latestNote.title, view.document, closing = false)
                     return true
                 }
 
                 // A read made while the note is open sees what is on screen: written out first, if anything is new.
                 override fun flush() {
-                    if (!heldForChange[0]) canvas?.let { store.flushSave(latestNote.id, latestNote.title, it.document) }
+                    if (!heldForChange[0]) canvas?.let { store.flushSave(latestNote.id, latestNote.title, it.document, closing = false) }
                 }
 
-                override fun letGo(changed: Boolean, done: () -> Unit) {
+                override fun letGo(changed: Boolean, done: () -> Unit) = letGo(changed, null, done)
+
+                override fun letGo(changed: Boolean, inkPages: Set<String>?, done: () -> Unit) {
                     if (!changed) { heldForChange[0] = false; done(); return }
                     scope.launch {
                         try {
@@ -5903,7 +5905,8 @@ private fun NoteScreen(
                             val view = canvas
                             if (fresh != null && view != null) {
                                 fresh.first.layoutMode = pageLayout
-                                view.reload(fresh.first)
+                                // In place where it can be: only what changed is read and drawn again.
+                                if (!view.refreshInPlace(fresh.first, inkPages)) view.reload(fresh.first)
                                 pageCount = fresh.first.pages.size
                                 fresh.second?.let(onNoteChanged)
                             }
@@ -8500,15 +8503,17 @@ private fun ReferencePanel(
                 val v = view ?: return false
                 if (InteractionGovernor.state == Interaction.WRITING) return false
                 heldForChange[0] = true
-                store.flushSave(noteId, latestTitle, v.document)
+                store.flushSave(noteId, latestTitle, v.document, closing = false)
                 return true
             }
 
             override fun flush() {
-                if (!heldForChange[0]) view?.let { store.flushSave(noteId, latestTitle, it.document) }
+                if (!heldForChange[0]) view?.let { store.flushSave(noteId, latestTitle, it.document, closing = false) }
             }
 
-            override fun letGo(changed: Boolean, done: () -> Unit) {
+            override fun letGo(changed: Boolean, done: () -> Unit) = letGo(changed, null, done)
+
+            override fun letGo(changed: Boolean, inkPages: Set<String>?, done: () -> Unit) {
                 if (!changed) { heldForChange[0] = false; done(); return }
                 paneScope.launch {
                     try {
@@ -8516,7 +8521,7 @@ private fun ReferencePanel(
                         val v = view
                         if (fresh != null && v != null) {
                             fresh.layoutMode = v.document.layoutMode
-                            v.reload(fresh)
+                            if (!v.refreshInPlace(fresh, inkPages)) v.reload(fresh)
                         }
                     } finally {
                         heldForChange[0] = false

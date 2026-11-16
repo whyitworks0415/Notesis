@@ -1935,10 +1935,13 @@ class NoteStore(context: Context) {
      * Bypasses the UI debounce when a note closes or the app enters the
      * background. Duplicate lifecycle events are rejected before snapshotting.
      */
-    fun flushSave(id: String, title: String, document: Document) {
-        thumbOnClose.add(id)
+    fun flushSave(id: String, title: String, document: Document, closing: Boolean = true) {
+        // Only a note being closed or put away draws its card's picture now: a flush asked for by an agent's
+        // read or change, many times a minute, drew the first page (PDF and all) each time.
+        if (closing) thumbOnClose.add(id)
         val generation = SaveGeneration(document.saveSessionId, document.editRevision, title)
         val alreadySaved = synchronized(saveQueueLock) { saveLedger.contains(id, generation) }
+        if (alreadySaved && !closing) return
         // Nothing new to save, but the last change to the first page was too
         // soon after the picture before it: draw it now, on the save worker.
         if (alreadySaved && id in thumbBehind) {

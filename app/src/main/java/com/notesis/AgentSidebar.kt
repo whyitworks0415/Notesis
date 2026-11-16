@@ -192,7 +192,8 @@ private fun AgentSidebar() {
             itemsIndexed(chat.messages) { _, message -> ChatBubble(message) }
             if (waiting != null) item {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                    // No running animation while it waits: one kept the whole screen redrawing every frame,
+                    // for as many minutes as an agent takes. The clock below moves once a second.
                     val seconds = ((now - chat.sentAt) / 1000).coerceAtLeast(0)
                     Text("{0} is working in Termux · {1}".tr.replace("{0}", chat.agent.label)
                         .replace("{1}", "%d:%02d".format(seconds / 60, seconds % 60)),

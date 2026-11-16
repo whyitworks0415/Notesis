@@ -61,6 +61,8 @@ internal interface LiveNoteScreen {
     fun flush() {}
     /** Goes on; [changed]: reads the note again first, keeping the view where it was. Calls [done] once it is showing it. */
     fun letGo(changed: Boolean, done: () -> Unit)
+    /** As [letGo], told which pages' ink was rewritten (by id, "board" for the whiteboard; null: not known). */
+    fun letGo(changed: Boolean, inkPages: Set<String>?, done: () -> Unit) = letGo(changed, done)
 }
 
 /** The screens that can take changes, by the note they show (see [LiveNoteScreen]). */
@@ -103,12 +105,12 @@ internal object LiveNotes {
         if (onMain { screen.flush() } != null) screen.settle()
     }
 
-    fun letGo(id: String, changed: Boolean) {
+    fun letGo(id: String, changed: Boolean, inkPages: Set<String>? = null) {
         val screen = screen(id)
         onMain {
             // The veil stays until the screen shows the note as it is now: a stroke drawn before that would be lost.
             if (screen == null) holding = holding - id
-            else screen.letGo(changed) { holding = holding - id }
+            else screen.letGo(changed, inkPages) { holding = holding - id }
         }
     }
 

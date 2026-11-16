@@ -2832,6 +2832,88 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     /**
+     * A change made under the screen applied where it can be without opening the
+     * note again: [fresh] is the note as it is on disk now, [inkPages] the pages
+     * whose ink was rewritten (by id, "board" for the whiteboard; null when it is
+     * not known which). Pages keep their objects, their drawing and their place;
+     * a page's settings, outline and pictures are taken from [fresh] where they
+     * differ, and only the pages whose ink changed are read again, as a page
+     * scrolled back to is. False when the pages themselves changed (added,
+     * removed, moved): the caller opens the note again instead.
+     *
+     * Opening the whole note again for every change an agent made re-read and
+     * re-drew everything on screen each time, which over an agent's many small
+     * changes was work, heat and stutter for nothing.
+     */
+    fun refreshInPlace(fresh: Document, inkPages: Set<String>?): Boolean {
+        val pages = document.pages
+        if (pages.size != fresh.pages.size || pages.indices.any { pages[it].id != fresh.pages[it].id }) return false
+        if (erasing || drawingLasso || movingLasso || capturing || drawingShape) return false
+        var changed = false
+        for (i in pages.indices) {
+            val page = pages[i]
+            val now = fresh.pages[i]
+            var metaChanged = false
+            fun <T> take(old: T, new: T, set: (T) -> Unit) { if (old != new) { set(new); metaChanged = true } }
+            take(page.width, now.width) { page.width = it }
+            take(page.height, now.height) { page.height = it }
+            take(page.background, now.background) { page.background = it }
+            take(page.templateId, now.templateId) { page.templateId = it }
+            take(page.pdfPageIndex, now.pdfPageIndex) { page.pdfPageIndex = it }
+            take(page.tocTitle, now.tocTitle) { page.tocTitle = it }
+            take(page.tocLevel, now.tocLevel) { page.tocLevel = it }
+            take(page.tocHighlighted, now.tocHighlighted) { page.tocHighlighted = it }
+            take(page.bookmarked, now.bookmarked) { page.bookmarked = it }
+            take(page.besideOf, now.besideOf) { page.besideOf = it }
+            take(page.attachmentsHidden, now.attachmentsHidden) { page.attachmentsHidden = it }
+            if (page.links != now.links) { page.links.clear(); page.links.putAll(now.links); metaChanged = true }
+            if (page.attachments != now.attachments) { page.attachments.clear(); page.attachments.addAll(now.attachments); metaChanged = true }
+            if (page.images.size != now.images.size || page.images.indices.any { !page.images[it].sameState(now.images[it]) }) {
+                page.images.clear(); page.images.addAll(now.images); metaChanged = true
+            }
+            val inkChanged = inkPages == null || page.id in inkPages
+            if (inkChanged && page.loaded) {
+                // Let go as a page scrolled far away is; it is read in again from disk when drawn.
+                page.strokes.clear()
+                page.hiddenStrokes.clear()
+                page.masks.clear()
+                dry.dropStrokeIndex(page)
+                dry.forgetPage(page)
+                page.loaded = false
+                page.tessellatedFor = -1f
+            }
+            if (inkChanged) {
+                page.savedStrokeCount = now.savedStrokeCount
+                page.dirty = false
+            }
+            if (metaChanged || inkChanged) {
+                // A new revision: what was recorded or kept of this page for drawing and saving is out of date.
+                page.revision++
+                page.renderState = RenderState.Dirty
+                changed = true
+            }
+        }
+        if (inkPages == null || Document.BOARD_PAGE_ID in inkPages) {
+            val board = document.board
+            board.strokes.clear(); board.strokes.addAll(fresh.board.strokes)
+            board.masks.clear(); board.masks.addAll(fresh.board.masks)
+            board.revision++
+            board.dirty = false
+            changed = true
+        }
+        document.layers.copyFrom(fresh.layers)
+        if (!changed) return true
+        // The history here speaks of what was on the pages before the change; it is let go, as on any opening.
+        undoStack.clear()
+        redoStack.clear()
+        document.invalidateLayout()
+        requestLayout()
+        dry.invalidate()
+        scheduleRefine()
+        return true
+    }
+
+    /**
      * The same note read again after a change made under it (an agent's or the
      * terminal's command; see LiveNotes): its pages as they are now, with the
      * view left where it was rather than fitted again to the first page. The
