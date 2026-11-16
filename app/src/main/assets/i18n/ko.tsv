@@ -1847,3 +1847,9 @@ The next request carries on this conversation.	다음 요청은 이 대화를 �
 The next request starts afresh.	다음 요청은 새로 시작합니다.
 (No answer.)	(답이 없습니다.)
 The setup also lets Termux take requests from Notesis's agent sidebar (allow-external-apps). Only apps you give the "Run commands in Termux" permission can use that.	설정은 Termux가 Notesis의 에이전트 사이드바 요청을 받게도 합니다(allow-external-apps). "Termux에서 명령 실행" 권한을 준 앱만 이것을 쓸 수 있습니다.
+Earlier conversations	이전 대화
+Back to the conversation	대화로 돌아가기
+Carrying on an earlier conversation: {0}	이전 대화를 이어 갑니다: {0}
+Asking Termux for {0}'s earlier conversations…	Termux에 {0}의 이전 대화를 묻는 중…
+No earlier conversations were found. If you used this agent before, run the setup script again in Termux: it adds what lists them.	이전 대화를 찾지 못했습니다. 이 에이전트를 써 본 적이 있다면 Termux에서 설정 스크립트를 다시 실행하세요. 목록을 읽는 도우미가 들어갑니다.
+Termux could not be asked. Is it installed and up to date?	Termux에 요청하지 못했습니다. 설치되어 있고 최신인가요?

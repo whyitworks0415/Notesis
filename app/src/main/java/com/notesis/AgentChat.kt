@@ -36,36 +36,154 @@ private const val TERMUX_HOME_DIR = "/data/data/com.termux/files/home"
 /** The helper in Debian that reads the request from its input and hands it to the agent; written by the setup script. */
 internal const val ASK_HELPER = "/root/.notesis/ask"
 
+/** The helper that lists an agent's earlier conversations; written by the setup script beside [ASK_HELPER]. */
+internal const val SESSIONS_HELPER = "/root/.notesis/sessions.js"
+
+/** An id as the agents write them: letters, digits, - _ . and nothing that could be taken for more than one word. */
+private val SESSION_ID = Regex("^[A-Za-z0-9._-]{1,100}$")
+
 /**
  * What Termux runs for one request to [agent]: Debian, the helper, the agent's
- * name, and whether this carries on the last conversation. Fixed words only:
+ * name, and which conversation it goes on - the last one ([carryOn]), the
+ * earlier one [resumeId] chosen from the list, or a new one. Fixed words only:
  * the request itself goes on standard input.
  */
-internal fun agentAskArguments(agent: AgentCli, carryOn: Boolean): List<String> =
-    listOf("login", "debian", "--", "bash", ASK_HELPER, agent.command) + (if (carryOn) listOf("continue") else emptyList())
+internal fun agentAskArguments(agent: AgentCli, carryOn: Boolean, resumeId: String? = null): List<String> {
+    val base = listOf("login", "debian", "--", "bash", ASK_HELPER, agent.command)
+    return when {
+        resumeId != null -> {
+            require(SESSION_ID.matches(resumeId)) { "Not a conversation id" }
+            base + listOf("resume", resumeId)
+        }
+        carryOn -> base + "continue"
+        else -> base
+    }
+}
+
+/** What Termux runs to list [agent]'s earlier conversations, one a line: id, when, title. */
+internal fun agentSessionsArguments(agent: AgentCli): List<String> =
+    listOf("login", "debian", "--", "bash", ASK_HELPER, "sessions", agent.command)
+
+/** An earlier conversation of an agent's, as the list gives it. */
+internal data class AgentSession(val id: String, val at: String, val title: String)
+
+/** The list's lines (id TAB when TAB title), newest first; a line that is not one is left out. */
+internal fun parseSessions(stdout: String): List<AgentSession> = stdout.lines().mapNotNull { line ->
+    val parts = line.split('\t')
+    val id = parts.getOrNull(0)?.trim().orEmpty()
+    if (!SESSION_ID.matches(id)) null else AgentSession(id, parts.getOrNull(1)?.trim().orEmpty(), parts.getOrNull(2)?.trim().orEmpty())
+}
 
 /**
  * The helper: the request from standard input, given to each agent in its
- * one-shot mode. Claude Code is allowed the Notesis tools and nothing else
- * without asking; the owner's own rules (ask first, or make at once) still
- * decide each change in Notesis.
+ * one-shot mode, in a new conversation, the last one, or one picked from the
+ * list. Claude Code is allowed the Notesis tools and nothing else without
+ * asking; the owner's own rules (ask first, or make at once) still decide each
+ * change in Notesis. `ask sessions AGENT` lists the conversations instead.
  */
 internal val ASK_HELPER_SCRIPT = """
 #!/bin/bash
-# Notesis: asks an agent once. The request comes on standard input; usage: ask AGENT [continue]
-prompt="${'$'}(cat)"
+# Notesis: asks an agent once, or lists its earlier conversations.
+#   ask AGENT [continue | resume ID]   the request comes on standard input
+#   ask sessions AGENT                 one conversation a line: id, when, title
 cd "${'$'}HOME"
+if [ "${'$'}1" = sessions ]; then
+  case "${'$'}2" in
+    gemini) gemini --list-sessions 2>&1 | node "${'$'}HOME/.notesis/sessions.js" gemini ;;
+    opencode) opencode session list --format json 2>/dev/null | node "${'$'}HOME/.notesis/sessions.js" opencode ;;
+    *) node "${'$'}HOME/.notesis/sessions.js" "${'$'}2" </dev/null ;;
+  esac
+  exit
+fi
+prompt="${'$'}(cat)"
+how="${'$'}2"
+id="${'$'}3"
 case "${'$'}1" in
-  claude) exec claude -p "${'$'}prompt" --allowedTools mcp__notesis__notesis_run,mcp__notesis__notesis_help ${'$'}{2:+--continue} ;;
-  codex) exec codex exec --skip-git-repo-check "${'$'}prompt" ;;
-  gemini) exec gemini -p "${'$'}prompt" ;;
-  opencode) exec opencode run ${'$'}{2:+--continue} "${'$'}prompt" ;;
+  claude)
+    case "${'$'}how" in continue) set -- --continue ;; resume) set -- --resume "${'$'}id" ;; *) set -- ;; esac
+    exec claude -p "${'$'}prompt" --allowedTools mcp__notesis__notesis_run,mcp__notesis__notesis_help "${'$'}@" ;;
+  codex)
+    case "${'$'}how" in
+      continue) exec codex exec --skip-git-repo-check resume --last "${'$'}prompt" ;;
+      resume) exec codex exec --skip-git-repo-check resume "${'$'}id" "${'$'}prompt" ;;
+      *) exec codex exec --skip-git-repo-check "${'$'}prompt" ;;
+    esac ;;
+  gemini)
+    case "${'$'}how" in
+      continue) exec gemini --resume latest -p "${'$'}prompt" ;;
+      resume) exec gemini --resume "${'$'}id" -p "${'$'}prompt" ;;
+      *) exec gemini -p "${'$'}prompt" ;;
+    esac ;;
+  opencode)
+    case "${'$'}how" in
+      continue) exec opencode run --continue "${'$'}prompt" ;;
+      resume) exec opencode run --session "${'$'}id" "${'$'}prompt" ;;
+      *) exec opencode run "${'$'}prompt" ;;
+    esac ;;
   *) echo "Notesis: no agent called ${'$'}1" >&2; exit 2 ;;
 esac
 """.trimIndent()
 
-/** Which agents carry on a conversation from one request to the next here. */
-internal fun carriesOn(agent: AgentCli): Boolean = agent == AgentCli.CLAUDE || agent == AgentCli.OPENCODE
+/**
+ * Lists an agent's earlier conversations from where each keeps them (Claude
+ * Code and Codex: their own files; Gemini CLI and OpenCode: their own list,
+ * read from standard input), newest first, as "id TAB when TAB title".
+ */
+internal val SESSIONS_SCRIPT = """
+// Notesis: an agent's earlier conversations, newest first, one a line: id, when, title.
+const fs = require("fs"), path = require("path"), os = require("os");
+const agent = process.argv[2], home = os.homedir(), out = [];
+const clean = (s) => String(s || "").replace(/\s+/g, " ").trim().slice(0, 80);
+const textOf = (c) => typeof c === "string" ? c : Array.isArray(c) ? c.map((p) => (p && (p.text || p.input_text)) || "").join(" ") : "";
+const lines = (file, n) => { try { return fs.readFileSync(file, "utf8").split("\n").slice(0, n); } catch (e) { return []; } };
+const walk = (dir, files) => {
+  let list = [];
+  try { list = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return files; }
+  for (const d of list) { const p = path.join(dir, d.name); if (d.isDirectory()) walk(p, files); else files.push(p); }
+  return files;
+};
+const input = () => { try { return fs.readFileSync(0, "utf8"); } catch (e) { return ""; } };
+const when = (f) => { try { return fs.statSync(f).mtimeMs; } catch (e) { return 0; } };
+if (agent === "claude") {
+  const dir = path.join(home, ".claude", "projects", home.replace(/[^A-Za-z0-9]/g, "-"));
+  for (const f of walk(dir, []).filter((f) => f.endsWith(".jsonl"))) {
+    let title = "";
+    for (const line of lines(f, 80)) {
+      try { const j = JSON.parse(line); if (j.type === "user" && j.message) { title = textOf(j.message.content); if (title) break; } } catch (e) {}
+    }
+    out.push([path.basename(f, ".jsonl"), when(f), title]);
+  }
+} else if (agent === "codex") {
+  for (const f of walk(path.join(home, ".codex", "sessions"), []).filter((f) => f.endsWith(".jsonl"))) {
+    let id = "", title = "";
+    for (const line of lines(f, 120)) {
+      try {
+        const j = JSON.parse(line), p = j.payload || {};
+        if (!id && j.type === "session_meta" && p.id) id = p.id;
+        if (!title && p.type === "message" && p.role === "user") { const t = textOf(p.content); if (t && !t.trim().startsWith("<")) title = t; }
+      } catch (e) {}
+    }
+    if (id) out.push([id, when(f), title]);
+  }
+} else if (agent === "opencode") {
+  let list = [];
+  try { list = JSON.parse(input()); } catch (e) {}
+  for (const s of Array.isArray(list) ? list : []) out.push([s.id, s.updated || (s.time && s.time.updated) || 0, s.title]);
+} else if (agent === "gemini") {
+  for (const line of input().split("\n")) {
+    const m = line.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+    if (m) out.push([m[0], 0, line.replace(m[0], "").replace(/[\[\]()]/g, " ")]);
+  }
+}
+out.sort((a, b) => b[1] - a[1]);
+for (const [id, at, title] of out.slice(0, 40)) {
+  const stamp = at ? new Date(at).toISOString().slice(0, 16).replace("T", " ") : "";
+  console.log([id, stamp, clean(title) || "(untitled)"].join("\t"));
+}
+""".trimIndent()
+
+/** Every agent here carries on a conversation, and picks up an earlier one, in its own way (see [ASK_HELPER_SCRIPT]). */
+internal fun carriesOn(agent: AgentCli): Boolean = true
 
 /**
  * The request as sent: the owner's words, with the note on screen named first
@@ -127,6 +245,16 @@ internal object AgentChat {
         private set
     /** Whether the next request carries on the conversation. */
     var carryOn by mutableStateOf(false)
+    /** An earlier conversation picked from the list, which the next request goes on. */
+    var resume by mutableStateOf<AgentSession?>(null)
+        private set
+    /** The agent's earlier conversations, while the list is open; null when it is not. */
+    var sessions by mutableStateOf<List<AgentSession>?>(null)
+        private set
+    var loadingSessions by mutableStateOf(false)
+        private set
+    var sessionsError by mutableStateOf<String?>(null)
+        private set
     /** The note on screen, named in each request; set by the note screens. */
     var note by mutableStateOf<Pair<String, String>?>(null)
     private var read = false
@@ -162,14 +290,67 @@ internal object AgentChat {
     fun clear(context: Context) {
         messages.clear()
         carryOn = false
+        resume = null
         save(context)
     }
 
     fun choose(context: Context, cli: AgentCli) {
-        if (cli != agent) carryOn = false
+        if (cli != agent) { carryOn = false; resume = null; sessions = null }
         agent = cli
         save(context)
     }
+
+    /** Goes on [session] from the next request; what this sidebar showed of another conversation is put away. */
+    fun pick(context: Context, session: AgentSession) {
+        resume = session
+        sessions = null
+        carryOn = false
+        messages.clear()
+        messages += ChatMessage(false, "Carrying on an earlier conversation: {0}".tr.replace("{0}",
+            listOf(session.title, session.at).filter { it.isNotBlank() }.joinToString(" · ")), agent.label)
+        save(context)
+    }
+
+    fun closeSessions() { sessions = null; sessionsError = null }
+
+    /** Asks Termux for the agent's earlier conversations; they arrive in [sessions]. */
+    fun listSessions(context: Context) {
+        if (loadingSessions || waiting != null) return
+        val app = context.applicationContext
+        val id = ++nextId
+        sessionsRequest = id
+        sessionsError = null
+        sessions = null
+        if (!runInTermux(app, id, agentSessionsArguments(agent), null, "Notesis: ${agent.label} conversations")) {
+            sessionsError = "Termux could not be asked. Is it installed and up to date?"
+            return
+        }
+        loadingSessions = true
+    }
+
+    private var sessionsRequest = 0L
+
+    /** Hands [arguments] (and [stdin]) to Termux to run in the background, the answer to come back as request [id]. */
+    private fun runInTermux(app: Context, id: Long, arguments: List<String>, stdin: String?, label: String): Boolean {
+        val reply = Intent(app, AgentChatResultReceiver::class.java).putExtra(EXTRA_REQUEST, id)
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (android.os.Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
+        val pending = PendingIntent.getBroadcast(app, (id % Int.MAX_VALUE).toInt(), reply, flags)
+        val intent = Intent(TERMUX_ACTION).setClassName(TERMUX_PACKAGE, TERMUX_SERVICE)
+            .putExtra("com.termux.RUN_COMMAND_PATH", "$TERMUX_BIN/proot-distro")
+            .putExtra("com.termux.RUN_COMMAND_ARGUMENTS", arguments.toTypedArray())
+            .putExtra("com.termux.RUN_COMMAND_WORKDIR", TERMUX_HOME_DIR)
+            .putExtra("com.termux.RUN_COMMAND_BACKGROUND", true)
+            .putExtra("com.termux.RUN_COMMAND_COMMAND_LABEL", label)
+            .putExtra("com.termux.RUN_COMMAND_PENDING_INTENT", pending)
+        if (stdin != null) intent.putExtra("com.termux.RUN_COMMAND_STDIN", stdin)
+        val started = runCatching { app.startService(intent) }.recoverCatching {
+            if (android.os.Build.VERSION.SDK_INT >= 26) app.startForegroundService(intent) else throw it
+        }
+        lastStartError = started.exceptionOrNull()?.message
+        return started.isSuccess && started.getOrNull() != null
+    }
+
+    private var lastStartError: String? = null
 
     /** Sends [words] to Termux; false when Termux could not be asked (the reason is added as a message). */
     fun send(context: Context, words: String): Boolean {
@@ -178,23 +359,10 @@ internal object AgentChat {
         val id = ++nextId
         val cli = agent
         messages += ChatMessage(true, words.trim(), cli.label)
-        val reply = Intent(app, AgentChatResultReceiver::class.java).putExtra(EXTRA_REQUEST, id)
-        val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (android.os.Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
-        val pending = PendingIntent.getBroadcast(app, (id % Int.MAX_VALUE).toInt(), reply, flags)
-        val intent = Intent(TERMUX_ACTION).setClassName(TERMUX_PACKAGE, TERMUX_SERVICE)
-            .putExtra("com.termux.RUN_COMMAND_PATH", "$TERMUX_BIN/proot-distro")
-            .putExtra("com.termux.RUN_COMMAND_ARGUMENTS", agentAskArguments(cli, carryOn && carriesOn(cli)).toTypedArray())
-            .putExtra("com.termux.RUN_COMMAND_STDIN", askText(words, note?.second, note?.first))
-            .putExtra("com.termux.RUN_COMMAND_WORKDIR", TERMUX_HOME_DIR)
-            .putExtra("com.termux.RUN_COMMAND_BACKGROUND", true)
-            .putExtra("com.termux.RUN_COMMAND_COMMAND_LABEL", "Notesis: ${cli.label}")
-            .putExtra("com.termux.RUN_COMMAND_PENDING_INTENT", pending)
-        val started = runCatching { app.startService(intent) }.recoverCatching {
-            if (android.os.Build.VERSION.SDK_INT >= 26) app.startForegroundService(intent) else throw it
-        }
-        if (started.isFailure || started.getOrNull() == null) {
-            messages += ChatMessage(false, "Termux could not be asked: " +
-                (started.exceptionOrNull()?.message ?: "is Termux installed and up to date?"), cli.label, failed = true)
+        val arguments = agentAskArguments(cli, carryOn && carriesOn(cli), resume?.id)
+        if (!runInTermux(app, id, arguments, askText(words, note?.second, note?.first), "Notesis: ${cli.label}")) {
+            messages += ChatMessage(false, "Termux could not be asked: " + (lastStartError ?: "is Termux installed and up to date?"),
+                cli.label, failed = true)
             save(app)
             return false
         }
@@ -207,10 +375,18 @@ internal object AgentChat {
 
     /** Termux's answer to request [id]. */
     fun finish(context: Context, id: Long, stdout: String, stderr: String, exitCode: Int, error: Int, errorMessage: String) {
+        if (id == sessionsRequest && loadingSessions) {
+            loadingSessions = false
+            val (text, failed) = askReply(stdout, stderr, exitCode, error, errorMessage)
+            if (failed) { sessionsError = text; return }
+            sessions = parseSessions(stdout)
+            return
+        }
         if (waiting != id) return
         val (text, failed) = askReply(stdout, stderr, exitCode, error, errorMessage)
         messages += ChatMessage(false, text, agent.label, failed)
-        if (!failed) carryOn = true
+        // Once a picked conversation has answered, it is the latest: the next request carries on from it.
+        if (!failed) { carryOn = true; resume = null }
         waiting = null
         save(context.applicationContext)
     }

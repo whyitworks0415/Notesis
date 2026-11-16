@@ -473,6 +473,11 @@ class AgentCommandsTest {
         assertEquals(listOf("login", "debian", "--", "bash", ASK_HELPER, "claude", "continue"), words)
         assertTrue(words.none { it.contains(' ') })
         assertEquals(listOf("login", "debian", "--", "bash", ASK_HELPER, "gemini"), agentAskArguments(AgentCli.GEMINI, carryOn = false))
+        // An earlier conversation picked from the list goes by its id, as one word; anything else is refused.
+        assertEquals(listOf("login", "debian", "--", "bash", ASK_HELPER, "codex", "resume", "019a-77f2.b_c"),
+            agentAskArguments(AgentCli.CODEX, carryOn = true, resumeId = "019a-77f2.b_c"))
+        assertTrue(runCatching { agentAskArguments(AgentCli.CLAUDE, false, "a b; rm -rf ~") }.isFailure)
+        assertEquals(listOf("login", "debian", "--", "bash", ASK_HELPER, "sessions", "opencode"), agentSessionsArguments(AgentCli.OPENCODE))
         assertEquals("[Notesis: the note on screen is \"Maths\" (id 3f9c2a71).]\nAdd an outline", askText(" Add an outline ", "Maths", "3f9c2a71-aaaa"))
         assertEquals("Hi", askText("Hi", null, null))
     }
@@ -495,5 +500,13 @@ class AgentCommandsTest {
         assertTrue(shown.spans.any { it.kind == MdKind.HEADING })
         assertTrue(shown.spans.any { it.kind == MdKind.BOLD && shown.text.substring(it.start, it.end) == "12" })
         assertTrue(shown.spans.any { it.kind == MdKind.CODE })
+    }
+
+    @Test
+    fun `the list of earlier conversations is read line by line`() {
+        val sessions = parseSessions("abc-1\t2026-11-15 09:30\tOutline of the PDF\n\nnot an id line with spaces\t\t\nzz_9\t\t(untitled)\n")
+        assertEquals(listOf("abc-1", "zz_9"), sessions.map { it.id })
+        assertEquals("Outline of the PDF", sessions[0].title)
+        assertEquals("2026-11-15 09:30", sessions[0].at)
     }
 }

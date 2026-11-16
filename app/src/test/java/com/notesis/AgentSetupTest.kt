@@ -145,6 +145,26 @@ class AgentSetupTest {
             assertEquals(0, ask.waitFor())
             assertTrue(log.readLines().last(), log.readLines().last() == "claude -p Add \"an\" outline; \$(rm -rf ~) " +
                 "--allowedTools mcp__notesis__notesis_run,mcp__notesis__notesis_help --continue")
+            // An earlier conversation is carried on by its id, and the conversations are listed from the agent's own files.
+            fun helper(vararg args: String, input: String = ""): String {
+                val pb = ProcessBuilder(listOf("bash", File(home, ".notesis/ask").path) + args).redirectErrorStream(true)
+                pb.environment().apply { put("HOME", home.path); put("PATH", bin.path + ":" + get("PATH")) }
+                val proc = pb.start()
+                proc.outputStream.use { it.write(input.toByteArray()) }
+                val out = proc.inputStream.readBytes().toString(Charsets.UTF_8)
+                proc.waitFor()
+                return out
+            }
+            helper("codex", "resume", "019a-77f2", input = "Go on")
+            assertEquals("codex exec --skip-git-repo-check resume 019a-77f2 Go on", log.readLines().last())
+            helper("gemini", "continue", input = "More")
+            assertEquals("gemini --resume latest -p More", log.readLines().last())
+            val projects = File(home, ".claude/projects/" + home.path.replace(Regex("[^A-Za-z0-9]"), "-")).apply { mkdirs() }
+            File(projects, "5f1c-aa.jsonl").writeText("{\"type\":\"summary\"}\n" +
+                "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"Outline the PDF note\"}}\n")
+            val listed = parseSessions(helper("sessions", "claude"))
+            assertEquals(listOf("5f1c-aa"), listed.map { it.id })
+            assertEquals("Outline the PDF note", listed[0].title)
             // The temporary folder the installs used is gone.
             assertFalse(File(home, ".notesis/tmp").exists())
         } finally {

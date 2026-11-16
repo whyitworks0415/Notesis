@@ -161,11 +161,26 @@ private fun AgentSidebar() {
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             for (cli in AgentCli.entries) SettingsChoiceChip(cli == chat.agent, { if (waiting == null) chat.choose(context, cli) }, cli.label)
         }
+        // The agent's own earlier conversations, to carry one on from here.
+        val picking = chat.sessions != null || chat.loadingSessions || chat.sessionsError != null
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = {
+                if (picking) chat.closeSessions()
+                else if (context.checkSelfPermission(TERMUX_RUN_COMMAND_PERMISSION) != PackageManager.PERMISSION_GRANTED) {
+                    permission.launch(TERMUX_RUN_COMMAND_PERMISSION)
+                } else chat.listSessions(context)
+            }, enabled = termux && waiting == null) { Text(if (picking) "Back to the conversation" else "Earlier conversations") }
+            chat.resume?.let { session ->
+                Text(AnnotatedString(session.title), style = MaterialTheme.typography.labelMedium, maxLines = 1,
+                    color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
+            }
+        }
         chat.note?.let { (_, title) ->
             Text(AnnotatedString("📝 " + title), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1)
         }
-        LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (picking) SessionPicker(Modifier.weight(1f).fillMaxWidth()) { chat.pick(context, it) }
+        else LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list, verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (chat.messages.isEmpty()) item {
                 Text(
                     if (termux) "Ask in your own words: “put an outline in this note from its PDF”, “sum up today's notes”. " +
@@ -203,8 +218,39 @@ private fun AgentSidebar() {
             Button(onClick = ::send, enabled = termux && waiting == null && draft.isNotBlank()) { Text("Send") }
         }
         if (chat.messages.isNotEmpty() && waiting == null) {
-            Text(if (chat.carryOn && carriesOn(chat.agent)) "The next request carries on this conversation." else "The next request starts afresh.",
+            Text(if ((chat.carryOn && carriesOn(chat.agent)) || chat.resume != null) "The next request carries on this conversation." else "The next request starts afresh.",
                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/** The agent's earlier conversations, newest first; one tapped is carried on from the next request. */
+@Composable
+private fun SessionPicker(modifier: Modifier, onPick: (AgentSession) -> Unit) {
+    val chat = AgentChat
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        when {
+            chat.loadingSessions -> {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                Text("Asking Termux for {0}'s earlier conversations…".tr.replace("{0}", chat.agent.label),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            chat.sessionsError != null -> Text(AnnotatedString(chat.sessionsError!!.tr), style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error)
+            chat.sessions.isNullOrEmpty() -> Text(
+                "No earlier conversations were found. If you used this agent before, run the setup script again in Termux: it adds what lists them.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            else -> LazyColumn(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                itemsIndexed(chat.sessions!!) { _, session ->
+                    TextButton(onClick = { onPick(session) }, modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.fillMaxWidth()) {
+                            Text(AnnotatedString(session.title), style = MaterialTheme.typography.bodyMedium, maxLines = 2)
+                            if (session.at.isNotBlank()) Text(AnnotatedString(session.at), style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
         }
     }
 }
