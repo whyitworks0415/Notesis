@@ -56,6 +56,8 @@ internal class InkTileCache(
         var job: TileRaster.Job? = null
         /** Raised by every change that makes a picture being painted out of date. */
         var version = 0
+        /** An edit made it dirty: it is recorded at once on the GPU, not sent to a worker to wait for. */
+        var edited = false
     }
 
     private class PageState {
@@ -203,11 +205,8 @@ internal class InkTileCache(
         val cleanupStarted = System.nanoTime()
         // A picture still being painted for a tile that has left the screen is not waited for.
         if (rastering > 0) for (tile in tiles.values) {
-            val job = tile.job ?: continue
-            if (tile.key in frameTiles) continue
-            job.cancelled = true
-            tile.job = null
-            rastering--
+            if (tile.job == null || tile.key in frameTiles) continue
+            cancelRaster(tile)
         }
         // Stale tiles go once a frame has drawn without them: the page is
         // complete again, or no longer on screen. Never in a frame that drew
@@ -249,9 +248,16 @@ internal class InkTileCache(
         return columns.coerceAtLeast(0) * rows.coerceAtLeast(0)
     }
 
-    private fun discard(tile: Tile) {
-        tile.job?.let { it.cancelled = true; rastering-- }
+    /** Stops [tile]'s picture being painted; the tile is drawn again from its ink as it is now. */
+    private fun cancelRaster(tile: Tile) {
+        val job = tile.job ?: return
+        job.cancelled = true
         tile.job = null
+        rastering--
+    }
+
+    private fun discard(tile: Tile) {
+        cancelRaster(tile)
         tile.version++
         if (tile.hasInk) layerBytes -= TILE_BYTES
         tile.base.setUseCompositingLayer(false, null)
@@ -380,7 +386,12 @@ internal class InkTileCache(
                 tile.appended += stroke
                 tile.deltaDirty = true
             } else {
+                // An edit - an erased, moved or recoloured stroke - shows at once. A picture still being
+                // painted holds the ink from before it: waiting for it kept an erased stroke on screen in
+                // just those tiles, so a long stroke went in pieces, tile by tile, as their pictures came.
+                cancelRaster(tile)
                 tile.dirty = true
+                tile.edited = true
                 tile.mayWait = false
                 tile.appended.clear()
                 tile.version++
@@ -391,6 +402,7 @@ internal class InkTileCache(
     /** Every tile of [page] to be recorded again, each showing its old picture until it is. */
     private fun allDirty(page: Page) {
         for (tile in tiles.values) if (tile.key.page === page) {
+            cancelRaster(tile)
             if (!tile.dirty) tile.mayWait = true
             tile.dirty = true
             tile.appended.clear()
@@ -537,7 +549,7 @@ internal class InkTileCache(
         // on a worker when its ink allows; the GPU path is kept for edits, which have to show at once.
         // Folding strokes written since into the picture goes the same way, the picture and its delta shown meanwhile.
         val foldOffThread = !tile.dirty && tile.appended.isNotEmpty() && (consolidate || tile.appended.size >= 32)
-        if (tile.job == null && (tile.dirty && (!tile.hasInk || tile.mayWait) || foldOffThread)) when (startRaster(tile)) {
+        if (tile.job == null && (tile.dirty && !tile.edited && (!tile.hasInk || tile.mayWait) || foldOffThread)) when (startRaster(tile)) {
             Raster.STARTED -> Unit
             // Workers full: its old picture meanwhile, or none yet; asked again next frame.
             Raster.WAIT -> return tile.takeIf { it.hasInk }
@@ -578,6 +590,7 @@ internal class InkTileCache(
             tile.hasInk = hasInk
             tile.base.setUseCompositingLayer(hasInk, null)
             tile.dirty = false
+            tile.edited = false
             tile.mayWait = false
             tile.appended.clear()
             tile.delta.discardDisplayList()
@@ -703,6 +716,7 @@ internal class InkTileCache(
         if (tile.hasInk != hasInk) layerBytes += if (hasInk) TILE_BYTES else -TILE_BYTES
         tile.hasInk = hasInk
         tile.dirty = false
+        tile.edited = false
         tile.mayWait = false
         // Strokes written before the picture was asked for are in it now; those written since stay over it.
         if (tile.appended.isNotEmpty()) {
