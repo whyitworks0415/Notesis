@@ -621,6 +621,7 @@ class MainActivity : ComponentActivity() {
         StudyClock.touched()
         DisplayRate.apply(this)
         JankWatch.start(this)
+        RenderLoad.start(this)
         // Not Activity.display: that is Android 11's, and this runs on every resume.
         MotionPrefs.refreshHz = DisplayRate.refreshRate(this)
         LabGuard.entered(this)
@@ -629,6 +630,7 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         LabGuard.left(this)
         JankWatch.stop(this)
+        RenderLoad.stop(this)
         MotionStats.stop(this)
         // The widget shows the library as it is now.
         NotesWidget.refresh(this)

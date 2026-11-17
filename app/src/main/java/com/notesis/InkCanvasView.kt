@@ -122,6 +122,41 @@ private val STAND_IN_WORKER = java.util.concurrent.ThreadPoolExecutor(
     0, 1, 5L, java.util.concurrent.TimeUnit.SECONDS, java.util.concurrent.LinkedBlockingQueue(),
 ) { runnable -> Thread(runnable, "notesis-stand-in").apply { isDaemon = true; priority = Thread.NORM_PRIORITY - 1 } }
 
+/**
+ * The mesh fidelity pages are read in and refined at: [tessellationBucket]
+ * above 1, and below it halves down to [MIN_LOD_SCALE] - zoomed out to a
+ * third, a page's strokes need a third of the detail, and building them at
+ * full detail was most of what a page coming on screen cost there.
+ */
+fun lodBucket(scale: Float): Float {
+    if (scale >= 1f) return tessellationBucket(scale)
+    var bucket = 1f
+    while (bucket / 2f >= scale && bucket / 2f >= MIN_LOD_SCALE) bucket /= 2f
+    return bucket
+}
+
+/** The epsilon for a [lodBucket], which may be below 1. */
+fun lodEpsilonFor(bucket: Float): Float = TESSELLATION_TARGET_PX / bucket.coerceIn(MIN_LOD_SCALE, MAX_CANVAS_SCALE)
+
+const val MIN_LOD_SCALE = 0.25f
+
+/**
+ * Whether a stroke built at epsilon [have] is rebuilt for [want]: when it is
+ * coarser than wanted, or more than [FINER_KEPT] times finer (a deep zoom
+ * left behind, its meshes far bigger than the screen needs). Zooming out a
+ * step or two keeps the finer meshes rather than rebuilding every stroke on
+ * screen for less detail and rebuilding them again on the way back.
+ */
+fun needsRetessellation(have: Float, want: Float): Boolean =
+    have > want * (1f + RELATIVE_SLOP) || have * FINER_KEPT * (1f + RELATIVE_SLOP) < want
+
+/** Whether a page built for bucket [have] serves bucket [want]; see [needsRetessellation]. */
+fun bucketServes(have: Float, want: Float): Boolean =
+    have > 0f && have * (1f + RELATIVE_SLOP) >= want && have <= want * FINER_KEPT * (1f + RELATIVE_SLOP)
+
+const val FINER_KEPT = 4f
+private const val RELATIVE_SLOP = 0.001f
+
 /** 급회전 한 프레임에서는 예측점이 코너 바깥으로 튀지 않게 합니다. */
 internal fun shouldSuppressPrediction(
     previousDx: Float,
@@ -2811,7 +2846,7 @@ class InkCanvasView @JvmOverloads constructor(
      * and the other view's history takes the new strokes.
      */
     private val canvasPeer = object : CanvasPeer {
-        override fun refineBucket(): Float = tessellationBucket(currentScale())
+        override fun refineBucket(): Float = lodBucket(currentScale())
         override fun canAdoptRefine(): Boolean = !disposed && activeStylusPointer == null && !erasing &&
             pendingStrokeCommits.isEmpty() && !hasLassoSelection() && !movingLasso
         override fun adoptRefine(replacements: IdentityHashMap<Stroke, Stroke>, twins: List<Pair<Stroke, Stroke?>>) {
@@ -2826,7 +2861,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** The bucket the pages on screen are built for: this view's, or a finer one another view of the note needs. */
     private fun sharedRefineBucket(): Float {
-        var bucket = tessellationBucket(currentScale())
+        var bucket = lodBucket(currentScale())
         if (document.liveCanvasCount > 1) for (peer in document.peersBesides(canvasPeer)) bucket = maxOf(bucket, peer.refineBucket())
         return bucket
     }
@@ -3804,8 +3839,8 @@ class InkCanvasView @JvmOverloads constructor(
     private fun ensureLoaded(page: Page): Boolean {
         if (page.loaded) return true
         val loader = pageLoader ?: return false
-        val bucket = minOf(tessellationBucket(currentScale()), LOAD_TESSELLATION_SCALE)
-        val epsilon = epsilonFor(bucket)
+        val bucket = minOf(lodBucket(currentScale()), LOAD_TESSELLATION_SCALE)
+        val epsilon = lodEpsilonFor(bucket)
         page.strokes.addAll(0, loader(page, epsilon))
         maskLoader?.let { page.masks.addAll(0, it(page, epsilon)) }
         page.savedOnDisk = if (page.dirty) 0 else page.strokes.size
@@ -6536,7 +6571,7 @@ class InkCanvasView @JvmOverloads constructor(
         if (activeStylusPointer != null) return
         val loadOnly = holdingDetail() || !peersCanAdopt()
         val target = sharedRefineBucket()
-        val epsilon = epsilonFor(target)
+        val epsilon = lodEpsilonFor(target)
         val serial = refineRequestSerial
 
         releaseDistantPages()
@@ -6565,7 +6600,7 @@ class InkCanvasView @JvmOverloads constructor(
             val bottom = viewport[3] - document.topOf(index) + margin
             val strokes = dry.strokesIn(page, left, top, right, bottom).filter { stroke ->
                 val wanted = inkEpsilon(stroke.brush.family, stroke.brush.size, epsilon)
-                abs(stroke.brush.epsilon - wanted) >= EPSILON_SLOP
+                needsRetessellation(stroke.brush.epsilon, wanted)
             }
             (page to strokes).takeIf { strokes.isNotEmpty() }
         }
@@ -6573,7 +6608,7 @@ class InkCanvasView @JvmOverloads constructor(
             for (page in visible) {
                 page.renderState = completedRenderState(
                     page.loaded,
-                    page.strokes.isEmpty() || abs(page.tessellatedFor - target) < EPSILON_SLOP,
+                    page.strokes.isEmpty() || bucketServes(page.tessellatedFor, target),
                 )
             }
             return
@@ -6596,7 +6631,7 @@ class InkCanvasView @JvmOverloads constructor(
             // Built once at the zoom in use, up to the scale where a whole page
             // is on screen: loading at 1 and rebuilding at 2 straight after
             // tessellated a dense page twice and re-recorded all its tiles.
-            val loadEpsilon = epsilonFor(minOf(target, LOAD_TESSELLATION_SCALE))
+            val loadEpsilon = lodEpsilonFor(minOf(target, LOAD_TESSELLATION_SCALE))
             val loaded = ArrayList<Pair<Page, List<Stroke>>>(toLoad.size)
             val loadedMasks = ArrayList<Pair<Page, List<PageMask>>>(toLoad.size)
             val built = ArrayList<Triple<Page, List<Stroke>, List<Stroke>>>(work.size)
@@ -6750,7 +6785,7 @@ class InkCanvasView @JvmOverloads constructor(
                 for (page in pages) {
                     page.renderState = completedRenderState(
                         page.loaded,
-                        page.strokes.isEmpty() || abs(page.tessellatedFor - target) < EPSILON_SLOP,
+                        page.strokes.isEmpty() || bucketServes(page.tessellatedFor, target),
                     )
                 }
                 refiningPages = emptyList()
@@ -6936,8 +6971,8 @@ class InkCanvasView @JvmOverloads constructor(
         if (pages.isEmpty()) return
         val loader = pageLoader ?: return
         val masksLoader = maskLoader
-        val scale = minOf(tessellationBucket(currentScale()), LOAD_TESSELLATION_SCALE)
-        val epsilon = epsilonFor(scale)
+        val scale = minOf(lodBucket(currentScale()), LOAD_TESSELLATION_SCALE)
+        val epsilon = lodEpsilonFor(scale)
         val serial = refineRequestSerial
         val withTwins = meshInk
         runCatching { refiner.execute {

@@ -2948,7 +2948,10 @@ internal object StrokeBuilder {
         // The governor knows what the person is doing and whether the device
         // is saving power or hot; one core while a pen writes or a page moves,
         // two in battery saver, the lot when nothing is going on.
-        val width = inkBuildWidth(threads, InteractionGovernor.budget(threads), onScreen.get() == true, INK_THROTTLED_SLICES)
+        // And half of that while the render thread is behind: those cores are the frame's.
+        val width = yieldToRender(
+            inkBuildWidth(threads, InteractionGovernor.budget(threads), onScreen.get() == true, INK_THROTTLED_SLICES),
+            RenderLoad.behind)
         val slices = inkBuildSlices(width, records.size, penActive || thermalThrottle || width < threads)
         val cancelled = java.util.concurrent.atomic.AtomicBoolean(false)
         val wanted = { !cancelled.get() && !Thread.currentThread().isInterrupted }

@@ -45,7 +45,7 @@ internal object TileRaster {
         Thread(runnable, "notesis-tile-raster").apply { isDaemon = true }
     }.apply { allowCoreThreadTimeOut(true) }
     private val renderers = ThreadLocal.withInitial { CanvasStrokeRenderer.create(PencilTextureStore) }
-    /** While the pen writes, one tile at a time. */
+    /** While the pen writes, or the render thread is behind, one tile at a time. */
     private val writingGate = Any()
     /** Stands for a tile with no ink: nothing to draw, nothing to hold. */
     private val empty: Bitmap by lazy { Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888) }
@@ -55,7 +55,8 @@ internal object TileRaster {
         pool.execute {
             if (job.cancelled) return@execute
             if (job.strokes.isEmpty()) { done(empty); return@execute }
-            val picture = if (InteractionGovernor.writing) synchronized(writingGate) { paintNow(job) } else paintNow(job)
+            val picture = if (InteractionGovernor.writing || RenderLoad.behind) synchronized(writingGate) { paintNow(job) }
+                else paintNow(job)
             if (!job.cancelled) done(picture)
         }
     }

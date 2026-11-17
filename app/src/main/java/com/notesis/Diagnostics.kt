@@ -181,7 +181,7 @@ internal object Measurements {
     fun overlay(view: InkCanvasView, zoomPercent: Int): String {
         sample(view)
         return conditions(view) + "\n" + view.latency.render(view.strokeCount()) + "\n" +
-            WorkStats.render() + "\nzoom $zoomPercent%"
+            WorkStats.render() + "\n" + RenderLoad.report() + "\nzoom $zoomPercent%"
     }
 
     /**
@@ -207,6 +207,7 @@ internal object Measurements {
                 appendLine(view.latency.render(view.strokeCount()))
             }
             appendLine(WorkStats.render())
+            appendLine(RenderLoad.report())
             appendLine(NoteOpenClock.render())
             appendLine(MemoryTrim.report())
             appendLine("Light mode: ${if (InteractionGovernor.lightMode) "on" else "off"} · slower device: ${if (InteractionGovernor.slowDevice) "yes" else "no"}")

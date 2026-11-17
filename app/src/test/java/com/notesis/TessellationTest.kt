@@ -1,6 +1,7 @@
 package com.notesis
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -69,5 +70,35 @@ class TessellationTest {
         assertEquals(0.5f, predictionLeadFraction(100L, 118L, 9L), 0.0001f)
         assertEquals(1f, predictionLeadFraction(100L, 109L, 9L), 0.0001f)
         assertEquals(1f, predictionLeadFraction(100L, 99L, 9L), 0.0001f)
+    }
+
+    @Test fun `zoomed out, pages are read in at less detail, down to a quarter`() {
+        assertEquals(1f, lodBucket(1f))
+        assertEquals(2f, lodBucket(1.5f))
+        assertEquals(1f, lodBucket(0.6f))
+        assertEquals(0.5f, lodBucket(0.5f))
+        assertEquals(0.5f, lodBucket(0.4f))
+        assertEquals(0.25f, lodBucket(0.2f))
+        assertEquals(0.25f, lodBucket(0.01f))
+        assertEquals(lodEpsilonFor(1f) * 4f, lodEpsilonFor(0.25f), 1e-6f)
+    }
+
+    @Test fun `coarser meshes are rebuilt, finer ones kept unless far finer`() {
+        val want = lodEpsilonFor(1f)
+        assertFalse(needsRetessellation(want, want))
+        assertTrue(needsRetessellation(want * 2f, want))
+        assertFalse(needsRetessellation(want / 2f, want))
+        assertFalse(needsRetessellation(want / 4f, want))
+        assertTrue(needsRetessellation(want / 8f, want))
+    }
+
+    @Test fun `a page serves the buckets its strokes are not rebuilt for`() {
+        assertTrue(bucketServes(1f, 1f))
+        assertTrue(bucketServes(2f, 1f))
+        assertTrue(bucketServes(4f, 1f))
+        assertFalse(bucketServes(8f, 1f))
+        assertFalse(bucketServes(0.5f, 1f))
+        assertFalse(bucketServes(0f, 1f))
+        assertFalse(bucketServes(-1f, 1f))
     }
 }

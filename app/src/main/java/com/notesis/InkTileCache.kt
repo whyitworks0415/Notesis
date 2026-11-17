@@ -179,7 +179,8 @@ internal class InkTileCache(
         recordSpentNanos = 0L
         recordedThisFrame = 0
         strokesThisFrame = 0
-        strokeCap = strokeCapFor(InteractionGovernor.state)
+        // Scaled down while the render thread has been running over its frames.
+        strokeCap = (strokeCapFor(InteractionGovernor.state) * RenderLoad.share).toInt()
         backlog = false
     }
 
