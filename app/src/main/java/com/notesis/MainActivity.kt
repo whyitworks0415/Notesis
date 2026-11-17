@@ -664,11 +664,13 @@ class MainActivity : ComponentActivity() {
 
     private fun acceptDocumentIntent(intent: android.content.Intent?) {
         acceptWidgetIntent(intent)
-        if (intent?.action != android.content.Intent.ACTION_VIEW) return
+        // Opened, or handed over to be written on (the pen button of Chrome's PDF viewer, "Edit" elsewhere).
+        val annotate = intent?.action == ACTION_ANNOTATE || intent?.action == android.content.Intent.ACTION_EDIT
+        if (intent?.action != android.content.Intent.ACTION_VIEW && !annotate) return
         val uri = intent.data ?: return
         val request = viewerRequest(this, uri)
-        if (request.name.endsWith(".pdf", true) ||
-            contentResolver.getType(uri) == "application/pdf"
+        if (annotate || request.name.endsWith(".pdf", true) ||
+            contentResolver.getType(uri) == "application/pdf" || intent.type == "application/pdf"
         ) {
             lifecycleScope.launch {
                 val imported = withContext(Dispatchers.IO) {
@@ -684,6 +686,9 @@ class MainActivity : ComponentActivity() {
         } else if (isSupportedDocumentName(request.name)) incomingViewerRequest = request
     }
 }
+
+/** The intent Android's PDF viewer (Chrome's, among others) sends to have a PDF annotated; a constant from API 36 on. */
+private const val ACTION_ANNOTATE = "android.intent.action.ANNOTATE"
 
 private val dateFormat = SimpleDateFormat("MMM d, HH:mm", Locale.ENGLISH)
 

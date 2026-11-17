@@ -61,6 +61,14 @@
                 <data android:mimeType="application/vnd.hancom.hwp" />
                 <data android:mimeType="application/vnd.hancom.hwpx" />
             </intent-filter>
+            <!-- The pen button of Chrome's PDF viewer (Android's own PDF viewer) asks for an app that
+                 annotates PDFs; others ask to edit one. Notesis takes the PDF in as a note to write on. -->
+            <intent-filter>
+                <action android:name="android.intent.action.ANNOTATE" />
+                <action android:name="android.intent.action.EDIT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/pdf" />
+            </intent-filter>
         </activity>
 
         <!-- The home-screen widget: a new note and the notes written in last. -->
