@@ -139,6 +139,9 @@ internal class InkTileCache(
         for (page in stale.keys.toList()) if (page !in staleDrawn) stale.remove(page)?.tiles?.values?.forEach(::discard)
     }
 
+    /** Whether every tile of [page] the last frame wanted was there; true for a page not drawn from tiles. */
+    fun isComplete(page: Page): Boolean = pages[page]?.complete ?: true
+
     fun clear() {
         tiles.values.forEach(::discard)
         tiles.clear()

@@ -293,11 +293,16 @@ internal fun WebPanel(
     var pageColors by remember(web) { mutableStateOf<PageColors?>(null) }
     LaunchedEffect(web) {
         val view = web ?: return@LaunchedEffect
+        var asked = 0
         while (true) {
-            runCatching {
+            // Each look makes the page work out its style and layout; asked five
+            // times a second all along, a chat streaming an answer was laid out
+            // again for it every 200ms. Quick while the page arrives, then once
+            // a second, and not at all while the pen is on the note beside it.
+            if (InteractionGovernor.state != Interaction.WRITING) runCatching {
                 view.evaluateJavascript(PAGE_TOP_COLOR_JS) { result -> parsePageColors(result)?.let { pageColors = it } }
             }
-            delay(PAGE_TOP_COLOR_POLL_MS)
+            delay(pageColorDelay(asked++))
         }
     }
     val surface = MaterialTheme.colorScheme.surface
@@ -501,7 +506,8 @@ internal fun WebPanel(
                         (existing.parent as? android.view.ViewGroup)?.removeView(existing)
                         existing
                     } else {
-                        newBrowser(viewContext, onFile, log, onRendererGone).also { holder.value = it }
+                        newBrowser(viewContext, onFile, log, onRendererGone, KeptBrowser.take(viewContext))
+                            .also { holder.value = it }
                     }
                 },
                 // The tag remembers which site was asked for, so picking another
@@ -583,13 +589,101 @@ private fun openExternally(context: android.content.Context?, url: String) {
     }
 }
 
+/**
+ * The AI panel's browser, kept for the app rather than for one note. Each note
+ * used to make its own and destroy it on leaving, so the first opening in every
+ * note paid Chromium's start on the main thread - the freeze when the panel
+ * was asked for - and then the whole sign-in and page load again. Kept here,
+ * the panel opens in the next note with the chat as it was left.
+ *
+ * It sits detached, which Chromium treats as a hidden tab (no frames, timers
+ * slowed), and goes after [KEEP_MS] unused or when Android asks for memory.
+ * Its context is a wrapper moved onto whichever screen takes it, so a kept
+ * browser never holds on to a screen that has gone.
+ */
+internal object KeptBrowser {
+    private const val KEEP_MS = 10 * 60 * 1000L
+    private var kept: android.webkit.WebView? = null
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    private val expire = Runnable { drop() }
+
+    // Held here: MemoryTrim keeps its listeners weakly. Hidden or nearly out of
+    // memory, the chat's renderer is the first thing worth giving back.
+    private val trimmer = MemoryTrim.Trimmable { severe -> if (severe) main.post { drop() } }
+
+    init {
+        MemoryTrim.register(trimmer)
+    }
+
+    /** The kept browser, moved onto [context]; null when there is none. */
+    fun take(context: android.content.Context): android.webkit.WebView? {
+        main.removeCallbacks(expire)
+        val view = kept ?: return null
+        kept = null
+        (view.context as? android.content.MutableContextWrapper)?.baseContext = context
+        return view
+    }
+
+    /** A screen is done with [view]: keep it for the next one, rather than destroy it. */
+    fun keep(view: android.webkit.WebView) {
+        (view.parent as? android.view.ViewGroup)?.removeView(view)
+        val wrapper = view.context as? android.content.MutableContextWrapper
+        if (wrapper == null) { view.destroy(); return }
+        wrapper.baseContext = wrapper.baseContext.applicationContext
+        // The screen's own clients hold that screen; plain ones while it waits.
+        // A renderer lost meanwhile takes the kept browser with it.
+        view.webChromeClient = null
+        view.webViewClient = object : android.webkit.WebViewClient() {
+            override fun onRenderProcessGone(
+                view: android.webkit.WebView,
+                detail: android.webkit.RenderProcessGoneDetail,
+            ): Boolean {
+                if (kept === view) { kept = null; main.removeCallbacks(expire) }
+                view.destroy()
+                return true
+            }
+        }
+        view.onPause()
+        kept?.takeIf { it !== view }?.destroy()
+        kept = view
+        main.removeCallbacks(expire)
+        main.postDelayed(expire, KEEP_MS)
+    }
+
+    /**
+     * Starts the browser engine before the panel is asked for, so opening it
+     * does not first stop the screen for Chromium's start. Only the engine: no
+     * page is loaded until the panel opens.
+     */
+    fun warm(context: android.content.Context) {
+        if (kept != null) return
+        kept = runCatching { android.webkit.WebView(android.content.MutableContextWrapper(context.applicationContext)) }.getOrNull()
+            ?: return
+        main.removeCallbacks(expire)
+        main.postDelayed(expire, KEEP_MS)
+    }
+
+    val holding: Boolean get() = kept != null
+
+    fun drop() {
+        main.removeCallbacks(expire)
+        kept?.destroy()
+        kept = null
+    }
+}
+
+/**
+ * The panel's browser: [reuse] when one is kept (its page as it was), a new
+ * one otherwise, with this screen's file picker and error log attached.
+ */
 private fun newBrowser(
     context: android.content.Context,
     onFile: (android.webkit.ValueCallback<Array<Uri>>) -> Unit,
     log: MutableList<String>,
     onRendererGone: (android.webkit.WebView) -> Unit,
+    reuse: android.webkit.WebView? = null,
 ): android.webkit.WebView {
-    val view = android.webkit.WebView(context)
+    val view = reuse ?: android.webkit.WebView(android.content.MutableContextWrapper(context))
     // The host adds a factory view as WRAP_CONTENT, which reaches Chromium as an
     // unbounded height, and it then resolves vh units against a viewport of
     // zero. Sites built on a height chain - Gemini, claude.ai - collapse to
@@ -663,6 +757,9 @@ private fun newBrowser(
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
         setRendererPriorityPolicy(android.webkit.WebView.RENDERER_PRIORITY_BOUND, true)
+        // Rasterises a little past what is on screen, so a chat scrolled by
+        // hand does not show blank stripes and catch up behind the finger.
+        settings.offscreenPreRaster = true
         // A sign-in popup with nowhere to go is a dead button; loading it in
         // place is what a single-window browser does.
         settings.setSupportMultipleWindows(false)

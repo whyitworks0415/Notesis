@@ -49,6 +49,10 @@ internal const val PAGE_PICTURE_MAX_HEIGHT = 8192
 internal const val PAGE_PICTURE_MAX_PIXELS = 3_200_000L
 /** How long a picture stays under the real ink once that is in, while its tiles are still being recorded. */
 internal const val PAGE_PICTURE_GRACE_MS = 250L
+/** The most pages of one note kept as pictures; a picture is a few hundred kilobytes. */
+internal const val MAX_PICTURES_PER_NOTE = 40
+/** How long a picture may stay under a page whose tiles are still being drawn. */
+internal const val PAGE_PICTURE_HOLD_MS = 2_000L
 /** Pictures kept across all notes; the oldest go first. */
 internal const val PAGE_PICTURE_KEEP = 90
 
@@ -88,12 +92,22 @@ internal class PagePictureStore(private val cacheDir: File, private val pageFile
      * before this had been written; a page whose file has changed again by the
      * time its picture is drawn is left without one.
      */
-    fun keep(noteId: String, requests: List<PagePictureRequest>, stamps: Map<String, String>) {
+    fun keep(noteId: String, requests: List<PagePictureRequest>, stamps: Map<String, String>, prune: Boolean = true) {
         runCatching {
             val noteDir = File(dir, noteId)
             if (!noteDir.isDirectory && !noteDir.mkdirs()) return
             val wanted = requests.map { it.pageId }.toSet()
-            noteDir.listFiles()?.forEach { if (it.nameWithoutExtension !in wanted) it.delete() }
+            if (prune) noteDir.listFiles()?.forEach { if (it.nameWithoutExtension !in wanted) it.delete() }
+            else {
+                // Pictures of every dense page seen, not only the last: the oldest go past a note's share.
+                val kept = noteDir.listFiles { file -> file.extension != "tmp" }?.groupBy { it.nameWithoutExtension }.orEmpty()
+                if (kept.size > MAX_PICTURES_PER_NOTE) {
+                    kept.entries.filter { it.key !in wanted }
+                        .sortedBy { entry -> entry.value.maxOf { it.lastModified() } }
+                        .take(kept.size - MAX_PICTURES_PER_NOTE)
+                        .forEach { entry -> entry.value.forEach { it.delete() } }
+                }
+            }
             for (request in requests) {
                 val before = stamps[request.pageId] ?: continue
                 // Already pictured as it is: nothing to draw.

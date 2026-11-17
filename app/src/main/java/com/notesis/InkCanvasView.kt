@@ -113,6 +113,15 @@ fun tessellationBucket(scale: Float): Float {
     return bucket.coerceAtMost(MAX_CANVAS_SCALE)
 }
 
+/**
+ * Reads kept page pictures for every canvas, one at a time. One worker for the
+ * app rather than one per view: a thread each would stay behind for every note
+ * opened, and it idles away when there is nothing to read.
+ */
+private val STAND_IN_WORKER = java.util.concurrent.ThreadPoolExecutor(
+    0, 1, 5L, java.util.concurrent.TimeUnit.SECONDS, java.util.concurrent.LinkedBlockingQueue(),
+) { runnable -> Thread(runnable, "notesis-stand-in").apply { isDaemon = true; priority = Thread.NORM_PRIORITY - 1 } }
+
 /** 급회전 한 프레임에서는 예측점이 코너 바깥으로 튀지 않게 합니다. */
 internal fun shouldSuppressPrediction(
     previousDx: Float,
@@ -1649,6 +1658,7 @@ class InkCanvasView @JvmOverloads constructor(
     /** Asks for the kept pictures of the pages a note opens on, off the UI thread. */
     private fun requestPagePictures(document: Document, around: Int) {
         pagePictures.clear()
+        standInsAsked.clear()
         val loader = pagePictureLoader ?: return
         // The page the note opens on, and no other: its neighbours are read in
         // behind it, and a picture is the size of a screen in memory.
@@ -1668,6 +1678,34 @@ class InkCanvasView @JvmOverloads constructor(
             }
         }, "notesis-page-picture").apply { isDaemon = true; priority = Thread.NORM_PRIORITY - 1 }.start()
     }
+
+    /** Pages whose kept picture was asked for this opening, so each is read from disk once. */
+    private val standInsAsked = HashSet<String>()
+
+    /** Reads the kept pictures of [pages] off the UI thread, to stand in until their ink is drawn. */
+    private fun requestStandIns(pages: List<Page>) {
+        val loader = pagePictureLoader ?: return
+        val wanted = pages.filter { !it.loaded && it.id !in pagePictures && standInsAsked.add(it.id) }
+        if (wanted.isEmpty()) return
+        val forDocument = document
+        STAND_IN_WORKER.execute {
+            for (page in wanted) {
+                val bitmap = runCatching { loader(page) }.getOrNull() ?: continue
+                post {
+                    if (disposed || this.document !== forDocument || page.loaded && pagePictures.size > MAX_STAND_INS) {
+                        bitmap.recycle(); return@post
+                    }
+                    pagePictures[page.id] = PageStandIn(bitmap)
+                    // A screenful each: only the newest few stay.
+                    while (pagePictures.size > MAX_STAND_INS) pagePictures.remove(pagePictures.keys.first())
+                    dry.invalidate()
+                }
+            }
+        }
+    }
+
+    /** Hears of dense pages worth a picture as they are let go, so arriving at one again is quick. */
+    internal var onPagePictures: ((List<PagePictureRequest>) -> Unit)? = null
 
     /**
      * The page worth a picture for the next opening - the one in view, which
@@ -2764,6 +2802,39 @@ class InkCanvasView @JvmOverloads constructor(
         ready()
     }
 
+    /**
+     * This view as the other canvases on its document see it. Before, a note
+     * shown twice - in the pop-up panel or both parts of a split - was never
+     * re-tessellated at all, since neither view could reach the other's undo
+     * history: zoomed in, its ink stayed at the fidelity it was read in at,
+     * soft and faceted. Now the pages are built for the finer of the two zooms
+     * and the other view's history takes the new strokes.
+     */
+    private val canvasPeer = object : CanvasPeer {
+        override fun refineBucket(): Float = tessellationBucket(currentScale())
+        override fun canAdoptRefine(): Boolean = !disposed && activeStylusPointer == null && !erasing &&
+            pendingStrokeCommits.isEmpty() && !hasLassoSelection() && !movingLasso
+        override fun adoptRefine(replacements: IdentityHashMap<Stroke, Stroke>, twins: List<Pair<Stroke, Stroke?>>) {
+            if (disposed) return
+            remapHistory(replacements)
+            // The mesh-rendered twins come made, rather than built in this view's next frame.
+            if (meshInk) dry.adoptTwins(twins)
+            inkCacheWorkGeneration++
+            dry.postInvalidateOnAnimation()
+        }
+    }
+
+    /** The bucket the pages on screen are built for: this view's, or a finer one another view of the note needs. */
+    private fun sharedRefineBucket(): Float {
+        var bucket = tessellationBucket(currentScale())
+        if (document.liveCanvasCount > 1) for (peer in document.peersBesides(canvasPeer)) bucket = maxOf(bucket, peer.refineBucket())
+        return bucket
+    }
+
+    /** Whether every other view of the note could take a re-tessellation now. */
+    private fun peersCanAdopt(): Boolean =
+        document.liveCanvasCount <= 1 || document.peersBesides(canvasPeer).all { it.canAdoptRefine() }
+
     /** A second canvas must not replace geometry referenced by this canvas's undo history. */
     fun suspendSharedDetail() {
         if (disposed) return
@@ -2795,8 +2866,10 @@ class InkCanvasView @JvmOverloads constructor(
         endBenchmarkInk()
         if (erasing) { finishEraseGesture(); endStylus() }
         registeredDocument?.detachCanvas(sharedInkChanged)
+        registeredDocument?.removePeer(canvasPeer)
         registeredDocument = document
         document.attachCanvas(sharedInkChanged)
+        document.addPeer(canvasPeer)
         this.pdf?.diagnostics = null
         this.pdf?.takeIf { it !== pdf }?.let(releasePdf)
         if (this.document.latency === latency) this.document.latency = null
@@ -3080,6 +3153,7 @@ class InkCanvasView @JvmOverloads constructor(
         InteractionGovernor.removeListener(prefetchWhenQuiet)
         if (document.latency === latency) document.latency = null
         registeredDocument?.detachCanvas(sharedInkChanged)
+        registeredDocument?.removePeer(canvasPeer)
         registeredDocument = null
         removeCallbacks(refineRunnable)
         removeCallbacks(prefetchRunnable)
@@ -6460,8 +6534,8 @@ class InkCanvasView @JvmOverloads constructor(
         // Never while a stroke is being drawn: the page list would be swapped
         // out from under the stroke that is about to land on it.
         if (activeStylusPointer != null) return
-        val loadOnly = holdingDetail() || document.liveCanvasCount > 1
-        val target = tessellationBucket(currentScale())
+        val loadOnly = holdingDetail() || !peersCanAdopt()
+        val target = sharedRefineBucket()
         val epsilon = epsilonFor(target)
         val serial = refineRequestSerial
 
@@ -6470,6 +6544,8 @@ class InkCanvasView @JvmOverloads constructor(
         // Read in already and waiting for its frame: no second read from disk.
         takePrefetched(visible)
         val toLoad = openingLoads(visible.filter { !it.loaded }, document.pages.getOrNull(currentPage), opening != null)
+        // Their kept pictures, at once: shown while the ink is rebuilt from disk, which on a dense page is the wait.
+        requestStandIns(visible.filter { !it.loaded })
 
         // At deep zoom only a fraction of a page is visible. Rebuilding the
         // whole page there produced enormous meshes that were immediately off
@@ -6603,7 +6679,7 @@ class InkCanvasView @JvmOverloads constructor(
                 // Rebuilt meshes are for one zoom and one request; pages read
                 // from disk are good whatever has happened since.
                 val current = !abandoned && !meshesOvertaken && serial == refineRequestSerial &&
-                    (loadOnly || tessellationBucket(currentScale()) == target)
+                    (loadOnly || sharedRefineBucket() == target && peersCanAdopt())
                 if (abandoned) WorkStats.loadsAbandoned.incrementAndGet()
                 if (!current && built.isNotEmpty()) WorkStats.refinesStale.incrementAndGet()
                 if (!current && loaded.isNotEmpty()) WorkStats.pagesLoadedStale.addAndGet(loaded.size.toLong())
@@ -6667,7 +6743,10 @@ class InkCanvasView @JvmOverloads constructor(
                     // Nothing about the saved file changed: same inputs, same
                     // brush, only the generated outline. Do not dirty the page.
                 }
-                if (replacements.isNotEmpty()) remapHistory(replacements)
+                if (replacements.isNotEmpty()) {
+                    remapHistory(replacements)
+                    if (document.liveCanvasCount > 1) for (peer in document.peersBesides(canvasPeer)) peer.adoptRefine(replacements, builtTwins)
+                }
                 for (page in pages) {
                     page.renderState = completedRenderState(
                         page.loaded,
@@ -6721,12 +6800,22 @@ class InkCanvasView @JvmOverloads constructor(
         if (stamp.contentEquals(lastReleaseStamp)) return
         lastReleaseStamp = stamp
         val keep = (first - KEEP_PAGES)..(last + KEEP_PAGES)
+        val pictureRequests = ArrayList<PagePictureRequest>()
+        val translucent = document.layers.translucentLook() != null
         val protected = IdentityHashMap<Page, Boolean>()
         undoStack.forEach { protected[it.page] = true }
         redoStack.forEach { protected[it.page] = true }
         for ((index, page) in document.pages.withIndex()) {
             if (index in keep || !page.loaded || page.dirty) continue
             if (protected.containsKey(page)) continue
+            // A dense page let go is kept as a picture first, for the next time it comes on screen.
+            if (onPagePictures != null && page.width > 0f && page.height > 0f) {
+                val strokes = page.strokes.filterNot { Tool.isVanishing(it.brush.family) }
+                if (pagePictureWanted(strokes.size, page.masks.size, strokes.any(::needsGpuPicture), translucent)) {
+                    pictureRequests += PagePictureRequest(page.id, page.width, page.height, strokes,
+                        pagePictureWidth(width, page.width, page.height))
+                }
+            }
             page.savedStrokeCount = page.allStrokes.size
             page.strokes.clear()
             page.hiddenStrokes.clear()
@@ -6738,6 +6827,7 @@ class InkCanvasView @JvmOverloads constructor(
             page.loaded = false
             page.tessellatedFor = -1f
         }
+        if (pictureRequests.isNotEmpty()) onPagePictures?.invoke(pictureRequests)
         // Let ART schedule collection itself. Calling System.gc() here pauses
         // the UI thread precisely when a long note has just been scrolled.
     }
@@ -10492,10 +10582,12 @@ class InkCanvasView @JvmOverloads constructor(
                     standIn.loadedAt = now
                     standIn.revision = page.revision
                     // Let go of the picture once the moment has passed, drawn again or not.
-                    postDelayed({ pagePictures.remove(page.id) }, PAGE_PICTURE_GRACE_MS + 50L)
+                    postDelayed({ pagePictures.remove(page.id) }, PAGE_PICTURE_HOLD_MS + 50L)
                 }
-                // Changed since, or see-through ink that a copy underneath would darken: gone at once.
-                if (now - standIn.loadedAt > PAGE_PICTURE_GRACE_MS || page.revision != standIn.revision ||
+                // Changed since, or see-through ink that a copy underneath would darken: gone at once. Otherwise
+                // it stays under the page until every tile of it is drawn (a dense page's take several frames).
+                val drawn = now - standIn.loadedAt > PAGE_PICTURE_GRACE_MS && inkTiles.isComplete(page)
+                if (drawn || now - standIn.loadedAt > PAGE_PICTURE_HOLD_MS || page.revision != standIn.revision ||
                     pageHasHighlighter(page)) {
                     pagePictures.remove(page.id)
                     return
@@ -11485,6 +11577,8 @@ class InkCanvasView @JvmOverloads constructor(
         const val MAX_SCREEN_BRUSHES = 256
         /** How many whiteboard strokes may be built afresh in one frame; see boardStroke. */
         const val BOARD_REBUILDS_PER_FRAME = 24
+        /** Kept pictures held at once while their pages load; each is up to a screenful. */
+        const val MAX_STAND_INS = 4
         /** The longest a finished live stroke waits for the frame that draws it on the page. */
         const val WET_HANDOFF_TIMEOUT_MS = 250L
         /** The widest a recorded square of the board is drawn at; past it the recording is cut, never the ink lost. */

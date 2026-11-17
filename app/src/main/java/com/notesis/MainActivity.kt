@@ -4322,10 +4322,22 @@ private fun NoteScreen(
                 // Timers are paused for every WebView in the process, and the
                 // document viewer has one of its own; leave them running.
                 it.resumeTimers()
-                it.destroy()
+                // Kept for the next note, so its panel opens on the chat as it was.
+                KeptBrowser.keep(it)
             }
             browser.value = null
         }
+    }
+    // For someone who uses the AI panel, the browser engine is started once the
+    // note has settled and the pen has been still a while, rather than in the
+    // tap that opens the panel - that start was most of the wait and the freeze.
+    LaunchedEffect(Unit) {
+        if (lastAiSite(context) == null || KeptBrowser.holding) return@LaunchedEffect
+        delay(WEB_WARM_AFTER_MS)
+        while (InteractionGovernor.state != Interaction.IDLE || InteractionGovernor.quietForMs() < WEB_WARM_QUIET_MS) {
+            delay(WEB_WARM_QUIET_MS)
+        }
+        if (browser.value == null && webUrl == null) KeptBrowser.warm(context)
     }
     val browserVisible by rememberUpdatedState(webUrl != null)
     DisposableEffect(lifecycleOwner) {
@@ -5365,6 +5377,9 @@ private fun NoteScreen(
                         // The page as it was left, shown until its ink has been rebuilt.
                         pagePictureLoader = if (store.isLocked(note.id) || ready.first.layers.translucentLook() != null) null
                             else { page -> store.pagePicture(note.id, page.id) }
+                        // Dense pages let go as the note is scrolled are kept as pictures, so coming back to one shows
+                        // it at once while its ink is rebuilt. Not for a locked note: its pages are not left as pictures.
+                        if (!store.isLocked(note.id)) onPagePictures = { requests -> store.keepPagePictures(note.id, requests, prune = false) }
                         maskLoader = { page, epsilon ->
                             store.loadMasks(note.id, page, epsilon)
                         }
@@ -5859,7 +5874,7 @@ private fun NoteScreen(
                 store.flushSave(note.id, latestNote.title, view.document)
                 // After that save: a picture of the page in view, for the next opening.
                 // Not for a locked note: its pages are not to be lying about as pictures.
-                if (!store.isLocked(note.id)) store.keepPagePictures(note.id, view.pagePictureRequests())
+                if (!store.isLocked(note.id)) store.keepPagePictures(note.id, view.pagePictureRequests(), prune = false)
             }
             val observer = LifecycleEventObserver { _, event ->
                 if (event == Lifecycle.Event.ON_STOP) { stopBenchmark(); flushLatest() }
@@ -9773,6 +9788,10 @@ internal fun siteHost(url: String): String? {
 
 private fun lastAiSite(context: android.content.Context): String? =
     context.getSharedPreferences("pens", android.content.Context.MODE_PRIVATE).getString("lastAiSite", null)
+
+/** How long a note is open, and the pen still, before the AI panel's browser engine is started ahead of it. */
+private const val WEB_WARM_AFTER_MS = 4_000L
+private const val WEB_WARM_QUIET_MS = 1_500L
 
 private fun rememberAiSite(context: android.content.Context, url: String) {
     context.getSharedPreferences("pens", android.content.Context.MODE_PRIVATE).edit().putString("lastAiSite", url).apply()

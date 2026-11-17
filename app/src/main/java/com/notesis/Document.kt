@@ -352,6 +352,16 @@ class Page(
  * these apps uses. Document space is shared by all pages; each page owns a
  * band of it, and [topOf] is the only thing that decides where.
  */
+/** One canvas on a [Document] that others show too: what a re-tessellation made by another needs of it. */
+internal interface CanvasPeer {
+    /** The mesh fidelity its zoom asks for now; shared pages are built for the finest of them. */
+    fun refineBucket(): Float
+    /** Nothing of its own holds the strokes as they are: no pen down, no erase or lasso under way. */
+    fun canAdoptRefine(): Boolean
+    /** Another canvas replaced these strokes with finer ones: its history names the new ones from now on. */
+    fun adoptRefine(replacements: java.util.IdentityHashMap<Stroke, Stroke>, twins: List<Pair<Stroke, Stroke?>>)
+}
+
 class Document(val pages: MutableList<Page>) {
     /** The note's layers; saved in meta.json. */
     val layers = NoteLayers()
@@ -378,6 +388,17 @@ class Document(val pages: MutableList<Page>) {
     internal fun notifyOtherCanvases(source: () -> Unit) {
         canvasListeners.forEach { if (it !== source) it() }
     }
+
+    /**
+     * The canvases showing this document at once - the note and its pop-up
+     * panel or a part of a split on the same note. A re-tessellation replaces
+     * stroke objects that every one of their histories names, so it is made
+     * only when all of them can take the replacements (see [CanvasPeer]).
+     */
+    private val peers = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<CanvasPeer, Boolean>())
+    internal fun addPeer(peer: CanvasPeer) { peers += peer }
+    internal fun removePeer(peer: CanvasPeer) { peers -= peer }
+    internal fun peersBesides(self: CanvasPeer): List<CanvasPeer> = peers.filter { it !== self }
 
     /** Runtime-only generation for save coalescing; never written to disk. */
     internal val saveSessionId: Long = nextSaveSession.getAndIncrement()
@@ -743,12 +764,12 @@ class NoteStore(context: Context) {
      * are drawn after every save already queued has been written, so each is
      * checked against the page's file as it then is.
      */
-    internal fun keepPagePictures(id: String, requests: List<PagePictureRequest>) {
+    internal fun keepPagePictures(id: String, requests: List<PagePictureRequest>, prune: Boolean = true) {
         if (requests.isEmpty()) return
         runCatching {
             saveWorker.execute {
                 val stamps = pagePictures.stamps(id, requests.map { it.pageId })
-                runCatching { pictureWorker.execute { pagePictures.keep(id, requests, stamps) } }
+                runCatching { pictureWorker.execute { pagePictures.keep(id, requests, stamps, prune) } }
             }
         }
     }

@@ -47,4 +47,11 @@ class WebTintTest {
         assertNull(parsePageColors("\"\""))
         assertNull(parsePageColors(null))
     }
+
+    @Test fun `the page is looked at quickly while it arrives, then once a second`() {
+        assertEquals(PAGE_TOP_COLOR_POLL_MS, pageColorDelay(0))
+        assertEquals(PAGE_TOP_COLOR_POLL_MS, pageColorDelay(PAGE_TOP_COLOR_QUICK_LOOKS - 1))
+        assertEquals(PAGE_TOP_COLOR_SETTLED_MS, pageColorDelay(PAGE_TOP_COLOR_QUICK_LOOKS))
+        assertEquals(PAGE_TOP_COLOR_SETTLED_MS, pageColorDelay(10_000))
+    }
 }

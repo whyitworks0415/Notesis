@@ -45,6 +45,16 @@ internal const val PAGE_TOP_SAMPLES = 5
  */
 internal const val PAGE_TOP_COLOR_POLL_MS = 200L
 
+/** How often once the page has arrived. */
+internal const val PAGE_TOP_COLOR_SETTLED_MS = 1_000L
+
+/** Looks taken at the quick pace first: the page's first few seconds, while it paints and picks its theme. */
+internal const val PAGE_TOP_COLOR_QUICK_LOOKS = 15
+
+/** The wait after the [asked]th look at the page's colours. */
+internal fun pageColorDelay(asked: Int): Long =
+    if (asked < PAGE_TOP_COLOR_QUICK_LOOKS) PAGE_TOP_COLOR_POLL_MS else PAGE_TOP_COLOR_SETTLED_MS
+
 /** The page's colours as [PAGE_TOP_COLOR_JS] tells them: across the top, left to right, and at the bottom. */
 internal data class PageColors(val top: List<Int>, val bottom: Int?)
 
