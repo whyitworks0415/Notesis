@@ -30,6 +30,11 @@ internal class InkTileCache(
     private val byteBudget: Int = 48 * 1024 * 1024,
     private val screenStroke: (Stroke) -> Stroke,
     private val query: (Page, Float, Float, Float, Float) -> List<Stroke>,
+    /**
+     * Runs a finished background picture on the UI thread and asks for a frame.
+     * Null keeps every tile on the GPU path (and tests off threads).
+     */
+    private val onRasterReady: ((Runnable) -> Unit)? = null,
 ) {
     private data class Key(val page: Page, val x: Int, val y: Int, val highlight: Boolean)
 
@@ -47,6 +52,10 @@ internal class InkTileCache(
         var mayWait = false
         var deltaDirty = false
         var hasInk = false
+        /** Its picture is being painted on a worker; see [TileRaster]. */
+        var job: TileRaster.Job? = null
+        /** Raised by every change that makes a picture being painted out of date. */
+        var version = 0
     }
 
     private class PageState {
@@ -169,15 +178,36 @@ internal class InkTileCache(
         cleanupNanos = 0L
         recordSpentNanos = 0L
         recordedThisFrame = 0
+        strokesThisFrame = 0
+        strokeCap = strokeCapFor(InteractionGovernor.state)
         backlog = false
     }
 
+    /**
+     * Strokes this frame's new GPU tiles may hold. The time budget above sees
+     * only the recording, which is quick; painting those strokes into the
+     * tiles' layers is the render thread's, in the same frame, and it was
+     * that - several dense tiles in one frame - that took a frame to hundreds
+     * of milliseconds as a page came on screen.
+     */
+    private var strokeCap = Int.MAX_VALUE
+    private var strokesThisFrame = 0
+
     private fun mayRecord(): Boolean = optionalTileWork(recordedThisFrame,
-        System.nanoTime() - frameStarted, recordBudgetNanos, previousRecordNanos)
+        System.nanoTime() - frameStarted, recordBudgetNanos, previousRecordNanos) &&
+        (recordedThisFrame == 0 || strokesThisFrame < strokeCap)
 
     /** Recorded canvas commands still reference these nodes until GPU playback. */
     fun endFrame() {
         val cleanupStarted = System.nanoTime()
+        // A picture still being painted for a tile that has left the screen is not waited for.
+        if (rastering > 0) for (tile in tiles.values) {
+            val job = tile.job ?: continue
+            if (tile.key in frameTiles) continue
+            job.cancelled = true
+            tile.job = null
+            rastering--
+        }
         // Stale tiles go once a frame has drawn without them: the page is
         // complete again, or no longer on screen. Never in a frame that drew
         // them - their nodes are in this frame's recording.
@@ -219,6 +249,9 @@ internal class InkTileCache(
     }
 
     private fun discard(tile: Tile) {
+        tile.job?.let { it.cancelled = true; rastering-- }
+        tile.job = null
+        tile.version++
         if (tile.hasInk) layerBytes -= TILE_BYTES
         tile.base.setUseCompositingLayer(false, null)
         tile.base.discardDisplayList()
@@ -339,13 +372,17 @@ internal class InkTileCache(
         for (tile in tiles.values) {
             if (tile.key.page !== page || tile.key.highlight != highlight || !touches(tile, box)) continue
             if (!evenExcluded && tile.excluded?.contains(stroke) == true) continue
-            if (deltaOk && !tile.dirty) {
+            // A tile whose picture is being painted, or has none yet, takes a new
+            // stroke over whatever stands in for it: waiting for the picture
+            // would leave the stroke just written off the screen until it came.
+            if (deltaOk && (!tile.dirty || tile.job != null || !tile.hasInk)) {
                 tile.appended += stroke
                 tile.deltaDirty = true
             } else {
                 tile.dirty = true
                 tile.mayWait = false
                 tile.appended.clear()
+                tile.version++
             }
         }
     }
@@ -356,6 +393,7 @@ internal class InkTileCache(
             if (!tile.dirty) tile.mayWait = true
             tile.dirty = true
             tile.appended.clear()
+            tile.version++
         }
     }
 
@@ -475,6 +513,7 @@ internal class InkTileCache(
             }) { stroke ->
                 renderer.draw(canvas, screenStroke(stroke), transform)
                 recordedStrokes++
+                strokesThisFrame++
                 hasInk = true
             }
         } finally { node.endRecording() }
@@ -491,8 +530,26 @@ internal class InkTileCache(
         }
         // Android can discard a display list when its node leaves the drawing
         // tree. A Java cache entry can therefore outlive the GPU recording.
-        if (tile.hasInk && !tile.base.hasDisplayList()) tile.dirty = true
+        if (tile.hasInk && !tile.base.hasDisplayList()) { tile.dirty = true; tile.version++ }
         if (tile.appended.isNotEmpty() && !tile.delta.hasDisplayList()) tile.deltaDirty = true
+        // A tile with no picture yet - a page coming on screen, a new zoom - or a whole-page change is painted
+        // on a worker when its ink allows; the GPU path is kept for edits, which have to show at once.
+        // Folding strokes written since into the picture goes the same way, the picture and its delta shown meanwhile.
+        val foldOffThread = !tile.dirty && tile.appended.isNotEmpty() && (consolidate || tile.appended.size >= 32)
+        if (tile.job == null && (tile.dirty && (!tile.hasInk || tile.mayWait) || foldOffThread)) when (startRaster(tile)) {
+            Raster.STARTED -> Unit
+            // Workers full: its old picture meanwhile, or none yet; asked again next frame.
+            Raster.WAIT -> return tile.takeIf { it.hasInk }
+            Raster.GPU -> Unit
+        }
+        // Being painted: what was written since the picture was asked for is drawn over its stand-in.
+        if (tile.job != null) {
+            if (tile.deltaDirty) {
+                if (tile.appended.isEmpty()) tile.delta.discardDisplayList() else record(tile.delta, tile, tile.appended)
+                tile.deltaDirty = false
+            }
+            return tile
+        }
         // A tile never recorded is the burst after a zoom or a page coming
         // in: it waits its turn. One an edit made dirty still has its old
         // recording and is the change just made, and one whose recording the
@@ -540,6 +597,7 @@ internal class InkTileCache(
         val state = sync(page, scale, interacting, excluded, viewport, passes, look)
         val recordedScale = state.scale
         var complete = true
+        var waitsOnBudget = false
         val firstX = floor(viewport.left * recordedScale / TILE_PX).toInt()
         val firstY = floor(viewport.top * recordedScale / TILE_PX).toInt()
         val lastX = ceil(viewport.right * recordedScale / TILE_PX).toInt() - 1
@@ -553,11 +611,14 @@ internal class InkTileCache(
                 val key = Key(page, x, y, highlight)
                 frameTiles += key
                 val tile = tileFor(key, state, consolidate)
-                if (tile == null) {
-                    WorkStats.tilesDeferred.incrementAndGet()
-                    complete = false
+                if (tile == null || tile.job != null) complete = false
+                // A frame is asked for again only for work the budget held back; a worker's
+                // picture asks for its own frame when it is done.
+                if (tile == null || tile.dirty && tile.job == null) waitsOnBudget = true
+                if (tile == null || tile.job != null && !tile.hasInk) {
+                    if (tile == null) WorkStats.tilesDeferred.incrementAndGet()
                     drawStale(canvas, page, x, y, recordedScale, highlight)
-                    continue
+                    if (tile == null) continue
                 }
                 if (!tile.hasInk && !tile.delta.hasDisplayList()) continue
                 canvas.save()
@@ -574,10 +635,87 @@ internal class InkTileCache(
             if (layer >= 0) canvas.restoreToCount(layer)
         }
         state.complete = complete
-        if (!complete) backlog = true
+        if (waitsOnBudget) backlog = true
+    }
+
+    /** Tiles whose pictures are on a worker now. */
+    private var rastering = 0
+    private val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG)
+
+    /**
+     * Sends [tile]'s picture to be painted on a worker, if its ink can be
+     * painted there; false leaves it to the GPU path. The strokes and their
+     * on-screen twins are taken here, on the UI thread, so the worker reads
+     * nothing that changes under it.
+     */
+    private enum class Raster { STARTED, WAIT, GPU }
+
+    private fun startRaster(tile: Tile): Raster {
+        val ready = onRasterReady ?: return Raster.GPU
+        if (rastering >= MAX_RASTERING) {
+            backlog = true
+            return Raster.WAIT
+        }
+        val scale = tile.scale
+        val left = (tile.key.x * TILE_PX - GUTTER_PX) / scale
+        val top = (tile.key.y * TILE_PX - GUTTER_PX) / scale
+        val strokes = ArrayList<Stroke>()
+        val twins = IdentityHashMap<Stroke, Stroke>()
+        for (stroke in query(tile.key.page, left, top, left + EXTENT_PX / scale, top + EXTENT_PX / scale)) {
+            if (tile.excluded?.contains(stroke) == true) continue
+            if ((stroke.brush.family == highlightFamily) != tile.key.highlight) continue
+            // The pencil's graphite and the particle brushes come out blank off the GPU.
+            if (needsGpuPicture(stroke)) return Raster.GPU
+            strokes += stroke
+            val twin = screenStroke(stroke)
+            if (twin !== stroke) twins[stroke] = twin
+        }
+        val version = tile.version
+        val dx = (GUTTER_PX - tile.key.x * TILE_PX).toFloat()
+        val dy = (GUTTER_PX - tile.key.y * TILE_PX).toFloat()
+        val job = TileRaster.Job(strokes, twins, tile.look, scale, dx, dy, EXTENT_PX)
+        tile.job = job
+        rastering++
+        TileRaster.paint(job) { bitmap -> ready.invoke(Runnable { finishRaster(tile, job, version, bitmap) }) }
+        return Raster.STARTED
+    }
+
+    /** On the UI thread: the worker's picture becomes [tile]'s, unless the tile changed or went meanwhile. */
+    private fun finishRaster(tile: Tile, job: TileRaster.Job, version: Int, bitmap: android.graphics.Bitmap?) {
+        if (tile.job !== job) return
+        tile.job = null
+        rastering--
+        if (bitmap == null || tile.version != version || tiles[tile.key] !== tile) {
+            // Out of date before it arrived: painted again, from the ink as it is now.
+            tile.dirty = true
+            backlog = true
+            return
+        }
+        val hasInk = job.strokes.isNotEmpty()
+        if (hasInk) {
+            tile.base.setPosition(0, 0, EXTENT_PX, EXTENT_PX)
+            val canvas = tile.base.beginRecording(EXTENT_PX, EXTENT_PX)
+            try { canvas.drawBitmap(bitmap, 0f, 0f, bitmapPaint) } finally { tile.base.endRecording() }
+        } else tile.base.discardDisplayList()
+        // A picture already: no layer of its own to keep.
+        tile.base.setUseCompositingLayer(false, null)
+        if (tile.hasInk != hasInk) layerBytes += if (hasInk) TILE_BYTES else -TILE_BYTES
+        tile.hasInk = hasInk
+        tile.dirty = false
+        tile.mayWait = false
+        // Strokes written before the picture was asked for are in it now; those written since stay over it.
+        if (tile.appended.isNotEmpty()) {
+            val inPicture = java.util.Collections.newSetFromMap(IdentityHashMap<Stroke, Boolean>())
+            inPicture.addAll(job.strokes)
+            tile.appended.removeAll { it in inPicture }
+            if (tile.appended.isEmpty()) tile.delta.discardDisplayList() else tile.deltaDirty = true
+        }
+        WorkStats.tilesRastered.incrementAndGet()
     }
 
     companion object {
+        /** Tiles on workers at once, across the view; the rest wait a frame. */
+        private const val MAX_RASTERING = 12
         private const val MAX_TILES = 128
         /** Settled zoom within this of the tiles' own is drawn from them as they are. */
         private const val SETTLED_SCALE_SLACK = 0.025f

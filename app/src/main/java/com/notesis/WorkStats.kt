@@ -17,6 +17,9 @@ internal object WorkStats {
     val pdfRenders = AtomicLong()
     val pdfDeferred = AtomicLong()
     val tilesRecorded = AtomicLong()
+    /** Tiles painted on a worker (TileRaster), and the time the workers spent on them. */
+    val tilesRastered = AtomicLong()
+    val tileRasterNanos = AtomicLong()
     val layerSettlesFull = AtomicLong()
     val layerSettlesTail = AtomicLong()
 
@@ -24,7 +27,9 @@ internal object WorkStats {
         "load ${pagesLoaded.get()} (late ${pagesLoadedStale.get()}, abandoned ${loadsAbandoned.get()})" +
             " · refine ${refinesApplied.get()}/stale ${refinesStale.get()} · prefetch ${prefetched.get()}\n" +
             "pdf ${pdfRenders.get()} (deferred ${pdfDeferred.get()}) · tiles recorded ${tilesRecorded.get()}" +
-            " · layer settle full ${layerSettlesFull.get()}/tail ${layerSettlesTail.get()}"
+            " · layer settle full ${layerSettlesFull.get()}/tail ${layerSettlesTail.get()}\n" +
+            "tiles painted off the render thread ${tilesRastered.get()}" +
+            " (${tileRasterNanos.get() / 1_000_000} ms on workers, ${tilesDeferred.get()} waits)"
 
     /** Ink tiles left for a later frame because this one's recording budget was spent. */
     val tilesDeferred = AtomicLong()

@@ -10117,10 +10117,13 @@ class InkCanvasView @JvmOverloads constructor(
         }
 
         private val inkTileViewport = RectF()
+        private val rasterHandler = android.os.Handler(android.os.Looper.getMainLooper())
         private val inkTiles = InkTileCache(
             byteBudget = inkTileBudget(context),
             screenStroke = ::onScreen,
             query = ::strokesIn,
+            // A tile painted on a worker comes back here and is shown in the next frame.
+            onRasterReady = { work -> rasterHandler.post { work.run(); postInvalidateOnAnimation() } },
         )
 
         fun clearInkTiles() = inkTiles.clear()

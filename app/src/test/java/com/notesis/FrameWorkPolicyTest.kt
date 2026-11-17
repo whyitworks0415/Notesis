@@ -28,4 +28,12 @@ class FrameWorkPolicyTest {
         assertNull(inkDrawCompletion(unset, 150, 130, 140))
         assertNull(inkDrawCompletion(100, 90, 95, 100))
     }
+
+    @Test fun `fewer strokes go to the render thread in a frame while writing or moving`() {
+        val writing = strokeCapFor(Interaction.WRITING)
+        val moving = strokeCapFor(Interaction.MOVING)
+        val idle = strokeCapFor(Interaction.IDLE)
+        assertTrue(writing < moving && moving < idle)
+        assertEquals(idle, strokeCapFor(Interaction.SETTLING))
+    }
 }
