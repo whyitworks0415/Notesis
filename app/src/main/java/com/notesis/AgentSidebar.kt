@@ -17,6 +17,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -53,6 +58,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+
+/** The narrowest the agent sidebar is dragged to. */
+private val SIDEBAR_MIN = 300.dp
 
 /** How Termux is opened from Notesis: beside it (split screen), in a window over it, or on its own. */
 internal enum class TermuxWindow { BESIDE, WINDOW, FULL }
@@ -137,13 +145,32 @@ private fun AgentSidebar() {
     val corner = chromeCorner()
     val shape = RoundedCornerShape(topStart = corner, bottomStart = corner)
     val wide = LocalConfiguration.current.screenWidthDp.dp
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    // As wide as the owner last dragged it, kept between openings; from a narrow column to most of the screen.
+    val prefs = remember { context.getSharedPreferences("agent-chat", android.content.Context.MODE_PRIVATE) }
+    val widest = wide * 0.9f
+    var width by remember { mutableStateOf(prefs.getFloat("width", 420f).dp.coerceIn(SIDEBAR_MIN, widest.coerceAtLeast(SIDEBAR_MIN))) }
+    Row(Modifier.fillMaxHeight().safeDrawingPadding().padding(vertical = 8.dp)) {
+    // The handle on the open edge: dragged left the sidebar grows, right it shrinks.
+    Box(
+        Modifier
+            .fillMaxHeight()
+            .width(20.dp)
+            .draggable(
+                orientation = Orientation.Horizontal,
+                state = rememberDraggableState { delta ->
+                    width = (width - with(density) { delta.toDp() }).coerceIn(SIDEBAR_MIN, widest.coerceAtLeast(SIDEBAR_MIN))
+                },
+                onDragStopped = { prefs.edit().putFloat("width", width.value).apply() },
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(Modifier.width(4.dp).height(48.dp).background(MaterialTheme.colorScheme.outline, RoundedCornerShape(2.dp)))
+    }
     Column(
         Modifier
             .fillMaxHeight()
-            .widthIn(max = minOf(420.dp, wide * 0.9f))
-            .fillMaxWidth()
-            .safeDrawingPadding()
-            .padding(vertical = 8.dp)
+            .width(width)
             .skinMaterial(shape, panel = true)
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -222,6 +249,7 @@ private fun AgentSidebar() {
             Text(if ((chat.carryOn && carriesOn(chat.agent)) || chat.resume != null) "The next request carries on this conversation." else "The next request starts afresh.",
                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+    }
     }
 }
 

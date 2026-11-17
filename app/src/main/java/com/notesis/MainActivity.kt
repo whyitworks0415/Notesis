@@ -6161,7 +6161,12 @@ private fun NoteScreen(
                     },
                 ),
                 webActions = listOf(GlassToolbarAction("Search the web", AppIcons.web) { webUrl = SEARCH_HOME }) +
-                    aiSites().map { (name, url) -> GlassToolbarAction(name, AppIcons.ai) { webUrl = url } },
+                    aiSites().map { (name, url) -> GlassToolbarAction(name, AppIcons.ai) { webUrl = url } } +
+                    // The agents on this tablet, beside the AI sites: asked from the sidebar, set up in the connection panel.
+                    listOf(
+                        GlassToolbarAction("Ask an agent", AppIcons.ai) { AgentChat.show(context) },
+                        GlassToolbarAction("Agent connection", AppIcons.terminal) { AgentPanelState.open = true },
+                    ),
                 onOpenSite = { webUrl = it },
                 penSettings = {
                     GlobalPenSettings(

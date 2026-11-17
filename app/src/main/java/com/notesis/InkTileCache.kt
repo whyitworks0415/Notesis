@@ -33,11 +33,18 @@ internal class InkTileCache(
 ) {
     private data class Key(val page: Page, val x: Int, val y: Int, val highlight: Boolean)
 
-    private class Tile(val key: Key, val scale: Float, val excluded: Set<Stroke>?, val look: LayerLook?) {
+    private class Tile(val key: Key, val scale: Float, var excluded: Set<Stroke>?, val look: LayerLook?) {
         val base = RenderNode("ink tile")
         val delta = RenderNode("ink delta")
         val appended = ArrayList<Stroke>()
         var dirty = true
+        /**
+         * Dirty, but its old recording may go on standing in while the frame's
+         * budget is spent: for a change that touches the whole page at once (a
+         * reorder), where recording every tile in one frame is a stall and the
+         * picture from a moment ago is still the right ink.
+         */
+        var mayWait = false
         var deltaDirty = false
         var hasInk = false
     }
@@ -113,6 +120,24 @@ internal class InkTileCache(
 
     fun stats() = Stats(recordings, recordedStrokes, layerDraws, tiles.size, layerBytes,
         tiles.values.count { it.hasInk && !it.base.hasDisplayList() })
+
+    /**
+     * Android wants memory back while the page is in view: everything but the
+     * tiles the last frame drew goes. Clearing those too left the page bare
+     * and every tile recorded again at once - a blink and a stall each time
+     * memory ran short, which it does with other heavy apps open.
+     */
+    fun trimToVisible() {
+        val iterator = tiles.entries.iterator()
+        while (iterator.hasNext()) {
+            val tile = iterator.next().value
+            if (tile.key in frameTiles) continue
+            discard(tile)
+            iterator.remove()
+            countRemoved(tile.key.page)
+        }
+        for (page in stale.keys.toList()) if (page !in staleDrawn) stale.remove(page)?.tiles?.values?.forEach(::discard)
+    }
 
     fun clear() {
         tiles.values.forEach(::discard)
@@ -301,7 +326,7 @@ internal class InkTileCache(
         return box.right >= left && box.left <= right && box.bottom >= top && box.top <= bottom
     }
 
-    private fun changedStroke(page: Page, stroke: Stroke, append: Boolean, look: LayerLook? = null) {
+    private fun changedStroke(page: Page, stroke: Stroke, append: Boolean, look: LayerLook? = null, evenExcluded: Boolean = false) {
         if ((tilesPerPage[page] ?: 0) == 0) return
         val box = strokeBounds(stroke) ?: return
         val highlight = stroke.brush.family == highlightFamily
@@ -310,14 +335,24 @@ internal class InkTileCache(
         val deltaOk = append && (look == null || look.alphaOf(StrokeLayers.of(stroke)) >= 255)
         for (tile in tiles.values) {
             if (tile.key.page !== page || tile.key.highlight != highlight || !touches(tile, box)) continue
-            if (tile.excluded?.contains(stroke) == true) continue
+            if (!evenExcluded && tile.excluded?.contains(stroke) == true) continue
             if (deltaOk && !tile.dirty) {
                 tile.appended += stroke
                 tile.deltaDirty = true
             } else {
                 tile.dirty = true
+                tile.mayWait = false
                 tile.appended.clear()
             }
+        }
+    }
+
+    /** Every tile of [page] to be recorded again, each showing its old picture until it is. */
+    private fun allDirty(page: Page) {
+        for (tile in tiles.values) if (tile.key.page === page) {
+            if (!tile.dirty) tile.mayWait = true
+            tile.dirty = true
+            tile.appended.clear()
         }
     }
 
@@ -335,6 +370,18 @@ internal class InkTileCache(
         // difference was a full redraw after nearly every gesture.
         val nearlySame = state.scale > 0f && abs(state.scale / requestedScale - 1f) < SETTLED_SCALE_SLACK
         val scale = if (keepScale || nearlySame) state.scale else requestedScale
+        // The lasso lifting strokes off (or putting them down) changes only the tiles under them. Throwing
+        // every tile of a dense page away for it left the page bare until each was recorded again: the ink
+        // blinked at every lift and drop.
+        if (state.excluded !== excluded && sameLook(state.look, look) && state.scale > 0f &&
+            abs(state.scale / scale - 1f) < 0.001f && state.meshRevision == page.meshRevision) {
+            val before = state.excluded.orEmpty()
+            val after = excluded.orEmpty()
+            for (stroke in before) if (stroke !in after) changedStroke(page, stroke, append = false, evenExcluded = true)
+            for (stroke in after) if (stroke !in before) changedStroke(page, stroke, append = false, evenExcluded = true)
+            for (tile in tiles.values) if (tile.key.page === page) tile.excluded = excluded
+            state.excluded = excluded
+        }
         val newPicture = state.excluded !== excluded || !sameLook(state.look, look)
         if (state.scale == 0f || abs(state.scale / scale - 1f) >= 0.001f ||
             state.meshRevision != page.meshRevision || newPicture) {
@@ -387,7 +434,11 @@ internal class InkTileCache(
                     }
                 }
                 val removed = old.filter { !present.containsKey(it) }
-                if (reordered || added.size + removed.size > 32) discardPage(page)
+                // Each changed stroke marks only the tiles it touches, however many there are: an eraser
+                // drawn through dense writing cuts dozens of strokes, and throwing the page's tiles away
+                // for it left them bare until recorded again - the ink blinked under the eraser. A
+                // reorder (a layer moved) keeps every tile's picture until its new one is in.
+                if (reordered) allDirty(page)
                 else {
                     removed.forEach { changedStroke(page, it, append = false) }
                     added.forEach { changedStroke(page, it, append = false) }
@@ -444,6 +495,11 @@ internal class InkTileCache(
         // recording and is the change just made, and one whose recording the
         // system let go was showing ink a moment ago; neither is held back.
         if (tile.dirty && !tile.hasInk && !tile.base.hasDisplayList() && !mayRecord()) return null
+        // A whole-page change waits its turn behind the budget, its old picture drawn meanwhile.
+        if (tile.dirty && tile.mayWait && tile.hasInk && tile.base.hasDisplayList() && !mayRecord()) {
+            backlog = true
+            return tile
+        }
         // Folding the delta into the base is tidying, and waits for room;
         // past 32 strokes it is due regardless.
         val fold = tile.appended.isNotEmpty() &&
@@ -461,6 +517,7 @@ internal class InkTileCache(
             tile.hasInk = hasInk
             tile.base.setUseCompositingLayer(hasInk, null)
             tile.dirty = false
+            tile.mayWait = false
             tile.appended.clear()
             tile.delta.discardDisplayList()
             tile.deltaDirty = false

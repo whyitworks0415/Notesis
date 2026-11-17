@@ -162,6 +162,8 @@ private class InkWeight(val revision: Long, val meshRevision: Long, val size: In
 private class InkNode(val node: android.graphics.RenderNode) {
     var scale = 0f
     var prefix: InkRenderPrefix<Stroke>? = null
+    /** The page's revision when recorded: the same ink, whatever meshes it was drawn from since. */
+    var revision = Long.MIN_VALUE
     var meshRevision = Long.MIN_VALUE
     var meshInk = false
     var highlighterAbove = false
@@ -3054,7 +3056,7 @@ class InkCanvasView @JvmOverloads constructor(
     /** Android wants memory back: everything here that a redraw can rebuild goes. */
     override fun trimMemory(severe: Boolean) {
         pdf?.trimMemory(severe)
-        dry.trimCaches(severe)
+        dry.trimCaches(severe, inView = isShown && windowVisibility == VISIBLE && !disposed)
         if (!disposed) dry.postInvalidateOnAnimation()
     }
 
@@ -9680,6 +9682,20 @@ class InkCanvasView @JvmOverloads constructor(
         activePage?.let { afterEdit(it) }
     }
 
+    /** Removes finished live strokes after the frame that draws them dry is committed; see CompatWetInkView.handOff. */
+    private fun retireWetAfterFrame(ids: Set<InProgressStrokeId>) {
+        if (ids.isEmpty()) return
+        if (!isAttachedToWindow || disposed) { wet.removeFinishedStrokes(ids); return }
+        var retired = false
+        val retire = Runnable {
+            if (retired) return@Runnable
+            retired = true
+            if (!disposed) wet.removeFinishedStrokes(ids)
+        }
+        viewTreeObserver.registerFrameCommitCallback { Choreographer.getInstance().postFrameCallback { retire.run() } }
+        postDelayed(retire, WET_HANDOFF_TIMEOUT_MS)
+    }
+
     override fun onStrokesFinished(finished: Map<InProgressStrokeId, Stroke>) {
         val commitStarted = if (latencyMonitoringEnabled) System.nanoTime() else 0L
         pendingStrokeCommits.removeAll(finished.keys)
@@ -9777,7 +9793,9 @@ class InkCanvasView @JvmOverloads constructor(
         }
         if (committedByPage.isNotEmpty()) redoStack.clear()
         recognizeOnFinish = false
-        wet.removeFinishedStrokes(finished.keys)
+        // Let go of the live strokes only once a frame showing them on the page has been committed: removed
+        // at once, a dense page whose next frame took longer showed the stroke in neither, a blink at pen-up.
+        retireWetAfterFrame(finished.keys.toSet())
         if (compatWetStrokeId in finished.keys) compatWetStrokeId = null
         for ((page, committed) in committedByPage) {
             if (committed.isNotEmpty() && page !== document.board) {
@@ -10018,12 +10036,19 @@ class InkCanvasView @JvmOverloads constructor(
         fun clearInkTiles() = inkTiles.clear()
 
         /** Ink bitmaps always; when [severe], the recorded ink tiles and page nodes too. */
-        fun trimCaches(severe: Boolean) {
+        fun trimCaches(severe: Boolean, inView: Boolean = false) {
             inkBitmaps.evictAll()
-            if (severe) {
-                inkTiles.clear()
-                discardInkNodes()
+            if (!severe) return
+            if (inView) {
+                // In view, only what is not on screen goes; see InkTileCache.trimToVisible.
+                inkTiles.trimToVisible()
+                val shown = visiblePages().toSet()
+                val gone = inkNodes.keys.filter { it !in shown }
+                for (page in gone) inkNodes.remove(page)?.node?.discardDisplayList()
+                return
             }
+            inkTiles.clear()
+            discardInkNodes()
         }
 
         /**
@@ -10037,6 +10062,18 @@ class InkCanvasView @JvmOverloads constructor(
             val ink = inkNodes.getOrPut(page) { InkNode(android.graphics.RenderNode("ink")) }
             val strokes = page.strokes
             val prefix = ink.prefix
+            // Finer meshes for the same ink (the refine after a page comes in or a zoom settles): the old
+            // recording is the same picture, a touch softer. Recording a dense page again for it, in the
+            // frame that shows the page, was the stutter on arriving at one; it waits for a frame with
+            // nothing else to do, one page a frame.
+            val meshOnly = ink.node.hasDisplayList() && prefix != null && ink.revision == page.revision &&
+                prefix.strokes.size == strokes.size && ink.meshRevision != page.meshRevision &&
+                ink.meshInk == meshInk && ink.highlighterAbove == highlighterAboveInk && sameLook(ink.look, look) &&
+                abs(ink.scale / scale - 1f) < 0.001f
+            if (meshOnly && (nodeRecordedThisFrame || activeStylusPointer != null || zooming || viewportInteracting || flinging)) {
+                postInvalidateOnAnimation()
+                return ink
+            }
             // Re-recorded when a layer's opacity changes: a display list, no geometry.
             val sameContent = ink.node.hasDisplayList() && prefix != null && ink.meshRevision == page.meshRevision &&
                 ink.meshInk == meshInk && ink.highlighterAbove == highlighterAboveInk &&
@@ -10068,9 +10105,15 @@ class InkCanvasView @JvmOverloads constructor(
             if (!record && abs(ink.scale / scale - 1f) >= 0.001f && !zooming && !viewportInteracting && !flinging) {
                 record = true
             }
-            if (record) recordInk(ink, page, scale, look)
+            if (record) {
+                recordInk(ink, page, scale, look)
+                nodeRecordedThisFrame = true
+            }
             return ink
         }
+
+        /** A page's whole recording was made this frame; another that can wait does. */
+        private var nodeRecordedThisFrame = false
 
         private fun recordInk(ink: InkNode, page: Page, scale: Float, look: LayerLook?) {
             val snapshot = page.strokes.toList()
@@ -10102,6 +10145,7 @@ class InkCanvasView @JvmOverloads constructor(
             }
             ink.scale = scale
             ink.prefix = InkRenderPrefix(snapshot).also { it.matches(snapshot, page.revision) }
+            ink.revision = page.revision
             ink.meshRevision = page.meshRevision
             ink.meshInk = meshInk
             ink.highlighterAbove = highlighterAboveInk
@@ -10585,6 +10629,7 @@ class InkCanvasView @JvmOverloads constructor(
             // this view must not end a frame the screen's recording still uses.
             val tileFrame = canvas.isHardwareAccelerated
             if (tileFrame) inkTiles.beginFrame(tileRecordBudgetNanos(InteractionGovernor.frameMs, InteractionGovernor.state))
+            nodeRecordedThisFrame = false
             // Null unless some layer is translucent: then each such layer's
             // ink is composited once at its opacity (see drawLayered), and
             // every path below - tiles, page node, direct - does the same.
@@ -10649,11 +10694,15 @@ class InkCanvasView @JvmOverloads constructor(
                     val hasHighlighter = pageHasHighlighter(page) && (tiledInk || visibleStrokes.any {
                         it.brush.family == Tool.HIGHLIGHTER.brushFamily()
                     })
-                    val inkNode = if (!tiledInk && scoped.isHardwareAccelerated && !lifted && playbackStrokeCount == null)
+                    // While an eraser is drawn through the page its strokes change every frame: recording the
+                    // whole page again each frame and then playing it back cost more than drawing it once, and
+                    // a kept bitmap would still show what was just erased. Drawn as it is until the pen lifts.
+                    val erasingHere = erasing && activePage === page
+                    val inkNode = if (!tiledInk && scoped.isHardwareAccelerated && !lifted && playbackStrokeCount == null && !erasingHere)
                         inkNodeFor(page, currentScale(), look) else null
                     // The bitmap is drawn flat; translucent layers take the direct path instead.
                     val inkBitmap = if (look == null && !tiledInk && inkNode == null && !hasHighlighter && !lifted &&
-                        playbackStrokeCount == null) cachedInk(page, visibleStrokes.size) else null
+                        playbackStrokeCount == null && !erasingHere) cachedInk(page, visibleStrokes.size) else null
                     // Put highlighter ink on the chosen side of handwriting.
                     // Keep the source list in its original order within each
                     // layer so overlapping strokes still look predictable.
@@ -11436,6 +11485,8 @@ class InkCanvasView @JvmOverloads constructor(
         const val MAX_SCREEN_BRUSHES = 256
         /** How many whiteboard strokes may be built afresh in one frame; see boardStroke. */
         const val BOARD_REBUILDS_PER_FRAME = 24
+        /** The longest a finished live stroke waits for the frame that draws it on the page. */
+        const val WET_HANDOFF_TIMEOUT_MS = 250L
         /** The widest a recorded square of the board is drawn at; past it the recording is cut, never the ink lost. */
         const val MAX_BOARD_NODE_PX = 8192
         /** The grid whiteboard strokes are moved to an origin on: see boardStroke. */
