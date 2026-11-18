@@ -4852,7 +4852,12 @@ private fun NoteScreen(
         if (engine == OcrEngine.INK) {
             scope.launch {
                 val lines = withContext(Dispatchers.IO) { indexer.readingsOf(strokes) }
-                show(lines, if (lines == null) "Recognition model unavailable" else null)
+                show(lines, when {
+                    lines == null -> "Recognition model unavailable"
+                    // Joined-up writing can lose whole letters here; the picture readers see it whole.
+                    lines.any { it.doubtful } -> "Some letters may have been missed. Joined-up writing often reads better with AI."
+                    else -> null
+                })
             }
             return
         }

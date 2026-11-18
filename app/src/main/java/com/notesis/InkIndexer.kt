@@ -291,7 +291,7 @@ class InkIndexer(private val context: Context) {
         var before = ""
         for (line in linesOf(strokes)) {
             if (!keepGoing()) return null
-            val readings = readLine(line, before, perLanguage = 1)
+            val readings = inkOf(line.ordered, line.tilt)?.let { readLine(it, before, perLanguage = 1).readings }.orEmpty()
             if (readings.isEmpty()) continue
             before = readings.first().text
             // For a person, the best reading; for the search index, each
@@ -312,20 +312,49 @@ class InkIndexer(private val context: Context) {
         if (!prepare()) return null
         var before = ""
         return linesOf(strokes).mapNotNull { line ->
-            val readings = readLine(line, before, perLanguage)
-            if (readings.isEmpty()) return@mapNotNull null
-            before = readings.first().text
-            OcrLine(readings)
+            val read = readLineWhole(line, before, perLanguage)
+            if (read.readings.isEmpty()) return@mapNotNull null
+            before = read.readings.first().text
+            OcrLine(read.readings, doubtful = readingLooksShort(read.readings.first().text, read.width, read.height))
         }
     }
 
-    /** [strokes] in lines, each with its strokes in the order to be read and its tilt. */
-    private fun linesOf(strokes: List<Stroke>): List<Pair<List<Stroke>, Float>> {
+    /**
+     * [strokes] in lines: each line's strokes in the order to be read, its
+     * tilt, and the same strokes in the order they were written.
+     */
+    private fun linesOf(strokes: List<Stroke>): List<InkLineStrokes> {
         val boxes = strokes.mapNotNull { stroke ->
             stroke.shape.computeBoundingBox()?.let { stroke to InkBox(it.xMin, it.yMin, it.xMax, it.yMax) }
         }
         if (boxes.isEmpty()) return emptyList()
-        return inkLines(boxes.map { it.second }).map { line -> line.strokes.map { boxes[it].first } to line.tilt }
+        return inkLines(boxes.map { it.second }).map { line ->
+            InkLineStrokes(line.strokes.map { boxes[it].first }, line.tilt, line.strokes.sorted().map { boxes[it].first })
+        }
+    }
+
+    private class InkLineStrokes(val ordered: List<Stroke>, val tilt: Float, val written: List<Stroke>)
+
+    /** A line's readings, and the size of the space its writing fills once levelled. */
+    private class LineRead(val readings: List<OcrReading>, val width: Float, val height: Float)
+
+    /**
+     * One line read for a person. The line is handed over as [inkLines] put
+     * it - letters left to right, levelled - and, when that differs, also just
+     * as it was written. Joined-up writing, whose letters run into each other,
+     * can come out of the first with whole letters dropped ("안녕하세요" read
+     * as two syllables); the attempt the recogniser is surer of (or that reads
+     * more of the ink) goes first, and the other's readings are offered too.
+     */
+    private fun readLineWhole(line: InkLineStrokes, before: String, perLanguage: Int): LineRead {
+        val sheet = inkOf(line.ordered, line.tilt) ?: return LineRead(emptyList(), 0f, 0f)
+        val first = readLine(sheet, before, perLanguage)
+        val sameOrder = line.tilt == 0f && line.ordered.indices.all { line.ordered[it] === line.written[it] }
+        if (sameOrder) return LineRead(first.readings, sheet.width, sheet.height)
+        val asWritten = inkOf(line.written, 0f)?.let { readLine(it, before, perLanguage) } ?: return LineRead(first.readings, sheet.width, sheet.height)
+        val best = betterAttempt(first, asWritten)
+        val other = if (best === first) asWritten else first
+        return LineRead((best.readings + other.readings).distinctBy { it.text }, sheet.width, sheet.height)
     }
 
     /**
@@ -334,8 +363,7 @@ class InkIndexer(private val context: Context) {
      * [scriptFit]), then the other languages' top readings, then the rest.
      * [before] is the text of the line above, given as context.
      */
-    private fun readLine(line: Pair<List<Stroke>, Float>, before: String, perLanguage: Int): List<OcrReading> {
-        val sheet = inkOf(line.first, line.second) ?: return emptyList()
+    private fun readLine(sheet: Sheet, before: String, perLanguage: Int): InkAttempt {
         val recognition = runCatching {
             RecognitionContext.builder()
                 .setPreContext(before.takeLast(PRE_CONTEXT_CHARS))
@@ -344,6 +372,7 @@ class InkIndexer(private val context: Context) {
         }.getOrNull()
         val tops = ArrayList<Pair<OcrReading, Float>>()
         val rest = ArrayList<OcrReading>()
+        val scores = HashMap<OcrReading, Float>()
         for ((order, tag) in languages(context).withIndex()) {
             val recognizer = recognizers[tag] ?: continue
             val candidates = runCatching {
@@ -356,11 +385,14 @@ class InkIndexer(private val context: Context) {
                 if (text.isEmpty()) return@forEachIndexed
                 val reading = OcrReading(text, tag)
                 // The language order breaks a tie, the first one first.
-                if (rank == 0) tops += reading to (scriptFit(text, tag) - order * 0.001f) else rest += reading
+                if (rank == 0) {
+                    tops += reading to (scriptFit(text, tag) - order * 0.001f)
+                    candidate.score?.let { scores[reading] = it }
+                } else rest += reading
             }
         }
-        val ordered = tops.sortedByDescending { it.second }.map { it.first } + rest
-        return ordered.distinctBy { it.text }
+        val ordered = (tops.sortedByDescending { it.second }.map { it.first } + rest).distinctBy { it.text }
+        return InkAttempt(ordered, ordered.firstOrNull()?.let { scores[it] })
     }
 
     /** A line as the recogniser is handed it, and the size of the space it fills. */
@@ -451,8 +483,48 @@ class InkIndexer(private val context: Context) {
 /** One way a line of handwriting was read: the text, and the language that read it. */
 data class OcrReading(val text: String, val language: String)
 
-/** A line of handwriting and its readings, the first the one shown by default. */
-data class OcrLine(val readings: List<OcrReading>)
+/**
+ * A line of handwriting and its readings, the first the one shown by default.
+ * [doubtful] when the reading looks too short for the ink it came from.
+ */
+data class OcrLine(val readings: List<OcrReading>, val doubtful: Boolean = false)
+
+/**
+ * One way of handing a line to the recogniser and what came back: readings,
+ * likeliest first, and the first one's score - lower is likelier, null when
+ * the model gives none.
+ */
+internal class InkAttempt(val readings: List<OcrReading>, val score: Float?)
+
+/**
+ * Of two attempts at the same strokes, the one to show first: the one the
+ * recogniser scored as likelier when both have a score, else the one whose
+ * reading has more letters - with the same ink, a reading that leaves letters
+ * out has failed to read part of it. The first on a tie.
+ */
+internal fun betterAttempt(a: InkAttempt, b: InkAttempt): InkAttempt {
+    if (b.readings.isEmpty()) return a
+    if (a.readings.isEmpty()) return b
+    val sa = a.score
+    val sb = b.score
+    if (sa != null && sb != null && sa != sb) return if (sb < sa) b else a
+    return if (letterCount(b.readings.first().text) > letterCount(a.readings.first().text)) b else a
+}
+
+private fun letterCount(text: String): Int = text.count { !it.isWhitespace() }
+
+/**
+ * Whether [text] is too short for writing [width] by [height] (levelled):
+ * a Hangul syllable is about as wide as the line is tall and a Latin letter
+ * narrower, so a line holds at least about width / height letters. Fewer
+ * than half of that, on a line long enough to tell, means letters were
+ * dropped.
+ */
+internal fun readingLooksShort(text: String, width: Float, height: Float): Boolean {
+    if (height <= 0f) return false
+    val expected = width / height
+    return expected >= 3f && letterCount(text) < expected * 0.5f
+}
 
 /** How much of the line above is handed over as context; the recogniser reads up to twenty characters. */
 private const val PRE_CONTEXT_CHARS = 20
