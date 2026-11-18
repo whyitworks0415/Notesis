@@ -276,6 +276,9 @@ class MainActivity : ComponentActivity() {
         WebSites.init(applicationContext)
         ToolbarScale.init(applicationContext)
         UiScale.init(applicationContext)
+        // Held the way it was left, if turning with the tablet was switched off.
+        ScreenRotation.init(applicationContext)
+        ScreenRotation.apply(this)
         // A real start, not a rotation: first-run mode shows the welcome and the tutorial again.
         if (savedInstanceState == null) Onboarding.startAsFirstRunIfAsked(applicationContext)
         // One store for the app, which the note commands (the terminal, an agent's connection) use too.
@@ -6117,6 +6120,10 @@ private fun NoteScreen(
                     GlassToolbarAction("Rotate · ${activeRotation().roundToInt()}°", AppIcons.rotate) {
                         turnActivePart()
                     },
+                    // The screen itself, not the page: whether the app turns with the tablet.
+                    GlassToolbarAction(if (ScreenRotation.follows) "Screen turns" else "Screen held",
+                        if (ScreenRotation.follows) AppIcons.rotate else Reicons.Lock,
+                        selected = !ScreenRotation.follows) { ScreenRotation.toggle(context) },
                     GlassToolbarAction("Zoom · ${(zoom * 100).roundToInt()}%", AppIcons.zoom) { zoomMenu = true },
                     GlassToolbarAction("Pages & search", AppIcons.search, selected = showPages) { showPages = !showPages },
                     // The calculator, the clock, the calendar and the to-do list, one panel.

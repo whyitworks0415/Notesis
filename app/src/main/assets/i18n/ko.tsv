@@ -1860,3 +1860,9 @@ off	꺼짐
 on	켜짐
 library not loaded	라이브러리를 불러오지 못함
 failed {0} times, off for this run	{0}번 실패해서 이번 실행에서는 꺼짐
+Screen rotation	화면 회전
+Rotate with the tablet	태블릿을 돌리면 화면도 회전
+The app turns when the tablet turns. Switch off to keep it the way it is now.	태블릿을 돌리면 앱 화면도 돌아갑니다. 끄면 지금 방향으로 고정됩니다.
+Held as it is now ({0}), however the tablet is turned, and opens that way. Switch on to turn with the tablet again.	태블릿을 어떻게 돌려도 지금 방향({0})으로 고정되고, 다음에 열 때도 이 방향입니다. 켜면 다시 태블릿을 따라 돌아갑니다.
+Screen turns	화면 회전 켜짐
+Screen held	화면 회전 잠김

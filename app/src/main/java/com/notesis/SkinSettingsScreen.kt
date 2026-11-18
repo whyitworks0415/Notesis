@@ -589,6 +589,12 @@ private fun DisplayGroup() {
     }
     SettingsSectionHeader("Brightness")
     AppBrightnessSetting()
+    SettingsSectionHeader("Screen rotation")
+    SettingsToggle(
+        "Rotate with the tablet", ScreenRotation.follows, { ScreenRotation.toggle(context) },
+        hint = if (ScreenRotation.follows) "The app turns when the tablet turns. Switch off to keep it the way it is now."
+        else "Held as it is now (${ScreenRotation.lockedLabel()}), however the tablet is turned, and opens that way. Switch on to turn with the tablet again.",
+    )
     SettingsSectionHeader("Interface size")
     // Every step resizes the whole app, so the size is taken once the hand
     // rests, not on every frame of the drag.
