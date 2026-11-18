@@ -38,9 +38,9 @@ Outline a PDF note (its table of contents):
    `toc set NOTE P "TITLE" --pdf --level L`, where P = printed page + printedOffset from `pdf info`.
 4. No text layer (a scan): `page image NOTE N` shows a page as a picture.
 
-Summarise a handwritten note: `note read NOTE --text-only`. A page with ink but no text: `ink read NOTE PAGE`.
+Summarise a handwritten note: `note read NOTE --text-only`. A page with ink but no text: `page image NOTE PAGE` shows it.
 
-Beside the pages (the whiteboard): `ink add NOTE board --near 3 --path "..."` draws from page 3's corner (x past the page's width is to its right); `ink read NOTE board` reads it; `note read` gives its ink count and handwriting under "board".
+Beside the pages (the whiteboard): `ink add NOTE board --near 3 --path "..."` draws from page 3's corner (x past the page's width is to its right); `note read` gives its ink count under "board".
 
 Write into notes: a Markdown note takes `md append NOTE "TEXT" --under HEADING` or `md replace NOTE OLD NEW`;
 a handwritten page takes `text add NOTE PAGE "TEXT" --md`. In TEXT, \n starts a new line.
@@ -62,7 +62,7 @@ internal val AGENT_PROMPTS = listOf(
     },
     AgentPrompt("summarize_note", "Summarise a note", "Reads a note and sums it up.", true) { note ->
         "Read the Notesis note \"$note\" (`note read $note --outline` first, then the pages in parts with --text-only) and " +
-            "summarise it: the main points, then anything left open. Pages with ink and no text: `ink read`. Change nothing."
+            "summarise it: the main points, then anything left open. Pages with ink and no text: `page image`. Change nothing."
     },
     AgentPrompt("organize_notes", "Organise notes", "Proposes folders and tags for the notes, then files them once allowed.", false) { _ ->
         "Look over my Notesis notes (`notes list --brief`, `folder list`, `tags list`) and propose a tidier set of folders and tags. " +

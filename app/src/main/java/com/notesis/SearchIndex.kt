@@ -10,7 +10,7 @@ import java.io.File
 data class PageHit(val pageId: String, val pageIndex: Int, val snippet: String)
 
 /**
- * The text of every page - PDF text and recognised handwriting - copied into
+ * The text of every page - PDF text and text boxes - copied into
  * SQLite so a search is one query instead of reading every page file of every
  * note on each keystroke.
  *
@@ -123,7 +123,7 @@ class SearchIndex(context: Context) : SQLiteOpenHelper(context, "search.db", nul
 
     companion object {
         fun isTextFile(name: String): Boolean =
-            name.endsWith(".txt") || name.endsWith(NoteStore.INK_INDEX) || name.endsWith(NoteStore.BOX_INDEX)
+            name.endsWith(".txt") || name.endsWith(NoteStore.BOX_INDEX)
 
         /** The page id a text file belongs to: the file name without its extension. */
         fun pageIdOf(file: String): String = file.substringBeforeLast('.')

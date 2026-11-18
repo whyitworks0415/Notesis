@@ -42,8 +42,6 @@ internal interface NoteWorkspace {
     fun setTags(id: String, tags: List<String>)
     fun trash(id: String)
     fun restore(id: String)
-    /** What the handwriting on [page] was read as for search, if it has been. */
-    fun handwriting(id: String, page: Page): String?
     /** How many strokes [page] holds. */
     fun inkCount(id: String, page: Page): Int
     /** A text box for [page], drawn and stored, not yet put on the page. */
@@ -78,7 +76,7 @@ internal interface NoteWorkspace {
     fun pdfText(id: String, pages: List<Page>): List<String?> = pages.map { null }
     /** A picture of page [pageIndex] as it looks, [width] pixels wide, as JPEG; null when it cannot be drawn. */
     fun pageImage(id: String, pageIndex: Int, width: Int): ByteArray? = null
-    /** Pages whose text (typed, PDF, handwriting read for search) holds [query]. */
+    /** Pages whose text (typed, PDF) holds [query]. */
     fun search(query: String, limit: Int): List<SearchHit> = emptyList()
     fun saveMarkdown(id: String, title: String, text: String) {}
     /** A new handwritten note; its id. */
@@ -100,8 +98,6 @@ internal interface NoteWorkspace {
     fun copyInk(id: String, document: Document, from: Page, to: Page) {}
     /** A copy of the note's picture [imageId] under a new id; the new id. */
     fun copyImage(id: String, imageId: String): String? = null
-    /** Reads the handwriting on [page] as text and keeps it for search; null when there is nothing to read. Throws when it cannot read at all. */
-    fun recognize(id: String, document: Document, page: Page): String? = null
     /** Puts a file the commands made where Termux and other apps can read it (Download/Notesis); the path there, or null. */
     fun shareFile(path: String): String? = null
     /** Takes a file [shareFile] put out away again. */
@@ -389,7 +385,7 @@ internal val COMMAND_USAGE = linkedMapOf(
     "help" to "help [COMMAND]",
     "status" to "status",
     "notes list" to "notes list [--folder PATH] [--tag TAG] [--search WORDS] [--since TIME] [--trash] [--limit N] [--offset N] [--brief]",
-    "search" to "search WORDS [--limit N]   (titles, typed text, PDF text, handwriting read for search)",
+    "search" to "search WORDS [--limit N]   (titles, typed text, PDF text)",
     "note read" to "note read NOTE [--pages 1-3,5] [--outline] [--text-only] [--sizes] [--max-chars N] [--from N] [--since TIME]",
     "note new" to "note new TITLE [--folder PATH] [--paper blank|lined|grid|dot|narrow|cornell] [--pages N]",
     "note new-md" to "note new-md TITLE [--folder PATH] [--text TEXT]",
@@ -427,7 +423,6 @@ internal val COMMAND_USAGE = linkedMapOf(
     "text rm" to "text rm NOTE PAGE BOX",
     "ink add" to "ink add NOTE PAGE|board (--path \"M 10 10 L 200 80\" | --points \"x,y x,y; x,y ...\") [--color #RRGGBB] [--width W] [--near PAGE]",
     "ink erase" to "ink erase NOTE PAGE|board (--rect X,Y,W,H | --all) [--near PAGE]",
-    "ink read" to "ink read NOTE PAGE|board   (the handwriting read as text)",
     "md outline" to "md outline NOTE",
     "md links" to "md links NOTE",
     "md write" to "md write NOTE TEXT",
@@ -633,7 +628,6 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
             "text rm" -> removeText(args(), usage)
             "ink add" -> addInk(args(setOf("path", "points", "color", "width", "near")), usage)
             "ink erase" -> eraseInk(args(setOf("rect", "near"), setOf("all")), usage)
-            "ink read" -> readInk(args(), usage)
             "md outline" -> markdownOutline(args(), usage)
             "md links" -> markdownLinks(args(), usage)
             "md write" -> writeMarkdown(args(), usage)
@@ -787,20 +781,16 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
         var stopped = -1
         for ((at, index) in indices.withIndex()) {
             val page = pageJson(meta, document, index, textOnly, args.has("sizes"))
-            if (textOnly && !page.has("text") && !page.has("handwriting") && !page.has("toc")) continue
+            if (textOnly && !page.has("text") && !page.has("toc")) continue
             val size = page.toString().length
             if (pages.length() > 0 && used + size > budget) { stopped = at; break }
             pages.put(page)
             used += size
         }
         json.put("pages", pages)
-        // The ink off the pages (the whiteboard), when there is any: how much, and what it was read as.
+        // The ink off the pages (the whiteboard), when there is any: how much.
         val boardInk = workspace.inkCount(meta.id, document.board)
-        val boardText = workspace.handwriting(meta.id, document.board)?.trim()?.takeIf { it.isNotEmpty() }
-        if (boardInk > 0 || boardText != null) json.put("board", JSONObject().apply {
-            put("ink", boardInk)
-            boardText?.let { put("handwriting", it) }
-        })
+        if (boardInk > 0) json.put("board", JSONObject().put("ink", boardInk))
         if (stopped >= 0) {
             json.put("truncated", true)
             val flags = (if (textOnly) " --text-only" else "") + (if (args.has("sizes")) " --sizes" else "")
@@ -830,7 +820,6 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
                 if (pictures > 0) put("pictures", pictures)
                 put("ink", workspace.inkCount(meta.id, page))
             }
-            workspace.handwriting(meta.id, page)?.trim()?.takeIf { it.isNotEmpty() }?.let { put("handwriting", it) }
         }
     }
 
@@ -966,23 +955,6 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
             }))
         }
         return Done(JSONObject().put("note", meta.title).put("pages", JSONArray(pages)))
-    }
-
-    private fun readInk(args: Args, usage: String): Done {
-        val meta = inkNote(args, usage)
-        val document = workspace.load(meta.id)
-        val word = args.positional.getOrNull(1) ?: throw CommandError("Give the page, or board for the ink off the pages.", usage)
-        if (isBoard(word)) {
-            val text = workspace.recognize(meta.id, document, document.board)
-            return Done(JSONObject().put("page", "board").put("text", text?.trim().orEmpty()).also {
-                if (text.isNullOrBlank()) it.put("hint", "Nothing was read off the pages.")
-            })
-        }
-        val index = pageIndex(word, document.pages.size)
-        val text = workspace.recognize(meta.id, document, document.pages[index])
-        return Done(JSONObject().put("page", index + 1).put("text", text?.trim().orEmpty()).also {
-            if (text.isNullOrBlank()) it.put("hint", "No handwriting was read on this page.")
-        })
     }
 
     private fun markdownOutline(args: Args, usage: String): Done {

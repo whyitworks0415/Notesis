@@ -1256,15 +1256,14 @@ class NoteStore(context: Context) {
 
     /**
      * A handwritten note as Markdown: its title, then each page in turn with
-     * what the app has read off it - recognised handwriting, text boxes and a
-     * PDF page's own text. Pages not yet read come out empty; reading them
-     * (Read handwriting) fills them in.
+     * the text it holds - a PDF page's own text and its text boxes. A page
+     * with neither comes out empty.
      */
     fun exportInkAsMarkdown(id: String, title: String, out: java.io.OutputStream): Boolean = runCatching {
         val order = pageOrder(id).entries.sortedBy { it.value }.map { it.key }
         val pages = File(root, "$id/pages")
         val text = inkMarkdown(title, order.map { pageId ->
-            listOf(".txt", INK_INDEX, BOX_INDEX).mapNotNull { suffix ->
+            listOf(".txt", BOX_INDEX).mapNotNull { suffix ->
                 File(pages, pageId + suffix).takeIf { it.isFile }?.readText(Charsets.UTF_8)?.trim()?.takeIf { it.isNotEmpty() }
             }
         })
@@ -1503,7 +1502,7 @@ class NoteStore(context: Context) {
                             it.savedStrokeCount = old.savedStrokeCount
                             it.savedOnDisk = old.savedStrokeCount
                         }
-                        for (suffix in listOf(".bin", ".mask", ".txt", INK_INDEX, BOX_INDEX)) {
+                        for (suffix in listOf(".bin", ".mask", ".txt", BOX_INDEX)) {
                             val source = File(root, "$id/pages/${old.id}$suffix")
                             if (source.isFile) source.copyTo(File(pagesDir, "$pageId$suffix"))
                         }
@@ -1526,8 +1525,7 @@ class NoteStore(context: Context) {
     }
 
     /**
-     * Notes whose title, extracted PDF text, or recognised handwriting contains
-     * [query].
+     * Notes whose title, extracted PDF text or text boxes contain [query].
      */
     fun search(query: String): List<NoteMeta> = searchWithPages(query).map { it.first }
 
@@ -1608,19 +1606,8 @@ class NoteStore(context: Context) {
         source.close()
     }
 
-    /** Where a page's recognised handwriting is kept, beside its strokes. */
-    fun inkIndexFile(id: String, pageId: String): File =
-        File(root, "$id/pages/$pageId$INK_INDEX")
-
-    /**
-     * Records what a page's handwriting says. Blank text still gets written -
-     * an erased page has to stop matching what it used to say.
-     */
-    fun writeInkIndex(id: String, pageId: String, text: String) {
-        val file = inkIndexFile(id, pageId)
-        file.parentFile?.mkdirs()
-        runCatching { file.writeText(text) }
-    }
+    /** The folder a note's page files are kept in. */
+    fun pagesDir(id: String): File = File(root, "$id/pages")
 
     fun delete(id: String) {
         File(root, id).deleteRecursively()
@@ -1643,18 +1630,6 @@ class NoteStore(context: Context) {
 
     /** A page's ink file, the one its strokes are saved in. */
     fun pageInkFile(id: String, pageId: String): File = File(root, "$id/pages/$pageId.bin")
-
-    /** A page's PDF text as kept beside it (extracted on import, or read from a scan); "" when there is none. */
-    fun pageText(id: String, pageId: String): String =
-        File(root, "$id/pages/$pageId.txt").takeIf { it.isFile }?.let { runCatching { it.readText() }.getOrNull() }.orEmpty()
-
-    /** Keeps [text] as a page's PDF text, written whole through a temporary file; false when it could not be. */
-    fun writePageText(id: String, pageId: String, text: String): Boolean = runCatching {
-        val dir = File(root, "$id/pages").apply { mkdirs() }
-        val tmp = File(dir, "$pageId.txt.tmp")
-        tmp.writeText(text)
-        tmp.renameTo(File(dir, "$pageId.txt")) || run { tmp.delete(); false }
-    }.getOrDefault(false)
 
     /** One entry of the outline a PDF carries inside it. */
     data class PdfOutlineEntry(val title: String, val pdfPage: Int, val level: Int)
@@ -1797,10 +1772,9 @@ class NoteStore(context: Context) {
         val live = document.pages
             .flatMap {
                 // .mesh: the GPU ink renderer's cache of the page's triangles (NativeInk), kept until its page goes.
-                listOf("${it.id}.bin", "${it.id}.mask", "${it.id}.txt", "${it.id}$INK_INDEX", "${it.id}$BOX_INDEX", "${it.id}.mesh")
+                listOf("${it.id}.bin", "${it.id}.mask", "${it.id}.txt", "${it.id}$BOX_INDEX", "${it.id}.mesh")
             }
-            .toSet() + "${Document.BOARD_PAGE_ID}$INK_INDEX"
-        // The whiteboard's handwriting as read, kept beside the pages' for search.
+            .toSet()
         dir.listFiles()?.forEach { if (it.name !in live) it.delete() }
         // The whiteboard, whole, when it changed: it is small next to the pages.
         if (document.board.dirty) {
@@ -2828,7 +2802,6 @@ class NoteStore(context: Context) {
         const val MAX_IMAGE_PX = 2048
         /** A page template is a whole page of background; this keeps it sharp at 150dpi A4 and then some. */
         const val MAX_TEMPLATE_PX = 4096
-        const val INK_INDEX = ".ink"
         const val TRASHED = "trashed"
         const val FAVORITE = "favorite"
         const val TRASH_DAYS = 14

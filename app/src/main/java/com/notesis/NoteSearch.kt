@@ -55,8 +55,10 @@ import java.io.File
 internal enum class SearchSource(val label: String) {
     PDF("PDF text"),
     TEXT_BOX("Text box"),
-    INK("Handwriting"),
 }
+
+/** A rectangle on a page, in page units. */
+internal data class PageBox(val left: Float, val top: Float, val right: Float, val bottom: Float)
 
 /** One page's searchable text from one source. Plain data, so matching can be tested off the device. */
 internal data class PageText(
@@ -65,7 +67,7 @@ internal data class PageText(
     val source: SearchSource,
     val text: String,
     /** Where the text sits on the page, in page units, when that is known (a text box). */
-    val box: InkBox? = null,
+    val box: PageBox? = null,
 )
 
 /** One match, as the page panel lists it. */
@@ -79,7 +81,7 @@ internal data class NoteSearchHit(
     val matchEnd: Int,
     /** Which match this is within its page's text from [source]: the n-th, for finding it on a PDF page. */
     val occurrence: Int,
-    val box: InkBox? = null,
+    val box: PageBox? = null,
 )
 
 /** A short excerpt of a text with the match inside it located. */
@@ -107,7 +109,7 @@ internal fun snippetAround(body: String, at: Int, length: Int, radius: Int = SNI
 
 /**
  * Every match of [query] in [texts], in page order and, within a page, PDF
- * text first, then text boxes, then handwriting. Case is ignored. Stops at
+ * text first, then text boxes. Case is ignored. Stops at
  * [limit] matches: a one-letter query on a long PDF would otherwise list
  * thousands, which nobody steps through.
  */
@@ -135,10 +137,9 @@ internal fun searchPageTexts(texts: List<PageText>, query: String, limit: Int = 
 
 /**
  * One note's text as it already sits on disk beside its pages: the PDF text
- * extracted on import (`.txt`) and the handwriting the indexer has already
- * read (`.ink`). Nothing here recognises or extracts anything; a file is read
- * once and again only when its modification time changes, so searching as
- * you type costs a directory listing.
+ * extracted on import (`.txt`). Nothing here extracts anything; a file is
+ * read once and again only when its modification time changes, so searching
+ * as you type costs a directory listing.
  */
 internal class NoteTextIndex(private val dir: File) {
     private val cache = HashMap<String, Pair<Long, String>>()
@@ -146,9 +147,7 @@ internal class NoteTextIndex(private val dir: File) {
     /** Blocking; off the main thread. File name to text, for every text file of the note. */
     @Synchronized
     fun refresh(stillWanted: () -> Boolean = { true }): Map<String, String> {
-        val files = dir.listFiles { file ->
-            file.name.endsWith(PDF_TEXT) || file.name.endsWith(NoteStore.INK_INDEX)
-        }.orEmpty()
+        val files = dir.listFiles { file -> file.name.endsWith(PDF_TEXT) }.orEmpty()
         val present = HashSet<String>(files.size)
         for (file in files) {
             if (!stillWanted()) break
@@ -189,8 +188,7 @@ internal class NoteSearchState(pagesDir: File) {
 }
 
 /**
- * Searches the body of the note: PDF text, text boxes and recognised
- * handwriting. Typing is debounced and a newer query cancels the search in
+ * Searches the body of the note: PDF text and text boxes. Typing is debounced and a newer query cancels the search in
  * flight. [view] supplies the live document (text boxes, page order) and, for
  * a PDF page with no extracted text on disk, the PDF that is already open.
  */
@@ -229,7 +227,7 @@ internal fun NoteSearchPanel(
                 for (image in page.images) {
                     val text = image.textContent?.text?.takeIf { it.isNotBlank() } ?: continue
                     typed += PageText(page.id, index, SearchSource.TEXT_BOX, text,
-                        InkBox(image.x, image.y, image.x + image.width, image.y + image.height))
+                        PageBox(image.x, image.y, image.x + image.width, image.y + image.height))
                 }
             }
             state.searching = true
@@ -240,14 +238,13 @@ internal fun NoteSearchPanel(
                     val texts = ArrayList<PageText>(files.size + typed.size)
                     texts += typed
                     for ((name, text) in files) {
-                        val source = if (name.endsWith(NoteStore.INK_INDEX)) SearchSource.INK else SearchSource.PDF
                         val pageId = SearchIndex.pageIdOf(name)
                         val index = pageIndex[pageId] ?: continue
-                        texts += PageText(pageId, index, source, text)
+                        texts += PageText(pageId, index, SearchSource.PDF, text)
                     }
                     // A PDF imported before text was indexed has no files yet.
-                    // Its text comes from the PDF already open - extraction,
-                    // not recognition - once, and is kept for the next query.
+                    // Its text comes from the PDF already open, once, and is
+                    // kept for the next query.
                     for ((pageId, index, pdfIndex) in pdfPages) {
                         if (pageId + NoteTextIndex.PDF_TEXT in files) continue
                         ensureActive()
@@ -323,7 +320,7 @@ internal fun NoteSearchPanel(
         ) {
             Text(
                 when {
-                    state.query.isBlank() -> "PDF text, text boxes and recognised handwriting"
+                    state.query.isBlank() -> "PDF text and text boxes"
                     state.searching && count == 0 -> "Searching…"
                     count == 0 -> "No matches"
                     state.selected >= 0 -> "${state.selected + 1} of $count" + if (count >= MAX_SEARCH_HITS) "+" else ""

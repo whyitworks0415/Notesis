@@ -60,7 +60,6 @@ class NoteCommandsTest {
         val read = json(commands.run("note read Maths --pages 1")).getJSONObject("result")
         val page = read.getJSONArray("pages").getJSONObject(0)
         assertEquals(1, page.getInt("page"))
-        assertEquals("hello world", page.getString("handwriting"))
     }
 
     @Test

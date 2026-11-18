@@ -3,7 +3,7 @@ package com.notesis
 /**
  * Conservatively turns the mathematical Unicode commonly exposed by a PDF
  * text layer into paste-ready LaTeX. Ordinary prose is deliberately left
- * byte-for-byte alone; this is a clipboard aid, not a general OCR engine.
+ * byte-for-byte alone; this is a clipboard aid, not a general converter.
  */
 internal object LatexClipboardText {
     private val superscripts = mapOf(

@@ -4,8 +4,6 @@ import com.notesis.UiScheduling.AUTOSAVE_AFTER_LIFT_MS
 import com.notesis.UiScheduling.AUTOSAVE_HARD_GRACE_MS
 import com.notesis.UiScheduling.AUTOSAVE_MAX_DELAY_MS
 import com.notesis.UiScheduling.AUTOSAVE_QUIET_MS
-import com.notesis.UiScheduling.INK_INDEX_AFTER_SAVE_MS
-import com.notesis.UiScheduling.INK_INDEX_IDLE_MS
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -83,21 +81,6 @@ class UiSchedulingTest {
                 assertTrue("$state $first", w <= AUTOSAVE_MAX_DELAY_MS + AUTOSAVE_HARD_GRACE_MS - first)
             }
         }
-    }
-
-    @Test
-    fun `handwriting waits for an idle screen left alone`() {
-        assertTrue(UiScheduling.inkIndexWaitMs(Interaction.IDLE, INK_INDEX_IDLE_MS, Long.MAX_VALUE / 2) <= 0L)
-        assertEquals(1_000L, UiScheduling.inkIndexWaitMs(Interaction.IDLE, INK_INDEX_IDLE_MS - 1_000L, Long.MAX_VALUE / 2))
-        for (busy in listOf(Interaction.WRITING, Interaction.MOVING, Interaction.SETTLING)) {
-            assertTrue(busy.name, UiScheduling.inkIndexWaitMs(busy, 60_000L, 60_000L) >= INK_INDEX_IDLE_MS)
-        }
-    }
-
-    @Test
-    fun `handwriting keeps clear of a save that just started`() {
-        assertEquals(INK_INDEX_AFTER_SAVE_MS - 500L,
-            UiScheduling.inkIndexWaitMs(Interaction.IDLE, INK_INDEX_IDLE_MS * 2, 500L))
     }
 
     @Test

@@ -224,7 +224,7 @@ internal class CoachMark(val target: CoachTarget, val title: String, val text: S
 internal val HOME_MARKS = listOf(
     CoachMark(CoachTarget.NEW_NOTE, "New notes", "A blank page, a PDF, pictures, a web page or Markdown all start here."),
     CoachMark(CoachTarget.GUIDE, "The guide", "Welcome to Notesis is a short tour, one page per part of the app. Write on it."),
-    CoachMark(CoachTarget.SEARCH, "Search", "Finds titles, words in PDFs and your own handwriting."),
+    CoachMark(CoachTarget.SEARCH, "Search", "Finds titles and words in PDFs and text boxes."),
     CoachMark(CoachTarget.TUTORIAL, "Tutorial", "The pen and its settings, gestures, pages, shapes, the AI panel and every setting, a page each. Open it any time."),
     CoachMark(CoachTarget.LOOK, "The look", "Skin, colours, corners and dark mode, any time."),
     CoachMark(CoachTarget.HELP, "More", "The trash, the library's picture, and About · Help: the guide note and these tips, whenever you want them again."),

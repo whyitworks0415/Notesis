@@ -1,8 +1,8 @@
 package com.notesis
 
 /**
- * When the note screen's own background work runs: the autosave snapshot, the
- * handwriting index and the diagnostics readout. Pure, so the timing can be
+ * When the note screen's own background work runs: the autosave snapshot
+ * and the diagnostics readout. Pure, so the timing can be
  * tested off the device; the screen feeds it the clock and
  * [InteractionGovernor]'s state.
  */
@@ -29,12 +29,6 @@ internal object UiScheduling {
      * ended is finished and committed before the snapshot is taken.
      */
     const val AUTOSAVE_AFTER_LIFT_MS = 100L
-
-    /** Hands off the page this long before handwriting is recognised. */
-    const val INK_INDEX_IDLE_MS = 8000L
-
-    /** And this long after a save started, so the two never land together. */
-    const val INK_INDEX_AFTER_SAVE_MS = 2000L
 
     /** The readout refreshes at most this often... */
     const val HUD_REFRESH_MS = 500L
@@ -70,25 +64,6 @@ internal object UiScheduling {
             return minOf(lift, quiet, hard)
         }
         return minOf(quiet, overdue, hard)
-    }
-
-    /**
-     * How long until handwriting may be recognised; 0 or less means now. It
-     * is optional work: only on an idle screen ([Interaction.IDLE]) whose
-     * hands have been off it for [INK_INDEX_IDLE_MS], and not in the burst
-     * right after a save. [sinceSaveMs] is the time since the last autosave
-     * started, or a large number if there was none.
-     */
-    fun inkIndexWaitMs(state: Interaction, quietMs: Long, sinceSaveMs: Long): Long {
-        val forQuiet = INK_INDEX_IDLE_MS - quietMs
-        val forSave = INK_INDEX_AFTER_SAVE_MS - sinceSaveMs
-        val wait = maxOf(forQuiet, forSave)
-        if (state != Interaction.IDLE) {
-            // Hands on the page: the quiet clock has not started. Ask again
-            // once it could have run out, rather than polling.
-            return maxOf(wait, INK_INDEX_IDLE_MS)
-        }
-        return wait
     }
 
     /** Whether the readout is due a refresh, [sinceLastMs] after the previous one. */

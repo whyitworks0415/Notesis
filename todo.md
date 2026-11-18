@@ -504,15 +504,15 @@ PDF 양식 작성, 암호화 PDF, PDF 표준 주석으로 저장되는 범위는
 - [ ] OCR-05 AI & Cloud에서 손글씨 인식 사용하기.
 - [ ] OCR-06 AI & Cloud에서 스캔 문서의 글자 인식하기.
 - [ ] OCR-07 AI & Cloud에서 이미지·사진의 글자 인식하기.
-- [x] OCR-08 OCR의 주 인식 언어 설정하기.
+- [ ] OCR-08 OCR의 주 인식 언어 설정하기.
 - [ ] OCR-09 주 인식 언어를 설정하지 않으면 인식 처리가 진행되지 않는 조건 반영하기.
 - [ ] OCR-10 백그라운드에서 자동 OCR 처리하기.
 - [ ] OCR-11 결과가 즉시 나오지 않을 수 있으며 도움말의 약 2분 처리 대기 안내 제공하기.
-- [x] OCR-12 인식한 손글씨를 검색하기.
+- [ ] OCR-12 인식한 손글씨를 검색하기.
 - [ ] OCR-13 인식한 내용의 검색 결과에 강조 표시하기.
-- [x] OCR-14 긴 손글씨 내용을 선택·복사·번역하기.
-- [x] OCR-15 올가미로 고른 손글씨를 Notewise AI로 텍스트 변환하기.
-- [x] OCR-16 20개 이상 언어의 인식 지원.
+- [ ] OCR-14 긴 손글씨 내용을 선택·복사·번역하기.
+- [ ] OCR-15 올가미로 고른 손글씨를 Notewise AI로 텍스트 변환하기.
+- [ ] OCR-16 20개 이상 언어의 인식 지원.
 - [ ] OCR-17 Android에서 PDF의 실제 텍스트가 있는 페이지는 그 텍스트를 사용하기.
 - [ ] OCR-18 Android에서 이미지로만 구성된 PDF 페이지는 OCR 처리하기.
 - [ ] OCR-19 Android에서 실제 텍스트와 이미지가 섞인 PDF 페이지는 내장 텍스트를 검색하며, 이미지 속 글자를 추가 OCR하지 않는 조건 반영하기.
@@ -520,7 +520,7 @@ PDF 양식 작성, 암호화 PDF, PDF 표준 주석으로 저장되는 범위는
 - [x] OCR-21 키보드로 입력한 내용 검색하기.
 - [x] OCR-22 문서 내용 검색하기.
 - [ ] OCR-23 녹음의 전사 내용 검색하기.
-- [x] OCR-24 OCR 언어와 앱 UI 언어를 별도 설정·지원 목록으로 다루기.
+- [ ] OCR-24 OCR 언어와 앱 UI 언어를 별도 설정·지원 목록으로 다루기.
 
 근거: [OS 손글씨 입력][systemocr], [OCR 설정·처리 지연·Android PDF 조건][ocr], [AI 손글씨 변환][release32], [다국어 인식][release31], [개발사 검색 설명][appstore].
 
@@ -973,7 +973,7 @@ Notewise의 Liquid Glass 출시 기록은 iOS에 관한 것이다. 이것만으�
 | 페이지 단위 | A4 기본값은 150dpi 기준 1,240×1,754 | Notewise의 300dpi 단위와 화면·내보내기 크기를 비교; 같은 px로 무조건 변경하지 않기 | [Document.kt](app/src/main/java/com/notesis/Document.kt) |
 | PDF | PDF 표시·텍스트 선택·내부/웹 링크 관련 구현 | 선택 서식·번역 메뉴·스캔 OCR·내보낸 주석의 표현 확인 | [PdfSource.kt](app/src/main/java/com/notesis/PdfSource.kt), [PdfLinks.kt](app/src/main/java/com/notesis/PdfLinks.kt) |
 | 목차 | 페이지 제목 기반 탐색 출발점 | PDF 내장 목차와 사용자 계층 목차, 북마크 필터·검색 | [MainActivity.kt](app/src/main/java/com/notesis/MainActivity.kt) |
-| 인식·검색 | ML Kit Digital Ink와 로컬 SQLite 검색 색인 | 이미지·스캔 PDF 인식, 인식 언어, 내용 선택·복사, Cloud와의 처리 차이 | [InkIndexer.kt](app/src/main/java/com/notesis/InkIndexer.kt), [SearchIndex.kt](app/src/main/java/com/notesis/SearchIndex.kt) |
+| 인식·검색 | 로컬 SQLite 검색 색인(PDF 글자·텍스트 상자) | 손글씨·이미지·스캔 PDF 인식, 인식 언어, 내용 선택·복사, Cloud와의 처리 차이 | [SearchIndex.kt](app/src/main/java/com/notesis/SearchIndex.kt) |
 | 보관함 | 폴더·정렬·즐겨찾기·휴지통·복원 | 노트 태그·재사용 객체 라이브러리·클립보드 이력과 UI 비교 | [Document.kt](app/src/main/java/com/notesis/Document.kt), [MainActivity.kt](app/src/main/java/com/notesis/MainActivity.kt) |
 | 가져오기·텍스트 노트 | 일부 Office·Markdown 가져오기와 Markdown 화면 | 확장자 전체와 문서 표현 정확도, 여러 소스를 담는 Note 모델 | [OfficeDocumentParser.kt](app/src/main/java/com/notesis/OfficeDocumentParser.kt), [MarkdownNoteScreen.kt](app/src/main/java/com/notesis/MarkdownNoteScreen.kt) |
 | 내보내기 | PDF·PNG·ZIP, 페이지 옵션·원본/A4/Letter·회전·노트 병합 | 벡터 텍스트·색 반전·워터마크·폴더 백업·재가져오기 결과 비교 | [Document.kt](app/src/main/java/com/notesis/Document.kt), [VectorPdfExporter.kt](app/src/main/java/com/notesis/VectorPdfExporter.kt) |

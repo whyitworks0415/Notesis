@@ -52,7 +52,6 @@ internal class MemoryNotes : NoteWorkspace {
     override fun setTags(id: String, tags: List<String>) { metas[id] = metas.getValue(id).copy(tags = tags) }
     override fun trash(id: String) { trash += id }
     override fun restore(id: String) { trash -= id }
-    override fun handwriting(id: String, page: Page) = if (page.id.endsWith("p1")) "hello world" else null
     override fun inkCount(id: String, page: Page) = ink[page.id] ?: 0
     override fun textBox(id: String, content: TextBoxContent) = PageImage("img", 0f, 0f, 200f, 50f, content)
     override fun addInk(id: String, document: Document, page: Page, lines: List<List<FloatArray>>, color: Int, width: Float): Int {

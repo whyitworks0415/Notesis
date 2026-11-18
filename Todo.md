@@ -61,7 +61,7 @@
 ## 4. AI에 PDF·노트 첨부 (P)
 
 - [x] **P1** (0.93.0) 첨부 시트: 범위(이 페이지 / 페이지 지정 / 전체), 필기 포함 켜기·끄기, 형식(PDF / 그림)
-- [x] **P2** (0.93.0) 필기 글자: 손글씨 인식 결과를 PDF 옆의 텍스트 파일로 (PDF 안의 보이지 않는 글자는 한글 글꼴을 PDF에 넣어야 해 미룸)
+- [ ] **P2** 필기 글자: 손글씨 인식 결과를 PDF 옆의 텍스트 파일로 (PDF 안의 보이지 않는 글자는 한글 글꼴을 PDF에 넣어야 해 미룸)
 - [x] **P3** (0.93.0) 채팅 입력창에 바로 붙이기, 안 되면 + › Files로 넘기기
 
 ## 5. 명령과 터미널 (C, T)
@@ -137,7 +137,7 @@
   - [x] 에이전트 패널의 "안내 복사"
   - [ ] 지침의 버전을 앱 버전과 맞추기
 - [ ] **Q4** 명령 늘리기
-  - [x] `search WORDS`(제목·글 상자·PDF 글자·필기 인식·Markdown, 쪽 번호와 앞뒤 글)
+  - [x] `search WORDS`(제목·글 상자·PDF 글자·Markdown, 쪽 번호와 앞뒤 글)
   - [x] Markdown: `md write|append [--under 제목]|replace [--all]|outline|links`(링크와 백링크). 목록 끝에 붙이면 빈 줄 없이 같은 목록으로
   - [x] 글 상자: `text list`, `text edit NOTE PAGE BOX TEXT`, `text rm`
   - [x] 필기: `ink read NOTE PAGE`(손글씨를 글로 읽음, 모델이 없으면 NOT_READY)

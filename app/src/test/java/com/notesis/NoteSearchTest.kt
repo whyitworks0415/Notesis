@@ -26,21 +26,21 @@ class NoteSearchTest {
     }
 
     @Test
-    fun `matches come in page order, PDF before boxes before ink, case ignored`() {
+    fun `matches come in page order, PDF before boxes, case ignored`() {
         val texts = listOf(
-            PageText("b", 1, SearchSource.INK, "cell wall"),
+            PageText("b", 1, SearchSource.TEXT_BOX, "cell wall"),
             PageText("b", 1, SearchSource.PDF, "The Cell and the cell"),
-            PageText("a", 0, SearchSource.TEXT_BOX, "my cell note", InkBox(1f, 2f, 3f, 4f)),
+            PageText("a", 0, SearchSource.TEXT_BOX, "my cell note", PageBox(1f, 2f, 3f, 4f)),
         )
         val hits = searchPageTexts(texts, " CELL ")
         assertEquals(listOf(0, 1, 1, 1), hits.map { it.pageIndex })
         assertEquals(
-            listOf(SearchSource.TEXT_BOX, SearchSource.PDF, SearchSource.PDF, SearchSource.INK),
+            listOf(SearchSource.TEXT_BOX, SearchSource.PDF, SearchSource.PDF, SearchSource.TEXT_BOX),
             hits.map { it.source },
         )
         // The n-th match within its page's text, for finding it on a PDF page.
         assertEquals(listOf(0, 0, 1, 0), hits.map { it.occurrence })
-        assertEquals(InkBox(1f, 2f, 3f, 4f), hits[0].box)
+        assertEquals(PageBox(1f, 2f, 3f, 4f), hits[0].box)
         for (hit in hits) {
             assertEquals("cell", hit.snippet.substring(hit.matchStart, hit.matchEnd).lowercase())
         }
@@ -58,12 +58,12 @@ class NoteSearchTest {
         val dir = Files.createTempDirectory("notesearch").toFile()
         try {
             File(dir, "p1.txt").writeText("pdf words")
-            File(dir, "p1" + NoteStore.INK_INDEX).writeText("ink words")
+            File(dir, "p2.txt").writeText("more pdf words")
             File(dir, "p1.bin").writeText("strokes, not text")
             val index = NoteTextIndex(dir)
-            assertEquals(setOf("p1.txt", "p1" + NoteStore.INK_INDEX), index.refresh().keys)
+            assertEquals(setOf("p1.txt", "p2.txt"), index.refresh().keys)
             File(dir, "p1.txt").delete()
-            assertEquals(setOf("p1" + NoteStore.INK_INDEX), index.refresh().keys)
+            assertEquals(setOf("p2.txt"), index.refresh().keys)
         } finally {
             dir.deleteRecursively()
         }

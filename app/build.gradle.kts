@@ -21,8 +21,8 @@ android {
         // dependable from Q onward, even though ink itself declares minSdk 23.
         minSdk = 29
         targetSdk = 36
-        versionCode = 254
-        versionName = "0.99.13"
+        versionCode = 255
+        versionName = "0.99.14"
         testInstrumentationRunner = "com.notesis.CustomizationInstrumentation"
         // Ship arm64 for the tablet; opt into x86_64 for emulator GPU checks.
         ndk { abiFilters += providers.gradleProperty("notesis.testAbi").getOrElse("arm64-v8a") }
@@ -83,14 +83,6 @@ dependencies {
     // Export keeps imported PDF pages and handwriting as vector content instead
     // of flattening both into a bitmap before another note imports the result.
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
-    // Handwriting search: the models are downloaded on demand and the
-    // recognition runs on the device.
-    // 19.0.0: its native library is aligned for 16 KB memory pages (18.1.0's was not).
-    implementation("com.google.mlkit:digital-ink-recognition:19.0.0")
-    // Text in pictures (Korean and Latin) and the camera document scanner, both
-    // through Play services: the models are fetched on first use, not shipped.
-    implementation("com.google.android.gms:play-services-mlkit-text-recognition-korean:16.0.2")
-    implementation("com.google.android.gms:play-services-mlkit-document-scanner:16.0.0")
     implementation("androidx.ink:ink-storage:1.0.0")
     implementation("androidx.activity:activity-compose:1.13.0")
     // Installs the baseline profiles - the app's own (src/main/baseline-prof.txt)

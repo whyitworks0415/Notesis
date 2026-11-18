@@ -32,7 +32,7 @@ private val VALUED_OPTIONS = setOf("after", "count", "level", "x", "y", "size", 
 
 /** The commands that only read: never asked about, whatever the owner chose. */
 internal val READ_COMMANDS = setOf("help", "status", "preview", "search", "notes list", "note read", "tags list", "folder list",
-    "page image", "toc show", "pdf info", "pdf text", "pdf find", "text list", "ink read", "md outline", "md links")
+    "page image", "toc show", "pdf info", "pdf text", "pdf find", "text list", "md outline", "md links")
 
 private fun snippet(text: String, max: Int = 60): String {
     val one = text.replace('\n', ' ').trim()

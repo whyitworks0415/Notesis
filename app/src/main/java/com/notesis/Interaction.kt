@@ -270,14 +270,6 @@ internal object InteractionGovernor {
      */
     val decorationsAllowed: Boolean get() = !powerSave && heatStep == 0
 
-    /**
-     * Whether work that can wait - reading handwriting for the search - is
-     * put off: while the system saves battery, or the tablet runs warm. Not
-     * under Light mode alone, which a slower tablet runs in all the time and
-     * would then never have its notes read.
-     */
-    val optionalWorkHeld: Boolean get() = (systemPowerSave && batteryOptimization) || heatStep > 0
-
     /** Why the decorations are off for now, in words for the settings, or null when they are allowed. */
     val decorationsHeldBy: String? get() = when {
         lightMode -> "Light mode"
@@ -350,14 +342,6 @@ internal object InteractionGovernor {
 
     /** Threads a job that would use [cores] on an idle device may use now. */
     fun budget(cores: Int): Int = backgroundBudget(cores, state, powerSave, thermalStatus)
-
-    /**
-     * Whether optional work - prefetch of pages around, mesh refinement of
-     * what is already drawn, handwriting recognition, thumbnails - may start
-     * now. [quietMs] is how long the hands must have been off for it.
-     */
-    fun mayRunOptional(quietMs: Long = 0L): Boolean =
-        state == Interaction.IDLE && quietForMs() >= quietMs
 
     /** Called on the main thread on every change of [state]. */
     fun addListener(listener: (Interaction) -> Unit) { listeners += listener }

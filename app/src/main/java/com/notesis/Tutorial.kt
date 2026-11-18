@@ -121,7 +121,7 @@ private val LESSONS: List<Lesson> = listOf(
         listOf(
             "Pull up past the last page to add a new one, or use + Page in the page panel.",
             "The page panel (the search button, or Pages & notes in Functions) shows the pages as pictures, two to five a row, the contents beside their pages, every strip of tape where it lies, and your other notes.",
-            "Its search field finds words in PDFs, text boxes and handwriting; on the other tabs it narrows the list. Drag its inner edge to widen it, or pull it right off to close it.",
+            "Its search field finds words in PDFs and text boxes; on the other tabs it narrows the list. Drag its inner edge to widen it, or pull it right off to close it.",
             "Hold a page in the panel, or hold the page itself, to lay a practice page beside it or write a comment in its margin, with a line to where you held. Tap a comment to open it; the page's menu hides them all.",
             "Ctrl+F searches; Ctrl+Alt+G goes to a page.",
         ),

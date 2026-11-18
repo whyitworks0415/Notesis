@@ -121,7 +121,7 @@ class LibraryScreenshotTest {
                                 hasCustomThumbnail = false, onOpen = { selected = id },
                                 onDelete = {}, onPickThumbnail = {}, onClearThumbnail = {},
                                 onExport = {}, onExportPdf = {}, onExportMarkdown = null,
-                                onIndex = {}, onFile = {}, onToggleFavorite = {},
+                                onFile = {}, onToggleFavorite = {},
                             ) else FolderTile(
                                 "Library folder $id", id, selected == id, selected != null,
                                 onOpen = { selected = id }, onRename = {}, onDelete = {},

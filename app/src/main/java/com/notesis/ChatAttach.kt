@@ -21,8 +21,7 @@ import androidx.compose.ui.unit.dp
 
 /*
  * A note, or part of it, sent to the AI chat in the web panel (Todo.md, P1-P3):
- * which pages, with or without the handwriting, as a PDF or as a picture, and
- * the handwriting as text beside it for the chat to read.
+ * which pages, with or without the handwriting, as a PDF or as a picture.
  */
 
 /** Which pages go to the chat. */
@@ -37,8 +36,6 @@ internal data class ChatRequest(
     val pages: List<Int>,
     /** The ink on them, or the pages as they are underneath it. */
     val withInk: Boolean,
-    /** The recognised handwriting, beside the pages, as a text file. */
-    val handwritingText: Boolean,
     val format: ChatFormat,
 )
 
@@ -76,23 +73,6 @@ internal fun chatPages(choice: ChatPages, current: Int, count: Int, typed: Strin
     ChatPages.SOME -> parsePageRange(typed, count)
 }
 
-/**
- * The text file of the handwriting sent beside the pages: each page with its
- * number, then what was read on it; pages with nothing read are left out.
- * Null when nothing was read on any of them.
- */
-internal fun handwritingText(title: String, pages: List<Pair<Int, String?>>): String? {
-    val read = pages.mapNotNull { (index, text) -> text?.trim()?.takeIf { it.isNotEmpty() }?.let { index to it } }
-    if (read.isEmpty()) return null
-    return buildString {
-        append(title).append('\n')
-        append("Handwriting read by Notesis, page by page. It may contain misreadings.\n")
-        for ((index, text) in read) {
-            append("\n--- Page ").append(index + 1).append(" ---\n").append(text).append('\n')
-        }
-    }.trimEnd() + "\n"
-}
-
 /** A name the chat is given for a file: the note's title, made safe, and what it is. */
 internal fun chatFileName(title: String, suffix: String, extension: String): String {
     val safe = title.map { if (it.isLetterOrDigit() || it == ' ' || it == '-' || it == '_') it else ' ' }
@@ -103,13 +83,12 @@ internal fun chatFileName(title: String, suffix: String, extension: String): Str
 /**
  * The sheet that asks what to send: opened from the chat's menu beside a
  * note. [current] and [count] are the note's page in view and how many it
- * has; [hasHandwriting] whether any of it has been read for search.
+ * has.
  */
 @Composable
 internal fun ChatAttachSheet(
     current: Int,
     count: Int,
-    hasHandwriting: Boolean,
     onDismiss: () -> Unit,
     onSend: (ChatRequest) -> Unit,
 ) {
@@ -117,7 +96,6 @@ internal fun ChatAttachSheet(
     var choice by remember { mutableStateOf(ChatPages.THIS) }
     var typed by remember { mutableStateOf("") }
     var withInk by remember { mutableStateOf(true) }
-    var asText by remember { mutableStateOf(hasHandwriting) }
     var format by remember { mutableStateOf(ChatFormat.PDF) }
     val pages = chatPages(choice, current, count, typed)
     // A picture is of one page; more pages go as a PDF.
@@ -149,11 +127,6 @@ internal fun ChatAttachSheet(
         PanelSectionHeader("What goes")
         PanelSwitchRow("Handwriting", withInk, hint = if (withInk) "The pages as they look, with what is written on them."
             else "The pages as they are underneath the writing: the PDF or the paper alone.") { withInk = it }
-        PanelSwitchRow("Handwriting as text", asText && hasHandwriting,
-            hint = if (hasHandwriting) "What the handwriting says, read for search, in a text file beside the pages, so the chat can read it."
-                else "Nothing in this note has been read yet. Index the handwriting from the note's card first.") {
-            if (hasHandwriting) asText = it
-        }
         PanelSectionHeader("Sent as")
         SegmentedControl(ChatFormat.entries.map { it.label }, shownFormat.ordinal, {
             format = ChatFormat.entries[it]
@@ -166,7 +139,7 @@ internal fun ChatAttachSheet(
             Button(
                 enabled = pages != null && pages.isNotEmpty(),
                 onClick = {
-                    val request = ChatRequest(pages.orEmpty(), withInk, asText && hasHandwriting, shownFormat)
+                    val request = ChatRequest(pages.orEmpty(), withInk, shownFormat)
                     panel.close { onSend(request) }
                 },
                 modifier = Modifier.heightIn(min = 48.dp),

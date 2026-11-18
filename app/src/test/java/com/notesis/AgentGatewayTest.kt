@@ -55,7 +55,7 @@ class AgentGatewayTest {
         // If a command is added to the commands and not described, it would run without asking: this fails first.
         // Written out here rather than taken from READ_COMMANDS, so moving a change into the reads fails this test.
         val reads = setOf("help", "status", "preview", "search", "notes list", "note read", "tags list", "folder list",
-            "page image", "toc show", "pdf info", "pdf text", "pdf find", "text list", "ink read", "md outline", "md links", "export")
+            "page image", "toc show", "pdf info", "pdf text", "pdf find", "text list", "md outline", "md links", "export")
         assertEquals(reads - "export", READ_COMMANDS)
         for (name in COMMAND_USAGE.keys) {
             val line = describeCommand(name.split(' ') + "Maths", notes)

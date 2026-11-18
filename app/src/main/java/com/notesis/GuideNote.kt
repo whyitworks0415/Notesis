@@ -138,7 +138,7 @@ internal object GuideNote {
         GuidePage("Pages and search", listOf(
             Block.Body("The page panel shows the pages as pictures, the contents,\n" +
                 "every strip of tape, and your other notes. Its search field finds\n" +
-                "words in PDFs, text boxes and handwriting. Writing closes it."),
+                "words in PDFs and text boxes. Writing closes it."),
             Block.Body("Pull past the last page to add a new one,\n" +
                 "or use + Page in the page panel."),
             Block.Tip("Ctrl+F opens search; Ctrl+Alt+G goes to a page."),

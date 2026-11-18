@@ -66,9 +66,6 @@ internal class NoteStoreWorkspace(
     override fun trash(id: String) = store.moveToTrash(id)
     override fun restore(id: String) = store.restoreFromTrash(id)
 
-    override fun handwriting(id: String, page: Page): String? =
-        store.inkIndexFile(id, page.id).takeIf { it.isFile }?.let { runCatching { it.readText() }.getOrNull() }
-
     override fun inkCount(id: String, page: Page): Int = if (page.loaded) page.allStrokes.size else page.savedStrokeCount
 
     override fun textBox(id: String, content: TextBoxContent): PageImage? {
@@ -307,20 +304,6 @@ internal class NoteStoreWorkspace(
         val source = store.imageFile(id, imageId).takeIf { it.isFile } ?: return null
         val newId = UUID.randomUUID().toString()
         return runCatching { source.copyTo(store.imageFile(id, newId)); newId }.getOrNull()
-    }
-
-    override fun recognize(id: String, document: Document, page: Page): String? {
-        loaded(id, page)
-        val visible = page.strokes.filter { document.layers.isVisible(StrokeLayers.of(it)) }
-        if (visible.isEmpty()) return null
-        val reader = InkIndexer(context)
-        try {
-            return reader.textOf(visible, firstReading = true)
-                ?: throw CommandError("Handwriting cannot be read yet: the reading models are not downloaded. " +
-                    "Connect to the internet and try again.", code = "NOT_READY")
-        } finally {
-            reader.close()
-        }
     }
 
     /** Where each shared file went, so taking it away again finds it. */

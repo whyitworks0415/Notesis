@@ -135,9 +135,9 @@ class AgentCommandsTest {
         memory.pages.getValue("n1")[3].tocTitle = "End"
         val commands = NoteCommands(memory)
         val pages = result(commands, "note read Maths --text-only").getJSONArray("pages")
-        // Page 1 has handwriting read for search, page 3 a text box, page 4 an outline entry.
-        assertEquals(listOf(1, 3, 4), (0 until pages.length()).map { pages.getJSONObject(it).getInt("page") })
-        assertEquals("x = 3", pages.getJSONObject(1).getJSONArray("text").getString(0))
+        // Page 3 has a text box, page 4 an outline entry; pages 1 and 2 have nothing to read.
+        assertEquals(listOf(3, 4), (0 until pages.length()).map { pages.getJSONObject(it).getInt("page") })
+        assertEquals("x = 3", pages.getJSONObject(0).getJSONArray("text").getString(0))
         val outline = result(commands, "note read Maths --outline")
         assertFalse(outline.has("pages") && outline.get("pages") is org.json.JSONArray)
         assertEquals("End", outline.getJSONArray("toc").getJSONObject(0).getString("title"))

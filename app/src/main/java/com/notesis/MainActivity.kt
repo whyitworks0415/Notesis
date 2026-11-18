@@ -1234,9 +1234,6 @@ private fun HomeScreen(
         }
     }
 
-    val indexer = remember { InkIndexer(context) }
-    DisposableEffect(Unit) { onDispose { indexer.close() } }
-
     // Pictures for a new note: picked, put in order, then one per page.
     var orderingImages by remember { mutableStateOf<List<Uri>?>(null) }
     val pickImages = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
@@ -1308,38 +1305,6 @@ private fun HomeScreen(
                     if (imported.size < uris.size) " (${uris.size - imported.size} failed)" else ""
             }
         }
-    }
-
-    // The camera's document scanner (ML Kit, through Play services): its PDF becomes a note, and the
-    // pages are read for text before it opens, so a scan is found by search like any typed PDF.
-    val scanDocument = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
-        if (result.resultCode != android.app.Activity.RESULT_OK) return@rememberLauncherForActivityResult
-        val scan = com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult.fromActivityResultIntent(result.data)
-        val pdf = scan?.pdf?.uri ?: return@rememberLauncherForActivityResult
-        busy = "Reading the scanned pages"
-        scope.launch {
-            val title = L10n.tr("Scan") + " " + java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.ROOT).format(java.util.Date())
-            val created = withContext(Dispatchers.IO) {
-                runCatching {
-                    context.contentResolver.openInputStream(pdf)?.use { store.createFromPdf(title, it)?.let { id -> filedHere(id) } }
-                }.getOrNull()
-            }
-            if (created != null) PageTextOcr.fillScannedPages(context, store, created.id)
-            busy = null
-            revision++
-            if (created == null) importFailed = true else onOpen(created)
-        }
-    }
-    fun startScan() {
-        val activity = context as? android.app.Activity ?: return
-        val options = com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions.Builder()
-            .setGalleryImportAllowed(true)
-            .setResultFormats(com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions.RESULT_FORMAT_PDF)
-            .setScannerMode(com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions.SCANNER_MODE_FULL)
-            .build()
-        com.google.mlkit.vision.documentscanner.GmsDocumentScanning.getClient(options).getStartScanIntent(activity)
-            .addOnSuccessListener { sender -> scanDocument.launch(androidx.activity.result.IntentSenderRequest.Builder(sender).build()) }
-            .addOnFailureListener { report = "The document scanner is not available on this tablet" }
     }
 
     val searchFocus = remember { androidx.compose.ui.focus.FocusRequester() }
@@ -1734,7 +1699,6 @@ private fun HomeScreen(
                         DialOption("Import PDF", Reicons.PictureAsPdf) {
                             pickPdf.launch(arrayOf("application/pdf"))
                         },
-                        DialOption("Scan document", Reicons.AddPhotoAlternate) { startScan() },
                         DialOption("Markdown folder (vault)", Reicons.FolderOpen) { onOpenVault() },
                         DialOption("New note", Reicons.Edit) { naming = true },
                     ),
@@ -2049,20 +2013,6 @@ private fun HomeScreen(
                             store.setLocked(note.id, true)
                             revision++
                         } else lockingNote = note
-                    },
-                    onIndex = {
-                        busy = "Reading handwriting"
-                        scope.launch {
-                            val pages = withContext(Dispatchers.IO) {
-                                indexNote(store, indexer, note.id)
-                            }
-                            busy = null
-                            report = if (pages < 0) {
-                                "Couldn't download the recognition model. Check your internet connection"
-                            } else {
-                                "Indexed " + countNoun(pages, "page")
-                            }
-                        }
                     },
                 )
                 }
@@ -3049,7 +2999,6 @@ internal fun NoteCard(
     onExport: () -> Unit,
     onExportPdf: () -> Unit,
     onExportMarkdown: (() -> Unit)?,
-    onIndex: () -> Unit,
     onFile: () -> Unit,
     onToggleFavorite: () -> Unit,
     /** The note's earlier versions (NoteHistory), offered for restoring. */
@@ -3271,16 +3220,6 @@ internal fun NoteCard(
                             leadingIcon = { Icon(Reicons.Refresh, contentDescription = null) },
                             onClick = { menuOpen = false; onHistory() },
                         )
-                        GlassMenuItem(
-                            text = { Text("Index handwriting for search") },
-                            leadingIcon = {
-                                Icon(Reicons.Search, contentDescription = null)
-                            },
-                            onClick = {
-                                menuOpen = false
-                                onIndex()
-                            },
-                        )
                         HorizontalDivider()
                         GlassMenuItem(
                             text = { Text("Export as backup file") },
@@ -3321,28 +3260,6 @@ internal fun NoteCard(
             }
         }
     }
-}
-
-/**
- * Reads every page of a note. Pages are loaded one at a time and let go again,
- * because a 120 page book indexed all at once is a 120 page book in memory.
- * Returns how many pages were read, or -1 when the models are not available.
- */
-private fun indexNote(store: NoteStore, indexer: InkIndexer, id: String): Int {
-    if (!indexer.prepare()) return -1
-    val document = store.load(id)
-    var done = 0
-    for (page in document.pages) {
-        val strokes = store.loadPage(id, page, STROKE_EPSILON)
-        if (strokes.isEmpty()) {
-            store.writeInkIndex(id, page.id, "")
-            done++
-            continue
-        }
-        indexer.textOf(strokes)?.let { store.writeInkIndex(id, page.id, it) }
-        done++
-    }
-    return done
 }
 
 /**
@@ -4337,8 +4254,6 @@ private fun NoteScreen(
     val penStore = remember { PenStore(context) }
     var playbackSpeed by remember { mutableFloatStateOf(penStore.playbackSpeed) }
     var playMode by remember { mutableIntStateOf(penStore.playMode) }
-    val indexer = remember { InkIndexer(context) }
-    DisposableEffect(Unit) { onDispose { indexer.close() } }
     var settings by remember { mutableStateOf(penStore.load()) }
     // One mode at a time, and every mode carries its own colour and thickness,
     // so putting the eraser down gives back the pen exactly as it was left.
@@ -4352,14 +4267,6 @@ private fun NoteScreen(
     var lassoCount by remember { mutableIntStateOf(0) }
     /** Bumped whenever the selection's box moves on screen, so its action bar follows it. */
     var lassoMoves by remember { mutableIntStateOf(0) }
-    var regionOcrText by remember { mutableStateOf<String?>(null) }
-    /** What the selection read as, line by line, for the person to choose and correct; null when not open. */
-    var regionOcrLines by remember { mutableStateOf<List<OcrLine>?>(null) }
-    var regionOcrBusy by remember { mutableStateOf(false) }
-    /** Which way the selection was last read (OcrEngines.kt), and what the reading said beside the text. */
-    var regionOcrEngine by remember { mutableStateOf(ocrEngine(context)) }
-    var regionOcrAiMode by remember { mutableStateOf(AiOcr.mode(context)) }
-    var regionOcrNote by remember { mutableStateOf<String?>(null) }
     val pen = settings[mode] ?: PenStore.DEFAULTS.getValue(EditMode.PEN)
     val eraserWidth = (settings[EditMode.ERASE] ?: PenStore.DEFAULTS.getValue(EditMode.ERASE)).width
     val tool = if (mode == EditMode.ERASE) Tool.ERASER else pen.drawingTool()
@@ -4802,7 +4709,7 @@ private fun NoteScreen(
     // The page panel's body search. Held here, not in the panel, so the query
     // and the place in its results outlive the panel closing under the pen.
     val noteSearch = remember(note.id) {
-        NoteSearchState(store.inkIndexFile(note.id, "search").parentFile ?: context.filesDir)
+        NoteSearchState(store.pagesDir(note.id))
     }
     var goToPage by remember { mutableStateOf(false) }
     /** Where the settings sidebar is, or null while it is closed. */
@@ -4812,7 +4719,6 @@ private fun NoteScreen(
     var pageLayout by remember { mutableStateOf(penStore.pageLayoutOf(note.id)) }
     var pageTone by remember { mutableIntStateOf(penStore.pageTone) }
     var edits by remember { mutableIntStateOf(0) }
-    val indexedRevisions = remember(note.id) { mutableMapOf<String, Long>() }
     val resumePage = remember(note.id, note.pageCount) {
         restoredPage(penStore.lastPage(note.id), note.pageCount)
     }
@@ -4833,69 +4739,6 @@ private fun NoteScreen(
     val liveZoom = remember { floatArrayOf(1f) }
     var zoomMenu by remember { mutableStateOf(false) }
     var canvas by remember { mutableStateOf<InkCanvasView?>(null) }
-    /**
-     * Reads the lasso selection the [engine] way and opens what it read. The
-     * picture ways draw the selection first (strokes over the page under them);
-     * the strokes way reads the ink itself, as it always did.
-     */
-    fun readSelection(engine: OcrEngine, aiMode: AiOcrMode) {
-        val view = canvas ?: return
-        val strokes = view.selectedLassoStrokes()
-        regionOcrEngine = engine
-        regionOcrAiMode = aiMode
-        regionOcrBusy = true
-        fun show(lines: List<OcrLine>?, note: String?) {
-            regionOcrBusy = false
-            regionOcrLines = lines.orEmpty()
-            regionOcrNote = note
-        }
-        if (engine == OcrEngine.INK) {
-            scope.launch {
-                val lines = withContext(Dispatchers.IO) { indexer.readingsOf(strokes) }
-                show(lines, when {
-                    lines == null -> "Recognition model unavailable"
-                    // Joined-up writing can lose whole letters here; the picture readers see it whole.
-                    lines.any { it.doubtful } -> "Some letters may have been missed. Joined-up writing often reads better with AI."
-                    else -> null
-                })
-            }
-            return
-        }
-        val side = if (engine == OcrEngine.AI) AiOcr.detail(context).maxSide else PICTURE_OCR_SIDE
-        view.renderLassoPicture(side) { picture ->
-            if (picture == null) { show(null, "Nothing to read"); return@renderLassoPicture }
-            if (engine == OcrEngine.LENS) {
-                scope.launch {
-                    val uri = try {
-                        withContext(Dispatchers.IO) { captureUri(context, picture) }
-                    } finally {
-                        picture.recycle()
-                    }
-                    show(emptyList(), if (uri == null) "Nothing to read" else openInLens(context, uri))
-                }
-                return@renderLassoPicture
-            }
-            scope.launch {
-                try {
-                    when (engine) {
-                        OcrEngine.PICTURE -> PictureOcr.read(context, picture).let { (lines, why) -> show(lines, why) }
-                        OcrEngine.BOTH -> {
-                            val ink = withContext(Dispatchers.IO) { indexer.readingsOf(strokes) }.orEmpty()
-                            val (seen, why) = PictureOcr.read(context, picture)
-                            show(mergeOcrLines(ink, seen.orEmpty()), why)
-                        }
-                        else -> {
-                            val read = AiOcr.read(context, picture, aiMode)
-                            show(ocrLinesOf(read.text, OCR_SOURCE_AI), read.error
-                                ?: "Used ${read.inputTokens} tokens in, ${read.outputTokens} out")
-                        }
-                    }
-                } finally {
-                    picture.recycle()
-                }
-            }
-        }
-    }
     fun stopBenchmark() {
         benchmarkJob?.cancel()
         benchmarkJob = null
@@ -5030,8 +4873,7 @@ private fun NoteScreen(
     }
     /**
      * Pages of the note to the chat, as the sheet asked (Todo.md, P1-P3): a PDF
-     * of them, with or without the ink, or one page as a picture, and the
-     * handwriting read off them in a text file beside it. Handed to the chat's
+     * of them, with or without the ink, or one page as a picture. Handed to the chat's
      * message box where it takes files that way; otherwise kept for its
      * "+ › Files".
      */
@@ -5075,16 +4917,6 @@ private fun NoteScreen(
                         pdf.delete()
                         out += png to "image/png"
                     } else out += pdf to "application/pdf"
-                    if (request.handwritingText) {
-                        val text = handwritingText(note.title, request.pages.zip(pages).map { (index, page) ->
-                            index to runCatching { store.inkIndexFile(note.id, page.id).takeIf { it.isFile }?.readText() }.getOrNull()
-                        })
-                        if (text != null) {
-                            val txt = java.io.File(dir, chatFileName(note.title, "handwriting", "txt"))
-                            txt.writeText(text)
-                            out += txt to "text/plain"
-                        }
-                    }
                     out
                 }.getOrNull()
             }
@@ -5964,81 +5796,18 @@ private fun NoteScreen(
         // recomposed this whole screen - page host, toolbar and panels - on the
         // UI thread right when the next stroke was starting.
         val latestNote by rememberUpdatedState(note)
-        // When the last autosave was taken, so recognition keeps clear of it.
-        val lastSaveAt = remember { longArrayOf(0L) }
         // While an agent's change is made under the screen, nothing it holds is written: that would undo the change.
         val heldForChange = remember { booleanArrayOf(false) }
         LaunchedEffect(Unit) {
             autosaveLoop(edits = { edits }) {
                 if (heldForChange[0]) return@autosaveLoop
                 val view = canvas ?: return@autosaveLoop
-                lastSaveAt[0] = android.os.SystemClock.uptimeMillis()
                 // Snapshot on the UI thread before the serial worker writes it.
                 // Passing the live document to Dispatchers.IO raced pen commits and
                 // mesh rebuilds, which is the repeated CME found in crash.log.
                 val started = System.nanoTime()
                 store.saveLater(latestNote.id, latestNote.title, view.document)
                 view.latency.record(PerformanceMetric.SAVE_SNAPSHOT, System.nanoTime() - started)
-            }
-        }
-
-        // Handwriting recognition is useful search metadata, not part of
-        // saving. It is optional work: it waits for an idle screen whose hands
-        // have been off it a while, keeps clear of the save, and does not rerun
-        // for toolbar or image state that left the ink revision unchanged.
-        LaunchedEffect(Unit) {
-            snapshotFlow { edits }.collectLatest { count ->
-                if (count == 0) return@collectLatest
-                delay(UiScheduling.INK_INDEX_IDLE_MS)
-                while (true) {
-                    val sinceSave = lastSaveAt[0].let {
-                        if (it == 0L) Long.MAX_VALUE / 2 else android.os.SystemClock.uptimeMillis() - it
-                    }
-                    val wait = UiScheduling.inkIndexWaitMs(
-                        InteractionGovernor.state, InteractionGovernor.quietForMs(), sinceSave)
-                    if (wait <= 0L && InteractionGovernor.mayRunOptional(UiScheduling.INK_INDEX_IDLE_MS) &&
-                        !InteractionGovernor.optionalWorkHeld) break
-                    delay(wait.coerceAtLeast(INK_INDEX_RECHECK_MS))
-                }
-                val view = canvas ?: return@collectLatest
-                val page = view.document.pages.getOrNull(view.currentPageIndex()) ?: return@collectLatest
-                if (!page.loaded) return@collectLatest
-                val revision = page.revision
-                if (indexedRevisions[page.id] == revision) return@collectLatest
-                // A copy of the list of references, nothing deeper: strokes are immutable.
-                val strokes = page.strokes.toList()
-                val text = withContext(Dispatchers.IO) {
-                    // A pen or finger back on the page stops it between lines;
-                    // the page is read again at the next quiet spell.
-                    indexer.textOf(strokes, keepGoing = { InteractionGovernor.state == Interaction.IDLE })
-                } ?: return@collectLatest
-                withContext(Dispatchers.IO) { store.writeInkIndex(latestNote.id, page.id, text) }
-                indexedRevisions[page.id] = revision
-            }
-        }
-
-        // The ink off the pages (the whiteboard) is read too, for search and for agents, in the same
-        // quiet spells; once on opening when it has never been read, then after it changes.
-        val boardIndexed = remember { longArrayOf(Long.MIN_VALUE) }
-        LaunchedEffect(Unit) {
-            snapshotFlow { edits }.collectLatest { count ->
-                if (count == 0 && withContext(Dispatchers.IO) { store.inkIndexFile(latestNote.id, Document.BOARD_PAGE_ID).isFile }) {
-                    return@collectLatest
-                }
-                delay(UiScheduling.INK_INDEX_IDLE_MS * 2)
-                while (!(InteractionGovernor.mayRunOptional(UiScheduling.INK_INDEX_IDLE_MS) && !InteractionGovernor.optionalWorkHeld)) {
-                    delay(INK_INDEX_RECHECK_MS)
-                }
-                val view = canvas ?: return@collectLatest
-                val board = view.document.board
-                if (board.revision == boardIndexed[0]) return@collectLatest
-                val revision = board.revision
-                val strokes = board.strokes.toList()
-                val text = if (strokes.isEmpty()) "" else withContext(Dispatchers.IO) {
-                    indexer.textOf(strokes, keepGoing = { InteractionGovernor.state == Interaction.IDLE })
-                } ?: return@collectLatest
-                withContext(Dispatchers.IO) { store.writeInkIndex(latestNote.id, Document.BOARD_PAGE_ID, text) }
-                boardIndexed[0] = revision
             }
         }
 
@@ -6495,79 +6264,6 @@ private fun NoteScreen(
                             }
                         }
                     }
-                    SettingsCard {
-                        SettingsSectionHeader("Handwriting recognition")
-                        SettingsNote("The languages handwriting is read in for search; the first is tried first.")
-                        var languages by remember { mutableStateOf(InkIndexer.languages(context)) }
-                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
-                            InkIndexer.OFFERED.forEach { (tag, label) ->
-                                SettingsChoiceChip(selected = tag in languages, onClick = {
-                                    val next = if (tag in languages) languages - tag else languages + tag
-                                    if (next.isNotEmpty()) { languages = next; InkIndexer.setLanguages(context, next) }
-                                }, label = label)
-                            }
-                        }
-                        // Scanned pages have no text of their own; read here, they are found by search and agents.
-                        var scanReading by remember { mutableStateOf<String?>(null) }
-                        TextButton(enabled = scanReading == null, onClick = {
-                            scanReading = "Reading pages…"
-                            scope.launch {
-                                val kept = PageTextOcr.fillScannedPages(context, store, note.id)
-                                scanReading = null
-                                regionOcrText = if (kept > 0) "Read the text of ${countNoun(kept, "page")}"
-                                    else "No scanned pages without text"
-                            }
-                        }) { Text(scanReading ?: "Read text of scanned pages") }
-                        // The page in view as text: its PDF or scanned text, then the handwriting read for search.
-                        TextButton(onClick = {
-                            val page = canvas?.let { view -> view.document.pages.getOrNull(view.currentPageIndex()) }
-                            scope.launch {
-                                val text = if (page == null) "" else withContext(Dispatchers.IO) {
-                                    listOf(store.pageText(note.id, page.id),
-                                        runCatching { store.inkIndexFile(note.id, page.id).readText() }.getOrDefault(""))
-                                        .filter { it.isNotBlank() }.joinToString("\n\n")
-                                }
-                                if (text.isBlank()) regionOcrText = "This page has no text yet"
-                                else { clipboard.setText(AnnotatedString(text)); regionOcrText = "Copied the page's text" }
-                            }
-                        }) { Text("Copy this page's text") }
-                    }
-                    SettingsCard {
-                        SettingsSectionHeader("AI text reading")
-                        SettingsNote("Reads a selection with Google Gemini when you pick AI after Read. Uses your own free API key " +
-                            "from Google AI Studio, kept only on this tablet. A small picture of the selection is sent to Google.")
-                        var aiKey by remember { mutableStateOf(AiOcr.key(context)) }
-                        var showKey by remember { mutableStateOf(false) }
-                        OutlinedTextField(
-                            value = aiKey,
-                            onValueChange = { aiKey = it; AiOcr.setKey(context, it) },
-                            singleLine = true,
-                            label = { Text("Gemini API key") },
-                            visualTransformation = if (showKey) androidx.compose.ui.text.input.VisualTransformation.None
-                                else androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                            trailingIcon = { TextButton(onClick = { showKey = !showKey }) { Text(if (showKey) "Hide" else "Show") } },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        var aiModel by remember { mutableStateOf(AiOcr.model(context)) }
-                        OutlinedTextField(
-                            value = aiModel,
-                            onValueChange = { aiModel = it; AiOcr.setModel(context, it) },
-                            singleLine = true,
-                            label = { Text("Model") },
-                            supportingText = { Text("A light, free model reads text well; $AI_OCR_DEFAULT_MODEL is the default.") },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        var aiDetail by remember { mutableStateOf(AiOcr.detail(context)) }
-                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
-                            AiDetail.entries.forEach { detail ->
-                                SettingsChoiceChip(selected = detail == aiDetail, onClick = {
-                                    aiDetail = detail
-                                    AiOcr.setDetail(context, detail)
-                                }, label = detail.label)
-                            }
-                        }
-                        SettingsNote("Fewest tokens reads clear writing; pick a finer level for small or smudged writing.")
-                    }
                     if (filing) FolderDialog(current = meta.folder, folders = remember { store.folders() },
                         onDismiss = { filing = false }, onPick = { store.setFolder(note.id, it); filing = false; edits++ })
                 },
@@ -6934,7 +6630,6 @@ private fun NoteScreen(
                     canvas?.deleteLassoSelection()
                     edits++
                 },
-                onOcr = { readSelection(regionOcrEngine, regionOcrAiMode) },
                 onTransform = { factor, degrees ->
                     canvas?.transformLassoSelection(factor, degrees)
                     edits++
@@ -7068,13 +6763,8 @@ private fun NoteScreen(
             onDismiss = { choosingSplit = false },
         )
         if (attachingToChat) canvas?.let { view ->
-            // Whether any page has had its handwriting read, looked up off the main thread.
-            val pageIds = remember(view) { view.document.pages.map { it.id } }
-            val read by produceState(false, pageIds) {
-                value = withContext(Dispatchers.IO) { pageIds.any { store.inkIndexFile(note.id, it).let { f -> f.isFile && f.length() > 0 } } }
-            }
             ChatAttachSheet(
-                current = view.currentPageIndex(), count = pageIds.size, hasHandwriting = read,
+                current = view.currentPageIndex(), count = view.document.pages.size,
                 onDismiss = { attachingToChat = false },
                 onSend = { request -> attachingToChat = false; sendNoteToChat(request) },
             )
@@ -7247,75 +6937,6 @@ private fun NoteScreen(
                     dismissButton = { TextButton(onClick = { renamingMask = null }) { Text("Cancel") } },
                 )
             }
-        }
-
-        if (regionOcrBusy) AlertDialog(
-            onDismissRequest = {}, title = { Text(if (regionOcrEngine == OcrEngine.AI) "Asking the AI…" else "Reading the selection…") },
-            confirmButton = {},
-        )
-        regionOcrText?.let { message -> AlertDialog(
-            onDismissRequest = { regionOcrText = null },
-            title = { Text("Handwriting recognition") },
-            text = { Text(message) },
-            confirmButton = { TextButton(onClick = { regionOcrText = null }) { Text("Close") } },
-        ) }
-        regionOcrLines?.let { lines ->
-            OcrResultDialog(
-                lines = lines,
-                engine = regionOcrEngine,
-                aiMode = regionOcrAiMode,
-                note = regionOcrNote,
-                aiReady = AiOcr.key(context).isNotBlank(),
-                onReadAgain = { engine, aiMode ->
-                    setOcrEngine(context, engine)
-                    if (engine != OcrEngine.LENS) AiOcr.setMode(context, aiMode)
-                    regionOcrLines = null
-                    readSelection(engine, aiMode)
-                },
-                onCopy = { text ->
-                    clipboard.setText(AnnotatedString(text))
-                    regionOcrLines = null
-                },
-                // The handwriting gives way to typed text where it stood - only
-                // once the text has been looked at, and as one undoable step.
-                onConvert = { recognized ->
-                    regionOcrLines = null
-                    val place = canvas?.lassoPlacement()
-                    val content = TextBoxContent(recognized.trim(), size = place?.third ?: 32f)
-                    scope.launch {
-                        val result = withContext(Dispatchers.IO) { runCatching {
-                            val bitmap = renderTextBox(content)
-                            try { store.addImage(note.id, bitmap)?.let { Triple(it.first, bitmap.width, bitmap.height) } }
-                            finally { bitmap.recycle() }
-                        }.getOrNull() }
-                        if (result != null && place != null) {
-                            canvas?.deleteLassoSelection()
-                            canvas?.putTextBox(result.first, result.second, result.third, content,
-                                at = Triple(place.first, place.second.left, place.second.top))
-                            edits++
-                        }
-                    }
-                },
-                onClose = { regionOcrLines = null },
-                // The same text, but as a text box just under the handwriting, which is left as it is.
-                onPlace = { recognized ->
-                    regionOcrLines = null
-                    val place = canvas?.lassoPlacement()
-                    val content = TextBoxContent(recognized.trim(), size = place?.third ?: 32f)
-                    scope.launch {
-                        val result = withContext(Dispatchers.IO) { runCatching {
-                            val bitmap = renderTextBox(content)
-                            try { store.addImage(note.id, bitmap)?.let { Triple(it.first, bitmap.width, bitmap.height) } }
-                            finally { bitmap.recycle() }
-                        }.getOrNull() }
-                        if (result != null && place != null) {
-                            canvas?.putTextBox(result.first, result.second, result.third, content,
-                                at = Triple(place.first, place.second.left, place.second.bottom + place.third * 0.5f))
-                            edits++
-                        }
-                    }
-                },
-            )
         }
 
         if (showTextBox) TextBoxDialog(textDialogInitial ?: replacingText?.textContent,
@@ -8183,7 +7804,6 @@ private fun StudyBar(
 private fun LassoActions(
     count: Int,
     onDelete: () -> Unit,
-    onOcr: (() -> Unit)? = null,
     onTransform: ((scale: Float, degrees: Float) -> Unit)? = null,
     onRecolor: (() -> Unit)? = null,
     /** Colours offered for the selection besides the pen's; picking one recolours it. */
@@ -8270,7 +7890,6 @@ private fun LassoActions(
                 Icon(Reicons.Delete, contentDescription = null)
                 Text(" Delete")
             }
-            if (onOcr != null) TextButton(onClick = onOcr) { Text("OCR") }
             TextButton(onClick = onDone) { Text("Done") }
         }
     }
@@ -8523,30 +8142,6 @@ private fun captureUri(
         context.packageName + ".files",
         file,
     )
-}
-
-/** The Google app, whose image share target is Google Lens. */
-private const val GOOGLE_APP = "com.google.android.googlequicksearchbox"
-
-/**
- * Hands the picture at [uri] to Google Lens, through the Google app's share
- * target; without the Google app, to whichever app is picked from the share
- * sheet (a gallery's own text extraction, say). What happened, to show.
- */
-private fun openInLens(context: android.content.Context, uri: Uri): String {
-    val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-        type = "image/png"
-        putExtra(android.content.Intent.EXTRA_STREAM, uri)
-        clipData = android.content.ClipData.newRawUri("", uri)
-        addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    }
-    return try {
-        context.startActivity(android.content.Intent(send).setPackage(GOOGLE_APP))
-        "Opened in Google Lens. Select the text there, copy it, then come back and paste it here."
-    } catch (_: android.content.ActivityNotFoundException) {
-        runCatching { context.startActivity(android.content.Intent.createChooser(send, null)) }
-        "Google Lens was not found, so the picture was offered to other apps. Copy the text there and paste it here."
-    }
 }
 
 /** Copies [file] where the share sheet may read it and offers it to other apps. */
@@ -10002,8 +9597,6 @@ private suspend fun autosaveLoop(edits: () -> Int, save: () -> Unit) {
     }
 }
 
-/** How often a held-back handwriting index looks again at the screen. */
-private const val INK_INDEX_RECHECK_MS = 250L
 private const val SEARCH_DEBOUNCE_MS = 220L
 
 private const val PEN_SAVE_DELAY_MS = 400L

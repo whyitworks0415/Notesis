@@ -32,18 +32,9 @@ class ChatAttachTest {
         assertNull(chatPages(ChatPages.SOME, 0, 3, "9"))
     }
 
-    @Test fun `the handwriting file has each page that was read, and is nothing when none was`() {
-        val text = handwritingText("Biology", listOf(0 to "cells", 1 to null, 2 to "  ", 3 to "DNA"))!!
-        assertTrue(text.startsWith("Biology\n"))
-        assertTrue(text.contains("--- Page 1 ---\ncells"))
-        assertTrue(text.contains("--- Page 4 ---\nDNA"))
-        assertTrue(!text.contains("Page 2") && !text.contains("Page 3 "))
-        assertNull(handwritingText("Biology", listOf(0 to null, 1 to "")))
-    }
-
     @Test fun `a file's name is the title made safe`() {
         assertEquals("Bio 1 - 3 pages.pdf", chatFileName("Bio/1", "3 pages", "pdf"))
         assertEquals("Note.txt", chatFileName("///", "", "txt"))
-        assertEquals("생물 정리 - handwriting.txt", chatFileName("생물 정리", "handwriting", "txt"))
+        assertEquals("생물 정리 - 2 pages.pdf", chatFileName("생물 정리", "2 pages", "pdf"))
     }
 }

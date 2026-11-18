@@ -632,7 +632,7 @@ internal fun LibrarySearchMorph(
                             decorationBox = { inner ->
                                 Box(contentAlignment = Alignment.CenterStart) {
                                     if (query.isEmpty()) Text(
-                                        "Search titles, PDFs and handwriting",
+                                        "Search titles and PDFs",
                                         style = MaterialTheme.typography.bodyLarge,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         maxLines = 1,
