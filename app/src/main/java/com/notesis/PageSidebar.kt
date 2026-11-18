@@ -262,7 +262,7 @@ internal fun PageSidebar(
     studyRevision: Int = 0,
     onRenameMask: (Int, Int) -> Unit = { _, _ -> },
     onAnswerMask: (Int, Int, Boolean) -> Unit = { _, _, _ -> },
-    onStudy: (Int, Boolean) -> Unit = { _, _ -> },
+    onStudy: (Int, StudyFilter) -> Unit = { _, _ -> },
     /** The in-note body search, kept by the note screen; its query is the panel's search field. */
     search: NoteSearchState? = null,
     searchView: InkCanvasView? = null,
@@ -818,7 +818,7 @@ internal fun PageSidebar(
                                         studyRevision = studyRevision,
                                         onRenameMask = { maskIndex -> onRenameMask(index, maskIndex) },
                                         onAnswerMask = { maskIndex, right -> onAnswerMask(index, maskIndex, right) },
-                                        onStudy = { wrongOnly -> onStudy(index, wrongOnly) },
+                                        onStudy = { filter -> onStudy(index, filter) },
                                     )
                                 }
                             }
@@ -1030,7 +1030,7 @@ private fun MaskChip(
     studyRevision: Int = 0,
     onRenameMask: (Int) -> Unit = {},
     onAnswerMask: (Int, Boolean) -> Unit = { _, _ -> },
-    onStudy: (Boolean) -> Unit = {},
+    onStudy: (StudyFilter) -> Unit = {},
 ) {
     val masks = page.masks
     val hidden = masks.count { !it.revealed }
@@ -1090,11 +1090,14 @@ private fun MaskChip(
             }
         }
         if (masks.isNotEmpty() && study != null) Row(Modifier.padding(start = 16.dp)) {
-            TextButton(onClick = { onStudy(false) }) { Text("Study") }
+            TextButton(onClick = { onStudy(StudyFilter.ALL) }) { Text("Study") }
             TextButton(
-                onClick = { onStudy(true) },
+                onClick = { onStudy(StudyFilter.WRONG) },
                 enabled = records.any { it.last == MaskRecord.RESULT_WRONG },
             ) { Text("Wrong only") }
+            // Spaced review: the masks whose next review has come.
+            val due = remember(records) { val day = today(); records.count { maskDue(it, day) } }
+            TextButton(onClick = { onStudy(StudyFilter.DUE) }, enabled = due > 0) { Text("Due today ($due)") }
         }
         for ((maskIndex, mask) in masks.withIndex()) {
             val record = records.getOrNull(maskIndex) ?: MaskRecord()

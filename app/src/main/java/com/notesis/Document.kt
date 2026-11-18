@@ -2970,7 +2970,7 @@ internal object StrokeBuilder {
         if (slices <= 1) return mapWhileWanted(records, wanted, ::build)
         val per = (records.size + slices - 1) / slices
         val futures = records.chunked(per).map { slice ->
-            pool.submit(java.util.concurrent.Callable { mapWhileWanted(slice, wanted, ::build) })
+            pool.submit(java.util.concurrent.Callable { CoreBudget.run { mapWhileWanted(slice, wanted, ::build) } })
         }
         val built = ArrayList<Stroke>(records.size)
         for (future in futures) {

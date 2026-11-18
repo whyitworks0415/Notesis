@@ -62,6 +62,11 @@ jobs:
         # it is useful and this build uses the JDK that was just set up.
         run: ./gradlew assembleRelease -Dorg.gradle.java.home="$JAVA_HOME" --no-daemon --stacktrace
 
+      - name: Android version check
+        # Notesis supports Android 10 (API 29) on: a call that only exists on a newer
+        # Android crashes there. Lint looks for exactly that (NewApi) and nothing else.
+        run: ./gradlew lintRelease -Dorg.gradle.java.home="$JAVA_HOME" --no-daemon
+
       - name: Unit tests
         # Never sign or publish an update whose regression tests failed.
         run: ./gradlew testReleaseUnitTest -Pnotesis.hostNativeDir="$PWD/build/host-native" -Dorg.gradle.java.home="$JAVA_HOME" --no-daemon

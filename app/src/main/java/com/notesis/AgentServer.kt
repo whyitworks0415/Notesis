@@ -209,9 +209,10 @@ internal class AgentServer(
             while (true) {
                 if (System.nanoTime() > deadline) throw SocketTimeoutException("Too slow")
                 val b = input.read()
-                if (b < 0) return if (out.size() == 0) null else out.toString(Charsets.ISO_8859_1)
+                if (b < 0) return if (out.size() == 0) null else String(out.toByteArray(), Charsets.ISO_8859_1)
                 if (++total > MAX_HEADER_BYTES) return null
-                if (b == '\n'.code) return out.toString(Charsets.ISO_8859_1).trimEnd('\r')
+                // Not out.toString(Charset): that is Android 13's, and the connection must work from 10 on.
+                if (b == '\n'.code) return String(out.toByteArray(), Charsets.ISO_8859_1).trimEnd('\r')
                 out.write(b)
             }
         }

@@ -676,12 +676,19 @@ class MainActivity : ComponentActivity() {
         if (annotate || request.name.endsWith(".pdf", true) ||
             contentResolver.getType(uri) == "application/pdf" || intent.type == "application/pdf"
         ) {
+            // Handed over to be written on, with leave to write: the note can save back into this file.
+            val writable = annotate && intent.flags and android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION != 0
+            if (writable) runCatching {
+                contentResolver.takePersistableUriPermission(uri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            }
             lifecycleScope.launch {
                 val imported = withContext(Dispatchers.IO) {
                     contentResolver.openInputStream(uri)?.use { stream ->
                         noteStore.createFromPdf(request.name, stream)
                     }
                 }
+                if (imported != null && writable) PdfOrigins.remember(this@MainActivity, imported.id, uri)
                 if (imported != null) {
                     incomingViewerRequest = null
                     incomingImportedNote = imported
@@ -857,6 +864,8 @@ private fun HomeScreen(
     val allTags = remember(revision) { store.allTags() }
     var taggingNote by remember { mutableStateOf<NoteMeta?>(null) }
     var labelingNote by remember { mutableStateOf<NoteMeta?>(null) }
+    /** The note whose earlier versions are listed; null when the list is closed. */
+    var historyNote by remember { mutableStateOf<NoteMeta?>(null) }
     var lockingNote by remember { mutableStateOf<NoteMeta?>(null) }
     // Which note the image picker, once it comes back, belongs to.
     var thumbnailFor by remember { mutableStateOf<NoteMeta?>(null) }
@@ -2025,6 +2034,15 @@ private fun HomeScreen(
                         }
                     } else null,
                     onLabel = { labelingNote = note },
+                    onHistory = if (note.kind == NoteKind.MARKDOWN) null else ({ historyNote = note }),
+                    onSaveBack = if (note.locked || PdfOrigins.of(context, note.id) == null) null else ({
+                        busy = "Rendering PDF"
+                        scope.launch {
+                            val ok = withContext(Dispatchers.IO) { PdfOrigins.saveBack(context, store, note.id) }
+                            busy = null
+                            report = if (ok) "Saved into the original PDF" else "Couldn't write the original file. Use Export as PDF instead"
+                        }
+                    }),
                     onLock = {
                         // Locking with a password already set needs nothing more; the rest asks first.
                         if (!note.locked && noteLock?.hasPassword == true) {
@@ -2526,6 +2544,41 @@ private fun HomeScreen(
         )
     }
 
+    historyNote?.let { target ->
+        val history = remember { NoteHistory(context) }
+        val versions = remember(target.id, revision) { history.versions(target.id) }
+        var restoring by remember { mutableStateOf<Long?>(null) }
+        val format = remember { java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT) }
+        AlertDialog(
+            onDismissRequest = { historyNote = null },
+            title = { Text("Earlier versions") },
+            text = {
+                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(Ui.Space.xs)) {
+                    Text("The note as it was each time it was opened, kept on this tablet. Restoring keeps the note as it is now " +
+                        "as a version too, so it can be undone.", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (versions.isEmpty()) Text("No earlier versions yet")
+                    versions.forEach { at ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(format.format(java.util.Date(at)), modifier = Modifier.weight(1f))
+                            TextButton(enabled = restoring == null, onClick = {
+                                restoring = at
+                                scope.launch {
+                                    val ok = withContext(Dispatchers.IO) { history.restore(target.id, at) }
+                                    restoring = null
+                                    historyNote = null
+                                    revision++
+                                    report = if (ok) "Restored the version of ${format.format(java.util.Date(at))}" else "Couldn't restore that version"
+                                }
+                            }) { Text(if (restoring == at) "Restoring…" else "Restore") }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { historyNote = null }) { Text("Close") } },
+        )
+    }
     labelingNote?.let { target ->
         AlertDialog(
             onDismissRequest = { labelingNote = null },
@@ -2999,6 +3052,10 @@ internal fun NoteCard(
     onIndex: () -> Unit,
     onFile: () -> Unit,
     onToggleFavorite: () -> Unit,
+    /** The note's earlier versions (NoteHistory), offered for restoring. */
+    onHistory: (() -> Unit)? = null,
+    /** Writes the note back into the PDF another app handed over (PdfOrigins); null when there is none. */
+    onSaveBack: (() -> Unit)? = null,
     onRename: () -> Unit = {},
     onTags: () -> Unit = {},
     onLabel: () -> Unit = {},
@@ -3209,6 +3266,11 @@ internal fun NoteCard(
                                 onFile()
                             },
                         )
+                        if (onHistory != null) GlassMenuItem(
+                            text = { Text("Earlier versions") },
+                            leadingIcon = { Icon(Reicons.Refresh, contentDescription = null) },
+                            onClick = { menuOpen = false; onHistory() },
+                        )
                         GlassMenuItem(
                             text = { Text("Index handwriting for search") },
                             leadingIcon = {
@@ -3229,6 +3291,11 @@ internal fun NoteCard(
                                 menuOpen = false
                                 onExport()
                             },
+                        )
+                        if (onSaveBack != null) GlassMenuItem(
+                            text = { Text("Save back to the original PDF") },
+                            leadingIcon = { Icon(Reicons.PictureAsPdf, contentDescription = null) },
+                            onClick = { menuOpen = false; onSaveBack() },
                         )
                         GlassMenuItem(
                             text = { Text("Export as PDF") },
@@ -5216,6 +5283,9 @@ private fun NoteScreen(
     // Opening a note decodes every stroke it holds and parses the PDF header.
     // On the main thread that is a visible freeze, and it grows with the note.
     LaunchedEffect(note.id) {
+        // The note as it was before this visit, put aside beside the reading (NoteHistory): a change
+        // regretted after the note is closed, when its undo is gone, can still be taken back.
+        launch(Dispatchers.IO) { runCatching { NoteHistory(context).keep(note.id) } }
         opened = withContext(Dispatchers.IO) {
             // The PDF and the page list do not depend on each other; open them
             // side by side rather than one after the other.
@@ -6429,6 +6499,19 @@ private fun NoteScreen(
                                     else "No scanned pages without text"
                             }
                         }) { Text(scanReading ?: "Read text of scanned pages") }
+                        // The page in view as text: its PDF or scanned text, then the handwriting read for search.
+                        TextButton(onClick = {
+                            val page = canvas?.let { view -> view.document.pages.getOrNull(view.currentPageIndex()) }
+                            scope.launch {
+                                val text = if (page == null) "" else withContext(Dispatchers.IO) {
+                                    listOf(store.pageText(note.id, page.id),
+                                        runCatching { store.inkIndexFile(note.id, page.id).readText() }.getOrDefault(""))
+                                        .filter { it.isNotBlank() }.joinToString("\n\n")
+                                }
+                                if (text.isBlank()) regionOcrText = "This page has no text yet"
+                                else { clipboard.setText(AnnotatedString(text)); regionOcrText = "Copied the page's text" }
+                            }
+                        }) { Text("Copy this page's text") }
                     }
                     SettingsCard {
                         SettingsSectionHeader("AI text reading")
@@ -7556,12 +7639,17 @@ private fun NoteScreen(
                         studyRevision++
                     }
                 },
-                onStudy = study@{ index, wrongOnly ->
+                onStudy = study@{ index, filter ->
                     if (sidePane != 0) return@study
                     val page = sideCanvas?.document?.pages?.getOrNull(index)
+                    val day = today()
                     val queue = if (page == null) emptyList() else page.masks.indices.filter { maskIndex ->
-                        !wrongOnly || study.record(MaskStudy.keyOf(page.id, page.masks[maskIndex].stroke)).last ==
-                            MaskRecord.RESULT_WRONG
+                        val record = study.record(MaskStudy.keyOf(page.id, page.masks[maskIndex].stroke))
+                        when (filter) {
+                            StudyFilter.ALL -> true
+                            StudyFilter.WRONG -> record.last == MaskRecord.RESULT_WRONG
+                            StudyFilter.DUE -> maskDue(record, day)
+                        }
                     }
                     if (queue.isNotEmpty()) {
                         sideCanvas?.setMasksRevealed(index, false)

@@ -1899,3 +1899,16 @@ Read it another way	다른 방법으로 읽기
 AI	AI
 Too deeply nested	괄호나 부호가 너무 깊게 겹쳐 있습니다
 ML Kit Digital Ink Recognition, Text Recognition and Document Scanner, used for reading handwriting and pictures and for scanning, are not open source and are covered by Google's ML Kit terms of service (https://developers.google.com/ml-kit/terms).	손글씨·그림 읽기와 스캔에 쓰는 ML Kit 손글씨 인식, 글자 인식, 문서 스캐너는 오픈소스가 아니며 Google ML Kit 서비스 약관(https://developers.google.com/ml-kit/terms)을 따릅니다.
+Earlier versions	이전 버전
+The note as it was each time it was opened, kept on this tablet. Restoring keeps the note as it is now as a version too, so it can be undone.	노트를 열 때마다의 모습을 이 태블릿에 보관합니다. 복원하면 지금 모습도 버전으로 남겨 두므로 되돌릴 수 있습니다.
+No earlier versions yet	아직 이전 버전이 없습니다
+Restoring…	복원하는 중…
+Restored the version of {0}	{0} 버전으로 복원했습니다
+Couldn't restore that version	그 버전을 복원하지 못했습니다
+Save back to the original PDF	원래 PDF에 저장
+Saved into the original PDF	원래 PDF에 저장했습니다
+Couldn't write the original file. Use Export as PDF instead	원래 파일에 쓸 수 없습니다. 대신 PDF로 내보내기를 쓰세요
+Due today ({0})	오늘 복습 ({0})
+Copy this page's text	이 페이지 글자 복사
+This page has no text yet	이 페이지에는 아직 글자가 없습니다
+Copied the page's text	페이지 글자를 복사했습니다

@@ -3,4 +3,6 @@
 <full-backup-content>
     <exclude domain="sharedpref" path="agent.xml" />
     <exclude domain="sharedpref" path="ai-ocr.xml" />
+    <!-- Earlier versions of notes stay on the tablet; the notes themselves are what is backed up. -->
+    <exclude domain="file" path="history/" />
 </full-backup-content>

@@ -6,6 +6,11 @@ plugins {
 
 android {
     namespace = "com.notesis"
+    // Lint is run for one thing (apk.yml): calls a supported Android (10 on) does not have.
+    lint {
+        checkOnly += "NewApi"
+        abortOnError = true
+    }
     compileSdk = 36
     ndkVersion = "28.2.13676358"
     externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
@@ -16,8 +21,8 @@ android {
         // dependable from Q onward, even though ink itself declares minSdk 23.
         minSdk = 29
         targetSdk = 36
-        versionCode = 250
-        versionName = "0.99.9"
+        versionCode = 251
+        versionName = "0.99.10"
         testInstrumentationRunner = "com.notesis.CustomizationInstrumentation"
         // Ship arm64 for the tablet; opt into x86_64 for emulator GPU checks.
         ndk { abiFilters += providers.gradleProperty("notesis.testAbi").getOrElse("arm64-v8a") }

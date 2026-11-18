@@ -228,7 +228,8 @@ internal class InkTileCache(
             oldPages.remove()
         }
         val oldTiles = tiles.entries.iterator()
-        while ((layerBytes > byteBudget || tiles.size > MAX_TILES) && oldTiles.hasNext()) {
+        val limit = sharedLimit()
+        while ((layerBytes > limit || tiles.size > MAX_TILES) && oldTiles.hasNext()) {
             val tile = oldTiles.next().value
             if (tile.key in frameTiles) continue
             discard(tile)
@@ -238,6 +239,24 @@ internal class InkTileCache(
         // The visible frame wins over the cache budget. Only off-screen entries
         // may be discarded; deleting a queued node makes that ink disappear.
         cleanupNanos = System.nanoTime() - cleanupStarted
+    }
+
+    /**
+     * This cache's share of one budget for every canvas on screen. The note,
+     * its pop-up panel and the parts of a split each held a whole budget of
+     * tiles; together they were three times what one screen should hold on a
+     * 4 GB tablet. Now the others' tiles count against this one's room - never
+     * below a quarter of its own, and only tiles off screen are ever let go.
+     */
+    private fun sharedLimit(): Int {
+        var others = 0
+        for (cache in live) if (cache !== this) others += cache.layerBytes
+        val shared = (byteBudget * SHARED_BUDGET_FACTOR).toInt() - others
+        return shared.coerceIn(byteBudget / 4, byteBudget)
+    }
+
+    init {
+        live += this
     }
 
     private fun visibleTiles(viewport: RectF, scale: Float): Long {
@@ -729,6 +748,10 @@ internal class InkTileCache(
     }
 
     companion object {
+        /** Every tile cache alive, for [sharedLimit]; touched on the main thread only. */
+        private val live: MutableSet<InkTileCache> = java.util.Collections.newSetFromMap(java.util.WeakHashMap())
+        /** How much of one cache's budget all of them together may hold. */
+        private const val SHARED_BUDGET_FACTOR = 1.5f
         /** Tiles on workers at once, across the view; the rest wait a frame. */
         private const val MAX_RASTERING = 12
         private const val MAX_TILES = 128

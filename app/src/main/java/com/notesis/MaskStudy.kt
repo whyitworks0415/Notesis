@@ -6,6 +6,34 @@ import org.json.JSONObject
 import java.io.File
 import kotlin.math.roundToInt
 
+/** Which of a page's masks a study round asks: all, the ones last answered wrong, or the ones due today. */
+enum class StudyFilter { ALL, WRONG, DUE }
+
+/** Longest gap between reviews of a mask that keeps being answered right, in days. */
+internal const val MAX_REVIEW_INTERVAL = 60
+
+/**
+ * Spaced review, in its simplest form: a right answer doubles the gap before
+ * the mask is asked again (1, 2, 4, 8 … days, up to [MAX_REVIEW_INTERVAL]); a
+ * wrong one brings it back today and starts the gaps over.
+ */
+internal fun answered(record: MaskRecord, right: Boolean, today: Long): MaskRecord =
+    if (right) {
+        val interval = (if (record.interval <= 0) 1 else record.interval * 2).coerceAtMost(MAX_REVIEW_INTERVAL)
+        record.copy(right = record.right + 1, last = MaskRecord.RESULT_RIGHT, interval = interval, due = today + interval)
+    } else {
+        record.copy(wrong = record.wrong + 1, last = MaskRecord.RESULT_WRONG, interval = 0, due = today)
+    }
+
+/** Due on [today]: never studied, or its next review has come. */
+internal fun maskDue(record: MaskRecord, today: Long): Boolean = record.due <= today
+
+/** Today, as days since 1970 in the tablet's time zone. */
+internal fun today(): Long {
+    val now = System.currentTimeMillis()
+    return (now + java.util.TimeZone.getDefault().getOffset(now)) / 86_400_000L
+}
+
 /** What has been learnt about one strip of tape: its name and how recall has gone. */
 data class MaskRecord(
     val name: String = "",
@@ -13,6 +41,10 @@ data class MaskRecord(
     val wrong: Int = 0,
     /** The most recent answer: [RESULT_NONE], [RESULT_RIGHT] or [RESULT_WRONG]. */
     val last: Int = RESULT_NONE,
+    /** Days until it is asked again after a right answer; 0 until one, and again after a wrong one. */
+    val interval: Int = 0,
+    /** The day (days since 1970) it is next due; 0 for never studied, which is due at once. */
+    val due: Long = 0L,
 ) {
     companion object {
         const val RESULT_NONE = 0
@@ -42,6 +74,8 @@ class MaskStudy(private val file: File) {
                     right = entry.optInt("right"),
                     wrong = entry.optInt("wrong"),
                     last = entry.optInt("last"),
+                    interval = entry.optInt("interval"),
+                    due = entry.optLong("due"),
                 )
             }
         }
@@ -51,10 +85,10 @@ class MaskStudy(private val file: File) {
 
     fun rename(key: String, name: String) = update(key) { it.copy(name = name.trim()) }
 
-    fun answer(key: String, right: Boolean) = update(key) {
-        if (right) it.copy(right = it.right + 1, last = MaskRecord.RESULT_RIGHT)
-        else it.copy(wrong = it.wrong + 1, last = MaskRecord.RESULT_WRONG)
-    }
+    fun answer(key: String, right: Boolean, today: Long = today()) = update(key) { answered(it, right, today) }
+
+    /** Whether the mask [key] is due for review on [today]. */
+    fun isDue(key: String, today: Long = today()): Boolean = maskDue(record(key), today)
 
     /** Totals over the given masks: how many were last answered right, wrong, or not yet. */
     fun summary(keys: Collection<String>): Triple<Int, Int, Int> {
@@ -87,7 +121,9 @@ class MaskStudy(private val file: File) {
                 .put("name", record.name)
                 .put("right", record.right)
                 .put("wrong", record.wrong)
-                .put("last", record.last))
+                .put("last", record.last)
+                .put("interval", record.interval)
+                .put("due", record.due))
         }
         runCatching {
             file.parentFile?.mkdirs()

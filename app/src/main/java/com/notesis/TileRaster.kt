@@ -55,8 +55,9 @@ internal object TileRaster {
         pool.execute {
             if (job.cancelled) return@execute
             if (job.strokes.isEmpty()) { done(empty); return@execute }
-            val picture = if (InteractionGovernor.writing || RenderLoad.behind) synchronized(writingGate) { paintNow(job) }
-                else paintNow(job)
+            val picture = CoreBudget.run {
+                if (InteractionGovernor.writing || RenderLoad.behind) synchronized(writingGate) { paintNow(job) } else paintNow(job)
+            }
             if (!job.cancelled) done(picture)
         }
     }

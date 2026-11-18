@@ -4,6 +4,7 @@
     <cloud-backup>
         <exclude domain="sharedpref" path="agent.xml" />
         <exclude domain="sharedpref" path="ai-ocr.xml" />
+        <exclude domain="file" path="history/" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="agent.xml" />

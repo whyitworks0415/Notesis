@@ -112,3 +112,24 @@ internal object RenderLoad {
 
     private const val BEHIND_HOLD_MS = 300L
 }
+
+/**
+ * One budget of cores for the app's background workers - pages being read in
+ * and tiles being painted - which each had a pool of their own sized to the
+ * whole tablet: on eight cores that was up to nine busy threads beside the UI
+ * and render threads. A worker takes a core from here for each piece of work
+ * and gives it back after; two are always left to the screen.
+ */
+internal object CoreBudget {
+    val size: Int = (Runtime.getRuntime().availableProcessors() - 2).coerceAtLeast(2)
+    private val cores = java.util.concurrent.Semaphore(size, true)
+
+    /** Runs [work] holding one core; waiting for one can be interrupted, as a cancelled load is. */
+    inline fun <T> run(work: () -> T): T {
+        acquire()
+        try { return work() } finally { release() }
+    }
+
+    fun acquire() = cores.acquire()
+    fun release() = cores.release()
+}
