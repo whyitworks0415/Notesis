@@ -4864,6 +4864,17 @@ private fun NoteScreen(
         val side = if (engine == OcrEngine.AI) AiOcr.detail(context).maxSide else PICTURE_OCR_SIDE
         view.renderLassoPicture(side) { picture ->
             if (picture == null) { show(null, "Nothing to read"); return@renderLassoPicture }
+            if (engine == OcrEngine.LENS) {
+                scope.launch {
+                    val uri = try {
+                        withContext(Dispatchers.IO) { captureUri(context, picture) }
+                    } finally {
+                        picture.recycle()
+                    }
+                    show(emptyList(), if (uri == null) "Nothing to read" else openInLens(context, uri))
+                }
+                return@renderLassoPicture
+            }
             scope.launch {
                 try {
                     when (engine) {
@@ -7257,7 +7268,7 @@ private fun NoteScreen(
                 aiReady = AiOcr.key(context).isNotBlank(),
                 onReadAgain = { engine, aiMode ->
                     setOcrEngine(context, engine)
-                    AiOcr.setMode(context, aiMode)
+                    if (engine != OcrEngine.LENS) AiOcr.setMode(context, aiMode)
                     regionOcrLines = null
                     readSelection(engine, aiMode)
                 },
@@ -8512,6 +8523,30 @@ private fun captureUri(
         context.packageName + ".files",
         file,
     )
+}
+
+/** The Google app, whose image share target is Google Lens. */
+private const val GOOGLE_APP = "com.google.android.googlequicksearchbox"
+
+/**
+ * Hands the picture at [uri] to Google Lens, through the Google app's share
+ * target; without the Google app, to whichever app is picked from the share
+ * sheet (a gallery's own text extraction, say). What happened, to show.
+ */
+private fun openInLens(context: android.content.Context, uri: Uri): String {
+    val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+        type = "image/png"
+        putExtra(android.content.Intent.EXTRA_STREAM, uri)
+        clipData = android.content.ClipData.newRawUri("", uri)
+        addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    return try {
+        context.startActivity(android.content.Intent(send).setPackage(GOOGLE_APP))
+        "Opened in Google Lens. Select the text there, copy it, then come back and paste it here."
+    } catch (_: android.content.ActivityNotFoundException) {
+        runCatching { context.startActivity(android.content.Intent.createChooser(send, null)) }
+        "Google Lens was not found, so the picture was offered to other apps. Copy the text there and paste it here."
+    }
 }
 
 /** Copies [file] where the share sheet may read it and offers it to other apps. */

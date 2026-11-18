@@ -96,4 +96,10 @@ class OcrEnginesTest {
         assertTrue(aiOcrPrompt(AiOcrMode.MATH).contains("LaTeX"))
         assertTrue(aiOcrPrompt(AiOcrMode.TABLE).contains("Markdown"))
     }
+
+    @Test fun lensIsAWayOfItsOwnAndKeysStayUnique() {
+        assertEquals(OcrEngine.LENS, OcrEngine.of("lens"))
+        assertEquals(OcrEngine.INK, OcrEngine.of("nothing like it"))
+        assertEquals(OcrEngine.entries.size, OcrEngine.entries.map { it.key }.toSet().size)
+    }
 }

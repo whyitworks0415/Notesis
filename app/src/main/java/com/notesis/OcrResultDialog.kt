@@ -68,14 +68,15 @@ internal fun OcrResultDialog(
                 note?.let {
                     Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                if (lines.isEmpty()) {
+                if (lines.isEmpty() && engine != OcrEngine.LENS) {
                     Text("No text recognized")
                 } else {
+                    // After Lens nothing was read here: the field takes the text pasted back from it.
                     OutlinedTextField(
                         value = text,
                         onValueChange = { text = it },
                         modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Recognized text") },
+                        label = { Text(if (lines.isEmpty()) "Paste the text from Lens here" else "Recognized text") },
                     )
                     val alternatives = lines.withIndex().filter { it.value.readings.size > 1 }
                     if (alternatives.isNotEmpty()) {

@@ -26,6 +26,9 @@ import kotlin.coroutines.resumeWithException
  *    Kit's text recogniser (Korean and Latin) on the tablet. Reads printed
  *    text, a PDF under the pen, pictures on the page, and neat handwriting.
  *  - Both, side by side: the two above, each line offered both ways.
+ *  - Google Lens: the selection's picture handed to Google Lens through the
+ *    Google app, for joined-up writing the on-tablet readers miss; free and
+ *    keyless, the text is copied there and pasted back into the result.
  *  - Scanning: the camera's document scanner makes a note, and its pages
  *    are read the picture way so the note can be searched.
  *  - AI: a small picture of the selection sent to Google's Gemini with the
@@ -39,6 +42,7 @@ internal enum class OcrEngine(val key: String, val label: String, val about: Str
     INK("ink", "Handwriting strokes", "On the tablet. Reads the strokes as they were written: best for handwriting."),
     PICTURE("picture", "Text in the picture", "On the tablet. Reads the selection as an image: printed text, PDFs, pictures."),
     BOTH("both", "Both, side by side", "On the tablet. Strokes and picture together; each line offered both ways."),
+    LENS("lens", "Google Lens", "Opens a picture of the selection in Google Lens, which reads joined-up handwriting well. Free and needs no key; the picture goes to Google. Copy the text there, then paste it here."),
     AI("ai", "AI (Gemini, free key)", "Sends a small picture of the selection to Google Gemini with your own key.");
 
     companion object {
@@ -51,6 +55,8 @@ internal fun ocrEngine(context: Context): OcrEngine =
     OcrEngine.of(context.getSharedPreferences("pens", Context.MODE_PRIVATE).getString("ocrEngine", null))
 
 internal fun setOcrEngine(context: Context, engine: OcrEngine) {
+    // Lens hands the picture to another app; it is chosen each time, never the next selection's way by itself.
+    if (engine == OcrEngine.LENS) return
     context.getSharedPreferences("pens", Context.MODE_PRIVATE).edit().putString("ocrEngine", engine.key).apply()
 }
 

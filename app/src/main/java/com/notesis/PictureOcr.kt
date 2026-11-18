@@ -15,6 +15,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.max
 
+/** Smaller copies tried when the full-size picture reads little or nothing, as shares of its size. */
+private val PICTURE_RETRY_SCALES = floatArrayOf(0.5f, 0.25f)
+/** A reading with at least this many letters is not tried smaller. */
+private const val PICTURE_GOOD_ENOUGH = 4
+/** The shorter side below which a smaller copy is not tried. */
+private const val PICTURE_MIN_SIDE = 48
+
 /**
  * Text in a picture, read on the tablet by ML Kit's text recogniser (the
  * Korean model, which reads Latin text too). The model comes through Play
@@ -30,13 +37,29 @@ internal object PictureOcr {
     suspend fun read(context: Context, picture: Bitmap): Pair<List<OcrLine>?, String?> {
         if (!ensureModel(context)) return null to "The text model is still downloading. Try again in a moment."
         return runCatching {
-            val result = recognizer.process(InputImage.fromBitmap(picture, 0)).awaited()
-            val lines = result.textBlocks.flatMap { it.lines }
-                .sortedWith(compareBy({ it.boundingBox?.top ?: 0 }, { it.boundingBox?.left ?: 0 }))
-                .map { OcrLine(listOf(OcrReading(it.text, OCR_SOURCE_PICTURE))) }
-            lines to null
+            // Large handwriting in a thick pen came back as nothing at the full size: the
+            // recogniser looks for text of about printed size. Smaller copies are tried
+            // until one reads, and the reading with the most letters is kept.
+            var best = linesIn(picture)
+            for (factor in PICTURE_RETRY_SCALES) {
+                if (letters(best) >= PICTURE_GOOD_ENOUGH) break
+                val width = (picture.width * factor).toInt()
+                val height = (picture.height * factor).toInt()
+                if (minOf(width, height) < PICTURE_MIN_SIDE) break
+                val smaller = Bitmap.createScaledBitmap(picture, width, height, true)
+                val lines = try { linesIn(smaller) } finally { if (smaller !== picture) smaller.recycle() }
+                if (letters(lines) > letters(best)) best = lines
+            }
+            best to null
         }.getOrElse { null to "The text model is not available on this tablet" }
     }
+
+    private suspend fun linesIn(picture: Bitmap): List<OcrLine> =
+        recognizer.process(InputImage.fromBitmap(picture, 0)).awaited().textBlocks.flatMap { it.lines }
+            .sortedWith(compareBy({ it.boundingBox?.top ?: 0 }, { it.boundingBox?.left ?: 0 }))
+            .map { OcrLine(listOf(OcrReading(it.text, OCR_SOURCE_PICTURE))) }
+
+    private fun letters(lines: List<OcrLine>): Int = lines.sumOf { line -> line.readings.first().text.count { !it.isWhitespace() } }
 
     /** Plain text of [picture], lines in reading order; empty when nothing was read. */
     suspend fun textOf(context: Context, picture: Bitmap): String =

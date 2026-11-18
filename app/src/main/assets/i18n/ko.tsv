@@ -1921,3 +1921,8 @@ on	켜짐
 library not loaded	라이브러리를 불러오지 못함
 failed {0} times, off for this run	{0}번 실패해서 이번 실행에서는 꺼짐
 Some letters may have been missed. Joined-up writing often reads better with AI.	글자가 빠졌을 수 있습니다. 이어 쓴 글씨는 AI로 읽으면 더 잘 읽힐 때가 많습니다.
+Google Lens	Google 렌즈
+Opens a picture of the selection in Google Lens, which reads joined-up handwriting well. Free and needs no key; the picture goes to Google. Copy the text there, then paste it here.	선택한 부분을 그림으로 만들어 Google 렌즈에서 엽니다. 이어 쓴 손글씨도 잘 읽습니다. 무료이고 키가 필요 없지만, 그림이 Google로 전송됩니다. 렌즈에서 글자를 복사한 뒤 여기에 붙여 넣으세요.
+Paste the text from Lens here	렌즈에서 복사한 글자를 여기에 붙여 넣기
+Opened in Google Lens. Select the text there, copy it, then come back and paste it here.	Google 렌즈에서 열었습니다. 렌즈에서 글자를 골라 복사한 뒤, 돌아와서 여기에 붙여 넣으세요.
+Google Lens was not found, so the picture was offered to other apps. Copy the text there and paste it here.	Google 렌즈를 찾지 못해 다른 앱으로 그림을 보냈습니다. 그 앱에서 글자를 복사해 여기에 붙여 넣으세요.
