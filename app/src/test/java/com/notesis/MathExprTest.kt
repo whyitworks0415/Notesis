@@ -57,4 +57,12 @@ class MathExprTest {
         assertEquals("1.5E-7", formatNumber(1.5e-7))
         assertEquals("Undefined", formatNumber(Double.NaN))
     }
+
+    @Test
+    fun deepNestingIsRefusedInsteadOfCrashing() {
+        assertEquals(1.0, calc("(".repeat(100) + "1" + ")".repeat(100)), 1e-9)
+        val refused = runCatching { MathExpr.parse("(".repeat(5000) + "1") }.exceptionOrNull()
+        assertTrue(refused is MathError)
+        assertTrue(runCatching { MathExpr.parse("-".repeat(5000) + "1") }.exceptionOrNull() is MathError)
+    }
 }

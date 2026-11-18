@@ -7874,6 +7874,34 @@ class InkCanvasView @JvmOverloads constructor(
      * Where the selection is - page, box - and a text size that matches the
      * height of one line of it, for typed text taking its place.
      */
+    /**
+     * The selection as a picture, for reading text out of it: its strokes over
+     * what lies under them on the page (a PDF, pictures), on white, with a
+     * little room round them, the longer side [maxSide] pixels at most.
+     * Drawn on a worker; [done] is called on the main thread, with null when
+     * there is nothing selected.
+     */
+    fun renderLassoPicture(maxSide: Int, done: (Bitmap?) -> Unit) {
+        val page = pageOf(lassoPage)
+        if (!hasLassoSelection() || lassoBounds.isEmpty || page == null) { done(null); return }
+        val board = lassoPage == BOARD_INDEX
+        val pad = max(lassoBounds.width(), lassoBounds.height()) * 0.04f + 6f
+        val rect = RectF(lassoBounds).apply { inset(-pad, -pad) }
+        if (!board) rect.intersect(0f, 0f, page.width, page.height)
+        if (rect.width() < 2f || rect.height() < 2f) { done(null); return }
+        val strokes = lassoStrokes.toList()
+        val images = page.images.filter { RectF.intersects(rect, RectF(it.x, it.y, it.x + it.width, it.y + it.height)) }
+            .map { it to imageLoader?.invoke(it.id) }
+        val pdfIndex = if (!board && page.background == PageBackground.PDF) page.pdfPageIndex else -1
+        val scale = maxSide / max(rect.width(), rect.height())
+        val width = if (board) rect.right else page.width
+        val height = if (board) rect.bottom else page.height
+        refiner.execute {
+            val bitmap = renderRegion(rect, width, height, pdfIndex, strokes, images, scale)
+            post { if (disposed) bitmap?.recycle() else done(bitmap) }
+        }
+    }
+
     fun lassoPlacement(): Triple<Int, RectF, Float>? {
         if (!hasLassoSelection() || lassoBounds.isEmpty) return null
         return Triple(lassoPage, RectF(lassoBounds), (lassoBounds.height() * 0.6f).coerceIn(14f, 72f))

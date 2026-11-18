@@ -1641,6 +1641,18 @@ class NoteStore(context: Context) {
 
     fun pdfFile(id: String): File = File(root, "$id/doc.pdf")
 
+    /** A page's PDF text as kept beside it (extracted on import, or read from a scan); "" when there is none. */
+    fun pageText(id: String, pageId: String): String =
+        File(root, "$id/pages/$pageId.txt").takeIf { it.isFile }?.let { runCatching { it.readText() }.getOrNull() }.orEmpty()
+
+    /** Keeps [text] as a page's PDF text, written whole through a temporary file; false when it could not be. */
+    fun writePageText(id: String, pageId: String, text: String): Boolean = runCatching {
+        val dir = File(root, "$id/pages").apply { mkdirs() }
+        val tmp = File(dir, "$pageId.txt.tmp")
+        tmp.writeText(text)
+        tmp.renameTo(File(dir, "$pageId.txt")) || run { tmp.delete(); false }
+    }.getOrDefault(false)
+
     /** One entry of the outline a PDF carries inside it. */
     data class PdfOutlineEntry(val title: String, val pdfPage: Int, val level: Int)
 

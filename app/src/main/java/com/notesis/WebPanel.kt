@@ -602,7 +602,9 @@ private fun openExternally(context: android.content.Context?, url: String) {
  * browser never holds on to a screen that has gone.
  */
 internal object KeptBrowser {
-    private const val KEEP_MS = 10 * 60 * 1000L
+    // Three minutes: long enough to go to the next note and back, short enough
+    // that a chat page hidden behind the writing is not left ticking for long.
+    private const val KEEP_MS = 3 * 60 * 1000L
     private var kept: android.webkit.WebView? = null
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
     private val expire = Runnable { drop() }

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A long press on the app icon: a new note, as the widget's button makes one. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="new_note"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_new_note"
+        android:shortcutLongLabel="@string/shortcut_new_note">
+        <intent
+            android:action="com.notesis.widget.NEW_NOTE"
+            android:targetPackage="com.notesis"
+            android:targetClass="com.notesis.MainActivity" />
+    </shortcut>
+</shortcuts>

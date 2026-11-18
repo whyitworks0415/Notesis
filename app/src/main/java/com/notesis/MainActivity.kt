@@ -645,7 +645,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun acceptWidgetIntent(intent: android.content.Intent?) {
-        val action = intent?.action ?: return
+        // Android's "new note" (the default notes app, a stylus button or the
+        // taskbar, Android 14 on) is the widget's new note by another name.
+        val action = intent?.action?.let { if (it == ACTION_CREATE_NOTE) NotesWidget.ACTION_NEW else it } ?: return
         if (action != NotesWidget.ACTION_NEW && action != NotesWidget.ACTION_OPEN) return
         // Taken once: a rotation must not make another new note.
         intent.action = android.content.Intent.ACTION_MAIN
@@ -691,6 +693,8 @@ class MainActivity : ComponentActivity() {
 
 /** The intent Android's PDF viewer (Chrome's, among others) sends to have a PDF annotated; a constant from API 36 on. */
 private const val ACTION_ANNOTATE = "android.intent.action.ANNOTATE"
+/** Intent.ACTION_CREATE_NOTE (Android 14), spelt out so older versions read it as just another action. */
+private const val ACTION_CREATE_NOTE = "android.intent.action.CREATE_NOTE"
 
 private val dateFormat = SimpleDateFormat("MMM d, HH:mm", Locale.ENGLISH)
 
@@ -1297,6 +1301,38 @@ private fun HomeScreen(
         }
     }
 
+    // The camera's document scanner (ML Kit, through Play services): its PDF becomes a note, and the
+    // pages are read for text before it opens, so a scan is found by search like any typed PDF.
+    val scanDocument = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        if (result.resultCode != android.app.Activity.RESULT_OK) return@rememberLauncherForActivityResult
+        val scan = com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult.fromActivityResultIntent(result.data)
+        val pdf = scan?.pdf?.uri ?: return@rememberLauncherForActivityResult
+        busy = "Reading the scanned pages"
+        scope.launch {
+            val title = L10n.tr("Scan") + " " + java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.ROOT).format(java.util.Date())
+            val created = withContext(Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openInputStream(pdf)?.use { store.createFromPdf(title, it)?.let { id -> filedHere(id) } }
+                }.getOrNull()
+            }
+            if (created != null) PageTextOcr.fillScannedPages(context, store, created.id)
+            busy = null
+            revision++
+            if (created == null) importFailed = true else onOpen(created)
+        }
+    }
+    fun startScan() {
+        val activity = context as? android.app.Activity ?: return
+        val options = com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions.Builder()
+            .setGalleryImportAllowed(true)
+            .setResultFormats(com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions.RESULT_FORMAT_PDF)
+            .setScannerMode(com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions.SCANNER_MODE_FULL)
+            .build()
+        com.google.mlkit.vision.documentscanner.GmsDocumentScanning.getClient(options).getStartScanIntent(activity)
+            .addOnSuccessListener { sender -> scanDocument.launch(androidx.activity.result.IntentSenderRequest.Builder(sender).build()) }
+            .addOnFailureListener { report = "The document scanner is not available on this tablet" }
+    }
+
     val searchFocus = remember { androidx.compose.ui.focus.FocusRequester() }
     // Opened again by hand while the list is scrolled; each round button its own.
     var iconsOpen by remember { mutableStateOf(false) }
@@ -1689,6 +1725,7 @@ private fun HomeScreen(
                         DialOption("Import PDF", Reicons.PictureAsPdf) {
                             pickPdf.launch(arrayOf("application/pdf"))
                         },
+                        DialOption("Scan document", Reicons.AddPhotoAlternate) { startScan() },
                         DialOption("Markdown folder (vault)", Reicons.FolderOpen) { onOpenVault() },
                         DialOption("New note", Reicons.Edit) { naming = true },
                     ),
@@ -4252,6 +4289,10 @@ private fun NoteScreen(
     /** What the selection read as, line by line, for the person to choose and correct; null when not open. */
     var regionOcrLines by remember { mutableStateOf<List<OcrLine>?>(null) }
     var regionOcrBusy by remember { mutableStateOf(false) }
+    /** Which way the selection was last read (OcrEngines.kt), and what the reading said beside the text. */
+    var regionOcrEngine by remember { mutableStateOf(ocrEngine(context)) }
+    var regionOcrAiMode by remember { mutableStateOf(AiOcr.mode(context)) }
+    var regionOcrNote by remember { mutableStateOf<String?>(null) }
     val pen = settings[mode] ?: PenStore.DEFAULTS.getValue(EditMode.PEN)
     val eraserWidth = (settings[EditMode.ERASE] ?: PenStore.DEFAULTS.getValue(EditMode.ERASE)).width
     val tool = if (mode == EditMode.ERASE) Tool.ERASER else pen.drawingTool()
@@ -4725,6 +4766,53 @@ private fun NoteScreen(
     val liveZoom = remember { floatArrayOf(1f) }
     var zoomMenu by remember { mutableStateOf(false) }
     var canvas by remember { mutableStateOf<InkCanvasView?>(null) }
+    /**
+     * Reads the lasso selection the [engine] way and opens what it read. The
+     * picture ways draw the selection first (strokes over the page under them);
+     * the strokes way reads the ink itself, as it always did.
+     */
+    fun readSelection(engine: OcrEngine, aiMode: AiOcrMode) {
+        val view = canvas ?: return
+        val strokes = view.selectedLassoStrokes()
+        regionOcrEngine = engine
+        regionOcrAiMode = aiMode
+        regionOcrBusy = true
+        fun show(lines: List<OcrLine>?, note: String?) {
+            regionOcrBusy = false
+            regionOcrLines = lines.orEmpty()
+            regionOcrNote = note
+        }
+        if (engine == OcrEngine.INK) {
+            scope.launch {
+                val lines = withContext(Dispatchers.IO) { indexer.readingsOf(strokes) }
+                show(lines, if (lines == null) "Recognition model unavailable" else null)
+            }
+            return
+        }
+        val side = if (engine == OcrEngine.AI) AiOcr.detail(context).maxSide else PICTURE_OCR_SIDE
+        view.renderLassoPicture(side) { picture ->
+            if (picture == null) { show(null, "Nothing to read"); return@renderLassoPicture }
+            scope.launch {
+                try {
+                    when (engine) {
+                        OcrEngine.PICTURE -> PictureOcr.read(context, picture).let { (lines, why) -> show(lines, why) }
+                        OcrEngine.BOTH -> {
+                            val ink = withContext(Dispatchers.IO) { indexer.readingsOf(strokes) }.orEmpty()
+                            val (seen, why) = PictureOcr.read(context, picture)
+                            show(mergeOcrLines(ink, seen.orEmpty()), why)
+                        }
+                        else -> {
+                            val read = AiOcr.read(context, picture, aiMode)
+                            show(ocrLinesOf(read.text, OCR_SOURCE_AI), read.error
+                                ?: "Used ${read.inputTokens} tokens in, ${read.outputTokens} out")
+                        }
+                    }
+                } finally {
+                    picture.recycle()
+                }
+            }
+        }
+    }
     fun stopBenchmark() {
         benchmarkJob?.cancel()
         benchmarkJob = null
@@ -6330,6 +6418,53 @@ private fun NoteScreen(
                                 }, label = label)
                             }
                         }
+                        // Scanned pages have no text of their own; read here, they are found by search and agents.
+                        var scanReading by remember { mutableStateOf<String?>(null) }
+                        TextButton(enabled = scanReading == null, onClick = {
+                            scanReading = "Reading pages…"
+                            scope.launch {
+                                val kept = PageTextOcr.fillScannedPages(context, store, note.id)
+                                scanReading = null
+                                regionOcrText = if (kept > 0) "Read the text of ${countNoun(kept, "page")}"
+                                    else "No scanned pages without text"
+                            }
+                        }) { Text(scanReading ?: "Read text of scanned pages") }
+                    }
+                    SettingsCard {
+                        SettingsSectionHeader("AI text reading")
+                        SettingsNote("Reads a selection with Google Gemini when you pick AI after Read. Uses your own free API key " +
+                            "from Google AI Studio, kept only on this tablet. A small picture of the selection is sent to Google.")
+                        var aiKey by remember { mutableStateOf(AiOcr.key(context)) }
+                        var showKey by remember { mutableStateOf(false) }
+                        OutlinedTextField(
+                            value = aiKey,
+                            onValueChange = { aiKey = it; AiOcr.setKey(context, it) },
+                            singleLine = true,
+                            label = { Text("Gemini API key") },
+                            visualTransformation = if (showKey) androidx.compose.ui.text.input.VisualTransformation.None
+                                else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                            trailingIcon = { TextButton(onClick = { showKey = !showKey }) { Text(if (showKey) "Hide" else "Show") } },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        var aiModel by remember { mutableStateOf(AiOcr.model(context)) }
+                        OutlinedTextField(
+                            value = aiModel,
+                            onValueChange = { aiModel = it; AiOcr.setModel(context, it) },
+                            singleLine = true,
+                            label = { Text("Model") },
+                            supportingText = { Text("A light, free model reads text well; $AI_OCR_DEFAULT_MODEL is the default.") },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        var aiDetail by remember { mutableStateOf(AiOcr.detail(context)) }
+                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
+                            AiDetail.entries.forEach { detail ->
+                                SettingsChoiceChip(selected = detail == aiDetail, onClick = {
+                                    aiDetail = detail
+                                    AiOcr.setDetail(context, detail)
+                                }, label = detail.label)
+                            }
+                        }
+                        SettingsNote("Fewest tokens reads clear writing; pick a finer level for small or smudged writing.")
                     }
                     if (filing) FolderDialog(current = meta.folder, folders = remember { store.folders() },
                         onDismiss = { filing = false }, onPick = { store.setFolder(note.id, it); filing = false; edits++ })
@@ -6697,16 +6832,7 @@ private fun NoteScreen(
                     canvas?.deleteLassoSelection()
                     edits++
                 },
-                onOcr = {
-                    val strokes = canvas?.selectedLassoStrokes().orEmpty()
-                    regionOcrBusy = true
-                    scope.launch {
-                        val lines = withContext(Dispatchers.IO) { indexer.readingsOf(strokes) }
-                        if (lines == null) regionOcrText = "Recognition model unavailable"
-                        else regionOcrLines = lines
-                        regionOcrBusy = false
-                    }
-                },
+                onOcr = { readSelection(regionOcrEngine, regionOcrAiMode) },
                 onTransform = { factor, degrees ->
                     canvas?.transformLassoSelection(factor, degrees)
                     edits++
@@ -7022,7 +7148,8 @@ private fun NoteScreen(
         }
 
         if (regionOcrBusy) AlertDialog(
-            onDismissRequest = {}, title = { Text("Reading selected handwriting…") }, confirmButton = {},
+            onDismissRequest = {}, title = { Text(if (regionOcrEngine == OcrEngine.AI) "Asking the AI…" else "Reading the selection…") },
+            confirmButton = {},
         )
         regionOcrText?.let { message -> AlertDialog(
             onDismissRequest = { regionOcrText = null },
@@ -7033,6 +7160,16 @@ private fun NoteScreen(
         regionOcrLines?.let { lines ->
             OcrResultDialog(
                 lines = lines,
+                engine = regionOcrEngine,
+                aiMode = regionOcrAiMode,
+                note = regionOcrNote,
+                aiReady = AiOcr.key(context).isNotBlank(),
+                onReadAgain = { engine, aiMode ->
+                    setOcrEngine(context, engine)
+                    AiOcr.setMode(context, aiMode)
+                    regionOcrLines = null
+                    readSelection(engine, aiMode)
+                },
                 onCopy = { text ->
                     clipboard.setText(AnnotatedString(text))
                     regionOcrLines = null

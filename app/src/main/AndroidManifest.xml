@@ -43,6 +43,14 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Android's "new note" (Android 14 on): with Notesis picked as the default notes app,
+                 a stylus button or the taskbar opens a new note here. -->
+            <intent-filter>
+                <action android:name="android.intent.action.CREATE_NOTE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <!-- A long press on the app icon offers a new note. -->
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />

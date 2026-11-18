@@ -71,29 +71,32 @@ internal class AdaptiveStrokeStabilizer {
     private var windowStart = 0
     private var windowCount = 0
 
+    // The window's running sums, so each sample costs the same however long the
+    // window is: what enters is added, what leaves is taken off. In doubles, so
+    // the taking-off does not drift over a long stroke; they start again at zero
+    // with every stroke (reset).
+    private var windowSumX = 0.0
+    private var windowSumY = 0.0
+
+    private fun dropOldest() {
+        windowSumX -= windowX[windowStart]
+        windowSumY -= windowY[windowStart]
+        windowStart = (windowStart + 1) % WINDOW_CAPACITY
+        windowCount--
+    }
+
     private fun pushWindow(rawX: Float, rawY: Float, timeMillis: Long) {
-        if (windowCount == WINDOW_CAPACITY) {
-            windowStart = (windowStart + 1) % WINDOW_CAPACITY
-            windowCount--
-        }
+        if (windowCount == WINDOW_CAPACITY) dropOldest()
         val at = (windowStart + windowCount) % WINDOW_CAPACITY
         windowX[at] = rawX
         windowY[at] = rawY
         windowT[at] = timeMillis
+        windowSumX += rawX
+        windowSumY += rawY
         windowCount++
-        while (windowCount > 1 && timeMillis - windowT[windowStart] > windowMillis) {
-            windowStart = (windowStart + 1) % WINDOW_CAPACITY
-            windowCount--
-        }
-        var sumX = 0f
-        var sumY = 0f
-        for (i in 0 until windowCount) {
-            val index = (windowStart + i) % WINDOW_CAPACITY
-            sumX += windowX[index]
-            sumY += windowY[index]
-        }
-        x = sumX / windowCount
-        y = sumY / windowCount
+        while (windowCount > 1 && timeMillis - windowT[windowStart] > windowMillis) dropOldest()
+        x = (windowSumX / windowCount).toFloat()
+        y = (windowSumY / windowCount).toFloat()
     }
 
     fun reset(strength: Int, rawX: Float, rawY: Float, timeMillis: Long) {
@@ -101,6 +104,8 @@ internal class AdaptiveStrokeStabilizer {
         windowMillis = slidingWindowMillis(strength)
         windowStart = 0
         windowCount = 0
+        windowSumX = 0.0
+        windowSumY = 0.0
         if (slidingWindow && windowMillis > 0L) pushWindow(rawX, rawY, timeMillis)
         x = rawX
         y = rawY

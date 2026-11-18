@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The agent connection's token is a secret of this device: it is not backed up, nor moved to another device. -->
+<!-- The agent connection's token and the AI reading key are secrets of this device: not backed up, nor moved to another device. -->
 <full-backup-content>
     <exclude domain="sharedpref" path="agent.xml" />
+    <exclude domain="sharedpref" path="ai-ocr.xml" />
 </full-backup-content>

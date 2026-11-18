@@ -165,6 +165,9 @@ internal fun formatNumber(v: Double): String {
     return if (plain == "-0") "0" else plain
 }
 
+/** The most brackets, powers and signs one expression may nest; far past anything written by hand. */
+internal const val MAX_NESTING = 200
+
 private class Parser(private val text: String) {
     private var at = 0
 
@@ -211,7 +214,17 @@ private class Parser(private val text: String) {
         }
     }
 
+    /** How deep [unary] is: every bracket, power and sign nests through it. */
+    private var depth = 0
+
     private fun unary(): Expr {
+        // Deep nesting - thousands of brackets or minus signs, typed or pasted - would
+        // run the parser, and later the evaluation, out of stack and take the app down.
+        if (++depth > MAX_NESTING) throw MathError("Too deeply nested")
+        try { return signed() } finally { depth-- }
+    }
+
+    private fun signed(): Expr {
         val c = peek()
         if (c == '-') {
             at++

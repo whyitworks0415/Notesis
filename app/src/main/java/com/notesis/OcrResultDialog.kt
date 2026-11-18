@@ -22,6 +22,14 @@ import androidx.compose.ui.unit.dp
 @Composable
 internal fun OcrResultDialog(
     lines: List<OcrLine>,
+    /** How this was read, offered again as chips so another way is one tap. */
+    engine: OcrEngine = OcrEngine.INK,
+    aiMode: AiOcrMode = AiOcrMode.TEXT,
+    /** What the reading said beside the text: the tokens an AI reading cost, or why nothing came back. */
+    note: String? = null,
+    /** Whether a Gemini key has been put in; without one the AI way says where to add it. */
+    aiReady: Boolean = false,
+    onReadAgain: ((OcrEngine, AiOcrMode) -> Unit)? = null,
     onCopy: (String) -> Unit,
     onConvert: (String) -> Unit,
     onClose: () -> Unit,
@@ -40,6 +48,26 @@ internal fun OcrResultDialog(
                 Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(Ui.Space.s),
             ) {
+                if (onReadAgain != null) {
+                    Text("Read it another way", style = MaterialTheme.typography.labelLarge)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(Ui.Space.s),
+                        verticalArrangement = Arrangement.spacedBy(Ui.Space.xs)) {
+                        OcrEngine.entries.forEach { way ->
+                            SettingsChoiceChip(selected = way == engine, onClick = { onReadAgain(way, aiMode) }, label = way.label)
+                        }
+                    }
+                    if (engine == OcrEngine.AI) FlowRow(horizontalArrangement = Arrangement.spacedBy(Ui.Space.s),
+                        verticalArrangement = Arrangement.spacedBy(Ui.Space.xs)) {
+                        AiOcrMode.entries.forEach { mode ->
+                            SettingsChoiceChip(selected = mode == aiMode, onClick = { onReadAgain(OcrEngine.AI, mode) }, label = mode.label)
+                        }
+                    }
+                    Text(if (engine == OcrEngine.AI && !aiReady) "Add your Gemini API key in the note's settings first" else engine.about,
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                note?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 if (lines.isEmpty()) {
                     Text("No text recognized")
                 } else {
@@ -92,6 +120,9 @@ internal fun OcrResultDialog(
 }
 
 /** How a recognition language is shown: its own name, as the settings offer it. */
-private fun languageName(tag: String): String =
-    InkIndexer.OFFERED.firstOrNull { it.first == tag }?.second ?: tag
+private fun languageName(tag: String): String = when (tag) {
+    OCR_SOURCE_PICTURE -> L10n.tr("Picture")
+    OCR_SOURCE_AI -> L10n.tr("AI")
+    else -> InkIndexer.OFFERED.firstOrNull { it.first == tag }?.second ?: tag
+}
 

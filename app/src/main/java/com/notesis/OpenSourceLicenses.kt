@@ -99,8 +99,8 @@ internal val OPEN_SOURCE_COMPONENTS = listOf(
 
 /** Google's on-device recognizer is not open source; it comes under its own terms, linked rather than reproduced. */
 private const val ML_KIT_NOTE =
-    "ML Kit Digital Ink Recognition, used for handwriting search, is not open source and is covered by Google's ML Kit terms of service " +
-        "(https://developers.google.com/ml-kit/terms)."
+    "ML Kit Digital Ink Recognition, Text Recognition and Document Scanner, used for reading handwriting and pictures and for scanning, " +
+        "are not open source and are covered by Google's ML Kit terms of service (https://developers.google.com/ml-kit/terms)."
 
 internal fun licenseText(context: Context, component: OpenSourceComponent): String =
     component.texts.joinToString("\n\n────────\n\n") { path ->
