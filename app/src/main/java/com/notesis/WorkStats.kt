@@ -20,6 +20,8 @@ internal object WorkStats {
     /** Tiles painted on a worker (TileRaster), and the time the workers spent on them. */
     val tilesRastered = AtomicLong()
     val tileRasterNanos = AtomicLong()
+    /** Of those, the ones the GPU renderer drew from a page's mesh cache (NativeInk). */
+    val tilesNative = AtomicLong()
     val layerSettlesFull = AtomicLong()
     val layerSettlesTail = AtomicLong()
 
@@ -29,7 +31,7 @@ internal object WorkStats {
             "pdf ${pdfRenders.get()} (deferred ${pdfDeferred.get()}) · tiles recorded ${tilesRecorded.get()}" +
             " · layer settle full ${layerSettlesFull.get()}/tail ${layerSettlesTail.get()}\n" +
             "tiles painted off the render thread ${tilesRastered.get()}" +
-            " (${tileRasterNanos.get() / 1_000_000} ms on workers, ${tilesDeferred.get()} waits)"
+            " (${tileRasterNanos.get() / 1_000_000} ms on workers, ${tilesDeferred.get()} waits, ${tilesNative.get()} by the GPU renderer)"
 
     /** Ink tiles left for a later frame because this one's recording budget was spent. */
     val tilesDeferred = AtomicLong()

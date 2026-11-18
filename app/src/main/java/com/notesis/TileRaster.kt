@@ -33,6 +33,8 @@ internal object TileRaster {
         val dx: Float,
         val dy: Float,
         val size: Int,
+        /** Where the page's mesh cache lets the GPU renderer draw this tile instead; null to paint it here. */
+        val native: NativeTile? = null,
     ) {
         /** Set on the UI thread when the tile goes or changes; the worker stops at the next stroke. */
         @Volatile var cancelled = false
@@ -50,6 +52,9 @@ internal object TileRaster {
     /** Stands for a tile with no ink: nothing to draw, nothing to hold. */
     private val empty: Bitmap by lazy { Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888) }
 
+    /** A tile drawn from a page's mesh cache: the file, its stamp, and the tile's top-left corner in page units. */
+    class NativeTile(val meshFile: java.io.File, val stamp: Long, val left: Float, val top: Float)
+
     /** Paints [job] on a worker; [done] gets the picture, or null if it could not be made. Not called once cancelled. */
     fun paint(job: Job, done: (Bitmap?) -> Unit) {
         pool.execute {
@@ -64,6 +69,11 @@ internal object TileRaster {
 
     private fun paintNow(job: Job): Bitmap? {
         if (job.cancelled) return null
+        // The GPU renderer first, where the page's cache allows: one draw call for the whole tile.
+        job.native?.let { native ->
+            NativeInk.render(native.meshFile, native.stamp, native.left, native.top, job.scale, job.size, job.size)
+                ?.let { WorkStats.tilesNative.incrementAndGet(); return it }
+        }
         val started = System.nanoTime()
         val bitmap = runCatching { Bitmap.createBitmap(job.size, job.size, Bitmap.Config.ARGB_8888) }.getOrNull() ?: return null
         try {

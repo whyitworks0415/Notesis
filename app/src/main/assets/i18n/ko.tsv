@@ -1912,3 +1912,11 @@ Due today ({0})	오늘 복습 ({0})
 Copy this page's text	이 페이지 글자 복사
 This page has no text yet	이 페이지에는 아직 글자가 없습니다
 Copied the page's text	페이지 글자를 복사했습니다
+GPU ink drawing (experiment)	GPU 잉크 그리기 (실험)
+Draw ink with the GPU renderer	GPU 렌더러로 필기 그리기
+Keeps each page's ink as triangles beside it and draws dense pages from them in one batch, and shows a page from them while it loads. Not yet tried on every tablet: if ink looks wrong or the app closes, turn it off. Takes effect for pages read in after it is turned on.	페이지마다 필기를 삼각형으로 저장해 두고, 필기 많은 페이지를 한 번에 묶어 그리며, 페이지를 불러오는 동안에도 그것으로 보여 줍니다. 모든 태블릿에서 확인된 기능이 아닙니다. 필기가 이상하게 보이거나 앱이 꺼지면 끄세요. 켠 뒤에 새로 불러오는 페이지부터 적용됩니다.
+Now: {0}	지금: {0}
+off	꺼짐
+on	켜짐
+library not loaded	라이브러리를 불러오지 못함
+failed {0} times, off for this run	{0}번 실패해서 이번 실행에서는 꺼짐

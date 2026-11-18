@@ -5537,6 +5537,9 @@ private fun NoteScreen(
                         // The page as it was left, shown until its ink has been rebuilt.
                         pagePictureLoader = if (store.isLocked(note.id) || ready.first.layers.translucentLook() != null) null
                             else { page -> store.pagePicture(note.id, page.id) }
+                        // The GPU ink renderer's cache sits beside each page file (NativeInk, off unless switched on).
+                        NativeInk.enabled(context)
+                        pageFileOf = { page -> store.pageInkFile(note.id, page.id) }
                         // Dense pages let go as the note is scrolled are kept as pictures, so coming back to one shows
                         // it at once while its ink is rebuilt. Not for a locked note: its pages are not left as pictures.
                         if (!store.isLocked(note.id)) onPagePictures = { requests -> store.keepPagePictures(note.id, requests, prune = false) }

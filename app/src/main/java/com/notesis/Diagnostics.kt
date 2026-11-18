@@ -208,6 +208,7 @@ internal object Measurements {
             }
             appendLine(WorkStats.render())
             appendLine(RenderLoad.report())
+            appendLine("GPU ink renderer: ${NativeInk.status()}")
             appendLine(NoteOpenClock.render())
             appendLine(MemoryTrim.report())
             appendLine("Light mode: ${if (InteractionGovernor.lightMode) "on" else "off"} · slower device: ${if (InteractionGovernor.slowDevice) "yes" else "no"}")
@@ -368,6 +369,17 @@ internal fun DiagnosticsSettings(
             hint = "Shows live timings over the page and collects the numbers below. " +
                 "Measuring costs a little work, so leave it off when you are not looking.",
         )
+    }
+    SettingsCard {
+        SettingsSectionHeader("GPU ink drawing (experiment)")
+        var nativeOn by remember { mutableStateOf(NativeInk.enabled(context)) }
+        SettingsToggle(
+            "Draw ink with the GPU renderer", nativeOn, { on -> nativeOn = on; NativeInk.setEnabled(context, on) },
+            hint = "Keeps each page's ink as triangles beside it and draws dense pages from them in one batch, " +
+                "and shows a page from them while it loads. Not yet tried on every tablet: if ink looks wrong or " +
+                "the app closes, turn it off. Takes effect for pages read in after it is turned on.",
+        )
+        SettingsNote("Now: ${NativeInk.status()}")
     }
     SettingsCard {
         SettingsSectionHeader("Performance recording")

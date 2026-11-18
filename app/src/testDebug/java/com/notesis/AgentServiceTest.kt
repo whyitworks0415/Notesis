@@ -131,7 +131,8 @@ class AgentServiceTest {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
         while (pageCount() != 1 && System.nanoTime() < deadline) { Thread.sleep(20); idle() }
         assertEquals(1, pageCount())
-        idle()
+        // The log marks the change undone just after the page goes; under a busy run that can be a moment later.
+        while (!ChangeLog.all().first().undone && System.nanoTime() < deadline) { Thread.sleep(20); idle() }
         assertTrue(ChangeLog.all().first().undone)
     }
 

@@ -35,6 +35,8 @@ internal class InkTileCache(
      * Null keeps every tile on the GPU path (and tests off threads).
      */
     private val onRasterReady: ((Runnable) -> Unit)? = null,
+    /** The GPU renderer's cache for a page whose ink is still what it was made from (NativeInk); null otherwise. */
+    private val nativeSource: ((Page) -> InkCanvasView.NativeSource?)? = null,
 ) {
     private data class Key(val page: Page, val x: Int, val y: Int, val highlight: Boolean)
 
@@ -706,7 +708,11 @@ internal class InkTileCache(
         val version = tile.version
         val dx = (GUTTER_PX - tile.key.x * TILE_PX).toFloat()
         val dy = (GUTTER_PX - tile.key.y * TILE_PX).toFloat()
-        val job = TileRaster.Job(strokes, twins, tile.look, scale, dx, dy, EXTENT_PX)
+        // Drawn from the page's mesh cache in one batched draw when the whole tile is plain ink the cache holds.
+        val native = if (tile.excluded == null && tile.look == null && !tile.key.highlight)
+            nativeSource?.invoke(tile.key.page)?.let { TileRaster.NativeTile(it.meshFile, it.stamp, -dx / scale, -dy / scale) }
+            else null
+        val job = TileRaster.Job(strokes, twins, tile.look, scale, dx, dy, EXTENT_PX, native)
         tile.job = job
         rastering++
         TileRaster.paint(job) { bitmap -> ready.invoke(Runnable { finishRaster(tile, job, version, bitmap) }) }

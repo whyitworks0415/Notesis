@@ -1641,6 +1641,9 @@ class NoteStore(context: Context) {
 
     fun pdfFile(id: String): File = File(root, "$id/doc.pdf")
 
+    /** A page's ink file, the one its strokes are saved in. */
+    fun pageInkFile(id: String, pageId: String): File = File(root, "$id/pages/$pageId.bin")
+
     /** A page's PDF text as kept beside it (extracted on import, or read from a scan); "" when there is none. */
     fun pageText(id: String, pageId: String): String =
         File(root, "$id/pages/$pageId.txt").takeIf { it.isFile }?.let { runCatching { it.readText() }.getOrNull() }.orEmpty()
@@ -1793,7 +1796,8 @@ class NoteStore(context: Context) {
         // A page that was deleted this session leaves its file behind otherwise.
         val live = document.pages
             .flatMap {
-                listOf("${it.id}.bin", "${it.id}.mask", "${it.id}.txt", "${it.id}$INK_INDEX", "${it.id}$BOX_INDEX")
+                // .mesh: the GPU ink renderer's cache of the page's triangles (NativeInk), kept until its page goes.
+                listOf("${it.id}.bin", "${it.id}.mask", "${it.id}.txt", "${it.id}$INK_INDEX", "${it.id}$BOX_INDEX", "${it.id}.mesh")
             }
             .toSet() + "${Document.BOARD_PAGE_ID}$INK_INDEX"
         // The whiteboard's handwriting as read, kept beside the pages' for search.
@@ -2237,7 +2241,8 @@ class NoteStore(context: Context) {
             for (id in ids) {
                 val dir = File(root, id)
                 if (!dir.isDirectory) continue
-                dir.walkTopDown().filter { it.isFile }.forEach { file ->
+                // The GPU renderer's caches are made again from the strokes; not worth carrying in a backup.
+                dir.walkTopDown().filter { it.isFile && it.extension != "mesh" }.forEach { file ->
                     val name = "$id/" + file.relativeTo(dir).invariantSeparatorsPath
                     zip.putNextEntry(java.util.zip.ZipEntry(name))
                     file.inputStream().use { it.copyTo(zip) }

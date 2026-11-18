@@ -1681,6 +1681,52 @@ class InkCanvasView @JvmOverloads constructor(
      */
     internal var pagePictureLoader: ((Page) -> Bitmap?)? = null
 
+    /** A page's file on disk, for the GPU ink renderer's cache beside it (NativeInk); null where there is none. */
+    internal var pageFileOf: ((Page) -> java.io.File?)? = null
+
+    /** A page's mesh cache as it stands: the file, the page file's stamp, and the ink it was made from. */
+    internal class NativeSource(val meshFile: java.io.File, val stamp: Long, val revision: Long, val meshRevision: Long)
+
+    /** Pages whose cache holds exactly their strokes as they are now; main thread only. */
+    private val nativeReady = IdentityHashMap<Page, NativeSource>()
+    private val nativePending: MutableSet<Page> = Collections.newSetFromMap(IdentityHashMap())
+
+    /** The cache a tile of [page] may be drawn from, while the page is still what it was made from. */
+    internal fun nativeSourceOf(page: Page): NativeSource? {
+        val source = nativeReady[page] ?: return null
+        if (source.revision != page.revision || source.meshRevision != page.meshRevision || page.dirty) {
+            nativeReady.remove(page)
+            return null
+        }
+        return source
+    }
+
+    /**
+     * Writes (or rewrites) the GPU renderer's cache for [page] on a worker,
+     * once its strokes are read and match its file: a page with unsaved
+     * changes waits for its next reading.
+     */
+    private fun scheduleNativeCache(page: Page) {
+        if (!NativeInk.usable() || page === document.board || !page.loaded || page.dirty) return
+        val file = pageFileOf?.invoke(page) ?: return
+        if (!nativePending.add(page)) return
+        val strokes = page.strokes.toList()
+        val revision = page.revision
+        val meshRevision = page.meshRevision
+        val forDocument = document
+        STAND_IN_WORKER.execute {
+            val ok = runCatching { CoreBudget.run { NativeInk.writeCache(strokes, file) } }.getOrDefault(false)
+            val stamp = NativeInk.stampOf(file)
+            post {
+                nativePending.remove(page)
+                if (disposed || document !== forDocument) return@post
+                if (ok && page.revision == revision && page.meshRevision == meshRevision && !page.dirty) {
+                    nativeReady[page] = NativeSource(NativeInk.meshFileFor(file), stamp, revision, meshRevision)
+                } else nativeReady.remove(page)
+            }
+        }
+    }
+
     /** Pictures standing in for pages whose ink is still being built; UI thread only. */
     private val pagePictures = HashMap<String, PageStandIn>()
     private class PageStandIn(val bitmap: Bitmap) {
@@ -1723,9 +1769,14 @@ class InkCanvasView @JvmOverloads constructor(
         val wanted = pages.filter { !it.loaded && it.id !in pagePictures && standInsAsked.add(it.id) }
         if (wanted.isEmpty()) return
         val forDocument = document
+        // Drawn from the GPU renderer's cache where there is one: sharp at the zoom in use, straight from the
+        // triangles Ink made last time, before Ink has read a stroke of the page again.
+        val files = if (NativeInk.usable()) wanted.associateWith { pageFileOf?.invoke(it) } else emptyMap()
+        val sharpness = (currentScale() * 1.25f).coerceIn(0.25f, 4f)
         STAND_IN_WORKER.execute {
             for (page in wanted) {
-                val bitmap = runCatching { loader(page) }.getOrNull() ?: continue
+                val bitmap = files[page]?.let { file -> runCatching { cachedPicture(page, file, sharpness) }.getOrNull() }
+                    ?: runCatching { loader(page) }.getOrNull() ?: continue
                 post {
                     if (disposed || this.document !== forDocument || page.loaded && pagePictures.size > MAX_STAND_INS) {
                         bitmap.recycle(); return@post
@@ -1737,6 +1788,16 @@ class InkCanvasView @JvmOverloads constructor(
                 }
             }
         }
+    }
+
+    /** [page] drawn from its mesh cache, its longer side at most [NATIVE_STAND_IN_PX]; null when there is no fresh cache. */
+    private fun cachedPicture(page: Page, file: java.io.File, sharpness: Float): Bitmap? {
+        val mesh = NativeInk.meshFileFor(file)
+        if (!mesh.isFile || page.width <= 0f || page.height <= 0f) return null
+        val scale = minOf(sharpness, NATIVE_STAND_IN_PX / maxOf(page.width, page.height))
+        val width = (page.width * scale).toInt().coerceAtLeast(1)
+        val height = (page.height * scale).toInt().coerceAtLeast(1)
+        return NativeInk.render(mesh, NativeInk.stampOf(file), 0f, 0f, scale, width, height)
     }
 
     /** Hears of dense pages worth a picture as they are let go, so arriving at one again is quick. */
@@ -6740,6 +6801,7 @@ class InkCanvasView @JvmOverloads constructor(
                     if (!page.settleLayers(document.layers)) dry.adoptStrokeIndex(page, grids[page])
                     page.tessellatedFor = minOf(target, LOAD_TESSELLATION_SCALE)
                     page.renderState = RenderState.ViewportCached
+                    scheduleNativeCache(page)
                 }
                 dry.adoptTwins(twins)
                 if (!current) {
@@ -10187,6 +10249,7 @@ class InkCanvasView @JvmOverloads constructor(
             query = ::strokesIn,
             // A tile painted on a worker comes back here and is shown in the next frame.
             onRasterReady = { work -> rasterHandler.post { work.run(); postInvalidateOnAnimation() } },
+            nativeSource = { page -> nativeSourceOf(page) },
         )
 
         fun clearInkTiles() = inkTiles.clear()
@@ -11645,6 +11708,8 @@ class InkCanvasView @JvmOverloads constructor(
         const val BOARD_REBUILDS_PER_FRAME = 24
         /** Kept pictures held at once while their pages load; each is up to a screenful. */
         const val MAX_STAND_INS = 4
+        /** Longest side, in pixels, a page is drawn at from its mesh cache to stand in while it loads. */
+        const val NATIVE_STAND_IN_PX = 2048f
         /** The longest a finished live stroke waits for the frame that draws it on the page. */
         const val WET_HANDOFF_TIMEOUT_MS = 250L
         /** The widest a recorded square of the board is drawn at; past it the recording is cut, never the ink lost. */

@@ -63,7 +63,7 @@ internal class NoteHistory(filesDir: File) {
     }
 
     private fun newestChange(dir: File): Long =
-        dir.walkTopDown().filter { it.isFile && it.name != "doc.pdf" }.maxOfOrNull { it.lastModified() } ?: 0L
+        dir.walkTopDown().filter { it.isFile && it.name != "doc.pdf" && it.extension != "mesh" }.maxOfOrNull { it.lastModified() } ?: 0L
 
     /** The space every version takes, in bytes. */
     fun totalBytes(): Long = root.walkTopDown().filter { it.isFile }.sumOf { it.length() }
@@ -71,10 +71,15 @@ internal class NoteHistory(filesDir: File) {
     private fun copyNote(source: File, target: File) {
         target.mkdirs()
         source.listFiles().orEmpty().forEach { file ->
-            if (file.name in KEPT_IN_PLACE || file.name.endsWith(".tmp") || file.name.endsWith(".part")) return@forEach
-            file.copyRecursively(File(target, file.name), overwrite = true)
+            if (file.name in KEPT_IN_PLACE || !worthKeeping(file)) return@forEach
+            if (file.isDirectory) copyNote(file, File(target, file.name))
+            else file.copyTo(File(target, file.name), overwrite = true)
         }
     }
+
+    /** Half-written files and the GPU renderer's caches (made again from the strokes) are not part of a version. */
+    private fun worthKeeping(file: File): Boolean =
+        !file.name.endsWith(".tmp") && !file.name.endsWith(".part") && file.extension != "mesh"
 
     private fun prune(id: String) {
         versions(id).drop(KEEP_PER_NOTE).forEach { File(File(root, id), it.toString()).deleteRecursively() }
