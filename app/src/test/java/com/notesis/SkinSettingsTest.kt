@@ -33,13 +33,18 @@ class SkinSettingsTest {
         assertEquals(32f, SkinSettings.fromJson("""{"spotiglassCorner": "x"}""").corner, 0f)
     }
 
-    @Test fun `saving keeps what the glass looks saved, for when they come back`() {
-        val before = """{"blur": 12.5, "liquidStyle": "MORNYE", "mornye": {"accent": "BLUE"}, "accent": 1}"""
-        val saved = JSONObject(SkinSettings(accent = 2).toJson(kept = before))
+    @Test fun `the glass looks' settings saved while they were out come back as they were`() {
+        // Saved by 0.90 and kept untouched by the Material-only versions since.
+        val before = """{"blur": 12.5, "liquidStyle": "MORNYE", "mornye": {"accent": "BLUE"}, "accent": 1, "later": 3}"""
+        val read = SkinSettings.fromJson(before)
+        assertEquals(12.5f, read.blur, 0f)
+        assertEquals(LiquidStyle.MORNYE, read.liquidStyle)
+        val saved = JSONObject(read.copy(accent = 2).toJson(kept = before))
         assertEquals(12.5, saved.getDouble("blur"), 0.0)
         assertEquals("MORNYE", saved.getString("liquidStyle"))
-        assertEquals("BLUE", saved.getJSONObject("mornye").getString("accent"))
         assertEquals(2, saved.getInt("accent"))
+        // A key this version does not read is kept for the one that does.
+        assertEquals(3, saved.getInt("later"))
     }
 
     @Test fun `an unreadable save is a fresh install's look`() {

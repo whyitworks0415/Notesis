@@ -26,13 +26,14 @@ import org.robolectric.annotation.GraphicsMode
 class SideSheetScreenshotTest {
     @get:Rule val compose = createComposeRule()
 
-    private fun shoot(name: String, content: @Composable () -> Unit) {
+    private fun shoot(name: String, skin: Skin = Skin.MATERIAL, content: @Composable () -> Unit) {
         val look = SkinSettings(themeMode = AppThemeMode.LIGHT, dynamicColor = false)
         compose.setContent {
-            MaterialTheme(colorScheme = skinColors(lookScheme(null, look), look), typography = chromeTypography()) {
-                ProvideSkin(look) {
+            MaterialTheme(colorScheme = skinColors(lookScheme(null, look), look, skin), typography = chromeTypography()) {
+                ProvideSkin(skin, look) {
                     CompositionLocalProvider(LocalMotionAllowed provides false) {
-                        Box(Modifier.fillMaxSize().background(Color(0xFFE8E4DC))) { content() }
+                        Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.linearGradient(
+                            listOf(Color(0xFFE8E4DC), Color(0xFF7FB3E8), Color(0xFFF2B5C4))))) { content() }
                     }
                 }
             }
@@ -53,5 +54,13 @@ class SideSheetScreenshotTest {
     @Test fun agent() {
         AgentChat.open = true
         shoot("sheet_agent") { AgentSidebarHost() }
+    }
+
+    @Test fun glassmorphism() = shoot("sheet_glassmorphism", Skin.GLASSMORPHISM) {
+        SettingsSidebarFrame("Settings", false, {}, {}, 420f, {}) { SettingsNote("Body", Modifier.padding(Ui.Space.l)) }
+    }
+
+    @Test fun liquidGlass() = shoot("sheet_liquid", Skin.LIQUID_GLASS) {
+        SettingsSidebarFrame("Settings", false, {}, {}, 420f, {}) { SettingsNote("Body", Modifier.padding(Ui.Space.l)) }
     }
 }

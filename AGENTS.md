@@ -90,9 +90,14 @@ S6 Lite, SM-P61x/P62x). Kotlin, Jetpack Compose for the chrome, a custom
 - The pen path is latency-critical: no allocation, Compose state writes or
   file work per pen event. Background work gives way while the pen is down
   (`InteractionGovernor`, `penWorking`).
-- Chrome is Material only (`SkinSurface`, `skinMaterial`, `LocalSkinSettings`).
-  The glass looks and the pouring popup animation are kept in `archive/`,
-  outside the build, and come back only when the owner asks (`Todo.md`, step 7).
+- Chrome has three looks, chosen in Appearance (`AppSkin`, `LocalSkin`): Material,
+  Glassmorphism and Liquid glass, back since 0.99.18 at the owner's request. All
+  chrome goes through `SkinSurface` / `skinMaterial`, so a look lands everywhere;
+  the glass looks through what the note and library screens record
+  (`recordBackdrop`, `captureLiquidGlassBackdrop`), never through the chrome. The
+  Liquid glass lens needs the Backdrop library, whose classes are Java 21: JVM
+  tests that load it run on Java 21 (CI's screenshot step). The pouring popup
+  animation stays in `archive/popup-pour`.
   New things that appear grow out of what made them (`PopupGrowth`,
   `revealOutOf`).
 - Icons are static Material Symbols by default, with Reicons
@@ -146,7 +151,7 @@ S6 Lite, SM-P61x/P62x). Kotlin, Jetpack Compose for the chrome, a custom
 | Agent sidebar | `AgentChat.kt` (requests to Termux by its RUN_COMMAND, the `ask` helper, answers), `AgentSidebar.kt` (the side sheet, opening Termux beside or in a window) |
 | Agent connection (MCP) | `AgentGuide.kt` (the guide and MCP prompts every agent gets), `McpProtocol.kt` (pure JSON-RPC, pictures, prompts), `AgentServer.kt` (HTTP and its checks), `AgentGateway.kt` (ask or make at once), `ChangeCards.kt` (what a command says it does, the log, the questions waiting), `AgentConnection.kt` (settings, `AgentRuntime`, `AgentService`), `AgentPanel.kt` (setup panel, approval card), `OpenNotes.kt` (notes on screen, `SharedNotes`) |
 | Backup, widget, updates | `AutoBackup.kt` (off by default), `NotesWidget.kt`, `AppUpdate.kt` (beta code) |
-| Look, popups | `Skin.kt`, `SkinSettings.kt` (the corner's saved key still says `spotiglass…`), `PopupGrowth.kt`, `PopupReveal.kt`, `AppDialog.kt`, `AppMenu.kt` |
+| Look, popups | `Skin.kt`, `SkinKind.kt` (`Skin`, `AppSkin`), `SkinSettings.kt` (the corner's saved key still says `spotiglass…`), `LiquidGlass*.kt`, `LiquidStyles.kt`, `MornyeLook.kt`, `Frost.kt`, `PopupGrowth.kt`, `PopupReveal.kt`, `AppDialog.kt`, `AppMenu.kt` |
 | Roadmap, archive | `Todo.md` (work in order), `archive/` (glass looks, not built) |
 
 ## Stable release and native checks

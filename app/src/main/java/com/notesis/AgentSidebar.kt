@@ -26,6 +26,9 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.widthIn
@@ -210,8 +213,14 @@ private fun AgentSidebar(appear: () -> Float) {
             IconButton(onClick = { chat.newThread(context) }) { Icon(AppIcons.addPage, contentDescription = "New conversation") }
         },
     ) {
+    // Above the keyboard: typing, the conversation and the field stay in sight, the newest at the bottom.
+    val keyboard = WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current)
+    LaunchedEffect(keyboard > 0) {
+        val count = chat.messages.size + (if (waitingHere) 1 else 0)
+        if (keyboard > 0 && count > 0) list.scrollToItem(count - 1, Int.MAX_VALUE)
+    }
     Column(
-        Modifier.fillMaxSize().padding(horizontal = Ui.Space.l, vertical = Ui.Space.s),
+        Modifier.fillMaxSize().imePadding().padding(horizontal = Ui.Space.l, vertical = Ui.Space.s),
         verticalArrangement = Arrangement.spacedBy(Ui.Space.s),
     ) {
         // The conversations, a tab each: held, a tab closes.

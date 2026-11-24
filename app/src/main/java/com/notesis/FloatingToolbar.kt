@@ -668,7 +668,14 @@ internal fun FloatingToolbar(
                                 columns.forEach { tools ->
                                     val selected = if (open && page == ToolbarMenu.AI) tools.indexOf(GlassToolbarTool.AI)
                                         else tools.indexOfFirst { it.mode == mode }
-                                    ToolStrip(tools, selected, compact = false, corner = outer,
+                                    // Liquid glass: the selection is a lens that rises and slides with the finger.
+                                    if (LocalSkin.current == Skin.LIQUID_GLASS) LiquidGlassBar(
+                                        tools.map { LiquidGlassItem(it.label, it.icon(), toolColors[it.mode]) },
+                                        selectedIndex = selected, onSelected = { pick(tools[it]) },
+                                        showLabels = false, compact = false, corner = outer,
+                                        surface = GlassBarSurface.LIQUID, vertical = true, role = ChromeRole.TOOLBAR,
+                                        holdFor = { tools.getOrNull(it) == GlassToolbarTool.AI })
+                                    else ToolStrip(tools, selected, compact = false, corner = outer,
                                         ownSurface = true, toolColors = toolColors, onPick = ::pick, vertical = true)
                                 }
                             }
@@ -700,7 +707,15 @@ internal fun FloatingToolbar(
                                 rows.forEach { tools ->
                                   val selected = if (open && page == ToolbarMenu.AI) tools.indexOf(GlassToolbarTool.AI)
                                       else tools.indexOfFirst { it.mode == mode }
-                                  ToolStrip(tools, selected, compact = full, corner = stripCorner,
+                                  // On the whole bar the strip has no glass of its own for a lens to bend: the pill slides flat there.
+                                  if (LocalSkin.current == Skin.LIQUID_GLASS) LiquidGlassBar(
+                                    tools.map { LiquidGlassItem(it.label, it.icon(), toolColors[it.mode]) },
+                                    selectedIndex = selected, onSelected = { pick(tools[it]) }, modifier = Modifier.fillMaxWidth(),
+                                    showLabels = false, compact = full, corner = stripCorner,
+                                    surface = if (full) GlassBarSurface.NONE else GlassBarSurface.LIQUID,
+                                    lift = !full, role = ChromeRole.TOOLBAR,
+                                    holdFor = { tools.getOrNull(it) == GlassToolbarTool.AI })
+                                  else ToolStrip(tools, selected, compact = full, corner = stripCorner,
                                     ownSurface = !full, toolColors = toolColors, onPick = ::pick)
                                 }
                               }

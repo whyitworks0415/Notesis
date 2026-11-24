@@ -21,8 +21,8 @@ android {
         // dependable from Q onward, even though ink itself declares minSdk 23.
         minSdk = 29
         targetSdk = 36
-        versionCode = 258
-        versionName = "0.99.17"
+        versionCode = 259
+        versionName = "0.99.18"
         testInstrumentationRunner = "com.notesis.CustomizationInstrumentation"
         // Ship arm64 for the tablet; opt into x86_64 for emulator GPU checks.
         ndk { abiFilters += providers.gradleProperty("notesis.testAbi").getOrElse("arm64-v8a") }
@@ -106,6 +106,9 @@ dependencies {
     implementation(platform("androidx.compose:compose-bom:2026.06.01"))
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui-tooling-preview")
+    // The Liquid glass look's lens: refraction and blur of what is behind the chrome (API 33+ shaders,
+    // a plain frost below). 1.0.6 is the newest release for this compileSdk 36 / AGP 8 line.
+    implementation("io.github.kyant0:backdrop:1.0.6")
     // The renderer behind @Preview. Without it the annotations compile and the
     // preview pane stays empty, which is why the chrome could only be looked at
     // by installing the app - see Previews.kt. Debug only: it is a development

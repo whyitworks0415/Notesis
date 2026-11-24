@@ -102,3 +102,9 @@ internal fun Modifier.revealOutOf(growth: PopupGrowth, corner: Dp, anchor: (Layo
  */
 internal fun Modifier.revealContent(growth: PopupGrowth, reveal: Boolean): Modifier =
     if (!reveal) this else graphicsLayer { alpha = popupContentAlpha(growth.height.value, growth.closing) }
+
+/** A corner that is read as it is drawn, for chrome whose rounding moves. */
+internal class LiveCornerSize(private val px: () -> Float) : androidx.compose.foundation.shape.CornerSize {
+    override fun toPx(shapeSize: androidx.compose.ui.geometry.Size, density: androidx.compose.ui.unit.Density): Float =
+        px().coerceIn(0f, kotlin.math.min(shapeSize.width, shapeSize.height) / 2f)
+}

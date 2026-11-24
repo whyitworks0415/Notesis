@@ -149,3 +149,14 @@ internal class SlideSpeed {
         return velocity
     }
 }
+
+/** The panels that share the end edge: one at a time. */
+internal enum class SideSheetSlot { PAGES, SETTINGS, LAYERS, AGENT }
+
+/**
+ * Which panel stays when [opened] are open and [shown] was the one there: the
+ * one just opened, which is any but [shown]; or [shown] if it is the only one
+ * left; or none.
+ */
+internal fun nextSideSheet(shown: SideSheetSlot?, opened: List<SideSheetSlot>): SideSheetSlot? =
+    opened.firstOrNull { it != shown } ?: opened.firstOrNull()

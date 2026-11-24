@@ -85,11 +85,21 @@ import kotlin.math.roundToInt
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.widthIn
 
+/** The name the appearance screens use for each skin: the one it has everywhere else. */
+internal val Skin.displayName: String
+    get() = label
+
+private val RefractionDirection.displayName: String
+    get() = when (this) {
+        RefractionDirection.RAISED -> "Raised"
+        RefractionDirection.INSET -> "Pressed in"
+    }
+
 /** What the toolbar preview is laid over. */
 internal enum class PreviewBackground(val label: String) {
     /** A written page: pen, pencil and highlighter, the thing the bar sits on all day. */
     PAGE("Page"),
-    /** Soft shapes of colour: something busy but quiet. */
+    /** Soft shapes of colour, for judging glass on something busy but quiet. */
     CALM("Calm"),
     /** A photo the person picked; kept as a small copy in the app's files. */
     PHOTO("Your photo"),
@@ -109,9 +119,11 @@ private const val PREVIEW_PHOTO_MAX_PX = 1600
 private fun previewPhotoFile(context: Context) = File(context.filesDir, PREVIEW_PHOTO)
 
 /**
- * A stage for the real toolbar: its own background, so the bar is judged
- * against something. Unless it is [interactive], nothing in it can be
- * touched: it is a picture of the bar, not a second bar.
+ * A stage for the real toolbar: its own background, recorded for the glass
+ * on it to look through, so the bar is judged against something without the
+ * note behind the panel being recorded or redrawn for it. Unless it is
+ * [interactive], nothing in it can be touched: it is a picture of the bar,
+ * not a second bar.
  */
 @Composable
 internal fun ToolbarPreviewStage(
@@ -122,16 +134,38 @@ internal fun ToolbarPreviewStage(
     interactive: Boolean = false,
     content: @Composable BoxScope.() -> Unit,
 ) {
+    val backdrop = rememberBackdrop(active = true)
+    val liquid = rememberLiquidGlassBackdrop()
+    // The bar is drawn shrunk to fit the stage, so its glass reads the stage
+    // by screen position and undoes that scale, as a popup's glass does.
+    val stageOrigin = remember { mutableStateOf(Offset.Zero) }
+    val aligned = remember(liquid) { GlassPopupBackdrop(liquid) { stageOrigin.value } }
     Box(modifier.clip(Ui.Shape.card)) {
-        Box(Modifier.matchParentSize().previewBackdrop(background, photo))
+        // The background goes inside the recording; the bar is outside it,
+        // or the glass would be looking at itself.
         Box(
-            Modifier.matchParentSize().then(
-                if (interactive) Modifier
-                else Modifier.clearAndSetSemantics { contentDescription = "Toolbar preview" },
-            ),
-            contentAlignment = Alignment.Center,
-            content = content,
+            Modifier
+                .matchParentSize()
+                .onGloballyPositioned { stageOrigin.value = it.positionOnScreen() }
+                .recordBackdrop(backdrop)
+                .captureLiquidGlassBackdrop(liquid)
+                .previewBackdrop(background, photo),
         )
+        CompositionLocalProvider(
+            LocalBackdrop provides backdrop,
+            LocalLiquidGlassBackdrop provides aligned,
+            LocalLiquidGlassHostBackdrop provides null,
+            LocalGlassPopupBackdrop provides null,
+        ) {
+            Box(
+                Modifier.matchParentSize().then(
+                    if (interactive) Modifier
+                    else Modifier.clearAndSetSemantics { contentDescription = "Toolbar preview" },
+                ),
+                contentAlignment = Alignment.Center,
+                content = content,
+            )
+        }
         // On top of the bar: it takes every touch, so the preview's buttons
         // never act, and leaves the events unconsumed for a scrolling parent.
         if (!interactive) Box(
@@ -241,7 +275,7 @@ private fun Modifier.previewBackdrop(kind: PreviewBackground, photo: ImageBitmap
  * The bar to try, in the look being set: tools that pick (the highlight
  * slides to them), Functions that opens from where it was tapped, the pen
  * row's swatches and width at the full size, and under it a switch and a
- * slider. Only the preview changes; the note's own tool
+ * slider in the same skin. Only the preview changes; the note's own tool
  * and pen are left alone. [sizeLevel] is the bar's real size.
  */
 @Composable
@@ -364,12 +398,12 @@ private suspend fun copyPreviewPhoto(context: Context, uri: Uri): Boolean = with
 }
 
 private enum class AppearanceGroup(val label: String) {
-    DISPLAY("Display"), STYLE("Style"), PANELS("Panels"), COLORS("Colors"), ICONS("Icons"), MOTION("Motion"),
+    DISPLAY("Display"), STYLE("Style"), PANELS("Panels"), GLASS("Glass"), COLORS("Colors"), ICONS("Icons"), MOTION("Motion"),
 }
 
 /**
  * One group of settings at a time under a preview of the real toolbar - the
- * style and toolbar first, then panels, colours and icons. The preview
+ * style and toolbar first, then panels, glass, colours and icons. The preview
  * and the group chips stay put and the group's controls have the rest of the
  * screen; on a wide screen the preview sits beside them instead.
  */
@@ -381,7 +415,13 @@ internal fun AppearanceSettings(
     /** The bar's size, 0 (the whole bar, 1/4) to 3 (one button, 4/4): chosen here, kept everywhere. */
     toolbarSize: Int = 1,
     onToolbarSize: (Int) -> Unit = {},
+    /** The look: the app's own, chosen here, unless a caller holds its own. */
+    skin: Skin = AppSkin.current,
+    onSkin: ((Skin) -> Unit)? = null,
 ) {
+    val skinContext = androidx.compose.ui.platform.LocalContext.current
+    @Suppress("NAME_SHADOWING")
+    val onSkin: (Skin) -> Unit = onSkin ?: { AppSkin.choose(skinContext, it) }
     // A slider reports every frame of a drag. Handed straight up, each frame
     // replaced the app's look: every screen under the sidebar recomposed - the
     // whole note, its page host and toolbar - and the look was written to
@@ -454,15 +494,21 @@ internal fun AppearanceSettings(
             when (group) {
                 AppearanceGroup.STYLE -> {
                     StyleGroup(
-                        settings, onChange, toolbarSize, onToolbarSize,
+                        skin, onSkin, settings, onChange, toolbarSize, onToolbarSize,
                         background, hasPhoto, ::choose, ::launchPicker,
                     )
                 }
                 AppearanceGroup.DISPLAY -> DisplayGroup()
                 AppearanceGroup.ICONS -> IconsGroup()
                 AppearanceGroup.MOTION -> MotionGroup()
-                AppearanceGroup.PANELS -> PanelsGroup(settings, onChange)
-                AppearanceGroup.COLORS -> ColorsGroup(settings, onChange)
+                AppearanceGroup.PANELS -> PanelsGroup(skin, settings, onChange)
+                AppearanceGroup.GLASS -> {
+                    SettingsToggle("Efficient glass", LabPerformance.efficientGlass,
+                        { LabPerformance.setEfficientGlass(context, it) },
+                        hint = "Uses one iOS glass pass and less surface blur. Off keeps the original glass.")
+                    GlassGroup(skin, settings, onChange, onSkin)
+                }
+                AppearanceGroup.COLORS -> ColorsGroup(skin, settings, onChange)
             }
             HorizontalDivider(Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
             OutlinedButton(onClick = { onChange(SkinSettings()) }, modifier = Modifier.heightIn(min = 48.dp)) {
@@ -504,22 +550,27 @@ internal fun AppearanceSettings(
 }
 
 /**
- * Light or dark, the toolbar's size, direction and scale, and what the
- * preview stands on: the choices that change everything at once.
+ * The toolbar's size, direction and scale, what the preview stands on, light
+ * or dark, and the UI style: the choices that change everything at once.
  */
 @Composable
 private fun StyleGroup(
+    skin: Skin, onSkin: (Skin) -> Unit,
     settings: SkinSettings, onChange: (SkinSettings) -> Unit,
     toolbarSize: Int, onToolbarSize: (Int) -> Unit,
     background: PreviewBackground, hasPhoto: Boolean,
     choose: (PreviewBackground) -> Unit, launchPicker: () -> Unit,
 ) {
-    SettingsSectionHeader("Light or dark")
-    SegmentedControl(
+    SettingsSectionHeader("UI style")
+    SkinChoiceTiles(skin, onSkin)
+    LiquidSegmentedControl(
         segments = listOf("Light", "Dark"),
         selectedIndex = settings.themeMode.ordinal,
         onSelected = { index -> onChange(settings.copy(themeMode = AppThemeMode.entries[index])) },
         modifier = Modifier.fillMaxWidth(),
+        // The control sits beside a recorded preview, not over one; a
+        // plain indicator reads in light and dark alike.
+        useLiquidGlass = false,
     )
     SettingsSectionHeader("Toolbar")
     ToolbarStageSelector(toolbarSize, onSelect = onToolbarSize)
@@ -528,8 +579,8 @@ private fun StyleGroup(
     SettingsToggle(
         "Light mode", InteractionGovernor.lightMode, InteractionGovernor::updateLightMode,
         hint = (if (InteractionGovernor.lightMode)
-            "Menus and panels appear at once without motion or blur, fewer pages are read ahead and background work takes fewer cores, so the pen and scrolling keep their speed."
-        else "Motion and reading ahead as set. Turn on if writing or scrolling stutters.") +
+            "The glass is drawn plain and solid, the lens stays still, fewer pages are read ahead and background work takes fewer cores, so the pen and scrolling keep their speed."
+        else "Glass, lens and reading ahead as set. Turn on if writing or scrolling stutters.") +
             if (InteractionGovernor.slowDevice) " On by default on this device." else "",
     )
     SettingsToggle(
@@ -542,8 +593,8 @@ private fun StyleGroup(
     SettingsToggle(
         "Battery optimization", InteractionGovernor.batteryOptimization, InteractionGovernor::updateBatteryOptimization,
         hint = (if (InteractionGovernor.batteryOptimization)
-            "In battery saver menus and panels stop moving and fewer pages are read ahead."
-        else "Battery saver changes nothing here: motion and reading ahead stay as set. The system's own limits still apply.") +
+            "In battery saver the glass goes plain and solid, the lens stops moving and fewer pages are read ahead."
+        else "Battery saver changes nothing here: the glass, its motion and reading ahead stay as set. The system's own limits still apply.") +
             if (InteractionGovernor.systemPowerSave) " Battery saver is on now." else "",
     )
     SettingsSectionHeader("Preview")
@@ -673,47 +724,336 @@ private fun MotionGroup() {
 private fun IconsGroup() {
     val context = LocalContext.current
     SettingsSectionHeader("Icon set")
-    SettingsNote("Static icons. Motion belongs to controls and panels.")
-    SegmentedControl(
+    SettingsNote("Static icons in every look. Motion belongs to controls and panels.")
+    LiquidSegmentedControl(
         segments = StaticIconSet.entries.map { it.label },
         selectedIndex = AppIconStyle.selected.ordinal,
         onSelected = { index -> AppIconStyle.select(context, StaticIconSet.entries[index]) },
         modifier = Modifier.fillMaxWidth(),
+        useLiquidGlass = false,
     )
 }
 
 @Composable
-private fun PanelsGroup(settings: SkinSettings, onChange: (SkinSettings) -> Unit) {
+private fun PanelsGroup(skin: Skin, settings: SkinSettings, onChange: (SkinSettings) -> Unit) {
     val defaults = SkinSettings()
     SettingsSectionHeader("Panels, menus and the toolbar")
-    // One corner for the toolbar, its menus and the panels (see [chromeCorner]).
-    AppearanceSlider("Corner radius", "%.0f dp".format(settings.corner), settings.corner,
-        SkinSettings.CORNER_RANGE, step = 1f, default = defaults.corner,
-        note = "The toolbar, its menus and the panels take the same curve.",
-    ) { onChange(settings.copy(corner = it)) }
+    // Each kind of chrome on its own, over whatever glass the style draws.
+    val solidStyle = if (skin == Skin.MATERIAL) "Material panels are solid" else null
+    ChromeRoleControls(ChromeRole.TOOLBAR, "Toolbar",
+        "The toolbar, its strip of tools and its round buttons.", settings, onChange, solidStyle)
+    ChromeRoleControls(ChromeRole.POPUP, "Popups",
+        "The Functions menu, the pen panel, Tools and the other panels that open from the bar, and a page shown large.",
+        settings, onChange, solidStyle)
+    ChromeRoleControls(ChromeRole.SIDEBAR, "Sidebars",
+        "Settings, the page panel and the layer panel along the window's edge.", settings, onChange, solidStyle)
     AppearanceSlider("Dim behind popups", "%.0f%%".format(settings.popupDim * 100), settings.popupDim,
         SkinSettings.POPUP_DIM_RANGE, step = 0.01f, default = defaults.popupDim,
         note = "How much the page darkens behind a tool or pen panel.",
     ) { onChange(settings.copy(popupDim = it)) }
+    val ownRecipe = skin == Skin.LIQUID_GLASS && settings.liquidStyle != LiquidStyle.NOTESIS
+    if (ownRecipe) {
+        SettingsNote("${settings.liquidStyle.label} sets its corner, blur, surface, rim and motion in Glass, " +
+            "with the numbers its project uses.")
+        return
+    }
+    // One corner for every style: the toolbar, its menus and the panels take
+    // the same curve whichever style is on (see [chromeCorner]).
+    AppearanceSlider("Corner radius", "%.0f dp".format(settings.corner), settings.corner,
+        SkinSettings.CORNER_RANGE, step = 1f, default = defaults.corner,
+        note = "Shared by Material, Glassmorphism and Liquid glass. Liquid glass's other recipes keep their own.",
+    ) { onChange(settings.copy(corner = it)) }
+    AppearanceSlider("Frost", "%.0f%%".format(settings.frost * 100), settings.frost, 0f..1f,
+        step = 0.01f, default = defaults.frost,
+        note = "How much the page behind is blurred, and how much colour comes through the blur.",
+        disabledReason = if (skin == Skin.MATERIAL) "Material panels are solid" else null,
+    ) { onChange(settings.withFrost(it)) }
+    if (skin == Skin.LIQUID_GLASS) {
+        AppearanceSlider("Transparency", "%.0f%%".format(settings.transparency * 100), settings.transparency, 0f..1f,
+            step = 0.01f, default = defaults.transparency,
+            note = "0% is solid, 100% clear glass - the panels and the toolbar together. " +
+                "Menus and the pen panel stay solid enough to read.",
+        ) { onChange(settings.withTransparency(it)) }
+        AppearanceSlider("Reflection", "%.0f%%".format(settings.reflection * 100), settings.reflection,
+            SkinSettings.REFLECTION_RANGE, step = 0.01f, default = defaults.reflection,
+            note = "The light the glass catches: its bright rim and the sheen across its top.",
+        ) { onChange(settings.copy(reflection = it)) }
+    }
 }
 
 @Composable
-private fun ColorsGroup(settings: SkinSettings, onChange: (SkinSettings) -> Unit) {
+private fun GlassGroup(skin: Skin, settings: SkinSettings, onChange: (SkinSettings) -> Unit, onSkin: (Skin) -> Unit) {
+    if (!skin.isRefractive) {
+        SettingsNote("Glass optics belong to the Liquid glass style; ${skin.displayName} has none.")
+        OutlinedButton(onClick = { onSkin(Skin.LIQUID_GLASS) }, modifier = Modifier.heightIn(min = 48.dp)) {
+            Text("Use Liquid glass")
+        }
+        return
+    }
+    when (settings.liquidStyle) {
+        LiquidStyle.IOS -> {
+            IosGlassControls(settings.ios, settings.accent, settings.themeMode == AppThemeMode.DARK) {
+                onChange(settings.copy(ios = it))
+            }
+            return
+        }
+        LiquidStyle.MORNYE -> {
+            MornyeGlassControls(settings.mornye, settings.accent, settings.themeMode == AppThemeMode.DARK) {
+                onChange(settings.copy(mornye = it))
+            }
+            return
+        }
+        LiquidStyle.NOTESIS -> Unit
+    }
+    val defaults = SkinSettings()
+    SettingsSectionHeader("Lens")
+    AppearanceSlider("Depth", "%.0f dp".format(settings.depth), settings.depth, SkinSettings.DEPTH_RANGE,
+        step = 1f, default = defaults.depth,
+        note = "How far in from the edge the glass bends the page, and how strongly.",
+    ) { onChange(settings.withDepth(it)) }
+    Text("Lens direction", style = MaterialTheme.typography.bodyLarge)
+    LiquidSegmentedControl(
+        segments = RefractionDirection.entries.map { it.displayName },
+        selectedIndex = settings.refractionDirection.ordinal,
+        onSelected = { index -> onChange(settings.copy(refractionDirection = RefractionDirection.entries[index])) },
+        modifier = Modifier.fillMaxWidth(),
+        useLiquidGlass = false,
+    )
+    SettingsNote("Raised is a lens standing above the page, pressed in a lens sunk into it.")
+    if (skin == Skin.LIQUID_GLASS) {
+        SettingsSectionHeader("Touch")
+        AppearanceSlider("Interaction strength", "%.0f%%".format(settings.liquidGlassResponse * 100),
+            settings.liquidGlassResponse, 0f..1f, step = 0.01f, default = defaults.liquidGlassResponse,
+            note = "How far the lens stretches and lifts on press and slide.",
+        ) { onChange(settings.copy(liquidGlassResponse = it)) }
+    }
+    SettingsNote("Sliders, switches and segmented controls keep their own glass, whatever is set here.")
+}
+
+/** The three motion switches every recipe has: on, the project's; off, this app's as before. */
+@Composable
+private fun ProjectMotionControls(m: ProjectMotion, project: String, onChange: (ProjectMotion) -> Unit) {
+    SettingsSectionHeader("Motion")
+    SettingsNote("On, $project's own motion; off, this app's as before.")
+    SettingsToggle("Press", m.press, { onChange(m.copy(press = it)) },
+        hint = "How the toolbar's round buttons and glass buttons answer a finger.")
+    SettingsToggle("Selection slide", m.slide, { onChange(m.copy(slide = it)) },
+        hint = "How the toolbar's selection follows a finger and lands on a tool.")
+    SettingsToggle("Menu opening", m.open, { onChange(m.copy(open = it)) },
+        hint = "How Functions, its menus and the tool panels come out of the button that opened them, and go back.")
+}
+
+/** liquid_glass_widgets' iOS material, under the names its LiquidGlassSettings take. */
+@Composable
+private fun IosGlassControls(g: IosGlass, appAccent: Int, dark: Boolean, onChange: (IosGlass) -> Unit) {
+    val d = IosGlass()
+    SettingsNote("iOS together with Mornye: iOS's glass, with Mornye's colours, its continuous corners and its " +
+        "menus that pour out of their button.")
+    MornyeAccentPicker(g.accent, appAccent, dark) { onChange(g.copy(accent = it)) }
+    SettingsToggle("Smooth corners", g.smoothCorners, { onChange(g.copy(smoothCorners = it)) },
+        hint = "Mornye's squircle: the corner eases out of the straight edge instead of turning on a circle.")
+    SettingsNote("From liquid_glass_widgets 1.16.1 (MIT), whose iOS 27 regular presets were measured against the " +
+        "native control: a frosted body over a lightly blurred page, a paraxial rim and the native springs. " +
+        "The defaults are set by eye from there. Dark mode takes its dark preset, moved in proportion to what is set here.")
+    SettingsSectionHeader("Lens")
+    AppearanceSlider("Thickness", "%.0f".format(g.thickness), g.thickness, IosGlass.THICKNESS_RANGE, step = 1f,
+        default = d.thickness, note = "In pixels at 3x: a bevel of %.1f dp.".format(g.bevelDp),
+    ) { onChange(g.copy(thickness = it)) }
+    AppearanceSlider("Refractive index", "%.2f".format(g.refractiveIndex), g.refractiveIndex, IosGlass.INDEX_RANGE,
+        step = 0.01f, default = d.refractiveIndex,
+        note = "The rim bends the page by thickness × 8 × (index − 1): %.1f dp, at most half the pane.".format(g.bendDp),
+    ) { onChange(g.copy(refractiveIndex = it)) }
+    AppearanceSlider("Chromatic aberration", "%.2f".format(g.dispersion), g.dispersion, 0f..1f, step = 0.01f,
+        default = d.dispersion, note = "0 in the presets and by default.",
+    ) { onChange(g.copy(dispersion = it)) }
+    SettingsSectionHeader("Material")
+    AppearanceSlider("Blur", "%.1f".format(g.blur), g.blur, IosGlass.BLUR_RANGE, step = 0.1f, default = d.blur,
+        note = "The page under the frost, barely softened.",
+    ) { onChange(g.copy(blur = it)) }
+    AppearanceSlider("Frost", "%.0f".format(g.frost), g.frost, IosGlass.FROST_RANGE, step = 1f, default = d.frost,
+        note = "The cloud over it, as a blur.",
+    ) { onChange(g.copy(frost = it)) }
+    AppearanceSlider("Frost opacity", "%.0f%%".format(g.frostOpacity * 100), g.frostOpacity, 0f..1f, step = 0.01f,
+        default = d.frostOpacity, note = "Below full, the page shows through the cloud as pale ghosts.",
+    ) { onChange(g.copy(frostOpacity = it)) }
+    AppearanceSlider("Saturation", "%.1f×".format(g.saturation), g.saturation, IosGlass.SATURATION_RANGE, step = 0.1f,
+        default = d.saturation,
+    ) { onChange(g.copy(saturation = it)) }
+    AppearanceSlider("Body", "%.0f%%".format(g.bodyOpacity * 100), g.bodyOpacity, 0f..1f, step = 0.01f,
+        default = d.bodyOpacity, note = "The #F8F8F8 glass colour over it all.",
+    ) { onChange(g.copy(bodyOpacity = it)) }
+    SettingsSectionHeader("Rim")
+    AppearanceSlider("Rim light", "%.2f".format(g.rimLight), g.rimLight, 0f..2f, step = 0.05f, default = d.rimLight,
+        note = "Light caught along the edge, where it faces the light.",
+    ) { onChange(g.copy(rimLight = it)) }
+    AppearanceSlider("Light from", lightAngleLabel(g.lightAngle), g.lightAngle, IosGlass.LIGHT_ANGLE_RANGE, step = 5f,
+        default = d.lightAngle,
+        note = "Where the rim is brightest. 90° lights the top and bottom and leaves the left and right ends faint; " +
+            "0° or 180° lights the ends instead, 45° or 135° the corners.",
+        disabledReason = if (g.rimAllRound) "The rim is lit all the way round" else null,
+    ) { onChange(g.copy(lightAngle = it)) }
+    SettingsToggle("Light all the way round", g.rimAllRound, { onChange(g.copy(rimAllRound = it)) },
+        hint = "The same light along every edge, with no faint ends.")
+    AppearanceSlider("Rim shade", "%.2f".format(g.rimShade), g.rimShade, 0f..2f, step = 0.05f, default = d.rimShade,
+        note = "The fine dark line just inside the edge.",
+    ) { onChange(g.copy(rimShade = it)) }
+    AppearanceSlider("Edge absorption", "%.3f".format(g.edgeAbsorption), g.edgeAbsorption, 0f..0.5f, step = 0.005f,
+        default = d.edgeAbsorption, note = "How much the bevel darkens towards the edge.",
+    ) { onChange(g.copy(edgeAbsorption = it)) }
+    AppearanceSlider("Corner radius", "%.0f dp".format(g.corner), g.corner, SkinSettings.CORNER_RANGE, step = 1f,
+        default = d.corner, note = "29 by default; its GlassMenu's is 32.",
+    ) { onChange(g.copy(corner = it)) }
+    ProjectMotionControls(g.motion, "liquid_glass_widgets") { onChange(g.copy(motion = it)) }
+    OutlinedButton(onClick = { onChange(d.copy(motion = g.motion, accent = g.accent)) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to the defaults") }
+    OutlinedButton(onClick = { onChange(IosGlass.PRESET.copy(motion = g.motion, accent = g.accent)) }, modifier = Modifier.heightIn(min = 48.dp)) {
+        Text("Use the ios27Light preset as measured")
+    }
+}
+
+/**
+ * One kind of chrome's own look over the glass: how clear it is, the
+ * colour that shows as it goes solid, and how much darker it is drawn.
+ */
+@Composable
+private fun ChromeRoleControls(
+    role: ChromeRole,
+    title: String,
+    note: String,
+    settings: SkinSettings,
+    onChange: (SkinSettings) -> Unit,
+    disabledReason: String?,
+) {
+    Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = Ui.Space.s))
+    SettingsNote(note)
+    val clarity = settings.clarityOf(role)
+    AppearanceSlider("Transparency", "%.0f%%".format(clarity * 100), clarity, 0f..1f, step = 0.01f, default = 1f,
+        note = "100% is the glass as the style draws it; lower lays the colour below over it, 0% solid.",
+        disabledReason = disabledReason,
+    ) { onChange(settings.withRole(role, clarity = it)) }
+    val chosen = settings.colorOf(role)
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(Ui.Space.s),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("Color", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        (listOf(0, settings.accent) + CHROME_COLORS).distinct().forEach { color ->
+            val picked = chosen == color
+            Box(
+                Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(if (color == 0) MaterialTheme.colorScheme.surface else Color(color).copy(alpha = 1f))
+                    .border(if (picked) 3.dp else 1.dp,
+                        if (picked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline, CircleShape)
+                    .clickable(enabled = disabledReason == null, onClickLabel = if (color == 0) "Theme color" else "Color") {
+                        onChange(settings.withRole(role, color = color))
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                if (color == 0) Text("A", style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+    if (chosen != 0 && clarity >= 0.999f) {
+        SettingsNote("The colour shows once the transparency is below 100%.")
+    }
+    val darken = settings.darkenOf(role)
+    AppearanceSlider("Darken", "%.0f%%".format(darken * 100), darken, SkinSettings.DARKEN_RANGE, step = 0.01f,
+        default = 0f, note = "Draws it a little darker, glass or solid alike.",
+        disabledReason = disabledReason,
+    ) { onChange(settings.withRole(role, darken = it)) }
+}
+
+/** The background colours offered for a kind of chrome, besides the theme's and the accent. */
+private val CHROME_COLORS = listOf(
+    0xFFFFFFFF.toInt(), 0xFFE5E5EA.toInt(), 0xFF8E8E93.toInt(), 0xFF2C2C2E.toInt(), 0xFF000000.toInt(),
+    0xFFFFF4D6.toInt(), 0xFFE3F2E8.toInt(), 0xFFE3ECFF.toInt(), 0xFFFCE4EC.toInt(),
+)
+
+/** The light's angle as where on the pane it comes from. */
+private fun lightAngleLabel(angle: Float): String = when (angle.roundToInt()) {
+    0 -> "0° · right"
+    45 -> "45° · top right"
+    90 -> "90° · top"
+    135 -> "135° · top left"
+    180 -> "180° · left"
+    else -> "%.0f°".format(angle)
+}
+
+/** The accent the Mornye and iOS looks build their colours from: iOS's system colours, or the app's own. */
+@Composable
+private fun MornyeAccentPicker(chosen: MornyeAccent, appAccent: Int, dark: Boolean, onPick: (MornyeAccent) -> Unit) {
+    SettingsSectionHeader("Accent")
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(Ui.Space.s),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        MornyeAccent.entries.forEach { accent ->
+            val picked = chosen == accent
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(Ui.Space.xs)) {
+                Box(
+                    Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(Color(accent.argb(dark, appAccent)).copy(alpha = 1f))
+                        .border(if (picked) 3.dp else 1.dp,
+                            if (picked) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline, CircleShape)
+                        .clickable(onClickLabel = accent.label) { onPick(accent) },
+                )
+                Text(accent.label, style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+    SettingsNote("App accent follows the colour set in Colours below.")
+}
+
+/** Mornye's glass: how clear it is, its rim, its corner and the accent its colours are built from. */
+@Composable
+private fun MornyeGlassControls(m: MornyeGlass, appAccent: Int, dark: Boolean, onChange: (MornyeGlass) -> Unit) {
+    val d = MornyeGlass()
+    SettingsNote("From Mornye (LGPL-3.0), written again from its numbers: a white body that clears as the clarity " +
+        "rises, a gentle lens, a fine lit rim and iOS's grouped colours. Bars take its clear tint, panels and menus " +
+        "its stronger one so their words read.")
+    MornyeAccentPicker(m.accent, appAccent, dark) { onChange(m.copy(accent = it)) }
+    SettingsSectionHeader("Glass")
+    AppearanceSlider("Clarity", "%.0f%%".format(m.clarity * 100), m.clarity, 0f..1f, step = 0.05f, default = d.clarity,
+        note = "Higher shows more of the page and blurs it less. Below 20% the glass is a plain tinted surface.",
+    ) { onChange(m.copy(clarity = it)) }
+    SettingsToggle("Glass outlines", m.outlines, { onChange(m.copy(outlines = it)) },
+        hint = "A hairline edge with a lit rim inside it.")
+    SettingsToggle("Smooth corners", m.smoothCorners, { onChange(m.copy(smoothCorners = it)) },
+        hint = "Mornye's squircle: the corner eases out of the straight edge instead of turning on a circle.")
+    AppearanceSlider("Corner radius", "%.0f dp".format(m.corner), m.corner, SkinSettings.CORNER_RANGE, step = 1f,
+        default = d.corner, note = "32 by default, as its panels.",
+    ) { onChange(m.copy(corner = it)) }
+    ProjectMotionControls(m.motion, "Mornye") { onChange(m.copy(motion = it)) }
+    OutlinedButton(onClick = { onChange(d.copy(accent = m.accent)) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to the defaults") }
+}
+
+@Composable
+private fun ColorsGroup(skin: Skin, settings: SkinSettings, onChange: (SkinSettings) -> Unit) {
     var editing by remember { mutableStateOf<ColorSlot?>(null) }
-    SettingsSectionHeader("Material colours")
-    val wallpaperAvailable = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S
-    SettingsToggle("Wallpaper colours", settings.dynamicColor, { onChange(settings.copy(dynamicColor = it)) },
-        hint = "The theme takes its colours from the wallpaper, as Android does. Off, from the accent below.",
-        disabledReason = when {
-            !wallpaperAvailable -> "Needs Android 12 or later"
-            settings.highContrast -> "High contrast uses the accent"
-            else -> null
-        },
-    )
-    SettingsToggle("AMOLED black", settings.amoled, { onChange(settings.copy(amoled = it)) },
-        hint = "In dark mode, a black page with near-black panels.",
-        disabledReason = if (settings.themeMode != AppThemeMode.DARK) "Used in dark mode" else null,
-    )
+    if (skin == Skin.MATERIAL) {
+        SettingsSectionHeader("Material colours")
+        val wallpaperAvailable = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S
+        SettingsToggle("Wallpaper colours", settings.dynamicColor, { onChange(settings.copy(dynamicColor = it)) },
+            hint = "The theme takes its colours from the wallpaper, as Android does. Off, from the accent below.",
+            disabledReason = when {
+                !wallpaperAvailable -> "Needs Android 12 or later"
+                settings.highContrast -> "High contrast uses the accent"
+                else -> null
+            },
+        )
+        SettingsToggle("AMOLED black", settings.amoled, { onChange(settings.copy(amoled = it)) },
+            hint = "In dark mode, a black page with near-black panels.",
+            disabledReason = if (settings.themeMode != AppThemeMode.DARK) "Used in dark mode" else null,
+        )
+    }
+    if (skin == Skin.LIQUID_GLASS && settings.liquidStyle != LiquidStyle.NOTESIS) {
+        SettingsNote("${settings.liquidStyle.label} builds its colours from its own accent, chosen in Glass. The ink below still applies.")
+    }
     SettingsSectionHeader("Cards and buttons")
     ColorSlot.entries.forEach { slot ->
         ColorRow(slot.label, slot.read(settings), selected = editing == slot,
@@ -732,26 +1072,32 @@ private fun ColorsGroup(settings: SkinSettings, onChange: (SkinSettings) -> Unit
     SettingsSectionHeader("Readability")
     SettingsToggle(
         "High contrast", settings.highContrast, { onChange(settings.copy(highContrast = it)) },
-        hint = "Darker text and thicker edges. Colors stay; only the contrast goes up.",
+        hint = "Darker text, solid glass, thicker edges. Colors stay; only the contrast goes up.",
     )
     SettingsToggle(
         "Shadows", settings.shadows, { onChange(settings.copy(shadows = it)) },
-        hint = "Shadows under the toolbar, panels, menus, buttons and dialogs. Off, everything sits flat on the page.",
+        hint = "Shadows under the toolbar, panels, menus, buttons and dialogs, in every look. Off, everything sits flat on the page.",
     )
 }
 
-/** Which colour a picker is for, so one picker serves both. */
+/** Which colour a picker is for, so one picker serves all four. */
 enum class ColorSlot(val label: String) {
+    TINT("Glass tint"),
+    BORDER("Edge"),
     CONTENT("Text and icons"),
     ACCENT("Accent"),
     ;
 
     fun read(s: SkinSettings): Int = when (this) {
+        TINT -> s.tint
+        BORDER -> s.border
         CONTENT -> s.content
         ACCENT -> s.accent
     }
 
     fun write(s: SkinSettings, argb: Int): SkinSettings = when (this) {
+        TINT -> s.copy(tint = argb)
+        BORDER -> s.copy(border = argb)
         CONTENT -> s.copy(content = argb)
         ACCENT -> s.copy(accent = argb)
     }
@@ -888,7 +1234,7 @@ private fun ColorRow(label: String, argb: Int, selected: Boolean, note: String? 
     }
 }
 
-/** Hue, shade and opacity. Opens in place, under its row. */
+/** Alpha included, because the body colour of glass is mostly its alpha. Opens in place, under its row. */
 @Composable
 private fun InlineColorPicker(argb: Int, onPick: (Int) -> Unit, onCancel: () -> Unit) {
     val hsv = remember(argb) { FloatArray(3).also { android.graphics.Color.colorToHSV(argb, it) } }
@@ -937,6 +1283,8 @@ fun SkinSettingsScreen(
     settings: SkinSettings,
     onChange: (SkinSettings) -> Unit,
     onBack: () -> Unit,
+    skin: Skin = AppSkin.current,
+    onSkin: ((Skin) -> Unit)? = null,
 ) {
     Scaffold(
         topBar = {
@@ -950,15 +1298,19 @@ fun SkinSettingsScreen(
             )
         },
     ) { padding ->
-        // No note open: the size is kept for the next one that is.
-        val context = LocalContext.current
-        val store = remember { PenStore(context) }
-        var toolbarSize by remember { mutableIntStateOf(store.toolbarSize) }
-        AppearanceSettings(
-            settings, onChange,
-            modifier = Modifier.padding(padding).background(MaterialTheme.colorScheme.surface),
-            toolbarSize = toolbarSize,
-            onToolbarSize = { toolbarSize = it; store.toolbarSize = it },
-        )
+        // Plain chrome here: the one piece of glass worth looking at is the
+        // preview, and it brings its own background.
+        CompositionLocalProvider(LocalBackdrop provides NoBackdrop, LocalLiquidGlassBackdrop provides null) {
+            // No note open: the size is kept for the next one that is.
+            val context = LocalContext.current
+            val store = remember { PenStore(context) }
+            var toolbarSize by remember { mutableIntStateOf(store.toolbarSize) }
+            AppearanceSettings(
+                settings, onChange, skin = skin, onSkin = onSkin,
+                modifier = Modifier.padding(padding).background(MaterialTheme.colorScheme.surface),
+                toolbarSize = toolbarSize,
+                onToolbarSize = { toolbarSize = it; store.toolbarSize = it },
+            )
+        }
     }
 }

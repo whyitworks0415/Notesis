@@ -450,6 +450,15 @@ class PenStore(context: Context) {
         prefs.edit().putString("colorTemplates", array.toString()).apply()
     }
 
+    /**
+     * How the chrome is dressed. Material until someone says otherwise. Read
+     * through [Skin.fromName], so the retired lens skin - here or in an
+     * imported settings file - comes back as Liquid glass.
+     */
+    var skin: Skin
+        get() = Skin.fromName(prefs.getString(SKIN, null))
+        set(value) = prefs.edit().putString(SKIN, value.name).apply()
+
     /** Whether the toolbar sits flush along the top edge rather than floating. */
     var docked: Boolean
         get() = prefs.getBoolean(DOCKED, false)
@@ -788,7 +797,7 @@ class PenStore(context: Context) {
         private const val PREDICTION = "prediction"
         private const val PREDICTION_LEAD_MS = "predictionLeadMs"
         private const val DEFER_DETAIL = "deferDetail"
-        // "skin" is still on disk where a glass look was chosen; nothing reads it while those are out of the build.
+        private const val SKIN = "skin"
         private const val LAST_PAGE = "lastPage:"
         private const val REFERENCE_NOTE = "referenceNote"
         private const val REFERENCE_FIT = "referenceFit"

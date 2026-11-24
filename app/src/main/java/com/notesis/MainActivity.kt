@@ -293,11 +293,13 @@ class MainActivity : ComponentActivity() {
         AppIconStyle.load(this)
         MotionPrefs.load(this)
         val lookStore = SkinSettingsStore(this)
+        AppSkin.load(this)
         acceptDocumentIntent(intent)
         setContent {
             // Hoisted to the top so a change repaints every bar at once rather
             // than whichever screen happened to be looking.
             var look by remember { mutableStateOf(lookStore.load()) }
+            val skin = AppSkin.current
             var settingsOpen by remember { mutableStateOf(false) }
             // The fastest refresh rate the panel has, unless turned off or saving power.
             LaunchedEffect(InteractionGovernor.highRefresh, InteractionGovernor.observedPowerSave, WindowFocus.focused) {
@@ -337,11 +339,11 @@ class MainActivity : ComponentActivity() {
             // The look reaches Material's own components through the theme, so
             // dialogs, menus and cards follow it without a call site knowing.
             MaterialTheme(
-                colorScheme = skinColors(scheme, look),
+                colorScheme = skinColors(scheme, look, skin),
                 typography = remember { chromeTypography() },
                 shapes = Ui.shapes,
             ) {
-            ProvideSkin(look) {
+            ProvideSkin(skin, look) {
             // The system's largest font sizes, kept to one the bars, buttons
             // and panels have room for: past it their words were cut off
             // rather than the controls growing, most of all on a phone.
@@ -1430,6 +1432,20 @@ private fun HomeScreen(
     }
     // The clock floats over the library too, on the same surface as its bars.
     Box(Modifier.fillMaxSize()) {
+    // The bars over the library look through it: recorded only while a glass look is on and can be drawn
+    // through, never in battery saver, where the panes go solid.
+    val homeSkin = LocalSkin.current
+    val homeLook = LocalSkinSettings.current
+    val homeBackdrop = rememberBackdrop(active = homeSkin == Skin.GLASSMORPHISM && BACKDROP_DRAWABLE &&
+        (homeLook.blur > 0.1f || homeLook.vibrancy > 0.01f) && !InteractionGovernor.observedPowerSave)
+    val homeLiquid = if (homeSkin.isRefractive && BACKDROP_DRAWABLE && !InteractionGovernor.observedPowerSave) rememberLiquidGlassBackdrop() else null
+    var homeLayerOrigin by remember { mutableStateOf(Offset.Zero) }
+    val homePopupBackdrop = remember(homeLiquid) { homeLiquid?.let { GlassPopupBackdrop(it) { homeLayerOrigin } } }
+    CompositionLocalProvider(
+        LocalBackdrop provides homeBackdrop,
+        LocalLiquidGlassBackdrop provides if (homeSkin.isRefractive) homePopupBackdrop else null,
+        LocalGlassPopupBackdrop provides if (homeSkin == Skin.LIQUID_GLASS) homePopupBackdrop else null,
+    ) {
     Scaffold(
         // Under the header too, the library's own ground colour, not the theme's.
         containerColor = homeColor?.let { Color(it) } ?: homeLookTop() ?: MaterialTheme.colorScheme.background,
@@ -1710,11 +1726,22 @@ private fun HomeScreen(
             }
         },
     ) { padding ->
+        // Nothing inside the recording may sample it; see NoBackdrop.
+        CompositionLocalProvider(LocalBackdrop provides NoBackdrop, LocalLiquidGlassBackdrop provides null) {
         Box(
             Modifier
                 .fillMaxSize()
                 // A layer of its own, so a redraw of the bars over it is not a redraw of the list.
-                .graphicsLayer(),
+                .graphicsLayer()
+                .recordBackdrop(homeBackdrop)
+                .onGloballyPositioned { homeLayerOrigin = it.positionOnScreen() }
+                .then(
+                    if (homeLiquid != null) {
+                        // Not while the list scrolls: the whole library recorded every frame of a
+                        // fling, for the glass at the top to blur, was what made it stutter.
+                        Modifier.captureLiquidGlassBackdrop(homeLiquid, paused = { gridState.isScrollInProgress || ChromeMotion.busy })
+                    } else Modifier,
+                ),
         ) {
         val ground = homeLookColors()?.takeIf { homeColor == null }
         Box(
@@ -2229,6 +2256,8 @@ private fun HomeScreen(
             }
         },
     )
+    }
+    }
     }
 
     busy?.let { label ->
@@ -4131,7 +4160,16 @@ private fun LatencyHud(report: () -> String, modifier: Modifier = Modifier) {
 
 /** A boundary for the compiler: what is inside is compiled as a function of its own. */
 @Composable
-private fun NoteScreenBody(content: @Composable () -> Unit) = content()
+private fun NoteScreenBody(backdrop: Backdrop,
+    popupBackdrop: com.kyant.backdrop.Backdrop?, content: @Composable () -> Unit) {
+    val skin = LocalSkin.current
+    CompositionLocalProvider(
+        LocalBackdrop provides backdrop,
+        LocalLiquidGlassBackdrop provides if (skin.isRefractive) popupBackdrop else null,
+        LocalGlassPopupBackdrop provides if (skin == Skin.LIQUID_GLASS) popupBackdrop else null,
+        content = content,
+    )
+}
 
 @Composable
 private fun NoteScreen(
@@ -4719,6 +4757,21 @@ private fun NoteScreen(
     var settingsNav by remember { mutableStateOf<SidebarNav?>(null) }
     var settingsWidth by remember { mutableFloatStateOf(penStore.settingsSidebarWidth) }
     fun openSettings(page: SettingsPage) { settingsNav = SidebarNav.at(page) }
+    // The edge holds one panel: the pages (and the search in them), settings, layers or the agent.
+    // Opening one puts the one there away rather than stacking them.
+    var sheetShown by remember { mutableStateOf<SideSheetSlot?>(null) }
+    LaunchedEffect(showPages, settingsNav != null, showLayers, AgentChat.open) {
+        val opened = listOfNotNull(
+            SideSheetSlot.PAGES.takeIf { showPages }, SideSheetSlot.SETTINGS.takeIf { settingsNav != null },
+            SideSheetSlot.LAYERS.takeIf { showLayers }, SideSheetSlot.AGENT.takeIf { AgentChat.open },
+        )
+        val keep = nextSideSheet(sheetShown, opened)
+        if (keep != SideSheetSlot.PAGES) showPages = false
+        if (keep != SideSheetSlot.SETTINGS) settingsNav = null
+        if (keep != SideSheetSlot.LAYERS) showLayers = false
+        if (keep != SideSheetSlot.AGENT) AgentChat.open = false
+        sheetShown = keep
+    }
     var pageLayout by remember { mutableStateOf(penStore.pageLayoutOf(note.id)) }
     var pageTone by remember { mutableIntStateOf(penStore.pageTone) }
     var edits by remember { mutableIntStateOf(0) }
@@ -5309,9 +5362,23 @@ private fun NoteScreen(
     }
 
     var movingPage by remember { mutableStateOf(false) }
+    // The glass looks through the page, so the page records itself - but only
+    // while a glass look is on and something can be drawn through it, and not
+    // in battery saver, where the panes go solid instead (see SkinSurface).
+    val skin = LocalSkin.current
+    val look = LocalSkinSettings.current
+    val backdrop = rememberBackdrop(
+        active = skin == Skin.GLASSMORPHISM && BACKDROP_DRAWABLE &&
+            (look.blur > 0.1f || look.vibrancy > 0.01f) && !InteractionGovernor.observedPowerSave,
+    )
+    val liquidBackdrop = if (skin.isRefractive && BACKDROP_DRAWABLE && !InteractionGovernor.observedPowerSave) {
+        rememberLiquidGlassBackdrop()
+    } else null
+    var pageLayerOrigin by remember { mutableStateOf(Offset.Zero) }
+    val popupBackdrop = remember(liquidBackdrop) { liquidBackdrop?.let { GlassPopupBackdrop(it) { pageLayerOrigin } } }
     // Its own function, not part of this one: everything under it is a
     // screen's worth of code, more than one method may hold.
-    NoteScreenBody {
+    NoteScreenBody(backdrop, popupBackdrop) {
     Row(Modifier.fillMaxSize().drawWithContent {
         drawContent()
         draftWebWidth?.let { draft ->
@@ -5354,12 +5421,60 @@ private fun NoteScreen(
             .onGloballyPositioned { containerOrigin = it.positionInWindow() },
     ) {
         val ready = opened
+        // What the glass sees: the ground and the page as the canvas has drawn it, each part of a split where
+        // it is and turned as it is. Not the canvas view itself, whose wet-ink surfaces would move with the glass.
+        val recordedTurn = remember { floatArrayOf(Float.NaN) }
+        val turnStale: () -> Boolean = { recordedTurn[0] != noteRotation }
+        val pageBackdrop: androidx.compose.ui.graphics.drawscope.DrawScope.() -> Unit = {
+            recordedTurn[0] = noteRotation
+            drawRect(desk)
+            val parts = split?.layout(SplitRect(0f, 0f, size.width, size.height), splitGap)
+            val view = canvas
+            if (view != null) {
+                val own = parts?.get(0)
+                withTransform({
+                    if (own != null) {
+                        clipRect(own.left, own.top, own.right, own.bottom)
+                        translate(own.left, own.top)
+                        rotate(noteRotation, Offset(own.width / 2f, own.height / 2f))
+                    } else rotate(noteRotation)
+                }) {
+                    drawIntoCanvas { view.drawBackdrop(it.nativeCanvas) }
+                }
+            }
+            parts?.forEach { (id, r) ->
+                val pane = paneViews[id] ?: return@forEach
+                if (id == 0) return@forEach
+                withTransform({
+                    clipRect(r.left, r.top, r.right, r.bottom)
+                    translate(r.left, r.top)
+                    rotate(paneRotations[id] ?: 0f, Offset(r.width / 2f, r.height / 2f))
+                }) {
+                    drawIntoCanvas { pane.drawBackdrop(it.nativeCanvas) }
+                }
+            }
+        }
         Box(
             Modifier
                 .fillMaxSize()
                 // A layer of its own, so a small redraw elsewhere in the
                 // window (a clock tick, a spinner) is not a redraw of the page.
                 .graphicsLayer()
+                .recordBackdrop(backdrop, pageBackdrop, stale = turnStale)
+                .onGloballyPositioned { pageLayerOrigin = it.positionOnScreen() }
+                .then(
+                    if (liquidBackdrop != null) {
+                        Modifier.captureLiquidGlassBackdrop(
+                            liquidBackdrop,
+                            // While anything writes, scrolls or slides, the glass keeps the last
+                            // recording: the page drawn again each frame of that is what made it stutter.
+                            paused = { !turnStale() &&
+                                (movingPage || InteractionGovernor.observed != Interaction.IDLE || ChromeMotion.busy ||
+                                    (sharedScreen && !WindowFocus.focused)) },
+                            source = pageBackdrop,
+                        )
+                    } else Modifier,
+                )
                 .background(desk),
         ) {
         if (ready == null) {
