@@ -109,18 +109,27 @@ internal fun drawTextBox(canvas: Canvas, content: TextBoxContent, layout: Static
     canvas.restore()
 }
 
-internal fun renderTextBox(content: TextBoxContent): Bitmap {
-    val scale = 2f
+private class TextBoxSize(val layout: StaticLayout, val width: Int, val height: Int)
+
+private fun textBoxSize(content: TextBoxContent, scale: Float): TextBoxSize {
     val pad = (content.padding * scale).toInt()
     val maxWidth = 1600
     val wrap = if (content.wrapWidth > 0f) ((content.wrapWidth * scale).toInt() - pad * 2).coerceIn(16, 4096) else null
     val desired = wrap ?: Layout.getDesiredWidth(content.styledText(), textPaint(content, scale)).toInt().coerceIn(1, maxWidth)
     val layout = textBoxLayout(content, desired, scale)
-    require(layout.height <= 8192) { "The text is too long. Split it into more boxes." }
-    val width = maxOf(desired + pad * 2, (content.minSize * scale).toInt())
-    val height = maxOf(layout.height + pad * 2, (content.minSize * scale).toInt())
-    return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also {
-        drawTextBox(Canvas(it), content, layout, width.toFloat(), height.toFloat(), scale)
+    return TextBoxSize(layout, maxOf(desired + pad * 2, (content.minSize * scale).toInt()),
+        maxOf(layout.height + pad * 2, (content.minSize * scale).toInt()))
+}
+
+/** How tall [content] stands on the page, in page units, without drawing it. */
+internal fun textBoxHeight(content: TextBoxContent): Float = textBoxSize(content, 2f).height / 2f
+
+internal fun renderTextBox(content: TextBoxContent): Bitmap {
+    val scale = 2f
+    val size = textBoxSize(content, scale)
+    require(size.layout.height <= 8192) { "The text is too long. Split it into more boxes." }
+    return Bitmap.createBitmap(size.width, size.height, Bitmap.Config.ARGB_8888).also {
+        drawTextBox(Canvas(it), content, size.layout, size.width.toFloat(), size.height.toFloat(), scale)
     }
 }
 

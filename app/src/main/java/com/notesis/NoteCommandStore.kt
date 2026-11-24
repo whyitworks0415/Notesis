@@ -78,6 +78,8 @@ internal class NoteStoreWorkspace(
         }
     }
 
+    override fun textHeight(content: TextBoxContent): Float = textBoxHeight(content)
+
     /** Reads the page's strokes in, all of them in file order, so a save writes them back as they were. */
     private fun loaded(id: String, page: Page) {
         if (page.loaded) return

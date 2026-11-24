@@ -214,4 +214,38 @@ class NoteCommandsTest {
         repeat(NoteCommands.UNDO_STEPS + 5) { commands.run("page add Maths") }
         assertEquals(5, memory.released - before)
     }
+
+    // A fake page: each line 10 tall, a line breaking every 20 characters.
+    private fun tall(text: String) = text.split('\n').sumOf { maxOf(1, (it.length + 19) / 20) } * 10f
+
+    @Test
+    fun `text that fits stays whole`() {
+        assertEquals(listOf("a\nb"), splitToFit("a\nb", 100f, 100f, ::tall))
+    }
+
+    @Test
+    fun `text taller than the room breaks between lines`() {
+        val text = (1..9).joinToString("\n") { "line $it" }
+        val parts = splitToFit(text, 30f, 40f, ::tall)
+        assertEquals(listOf("line 1\nline 2\nline 3", "line 4\nline 5\nline 6\nline 7", "line 8\nline 9"), parts)
+    }
+
+    @Test
+    fun `one long line breaks between words`() {
+        val text = (1..20).joinToString(" ") { "word" }
+        val parts = splitToFit(text, 20f, 20f, ::tall)
+        assertTrue(parts.size > 1)
+        assertTrue(parts.all { tall(it) <= 20f })
+        assertEquals(text, parts.joinToString(" "))
+    }
+
+    @Test
+    fun `no room on the first page leaves it empty`() {
+        assertEquals(listOf("", "a\nb"), splitToFit("a\nb", 5f, 100f, ::tall))
+    }
+
+    @Test
+    fun `a line taller than a page still goes somewhere`() {
+        assertEquals("x".repeat(100), splitToFit("x".repeat(100), 10f, 10f) { 50f }.joinToString(""))
+    }
 }

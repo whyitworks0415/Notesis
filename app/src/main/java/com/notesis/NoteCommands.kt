@@ -46,6 +46,8 @@ internal interface NoteWorkspace {
     fun inkCount(id: String, page: Page): Int
     /** A text box for [page], drawn and stored, not yet put on the page. */
     fun textBox(id: String, content: TextBoxContent): PageImage?
+    /** How tall [content] would stand on a page, in page units; 0 when it is not measured (it is never split). */
+    fun textHeight(content: TextBoxContent): Float = 0f
     /** Adds a stroke along each of [lines] (points as x, y in page units); how many were made. */
     fun addInk(id: String, document: Document, page: Page, lines: List<List<FloatArray>>, color: Int, width: Float): Int
     /** Takes away the strokes touching [area] (left, top, right, bottom), or all with null; how many. */
@@ -1149,18 +1151,39 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
         val text = unescapeText(args.positional.drop(2).joinToString(" ")).trim()
         if (text.isEmpty()) throw CommandError("Give the text.", usage)
         if (text.length > MAX_TEXT) throw CommandError("A text box holds up to $MAX_TEXT characters.")
-        val page = document.pages[index]
-        val content = TextBoxContent(text, size = args.float("size", 8f..200f) ?: 32f,
-            color = args.text("color")?.let(::commandColor) ?: 0xFF000000.toInt(),
-            markdown = args.has("md"), wrapWidth = args.float("width", 40f..page.width) ?: 0f)
-        val image = workspace.textBox(meta(args).id, content) ?: throw CommandError("The text box could not be made.")
-        image.x = args.float("x", 0f..page.width) ?: TEXT_MARGIN
-        image.y = args.float("y", 0f..page.height)
-            ?: ((page.images.maxOfOrNull { it.y + it.height }?.plus(TEXT_GAP)) ?: TEXT_MARGIN)
-                .coerceAtMost(page.height - image.height).coerceAtLeast(0f)
-        page.images += image
-        JSONObject().put("page", index + 1).put("x", image.x.clean()).put("y", image.y.clean())
-            .put("width", image.width.clean()).put("height", image.height.clean())
+        val id = meta(args).id
+        val first = document.pages[index]
+        val x = args.float("x", 0f..first.width) ?: TEXT_MARGIN
+        // Wrapped inside the page unless told otherwise: unwrapped, a long line ran past its edge and was cut there.
+        val width = (args.float("width", 40f..first.width) ?: (first.width - x - TEXT_MARGIN)).coerceAtMost(maxOf(40f, first.width - x))
+        val size = args.float("size", 8f..200f) ?: 32f
+        val color = args.text("color")?.let(::commandColor) ?: 0xFF000000.toInt()
+        fun content(part: String) = TextBoxContent(part, size = size, color = color, markdown = args.has("md"), wrapWidth = width)
+        val given = args.float("y", 0f..first.height)
+        val y = given ?: (first.images.maxOfOrNull { it.y + it.height }?.plus(TEXT_GAP) ?: TEXT_MARGIN)
+        // Taller than the room left, the text goes on over new pages after this one instead of off the bottom.
+        val parts = splitToFit(text, first.height - y - TEXT_MARGIN, first.height - 2 * TEXT_MARGIN) { workspace.textHeight(content(it)) }
+        val boxes = JSONArray()
+        var at = index
+        parts.forEachIndexed { n, part ->
+            if (n > 0) {
+                val like = document.pages[at]
+                document.pages.add(++at, Page(width = like.width, height = like.height, background = like.background, templateId = like.templateId))
+                document.invalidateLayout()
+            }
+            if (part.isEmpty()) return@forEachIndexed
+            val page = document.pages[at]
+            val image = workspace.textBox(id, content(part)) ?: throw CommandError("The text box could not be made.")
+            image.x = x
+            image.y = if (n > 0) TEXT_MARGIN else given ?: y.coerceAtMost(page.height - image.height).coerceAtLeast(0f)
+            page.images += image
+            boxes.put(JSONObject().put("page", at + 1).put("x", image.x.clean()).put("y", image.y.clean())
+                .put("width", image.width.clean()).put("height", image.height.clean()))
+        }
+        val head = boxes.getJSONObject(0)
+        JSONObject().put("page", head.get("page")).put("x", head.get("x")).put("y", head.get("y"))
+            .put("width", head.get("width")).put("height", head.get("height"))
+            .apply { if (boxes.length() > 1) put("boxes", boxes).put("pages", document.pages.size) }
     }
 
     private fun addInk(args: Args, usage: String): Done = changePages(args, usage, "add ink") { document ->
@@ -1680,4 +1703,43 @@ internal fun shortIds(ids: List<String>, min: Int = 8): Map<String, String> {
         val need = maxOf(sorted.getOrNull(i - 1)?.let { shared(it, id) } ?: 0, sorted.getOrNull(i + 1)?.let { shared(it, id) } ?: 0) + 1
         id to id.take(maxOf(min, need).coerceAtMost(id.length))
     }
+}
+
+/**
+ * [text] in pieces each no taller, by [height], than [first] (the room left on
+ * the page it starts on) and after that [rest] (a fresh page): broken between
+ * lines, or between words in a line too long for the room. The first piece is
+ * empty when not one line fits where it would start.
+ * shortcut: a break inside a Markdown code block or table leaves each half
+ * unfenced; split by blocks if agents write long code onto pages.
+ */
+internal fun splitToFit(text: String, first: Float, rest: Float, height: (String) -> Float): List<String> {
+    val parts = ArrayList<String>()
+    var left = text
+    var room = first
+    while (true) {
+        if (height(left) <= room) return parts.apply { add(left) }
+        var cut = fittingCut(left, room, height)
+        // A line taller than a whole page goes on one by itself, or nothing would ever be placed.
+        if (cut == 0 && room >= rest) cut = left.indexOf('\n').let { if (it >= 0) it + 1 else left.length }
+        parts += left.substring(0, cut).trimEnd()
+        left = left.substring(cut).trimStart('\n')
+        if (left.isEmpty()) return parts
+        room = rest
+    }
+}
+
+/** The longest start of [text], ending at a line break or a space, that fits [room]; 0 when none does. */
+private fun fittingCut(text: String, room: Float, height: (String) -> Float): Int {
+    val lineEnds = text.indices.filter { text[it] == '\n' }.map { it + 1 }
+    val firstLine = lineEnds.firstOrNull() ?: text.length
+    val cuts = if (lineEnds.isNotEmpty() && height(text.substring(0, firstLine).trimEnd()) <= room) lineEnds
+        else (0 until firstLine).filter { text[it] == ' ' }.map { it + 1 }.ifEmpty { (1 until firstLine).toList() }
+    var fits = 0
+    var over = cuts.size + 1
+    while (over - fits > 1) {
+        val mid = (fits + over) / 2
+        if (height(text.substring(0, cuts[mid - 1]).trimEnd()) <= room) fits = mid else over = mid
+    }
+    return if (fits == 0) 0 else cuts[fits - 1]
 }
