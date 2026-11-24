@@ -59,6 +59,13 @@ class MotionBlurTest {
         assertEquals(1f, streakStrength(Float.NaN), 0f)
     }
 
+    @Test fun `motion blur's own streak behind the pen is for 60 Hz screens only`() {
+        assertTrue(autoInkStreak(blurOn = true, displayHz = 60f))
+        assertTrue(!autoInkStreak(blurOn = true, displayHz = 90f))
+        assertTrue(!autoInkStreak(blurOn = true, displayHz = 120f))
+        assertTrue(!autoInkStreak(blurOn = false, displayHz = 60f))
+    }
+
     @Test fun `every part of the app is a part motion blur can be switched off for`() {
         assertEquals(setOf("popups", "sidebars", "lists", "page", "ink"), BlurPart.entries.map { it.key }.toSet())
     }

@@ -36,6 +36,17 @@ class JankWatchTest {
     }
 
     @Test
+    fun `a frame is as long as its own work, not its wait in the queue`() {
+        val ms = 1_000_000L
+        // A smooth 120 Hz frame: 3 ms of work, 2.5 ms on the GPU.
+        assertEquals(3 * ms, frameWorkNanos(longArrayOf(ms / 2, ms, ms, ms / 2), 5 * ms / 2))
+        // GPU-bound: the GPU's time is the frame's.
+        assertEquals(20 * ms, frameWorkNanos(longArrayOf(ms, ms), 20 * ms))
+        // A stage the platform could not time reads as -1, and is left out.
+        assertEquals(2 * ms, frameWorkNanos(longArrayOf(-1L, 2 * ms), 0L))
+    }
+
+    @Test
     fun `asked once, and never while light mode is on`() {
         assertTrue(shouldSuggestLightMode(0.3f, hot = false, lightMode = false, asked = false))
         assertTrue(shouldSuggestLightMode(0f, hot = true, lightMode = false, asked = false))

@@ -41,6 +41,20 @@ internal class JankWindow(private val capacity: Int = 300) {
 }
 
 /**
+ * How long a frame kept the app or the GPU busy: the app's stages up to
+ * handing the buffer over, or the GPU's own time, whichever was longer.
+ * Not the frame's total, which runs on to the GPU finishing it and so counts
+ * the wait behind the frames queued ahead: at 120 Hz that alone is more than
+ * two frame times, and every frame of a smooth scroll on a fast tablet was
+ * counted late - it was asked to go light the moment a long note opened.
+ */
+internal fun frameWorkNanos(stages: LongArray, gpuNanos: Long): Long {
+    var cpu = 0L
+    for (stage in stages) if (stage > 0) cpu += stage
+    return maxOf(cpu, gpuNanos)
+}
+
+/**
  * Whether to suggest light mode: a full window of frames in which at least
  * [threshold] ran late, or the tablet running hot, while light mode is off
  * and the question has not been asked on this tablet before.
@@ -77,9 +91,13 @@ internal object JankWatch {
         skip = SETTLE_FRAMES
         val main = Handler(activity.mainLooper)
         val power = activity.getSystemService(PowerManager::class.java)
+        // Read on the watch's own thread only, one frame at a time.
+        val stages = LongArray(FRAME_STAGES.size)
         val watch = Window.OnFrameMetricsAvailableListener { _, metrics, _ ->
             if (skip > 0) { skip--; return@OnFrameMetricsAvailableListener }
-            window.record(metrics.getMetric(FrameMetrics.TOTAL_DURATION), interval)
+            for (i in FRAME_STAGES.indices) stages[i] = metrics.getMetric(FRAME_STAGES[i])
+            val gpu = if (android.os.Build.VERSION.SDK_INT >= 31) metrics.getMetric(FrameMetrics.GPU_DURATION) else 0L
+            window.record(frameWorkNanos(stages, gpu), interval)
             // Looked at every second or so of drawing, once the window is full.
             if (++sinceCheck < CHECK_EVERY || window.lateShare() == 0f) return@OnFrameMetricsAvailableListener
             sinceCheck = 0
@@ -106,6 +124,17 @@ internal object JankWatch {
         stop(activity)
     }
 
+    /** The app's part of a frame, in order, up to the buffer being handed over; see [frameWorkNanos]. */
+    private val FRAME_STAGES = intArrayOf(
+        FrameMetrics.UNKNOWN_DELAY_DURATION,
+        FrameMetrics.INPUT_HANDLING_DURATION,
+        FrameMetrics.ANIMATION_DURATION,
+        FrameMetrics.LAYOUT_MEASURE_DURATION,
+        FrameMetrics.DRAW_DURATION,
+        FrameMetrics.SYNC_DURATION,
+        FrameMetrics.COMMAND_ISSUE_DURATION,
+        FrameMetrics.SWAP_BUFFERS_DURATION,
+    )
     private const val KEY_ASKED = "jankAsked"
     private const val SETTLE_FRAMES = 120
     private const val CHECK_EVERY = 60

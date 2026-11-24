@@ -252,6 +252,20 @@ internal class SubframeBlurView(context: Context) : View(context) {
 }
 
 /**
+ * Whether motion blur's Writing part draws its streak on a screen of
+ * [displayHz]. Only on a 60 Hz screen, where motion blur is meant to hide the
+ * steps: at 120 Hz a frame's travel is half as long and the streak barely
+ * shows, yet moving it made the whole window draw again on every pen frame -
+ * on the tablet, a Compose frame and the system's frame-rate bookkeeping each
+ * time, while the front buffer alone would have drawn the ink. A pen's own
+ * Motion blur or Trail is its owner's choice and still drawn.
+ */
+internal fun autoInkStreak(blurOn: Boolean, displayHz: Float): Boolean =
+    blurOn && displayHz <= AUTO_STREAK_MAX_HZ
+
+private const val AUTO_STREAK_MAX_HZ = 75f
+
+/**
  * How strong the pen's streak is at motion blur [strength] 0-1: the old
  * streak at half, fainter below and up to a third stronger above.
  */

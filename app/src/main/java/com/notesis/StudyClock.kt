@@ -68,10 +68,14 @@ internal object StudyClock {
     var buttonShown by mutableStateOf(true)
         private set
 
-    /** Where the button sits, as a fraction of the free space across and down. */
-    var buttonX by mutableFloatStateOf(1f)
+    /**
+     * Where the button sits, as a fraction of the free space across and down.
+     * Top right until moved: at the bottom right, where it once started, it
+     * sat on the library's backup and new-note buttons.
+     */
+    var buttonX by mutableFloatStateOf(DEFAULT_BUTTON_X)
         private set
-    var buttonY by mutableFloatStateOf(0.9f)
+    var buttonY by mutableFloatStateOf(DEFAULT_BUTTON_Y)
         private set
 
     // ---- timer ----------------------------------------------------------------
@@ -432,8 +436,8 @@ internal object StudyClock {
 
     private fun load(p: SharedPreferences) {
         buttonShown = p.getBoolean("buttonShown", true)
-        buttonX = p.getFloat("buttonX", 1f)
-        buttonY = p.getFloat("buttonY", 0.9f)
+        buttonX = p.getFloat("buttonX", DEFAULT_BUTTON_X)
+        buttonY = p.getFloat("buttonY", DEFAULT_BUTTON_Y)
 
         timerDurationMs = p.getLong("timerDuration", 25 * MINUTE)
         timerEndAt = p.getLong("timerEndAt", 0L)
@@ -521,6 +525,8 @@ internal object StudyClock {
     const val SECOND = 1_000L
     const val MINUTE = 60 * SECOND
     const val HOUR = 60 * MINUTE
+    private const val DEFAULT_BUTTON_X = 1f
+    private const val DEFAULT_BUTTON_Y = 0.1f
     private const val MAX_TICK_GAP_MS = 2_000L
     private const val SAVE_EVERY_MS = 15 * SECOND
     private const val STALE_ALARM_MS = 6 * HOUR

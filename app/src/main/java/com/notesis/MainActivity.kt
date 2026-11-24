@@ -688,7 +688,7 @@ class MainActivity : ComponentActivity() {
             lifecycleScope.launch {
                 val imported = withContext(Dispatchers.IO) {
                     contentResolver.openInputStream(uri)?.use { stream ->
-                        noteStore.createFromPdf(request.name, stream)
+                        noteStore.createFromPdf(importedTitle(request.name), stream)
                     }
                 }
                 if (imported != null && writable) PdfOrigins.remember(this@MainActivity, imported.id, uri)
@@ -2986,7 +2986,7 @@ private fun displayName(context: android.content.Context, uri: Uri): String {
             if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
         }
     }.getOrNull()
-    return (name ?: "Imported PDF").removeSuffix(".pdf")
+    return importedTitle(name ?: "Imported PDF")
 }
 
 @Composable

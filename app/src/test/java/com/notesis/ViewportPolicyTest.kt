@@ -15,6 +15,20 @@ class ViewportPolicyTest {
         floatArrayOf((screenX - state[1]) / state[0], (screenY - state[2]) / state[0])
 
     @Test
+    fun `a pinch that zoomed never flings the page as the hand lifts`() {
+        // One or two fingers that only moved the page keep their fling.
+        assertTrue(flingsOnLift(maxPointers = 1, startScale = 1.5f, endScale = 1.5f))
+        assertTrue(flingsOnLift(maxPointers = 2, startScale = 1.5f, endScale = 1.505f))
+        // Zoomed out or in: the last finger's speed is not a flick.
+        assertFalse(flingsOnLift(maxPointers = 2, startScale = 1.5f, endScale = 0.6f))
+        assertFalse(flingsOnLift(maxPointers = 2, startScale = 0.6f, endScale = 1.5f))
+        // Three fingers never move the page at all.
+        assertFalse(flingsOnLift(maxPointers = 3, startScale = 1f, endScale = 1f))
+        // A start before the page had a scale is no reason to hold a fling back.
+        assertTrue(flingsOnLift(maxPointers = 1, startScale = 0f, endScale = 1f))
+    }
+
+    @Test
     fun `the document point under the pinch centroid follows the fingers`() {
         val state = floatArrayOf(1.7f, -120f, 340f)
         val under = docOf(state, 500f, 600f)

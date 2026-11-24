@@ -21,8 +21,8 @@ android {
         // dependable from Q onward, even though ink itself declares minSdk 23.
         minSdk = 29
         targetSdk = 36
-        versionCode = 256
-        versionName = "0.99.15"
+        versionCode = 257
+        versionName = "0.99.16"
         testInstrumentationRunner = "com.notesis.CustomizationInstrumentation"
         // Ship arm64 for the tablet; opt into x86_64 for emulator GPU checks.
         ndk { abiFilters += providers.gradleProperty("notesis.testAbi").getOrElse("arm64-v8a") }
@@ -40,6 +40,17 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+        }
+        // A release build that installs beside the real app (com.notesis.bench)
+        // with the debug key, so timings on a tablet come from optimised code
+        // without touching the owner's notes or the signed install. Profileable
+        // from the shell (src/bench) for frame and method traces.
+        create("bench") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".bench"
+            versionNameSuffix = "-bench"
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += "release"
         }
     }
 

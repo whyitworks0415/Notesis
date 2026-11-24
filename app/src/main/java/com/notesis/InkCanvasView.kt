@@ -2231,6 +2231,8 @@ class InkCanvasView @JvmOverloads constructor(
     private var gestureMaxPointers = 0
     private var gestureStartTime = 0L
     private var gestureMoved = 0f
+    /** The zoom when this hand came down, so its lift can tell a pinch from a pan; see [flingsOnLift]. */
+    private var gestureStartScale = 0f
     // Three fingers are their own zone; these three track only the sustained
     // drag once a third finger has actually landed, not the whole gesture.
     private var have3Fingers = false
@@ -5637,7 +5639,7 @@ class InkCanvasView @JvmOverloads constructor(
     private fun updateSubframe(real: MotionEvent, pointerId: Int) {
         // Motion blur's Writing part draws the same streak when the pen has
         // none of its own: read here, a field each, nothing allocated.
-        subframe.autoBlur = MotionPrefs.blurs(BlurPart.INK)
+        subframe.autoBlur = autoInkStreak(MotionPrefs.blurs(BlurPart.INK), displayHz)
         subframe.blurStrength = MotionPrefs.blurStrength
         if (subframe.active == SUBFRAME_OFF) return
         // Decoration only, and a redraw of its own every pen frame: battery
@@ -5830,6 +5832,7 @@ class InkCanvasView @JvmOverloads constructor(
                 viewportWasFast = false
                 gestureMaxPointers = 1
                 gestureStartTime = System.currentTimeMillis()
+                gestureStartScale = currentScale()
                 gestureMoved = 0f
                 have3Fingers = false
                 rotating3f = false
@@ -5995,7 +5998,7 @@ class InkCanvasView @JvmOverloads constructor(
                 // Three fingers never move the page, so they never fling it: the
                 // last finger off after moving the reference panel flung the
                 // page inside it, which read as the panel jumping on release.
-                if (!openedLink && gestureMaxPointers < 3) startFling()
+                if (!openedLink && flingsOnLift(gestureMaxPointers, gestureStartScale, currentScale())) startFling()
                 viewportInteracting = false
                 viewportSpeedPxPerSecond = 0f
                 viewportWasFast = false

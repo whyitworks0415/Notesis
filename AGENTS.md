@@ -11,6 +11,12 @@ S6 Lite, SM-P61x/P62x). Kotlin, Jetpack Compose for the chrome, a custom
 - There is no emulator or device in CI. Say plainly in notes and replies what
   was checked by a build or test and what was not tried on a device. Never
   quote performance numbers that were not measured.
+- With the tablet on USB, measure rather than guess: `./gradlew assembleBench`
+  builds `com.notesis.bench`, optimised like a release, debug-signed and
+  installed beside the owner's app (their notes are never touched), profileable
+  for `simpleperf`. Compile it (`adb shell cmd package compile -m speed-profile
+  -f com.notesis.bench`) before timing, and replay the same pen, scroll and
+  pinch with `tools/performance-lab/device_replay.py` before and after a change.
 - Keep pure logic (layout maths, parsers, policies) in plain functions so it
   can be unit tested; add a test in `app/src/test/java/com/notesis/` for new
   logic of that kind.

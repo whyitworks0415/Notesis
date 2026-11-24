@@ -26,6 +26,22 @@ internal fun pinchStep(state: FloatArray, factor: Float, fromX: Float, fromY: Fl
     state[2] = toY + (state[2] - fromY) * factor
 }
 
+/**
+ * Whether a hand lifting off the page may fling it: not after three fingers,
+ * which never move the page, and not after a pinch that changed the zoom
+ * ([startScale] to [endScale]). By the last lift the scale detector has
+ * already ended, so its own check let the last finger's speed through - and
+ * a pinch closing to zoom out slid the page off sideways as the hand let go.
+ */
+internal fun flingsOnLift(maxPointers: Int, startScale: Float, endScale: Float): Boolean {
+    if (maxPointers >= 3) return false
+    if (!(startScale > 0f) || !endScale.isFinite()) return true
+    return abs(endScale / startScale - 1f) <= PINCH_NO_FLING
+}
+
+/** A hundredth of the zoom: less than this is two fingers panning, not a pinch. */
+private const val PINCH_NO_FLING = 0.01f
+
 /** The longest step a fling takes in one frame; a stall past this is not made up in one jump. */
 internal const val MAX_FLING_STEP_S = 0.05f
 
