@@ -355,6 +355,8 @@ internal fun MarkdownNoteScreen(
                 apply(MdEdit(value.text.removeRange(slash.first, cursor), slash.first))
                 pickImage(slash.first)
             }
+            // A block to write on, under the line: its picture is made the first time the pen lifts.
+            SlashItem.INK -> apply(applySlash(value.text, slash.first, cursor, item, inkFileName(System.currentTimeMillis())))
             SlashItem.DATE -> apply(applySlash(value.text, slash.first, cursor, item,
                 java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.ROOT).format(java.util.Date())))
             else -> apply(applySlash(value.text, slash.first, cursor, item))

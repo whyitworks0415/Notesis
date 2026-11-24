@@ -495,7 +495,8 @@ private fun MediaRow(text: InlineText, source: MarkdownSource, c: MdColors, onFo
             when (s.kind) {
                 InlineKind.EMBED -> {
                     val (name, width) = embedParts(target)
-                    if (isImageName(name)) NoteImage(name, width, text.shown.substring(s.start, s.end), source, c, open)
+                    if (isInkName(name)) InkBlock(name, source)
+                    else if (isImageName(name)) NoteImage(name, width, text.shown.substring(s.start, s.end), source, c, open)
                     else Surface(color = Color.Transparent, shape = Ui.Shape.preview,
                         modifier = Modifier.fillMaxWidth().border(1.dp, c.marker.copy(alpha = 0.4f), Ui.Shape.preview)
                             .clickable { onFollow(name.substringBefore('#')) }) {

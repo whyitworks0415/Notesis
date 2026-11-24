@@ -27,6 +27,8 @@ internal interface MarkdownSource {
     fun openFile(name: String): java.io.InputStream?
     /** Keeps [input] with the note under a free name like [name]; the name to write in ![[ ]], or null. */
     suspend fun addFile(name: String, input: java.io.InputStream): String?
+    /** Writes [bytes] as the note's file [name], over what is there (a handwriting block's picture); false when it cannot. */
+    suspend fun replaceFile(name: String, bytes: ByteArray): Boolean = false
 }
 
 /** A Markdown note in the library (note.md in its folder). */
@@ -68,6 +70,9 @@ internal class StoreMarkdownSource(
 
     override suspend fun addFile(name: String, input: java.io.InputStream): String? =
         withContext(Dispatchers.IO) { store.addMarkdownFile(note.id, name, input) }
+
+    override suspend fun replaceFile(name: String, bytes: ByteArray): Boolean =
+        withContext(Dispatchers.IO) { store.replaceMarkdownFile(note.id, name, bytes) }
 }
 
 /** A file in a vault folder, read and written where it is. */
@@ -104,6 +109,9 @@ internal class VaultMarkdownSource(
 
     override suspend fun addFile(name: String, input: java.io.InputStream): String? =
         withContext(Dispatchers.IO) { vault.addAttachment(name, input) }
+
+    override suspend fun replaceFile(name: String, bytes: ByteArray): Boolean =
+        withContext(Dispatchers.IO) { vault.replaceAttachment(name, bytes) }
 
     private companion object {
         /** Backlinks are read from at most this many files, so a huge vault does not stall. */

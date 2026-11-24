@@ -904,6 +904,7 @@ internal enum class SlashItem(val label: String, val words: String, val prefix: 
     DIVIDER("Divider", "divider rule line hr 구분선", snippet = "---\n\u0001"),
     LINK("Link to note", "link wiki note 링크 노트", snippet = "[[\u0001]]"),
     IMAGE("Image", "image picture photo 그림 사진 이미지"),
+    INK("Handwriting", "handwriting ink draw pen sketch 필기 손글씨 그리기"),
     FOOTNOTE("Footnote", "footnote reference 각주"),
     DATE("Today's date", "date today 날짜 오늘"),
     COMMENT("Comment", "comment hidden 주석 숨김", snippet = "%% \u0001 %%"),
@@ -953,6 +954,7 @@ internal fun applySlash(text: String, slash: Int, cursor: Int, item: SlashItem, 
     }
     val snippet = when (item) {
         SlashItem.IMAGE -> "![[${extra}]]\u0001"
+        SlashItem.INK -> "![[${extra}]]\n\u0001"
         SlashItem.DATE -> "$extra\u0001"
         SlashItem.FOOTNOTE -> {
             val n = (Regex("\\[\\^(\\d+)]").findAll(text).mapNotNull { it.groupValues[1].toIntOrNull() }.maxOrNull() ?: 0) + 1

@@ -1306,6 +1306,15 @@ class NoteStore(context: Context) {
         chosen
     }.getOrNull()
 
+    /** Writes [bytes] as the note's file [name], whole or not at all. */
+    internal fun replaceMarkdownFile(id: String, name: String, bytes: ByteArray): Boolean = runCatching {
+        val file = markdownFile(id, name) ?: return false
+        file.parentFile?.mkdirs()
+        val tmp = File(file.parentFile, file.name + ".tmp")
+        java.io.FileOutputStream(tmp).use { it.write(bytes); it.fd.sync() }
+        tmp.renameTo(file)
+    }.getOrDefault(false)
+
     /** [title] null keeps the title it has: the editor's saves, so a rename made while it is open stands. */
     internal fun saveMarkdown(id: String, title: String?, text: String) {
         val metaFile = File(root, "$id/meta.json")

@@ -154,6 +154,20 @@ internal class MarkdownVault(private val context: Context, val tree: Uri) {
         chosen
     }.getOrNull()
 
+    /** Writes [bytes] as the attachment [name], over the one there or as a new file at the vault's top. */
+    fun replaceAttachment(name: String, bytes: ByteArray): Boolean = runCatching {
+        val wanted = name.trim().removePrefix("/").removePrefix("./")
+        val key = tree.toString() + "|" + wanted.lowercase(Locale.ROOT)
+        val uri = attachments[key] ?: findAttachment(wanted) ?: run {
+            val mime = android.webkit.MimeTypeMap.getSingleton()
+                .getMimeTypeFromExtension(wanted.substringAfterLast('.', "").lowercase(Locale.ROOT)) ?: "application/octet-stream"
+            DocumentsContract.createDocument(resolver, DocumentsContract.buildDocumentUriUsingTree(tree, rootId), mime, wanted.substringAfterLast('/'))
+        } ?: return false
+        attachments[key] = uri
+        resolver.openOutputStream(uri, "wt")?.use { it.write(bytes) } ?: return false
+        true
+    }.getOrDefault(false)
+
     companion object {
         private val listed = java.util.concurrent.ConcurrentHashMap<String, List<VaultFile>>()
         private val attachments = java.util.concurrent.ConcurrentHashMap<String, Uri>()

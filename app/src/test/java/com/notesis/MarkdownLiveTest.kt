@@ -188,6 +188,13 @@ class MarkdownLiveTest {
         val foot = applySlash("Fact /foot", 5, 10, SlashItem.FOOTNOTE)
         assertEquals("Fact [^1]\n\n[^1]: ", foot.text)
         assertEquals(foot.text.length, foot.start)
+        // Handwriting: an embed of its picture on a line of its own, the cursor on the line after.
+        assertTrue(SlashItem.INK in slashMatches("필기"))
+        val ink = applySlash("/ink", 0, 4, SlashItem.INK, inkFileName(7))
+        assertEquals("![[ink-7.png]]\n", ink.text)
+        assertEquals(ink.text.length, ink.start)
+        assertTrue(isInkName("ink-7.png") && !isInkName("photo.png"))
+        assertEquals("ink-7.png.ink", inkStrokesName("ink-7.png"))
     }
 
     @Test
