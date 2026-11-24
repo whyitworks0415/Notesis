@@ -56,10 +56,9 @@ jobs:
         run: bash tools/performance-lab/check-native.sh
 
       - name: Build release APK
-        # gradle.properties pins org.gradle.java.home to a path on the author's
-        # own Windows machine, which does not exist here. A system property on
-        # the command line outranks the properties file, so the pin stays where
-        # it is useful and this build uses the JDK that was just set up.
+        # The JDK is named on the command line so the build uses the one just
+        # set up, whatever a properties file says. The author's own machine
+        # pins its JDK in the user-level ~/.gradle/gradle.properties, not here.
         run: ./gradlew assembleRelease -Dorg.gradle.java.home="$JAVA_HOME" --no-daemon --stacktrace
 
       - name: Android version check

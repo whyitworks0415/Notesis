@@ -2700,8 +2700,12 @@ class NoteStore(context: Context) {
                 DataOutputStream(java.io.BufferedOutputStream(FileOutputStreamAt(raw))).use { out ->
                     for (i in onDisk until strokes.size) writeStroke(out, strokes[i])
                 }
+                // The new strokes reach the disk before the count that names
+                // them, so a power cut leaves the old count over whole strokes.
+                raw.fd.sync()
                 raw.seek(COUNT_OFFSET)
                 raw.writeInt(strokes.size)
+                raw.fd.sync()
                 true
             }
         }.getOrDefault(false)
@@ -2736,11 +2740,16 @@ class NoteStore(context: Context) {
         // Write beside the real file and rename over it, so a crash mid-write
         // leaves the previous save intact instead of a truncated page.
         val tmp = File(file.parentFile, "${file.name}.tmp")
-        DataOutputStream(tmp.outputStream().buffered()).use { out ->
+        val stream = java.io.FileOutputStream(tmp)
+        DataOutputStream(stream.buffered()).use { out ->
             out.writeInt(MAGIC)
             out.writeInt(VERSION)
             out.writeInt(strokes.size)
             for (stroke in strokes) writeStroke(out, stroke)
+            // On disk before the rename: after a power cut the rename alone
+            // could survive and leave the page empty instead of as it was.
+            out.flush()
+            stream.fd.sync()
         }
         return tmp.renameTo(file)
     }
