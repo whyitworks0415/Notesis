@@ -343,7 +343,11 @@ class MainActivity : ComponentActivity() {
                 typography = remember { chromeTypography() },
                 shapes = Ui.shapes,
             ) {
-            ProvideSkin(skin, look) {
+            ProvideSkin(skin, look, onLiquidStyle = { style ->
+                val next = look.copy(liquidStyle = style)
+                look = next
+                lookStore.save(next)
+            }) {
             // The system's largest font sizes, kept to one the bars, buttons
             // and panels have room for: past it their words were cut off
             // rather than the controls growing, most of all on a phone.

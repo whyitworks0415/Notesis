@@ -139,7 +139,12 @@ fun ProvideSkin(settings: SkinSettings, content: @Composable () -> Unit) = Provi
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ProvideSkin(skin: Skin, settings: SkinSettings, content: @Composable () -> Unit) {
+fun ProvideSkin(
+    skin: Skin,
+    settings: SkinSettings,
+    onLiquidStyle: ((LiquidStyle) -> Unit)? = null,
+    content: @Composable () -> Unit,
+) {
     // Whether the chrome may move is watched once here and shared by every control.
     val motionAllowed = LocalMotionAllowed.current ?: rememberSystemMotionAllowed()
     // The same for whether the glass may bend and blur: shared by every Liquid glass control.
@@ -147,6 +152,8 @@ fun ProvideSkin(skin: Skin, settings: SkinSettings, content: @Composable () -> U
     CompositionLocalProvider(
         LocalSkin provides skin,
         LocalSkinSettings provides settings,
+        // Without this the pickers' choice of Liquid glass recipe (iOS, Mornye) went nowhere.
+        LocalLiquidStyleChange provides (onLiquidStyle ?: LocalLiquidStyleChange.current),
         // MaterialTheme alone does not provide this local. Text/icons in a
         // plain Box otherwise inherit the default black even in dark mode.
         LocalContentColor provides MaterialTheme.colorScheme.onSurface,
