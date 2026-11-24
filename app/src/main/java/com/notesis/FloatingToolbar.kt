@@ -721,7 +721,7 @@ internal fun FloatingToolbar(
                         }
                     }
                     if (menuShown) {
-                        val maxHeight = (LocalConfiguration.current.screenHeightDp - 140).coerceAtLeast(180).dp
+                        val maxHeight = Ui.Size.popupMax(LocalConfiguration.current.screenHeightDp.dp)
                         val density = androidx.compose.ui.platform.LocalDensity.current
                         val gap = with(density) { Ui.Space.s.roundToPx() }
                         val room = with(density) { POPUP_SHADOW_ROOM.roundToPx() }

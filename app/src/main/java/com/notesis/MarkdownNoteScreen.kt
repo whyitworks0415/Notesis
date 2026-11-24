@@ -484,7 +484,7 @@ internal fun MarkdownNoteScreen(
             title = { Text("Outline") },
             text = {
                 if (headings.isEmpty()) Text("No headings yet. Start a line with # to make one.")
-                else LazyColumn(Modifier.heightIn(max = 420.dp)) {
+                else LazyColumn(Modifier.heightIn(max = Ui.Size.dialogBody)) {
                     items(headings) { heading ->
                         Text(heading.title.ifBlank { "(untitled)" },
                             style = if (heading.level <= 1) MaterialTheme.typography.titleMedium else MaterialTheme.typography.bodyLarge,
@@ -507,7 +507,7 @@ internal fun MarkdownNoteScreen(
             onDismissRequest = { showLinks = false },
             title = { Text("Links") },
             text = {
-                LazyColumn(Modifier.heightIn(max = 460.dp)) {
+                LazyColumn(Modifier.heightIn(max = Ui.Size.dialogBody)) {
                     item { LinkHeading("Linked from") }
                     val incoming = backlinks
                     if (incoming == null) item { Text("Looking…", color = MaterialTheme.colorScheme.onSurfaceVariant) }

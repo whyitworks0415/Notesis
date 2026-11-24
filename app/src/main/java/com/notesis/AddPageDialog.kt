@@ -116,7 +116,7 @@ internal fun AddPageDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add page") },
         text = {
-            Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
+            Column(Modifier.heightIn(max = Ui.Size.dialogBody).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
                 Text("Size", style = MaterialTheme.typography.labelLarge)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(Ui.Space.s),

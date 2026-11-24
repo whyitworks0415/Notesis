@@ -145,6 +145,14 @@ object Ui {
         val touchCompact = 44.dp
         /** An icon button's visible body; its hit area is still [touch]. */
         val button = 40.dp
+        /** The tallest a dialog's scrolling body stands, in every dialog, so they all end at one line. */
+        val dialogBody = 520.dp
+        /**
+         * The tallest a popup off the toolbar or a menu stands on a screen
+         * [screenHeight] tall: clear of the bar above and the edge below, the
+         * same for the tool panels, the functions menu and the app's menus.
+         */
+        fun popupMax(screenHeight: Dp): Dp = (screenHeight - 140.dp).coerceAtLeast(180.dp)
     }
 
     object Icon {

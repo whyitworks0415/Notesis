@@ -140,7 +140,7 @@ internal fun SmartFolderDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (initial == null) "New smart folder" else "Edit smart folder") },
         text = {
-            Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
+            Column(Modifier.heightIn(max = Ui.Size.dialogBody).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
                 OutlinedTextField(name, { name = it }, singleLine = true, label = { Text("Name") })
                 Text("Notes that are…", style = MaterialTheme.typography.labelLarge)

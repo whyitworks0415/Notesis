@@ -74,7 +74,7 @@ internal fun GlassMenu(
     // Its rows give at either end and spring back.
     val bounce = rememberEdgeBounce()
     val scrollSpeed = rememberScrollSpeed()
-    val gap = with(androidx.compose.ui.platform.LocalDensity.current) { 6.dp.roundToPx() }
+    val gap = with(androidx.compose.ui.platform.LocalDensity.current) { Ui.Space.s.roundToPx() }
     // What it was opened from, in the popup's window, as the position puts it.
     val anchor = remember { floatArrayOf(Float.NaN, Float.NaN) }
     Popup(
@@ -89,7 +89,7 @@ internal fun GlassMenu(
                 modifier
                     .width(IntrinsicSize.Max)
                     .widthIn(min = 200.dp, max = 320.dp)
-                    .heightIn(max = 520.dp)
+                    .heightIn(max = Ui.Size.popupMax(androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp))
                     // Where motion is off the growth is already at its end and nothing is cut.
                     .then(if (animate) {
                         Modifier.revealOutOf(growth, Ui.Corner.card) { c ->

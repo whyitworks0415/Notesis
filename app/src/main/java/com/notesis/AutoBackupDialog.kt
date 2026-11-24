@@ -52,7 +52,7 @@ internal fun AutoBackupDialog(onDismiss: () -> Unit, onReport: (String) -> Unit)
         onDismissRequest = onDismiss,
         title = { Text("Automatic backup") },
         text = {
-            Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
+            Column(Modifier.heightIn(max = Ui.Size.dialogBody).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
                 Text("Every note, backed up on its own as the same file \"Back up all notes\" makes. Off until you turn it on.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)

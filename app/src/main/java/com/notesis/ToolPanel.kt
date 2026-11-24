@@ -117,7 +117,7 @@ internal fun ToolPanel(
         val shape = RoundedCornerShape(corner)
         val reveal = state.animate
         val scrollSpeed = rememberScrollSpeed()
-        val tallest = LocalConfiguration.current.screenHeightDp.dp * 0.9f
+        val tallest = Ui.Size.popupMax(LocalConfiguration.current.screenHeightDp.dp)
         // Where the panel's top first lands, kept there: a part opening inside
         // it, or another tab of it, makes it longer downwards rather than
         // moving its top up and down the screen. Only a panel grown past the

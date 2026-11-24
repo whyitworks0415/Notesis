@@ -459,7 +459,7 @@ internal fun HomeGradientEditor(onDismiss: () -> Unit, onSave: (CustomGround) ->
         onDismissRequest = onDismiss,
         title = { Text("Your own look") },
         text = {
-            Column(Modifier.heightIn(max = 600.dp).verticalScroll(rememberScrollState()),
+            Column(Modifier.heightIn(max = Ui.Size.dialogBody).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
                 Text("Drag a colour to where you want it on the screen; tap one to change it.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)

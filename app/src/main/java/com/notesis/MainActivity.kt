@@ -2506,7 +2506,7 @@ private fun HomeScreen(
             onDismissRequest = { historyNote = null },
             title = { Text("Earlier versions") },
             text = {
-                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                Column(Modifier.heightIn(max = Ui.Size.dialogBody).verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(Ui.Space.xs)) {
                     Text("The note as it was each time it was opened, kept on this tablet. Restoring keeps the note as it is now " +
                         "as a version too, so it can be undone.", style = MaterialTheme.typography.bodySmall,
@@ -2792,7 +2792,7 @@ internal fun LibraryDialog(store: NoteStore, onPaste: (InkClipboard.Clip) -> Uni
                 }
                 if (items.isEmpty()) Text("Select with the lasso and tap 'Add to library' to keep it here.",
                     style = MaterialTheme.typography.bodySmall)
-                LazyVerticalGrid(GridCells.Adaptive(96.dp), Modifier.heightIn(max = 420.dp)) {
+                LazyVerticalGrid(GridCells.Adaptive(96.dp), Modifier.heightIn(max = Ui.Size.dialogBody)) {
                     items(items.filter { filter == null || filter in it.tags }, key = { it.id }) { item ->
                         val preview = remember(item.id) {
                             runCatching { android.graphics.BitmapFactory.decodeFile(item.preview.path) }.getOrNull()
@@ -2908,7 +2908,7 @@ private fun ImageOrderDialog(uris: List<Uri>, onDismiss: () -> Unit, onConfirm: 
         onDismissRequest = onDismiss,
         title = { Text("Order of ${countNoun(order.size, "image")}") },
         text = {
-            LazyColumn(Modifier.heightIn(max = 420.dp)) {
+            LazyColumn(Modifier.heightIn(max = Ui.Size.dialogBody)) {
                 items(order.toList(), key = { it.toString() }) { uri ->
                     val at = order.indexOf(uri)
                     val thumb = remember(uri) {
@@ -2942,7 +2942,7 @@ private fun TrashDialog(store: NoteStore, onChanged: () -> Unit, onDismiss: () -
         text = {
             if (trashed.isEmpty()) {
                 Text("Trash is empty", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } else LazyColumn(Modifier.heightIn(max = 420.dp)) {
+            } else LazyColumn(Modifier.heightIn(max = Ui.Size.dialogBody)) {
                 items(trashed, key = { it.id }) { note ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
@@ -3303,7 +3303,7 @@ private fun FolderDialog(
         onDismissRequest = onDismiss,
         title = { Text("Move to folder") },
         text = {
-            Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
+            Column(Modifier.heightIn(max = Ui.Size.dialogBody).verticalScroll(rememberScrollState())) {
                 row(L10n.tr("Top level"), 0, "")
                 folders.sorted().forEach { path -> row(folderLeaf(path), path.count { it == '/' } + 1, path) }
                 Spacer(Modifier.height(Ui.Space.m))
@@ -4023,7 +4023,7 @@ private fun NameDialog(
         onDismissRequest = onDismiss,
         title = { Text("New note") },
         text = {
-            Column(Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState())) {
+            Column(Modifier.heightIn(max = Ui.Size.dialogBody).verticalScroll(rememberScrollState())) {
                 OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
@@ -4777,7 +4777,7 @@ private fun NoteScreen(
             onDismissRequest = { benchReport = null },
             title = { Text("Benchmark") },
             text = {
-                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                Column(Modifier.heightIn(max = Ui.Size.dialogBody).verticalScroll(rememberScrollState())) {
                     // Numbers and fixed labels, for pasting beside another run: shown as they are.
                     androidx.compose.material3.Text(report, style = MaterialTheme.typography.bodySmall,
                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
