@@ -135,7 +135,7 @@ val LocalSkinSettings = compositionLocalOf { SkinSettings() }
 
 /** Material, for previews and tests that do not choose a look. */
 @Composable
-fun ProvideSkin(settings: SkinSettings, content: @Composable () -> Unit) = ProvideSkin(Skin.MATERIAL, settings, content)
+fun ProvideSkin(settings: SkinSettings, content: @Composable () -> Unit) = ProvideSkin(Skin.MATERIAL, settings, content = content)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
