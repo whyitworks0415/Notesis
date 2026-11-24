@@ -1875,3 +1875,18 @@ Page edges and centre	쪽 가장자리와 가운데
 Page margins	쪽 여백
 Pictures and text boxes	그림과 텍스트 상자
 Even spacing	같은 간격
+Close this conversation	이 대화 닫기
+Ask, / for commands, ! for a shell line…	질문, / 명령, ! 셸 명령…
+{0} steps	{0}단계
+runs the line in Debian, its output shown as it comes	Debian에서 그 줄을 실행하고 출력을 바로 보여 줌
+a note command, run here at once without the agent	Agent 없이 여기서 바로 실행하는 노트 명령
+passed to the agent as its own command	Agent의 자체 명령으로 전달
+a new conversation in its own tab	새 탭에서 새 대화
+close this tab	이 탭 닫기
+empty this tab and start its conversation afresh	이 탭을 비우고 대화를 새로 시작
+/agent claude|codex|gemini|opencode: who answers in this tab	/agent claude|codex|gemini|opencode: 이 탭에서 답할 Agent
+the agent's earlier conversations, to carry one on here	Agent의 이전 대화 (골라서 여기서 이어 가기)
+stop waiting for the answer	답 기다리기 그만두기
+these commands	이 명령 목록
+The helpers in Debian could not be brought up to date: {0} Run the setup script again in Termux (Agent connection → On this tablet).	Debian의 도우미를 새로 고치지 못했습니다: {0} Termux에서 설정 스크립트를 다시 실행하세요 (Agent 연결 → 이 태블릿에서).
+Type / for commands, ! to run a line in Debian, notesis … for a note command without the agent.	/ 를 입력하면 명령, ! 는 Debian에서 한 줄 실행, notesis … 는 Agent 없이 노트 명령입니다.

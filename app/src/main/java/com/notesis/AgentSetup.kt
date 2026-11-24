@@ -53,7 +53,7 @@ internal fun termuxSetupScript(agents: Set<AgentCli>, url: String, token: String
     require(SAFE_URL.matches(url)) { "Not an address of this server" }
     require(bridge.lines().none { it.trim() == "NOTESIS_BRIDGE" || it.trim() == "NOTESIS_DEBIAN" }) { "The bridge would end the script early" }
     require(AGENT_GUIDE.lines().none { it.trim() in setOf("NOTESIS_GUIDE", "NOTESIS_DEBIAN") } && '\'' !in GUIDE_MERGE_JS) { "The guide would end the script early" }
-    require((ASK_HELPER_SCRIPT.lines() + SESSIONS_SCRIPT.lines()).none { it.trim() in setOf("NOTESIS_ASK", "NOTESIS_SESSIONS", "NOTESIS_DEBIAN") }) {
+    require((ASK_HELPER_SCRIPT.lines() + SESSIONS_SCRIPT.lines() + STREAM_SCRIPT.lines()).none { it.trim() in setOf("NOTESIS_ASK", "NOTESIS_SESSIONS", "NOTESIS_STREAM", "NOTESIS_DEBIAN") }) {
         "A helper would end the script early"
     }
     val chosen = AgentCli.entries.filter { it in agents }
@@ -91,13 +91,7 @@ internal fun termuxSetupScript(agents: Set<AgentCli>, url: String, token: String
         appendLine("NOTESIS_BRIDGE")
         appendLine("BRIDGE=\"\$HOME/.notesis/notesis-mcp.js\"")
         // The helper the sidebar's requests go through (AgentChat.kt): the request on its input, never on a command line.
-        appendLine("cat > \"\$HOME/.notesis/ask\" <<'NOTESIS_ASK'")
-        append(ASK_HELPER_SCRIPT.trimEnd('\n')).append('\n')
-        appendLine("NOTESIS_ASK")
-        appendLine("chmod 700 \"\$HOME/.notesis/ask\"")
-        appendLine("cat > \"\$HOME/.notesis/sessions.js\" <<'NOTESIS_SESSIONS'")
-        append(SESSIONS_SCRIPT.trimEnd('\n')).append('\n')
-        appendLine("NOTESIS_SESSIONS")
+        append(helperFilesScript())
         // What each agent is told about the notes, in its own instructions file; setting up again replaces only this part.
         appendLine("cat > \"\$HOME/.notesis/guide.md\" <<'NOTESIS_GUIDE'")
         append(AGENT_GUIDE.trimEnd('\n')).append('\n')

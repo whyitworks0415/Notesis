@@ -59,6 +59,16 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** How Termux is opened from Notesis: beside it (split screen), in a window over it, or on its own. */
 internal enum class TermuxWindow { BESIDE, WINDOW, FULL }
@@ -99,43 +109,94 @@ internal fun AgentSidebarHost() {
 @Composable
 private fun AgentSidebar(appear: () -> Float) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val chat = AgentChat
     var draft by remember { mutableStateOf("") }
     var pending by remember { mutableStateOf<String?>(null) }
+    var notesRunning by remember { mutableStateOf(false) }
     val list = rememberLazyListState()
     val termux = remember { context.packageManager.getLaunchIntentForPackage(TERMUX_PACKAGE) != null }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val waiting = chat.waiting
+    val waitingHere = waiting != null && chat.waitingThread == chat.thread.id
+    val scheme = MaterialTheme.colorScheme
 
-    fun deliver(text: String) {
-        if (chat.send(context, text)) draft = ""
+    fun allowed(text: String): Boolean {
+        if (context.checkSelfPermission(TERMUX_RUN_COMMAND_PERMISSION) == PackageManager.PERMISSION_GRANTED) return true
+        pending = text
+        return false
     }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         val text = pending
         pending = null
-        if (granted && text != null) deliver(text)
-        else if (!granted) chat.messages += ChatMessage(false,
+        // Allowed, what was typed is still there to send.
+        if (!granted && text != null) chat.say(context,
             "Notesis may not ask Termux to run commands. Allow it under Settings → Apps → Notesis → Permissions (Run commands in Termux).",
             failed = true)
     }
+
+    /** A note command, here and at once: no agent, no tokens. */
+    fun runNotes(line: String) {
+        chat.mine(context, "notesis $line")
+        notesRunning = true
+        scope.launch {
+            val answer = withContext(Dispatchers.IO) {
+                runCatching { TerminalSession.commands(context).runAll(listOf(line)) }
+                    .getOrElse { "{\"ok\":false,\"error\":${org.json.JSONObject.quote(it.message ?: it.javaClass.simpleName)}}" }
+            }
+            val out = terminalOutput(answer)
+            chat.say(context, "```\n" + out.joinToString("\n") { clipLines(it.text, 200) } + "\n```",
+                failed = out.any { it.tone == TerminalTone.ERROR })
+            if (terminalChangedNotes(answer)) LibraryChanges.changed()
+            notesRunning = false
+        }
+    }
+
     fun send() {
         val text = draft.trim()
-        if (text.isEmpty() || waiting != null) return
-        if (context.checkSelfPermission(TERMUX_RUN_COMMAND_PERMISSION) != PackageManager.PERMISSION_GRANTED) {
-            pending = text
-            permission.launch(TERMUX_RUN_COMMAND_PERMISSION)
-        } else deliver(text)
+        if (text.isEmpty() || waiting != null || notesRunning) return
+        when (val input = parseChatInput(text)) {
+            is ChatInput.Notes -> { draft = ""; runNotes(input.line) }
+            is ChatInput.Slash -> when (input.name) {
+                "new" -> { draft = ""; chat.newThread(context) }
+                "close" -> { draft = ""; chat.closeThread(context) }
+                "clear" -> { draft = ""; chat.clear(context) }
+                "stop" -> { draft = ""; if (waiting != null) chat.stopWaiting(context) }
+                "sessions" -> { draft = ""; if (allowed(text)) chat.listSessions(context) else permission.launch(TERMUX_RUN_COMMAND_PERMISSION) }
+                "agent" -> {
+                    draft = ""
+                    val cli = AgentCli.entries.firstOrNull { it.command == input.rest.lowercase() || it.label.equals(input.rest, true) }
+                    if (cli != null) chat.choose(context, cli)
+                    else chat.say(context, "Which agent? " + AgentCli.entries.joinToString(", ") { it.command })
+                }
+                "help" -> {
+                    draft = ""
+                    chat.say(context, SIDEBAR_COMMANDS.entries.joinToString("\n") { "- **/${it.key}**: ${it.value.tr}" } +
+                        "\n- **!line**: " + "runs the line in Debian, its output shown as it comes".tr +
+                        "\n- **notesis …**: " + "a note command, run here at once without the agent".tr +
+                        "\n- **/other**: " + "passed to the agent as its own command".tr)
+                }
+                // Anything else is the agent's own command, as typed.
+                else -> if (allowed(text)) { if (chat.send(context, text)) draft = "" } else permission.launch(TERMUX_RUN_COMMAND_PERMISSION)
+            }
+            is ChatInput.Shell -> if (input.line.isNotEmpty()) {
+                if (allowed(text)) { if (chat.send(context, input.line, shell = true)) draft = "" } else permission.launch(TERMUX_RUN_COMMAND_PERMISSION)
+            }
+            is ChatInput.Ask -> if (allowed(text)) { if (chat.send(context, text)) draft = "" } else permission.launch(TERMUX_RUN_COMMAND_PERMISSION)
+        }
     }
 
     LaunchedEffect(waiting) {
         while (chat.waiting != null) { now = System.currentTimeMillis(); delay(1_000) }
     }
-    LaunchedEffect(chat.messages.size, AgentActivity.lines.size) {
-        val count = chat.messages.size + (if (chat.waiting != null) 1 else 0)
-        if (count > 0) list.animateScrollToItem(count - 1)
+    // Follows what comes in - each step as it arrives - unless the owner has scrolled up to read.
+    LaunchedEffect(chat.thread.id, chat.messages.size, chat.live.size, AgentActivity.lines.size) {
+        val count = chat.messages.size + (if (waitingHere) 1 else 0)
+        if (count > 0 && (!list.canScrollForward || (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= count - 2)) {
+            list.animateScrollToItem(count - 1, Int.MAX_VALUE)
+        }
     }
 
-    // As wide as the owner last dragged it, kept between openings; the same panel as settings and the pages.
     val prefs = remember { context.getSharedPreferences("agent-chat", android.content.Context.MODE_PRIVATE) }
     var width by remember { mutableFloatStateOf(prefs.getFloat("width", 420f)) }
     SettingsSidebarFrame(
@@ -146,19 +207,31 @@ private fun AgentSidebar(appear: () -> Float) {
             if (termux) IconButton(onClick = { openTermux(context, TermuxWindow.BESIDE) }) {
                 Icon(AppIcons.terminal, contentDescription = "Open Termux beside")
             }
-            IconButton(onClick = { chat.clear(context) }, enabled = waiting == null) {
-                Icon(AppIcons.reset, contentDescription = "New conversation")
-            }
+            IconButton(onClick = { chat.newThread(context) }) { Icon(AppIcons.addPage, contentDescription = "New conversation") }
         },
     ) {
     Column(
-        Modifier.fillMaxSize().padding(Ui.Space.l),
+        Modifier.fillMaxSize().padding(horizontal = Ui.Space.l, vertical = Ui.Space.s),
         verticalArrangement = Arrangement.spacedBy(Ui.Space.s),
     ) {
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            for (cli in AgentCli.entries) SettingsChoiceChip(cli == chat.agent, { if (waiting == null) chat.choose(context, cli) }, cli.label)
+        // The conversations, a tab each: held, a tab closes.
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.xs)) {
+            chat.threads.forEachIndexed { index, t ->
+                val busy = waiting != null && chat.waitingThread == t.id
+                SettingsChoiceChip(
+                    selected = index == chat.current,
+                    onClick = { chat.select(context, index) },
+                    label = (if (busy) "● " else "") + t.title.ifEmpty { "New conversation".tr } + " · " + t.agent.label.substringBefore(' '),
+                )
+            }
+            if (chat.threads.size > 1 && !waitingHere) IconButton(onClick = { chat.closeThread(context) }) {
+                Icon(AppIcons.close, contentDescription = "Close this conversation")
+            }
         }
-        // The agent's own earlier conversations, to carry one on from here.
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.xs)) {
+            for (cli in AgentCli.entries) SettingsChoiceChip(cli == chat.agent, { if (!waitingHere) chat.choose(context, cli) }, cli.label)
+        }
+        // The agent's own earlier conversations, to carry one on in a tab.
         val picking = chat.sessions != null || chat.loadingSessions || chat.sessionsError != null
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = {
@@ -167,59 +240,89 @@ private fun AgentSidebar(appear: () -> Float) {
                     permission.launch(TERMUX_RUN_COMMAND_PERMISSION)
                 } else chat.listSessions(context)
             }, enabled = termux && waiting == null) { Text(if (picking) "Back to the conversation" else "Earlier conversations") }
-            chat.resume?.let { session ->
-                Text(AnnotatedString(session.title), style = MaterialTheme.typography.labelMedium, maxLines = 1,
-                    color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
+            chat.note?.let { (_, title) ->
+                Text(AnnotatedString("📝 " + title), style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             }
         }
-        chat.note?.let { (_, title) ->
-            Text(AnnotatedString("📝 " + title), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1)
-        }
         if (picking) SessionPicker(Modifier.weight(1f).fillMaxWidth()) { chat.pick(context, it) }
-        else LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        else LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list, verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
             if (chat.messages.isEmpty()) item {
                 Text(
                     if (termux) "Ask in your own words: “put an outline in this note from its PDF”, “sum up today's notes”. " +
                         "The agent runs in Termux and changes notes through Notesis, so each change shows at once and can be undone."
                     else "The agents run in Termux. Set them up first: Agent connection → On this tablet.",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant,
                 )
             }
+            if (chat.messages.isEmpty() && termux) item {
+                Text("Type / for commands, ! to run a line in Debian, notesis … for a note command without the agent.",
+                    style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
+            }
             itemsIndexed(chat.messages) { _, message -> ChatBubble(message) }
-            if (waiting != null) item {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (waitingHere) item {
+                Column(verticalArrangement = Arrangement.spacedBy(Ui.Space.xs)) {
                     // No running animation while it waits: one kept the whole screen redrawing every frame,
                     // for as many minutes as an agent takes. The clock below moves once a second.
                     val seconds = ((now - chat.sentAt) / 1000).coerceAtLeast(0)
                     Text("{0} is working in Termux · {1}".tr.replace("{0}", chat.agent.label)
                         .replace("{1}", "%d:%02d".format(seconds / 60, seconds % 60)),
-                        style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    // What the agent has asked of the notes so far: it comes through the connection as it happens.
-                    for (line in AgentActivity.lines.drop(chat.activityFrom).takeLast(8)) {
-                        Text(AnnotatedString(line), fontFamily = FontFamily.Monospace, fontSize = 12.sp, maxLines = 1,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        style = MaterialTheme.typography.labelMedium, color = scheme.primary)
+                    // What it does, as it does it: its thinking, its words, the tools it calls and what they answer.
+                    for (step in chat.live.takeLast(LIVE_SHOWN)) LiveStepRow(step)
+                    // What it has asked of the notes, through the connection, when no steps come (an older helper).
+                    if (chat.live.isEmpty()) for (line in AgentActivity.lines.drop(chat.activityFrom).takeLast(8)) {
+                        Text(AnnotatedString(line), fontFamily = FontFamily.Monospace, fontSize = 12.sp, color = scheme.onSurfaceVariant)
                     }
                     TextButton(onClick = { chat.stopWaiting(context) }) { Text("Stop waiting") }
                 }
             }
         }
-        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // `/`: the commands there are, to tap rather than remember.
+        if (draft.startsWith("/") && !draft.contains(' ')) {
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Ui.Space.xs)) {
+                for (name in SIDEBAR_COMMANDS.keys.filter { it.startsWith(draft.drop(1).lowercase()) }) {
+                    SettingsChoiceChip(false, { draft = if (name == "agent") "/agent " else "/$name" }, "/$name")
+                }
+            }
+        }
+        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
             OutlinedTextField(
                 value = draft,
                 onValueChange = { draft = it },
-                modifier = Modifier.weight(1f).heightIn(min = 48.dp),
-                placeholder = { Text("Ask about your notes…") },
-                maxLines = 5,
-                enabled = termux,
+                modifier = Modifier.weight(1f).heightIn(min = Ui.Size.touch),
+                placeholder = { Text("Ask, / for commands, ! for a shell line…") },
+                maxLines = 6,
+                enabled = termux || draft.startsWith("notesis") || draft.startsWith("/"),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(onSend = { send() }),
             )
-            Button(onClick = ::send, enabled = termux && waiting == null && draft.isNotBlank()) { Text("Send") }
+            Button(onClick = ::send, enabled = waiting == null && !notesRunning && draft.isNotBlank()) { Text("Send") }
         }
-        if (chat.messages.isNotEmpty() && waiting == null) {
-            Text(if ((chat.carryOn && carriesOn(chat.agent)) || chat.resume != null) "The next request carries on this conversation." else "The next request starts afresh.",
-                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (chat.messages.isNotEmpty() && !waitingHere) {
+            Text(if (chat.thread.agentSession != null || chat.thread.carryOn) "The next request carries on this conversation." else "The next request starts afresh.",
+                style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant)
         }
     }
+    }
+}
+
+/** One step an agent took, as it is shown while it works and under its answer. */
+@Composable
+private fun LiveStepRow(step: LiveStep) {
+    val scheme = MaterialTheme.colorScheme
+    when (step.kind) {
+        LiveStep.THINKING -> Text(AnnotatedString(step.text.trim()), style = MaterialTheme.typography.bodySmall,
+            fontStyle = FontStyle.Italic, color = scheme.onSurfaceVariant, maxLines = 6, overflow = TextOverflow.Ellipsis)
+        LiveStep.TEXT -> Text(AnnotatedString(step.text.trim()), style = MaterialTheme.typography.bodyMedium, color = scheme.onSurface)
+        LiveStep.TOOL -> Text(AnnotatedString("› " + step.text.trim()), fontFamily = FontFamily.Monospace, fontSize = 12.sp,
+            color = scheme.primary, maxLines = 3, overflow = TextOverflow.Ellipsis)
+        LiveStep.OUTPUT -> Text(AnnotatedString(step.text.trimEnd()), fontFamily = FontFamily.Monospace, fontSize = 11.sp,
+            color = scheme.onSurfaceVariant, maxLines = 4, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth().background(scheme.surfaceContainerHigh, Ui.Shape.badge).padding(Ui.Space.xs))
+        LiveStep.USAGE -> usageLine(step.text)?.let {
+            Text(AnnotatedString(it), style = MaterialTheme.typography.labelSmall, color = scheme.outline)
+        }
     }
 }
 
@@ -257,7 +360,21 @@ private fun SessionPicker(modifier: Modifier, onPick: (AgentSession) -> Unit) {
 @Composable
 private fun ChatBubble(message: ChatMessage) {
     val scheme = MaterialTheme.colorScheme
-    Box(Modifier.fillMaxWidth(), contentAlignment = if (message.mine) Alignment.CenterEnd else Alignment.CenterStart) {
+    var stepsShown by remember(message) { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = if (message.mine) Alignment.End else Alignment.Start,
+        verticalArrangement = Arrangement.spacedBy(Ui.Space.xs)) {
+        // How it got there, folded under the answer: what it thought, the tools it called, what it cost.
+        if (message.steps.isNotEmpty()) {
+            val usage = message.steps.lastOrNull { it.kind == LiveStep.USAGE }?.let { usageLine(it.text) }
+            val count = message.steps.count { it.kind != LiveStep.USAGE }
+            TextButton(onClick = { stepsShown = !stepsShown }) {
+                Text(AnnotatedString((if (stepsShown) "▾ " else "▸ ") + "{0} steps".tr.replace("{0}", count.toString()) +
+                    (usage?.let { " · $it" } ?: "")), style = MaterialTheme.typography.labelSmall)
+            }
+            if (stepsShown) Column(Modifier.fillMaxWidth().padding(start = Ui.Space.s), verticalArrangement = Arrangement.spacedBy(Ui.Space.xs)) {
+                for (step in message.steps) if (step.kind != LiveStep.USAGE) LiveStepRow(step)
+            }
+        }
         SelectionContainer {
             // The app's own words (a failure, a hint) are translated; the agent's and the owner's are shown as written.
             Text(
@@ -272,12 +389,14 @@ private fun ChatBubble(message: ChatMessage) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = when { message.failed -> scheme.onErrorContainer; message.mine -> scheme.onPrimaryContainer; else -> scheme.onSurface },
                 modifier = Modifier
-                    .widthIn(max = 340.dp)
+                    // As wide as the panel lets it, less a margin on the other side: a long answer is not a narrow column.
+                    .fillMaxWidth(if (message.mine) 0.85f else 1f)
+                    .wrapContentWidth(if (message.mine) Alignment.End else Alignment.Start)
                     .background(
                         when { message.failed -> scheme.errorContainer; message.mine -> scheme.primaryContainer; else -> scheme.surfaceContainerHighest },
-                        RoundedCornerShape(14.dp),
+                        Ui.Shape.chip,
                     )
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                    .padding(horizontal = Ui.Space.m, vertical = Ui.Space.s),
             )
         }
     }
@@ -292,3 +411,6 @@ internal fun AgentChatNote(note: NoteMeta) {
         onDispose { if (AgentChat.note == mine) AgentChat.note = null }
     }
 }
+
+/** How many of the steps a working agent has taken are shown at once; the rest are folded under its answer. */
+private const val LIVE_SHOWN = 40

@@ -469,17 +469,40 @@ class AgentCommandsTest {
 
     @Test
     fun `a request goes to Termux as fixed words, the owner's words on its input`() {
-        val words = agentAskArguments(AgentCli.CLAUDE, carryOn = true)
-        assertEquals(listOf("login", "debian", "--", "bash", ASK_HELPER, "claude", "continue"), words)
+        val words = agentAskArguments(AgentCli.CLAUDE, carryOn = true, request = 42)
+        assertEquals(listOf("login", "debian", "--", "bash", ASK_HELPER, "claude", "42", "continue"), words)
         assertTrue(words.none { it.contains(' ') })
-        assertEquals(listOf("login", "debian", "--", "bash", ASK_HELPER, "gemini"), agentAskArguments(AgentCli.GEMINI, carryOn = false))
+        assertEquals(listOf("login", "debian", "--", "bash", ASK_HELPER, "gemini", "7"), agentAskArguments(AgentCli.GEMINI, carryOn = false, request = 7))
         // An earlier conversation picked from the list goes by its id, as one word; anything else is refused.
-        assertEquals(listOf("login", "debian", "--", "bash", ASK_HELPER, "codex", "resume", "019a-77f2.b_c"),
-            agentAskArguments(AgentCli.CODEX, carryOn = true, resumeId = "019a-77f2.b_c"))
+        assertEquals(listOf("login", "debian", "--", "bash", ASK_HELPER, "codex", "9", "resume", "019a-77f2.b_c"),
+            agentAskArguments(AgentCli.CODEX, carryOn = true, resumeId = "019a-77f2.b_c", request = 9))
         assertTrue(runCatching { agentAskArguments(AgentCli.CLAUDE, false, "a b; rm -rf ~") }.isFailure)
         assertEquals(listOf("login", "debian", "--", "bash", ASK_HELPER, "sessions", "opencode"), agentSessionsArguments(AgentCli.OPENCODE))
+        assertEquals(listOf("login", "debian", "--", "bash", ASK_HELPER, "shell", "5"), shellArguments(5))
         assertEquals("[Notesis: the note on screen is \"Maths\" (id 3f9c2a71).]\nAdd an outline", askText(" Add an outline ", "Maths", "3f9c2a71-aaaa"))
         assertEquals("Hi", askText("Hi", null, null))
+    }
+
+    @Test
+    fun `what is typed is a request, a command, a shell line or a note command`() {
+        assertEquals(ChatInput.Ask("sum up today"), parseChatInput(" sum up today "))
+        assertEquals(ChatInput.Slash("agent", "codex"), parseChatInput("/agent codex"))
+        assertEquals(ChatInput.Slash("compact", ""), parseChatInput("/compact"))
+        assertEquals(ChatInput.Shell("ls -la"), parseChatInput("! ls -la"))
+        assertEquals(ChatInput.Notes("list --folder School"), parseChatInput("notesis list --folder School"))
+        assertEquals(ChatInput.Notes("search x"), parseChatInput("n search x"))
+        // Words that only begin like a command are words.
+        assertEquals(ChatInput.Ask("/ not a command"), parseChatInput("/ not a command"))
+        assertEquals(ChatInput.Ask("notes about maths"), parseChatInput("notes about maths"))
+    }
+
+    @Test
+    fun `the conversation id comes off the answer`() {
+        assertEquals("019a-77f2" to "Done.", splitSession("NOTESIS-SESSION 019a-77f2\nDone."))
+        assertEquals("abc" to "Line one\nLine two", splitSession("Line one\nLine two\nNOTESIS-SESSION abc\n"))
+        assertEquals(null to "NOTESIS-SESSION a b", splitSession("NOTESIS-SESSION a b"))
+        assertEquals("12.3k in (10.0k cached) · 410 out", usageLine("2000 10000 300 410"))
+        assertEquals(null, usageLine("x"))
     }
 
     @Test

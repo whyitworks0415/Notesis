@@ -120,7 +120,7 @@ S6 Lite, SM-P61x/P62x). Kotlin, Jetpack Compose for the chrome, a custom
   described in `describeCommand` (a test fails otherwise), or it would run
   without asking; only reading goes in `READ_COMMANDS`, and anything that
   puts a note's content outside the app (`export --to shared`) is a change.
-  Answers stay small: a read that can be long takes `--max-chars` and says
+  The sidebar's requests show their progress through `/events` on the same server, with the same token: it only shows text in the sidebar and changes nothing. Answers stay small: a read that can be long takes `--max-chars` and says
   `truncated` with the `next` command, and the guide (`AGENT_GUIDE`) names
   only commands that exist (a test checks). Do not add a way around any of this.
 - Large files: `MainActivity.kt` (screens) and `InkCanvasView.kt` (canvas).

@@ -192,6 +192,14 @@ internal class AgentServer(
             respond(client, 401, "Unauthorized", null, "WWW-Authenticate" to "Bearer")
             return
         }
+        // What an agent asked from the sidebar is doing, as it goes (AgentChat's stream helper): shown there, nothing changed.
+        if (request.path == "/events") {
+            if (request.method != "POST") { respond(client, 405, "Method Not Allowed", null, "Allow" to "POST"); return }
+            val body = readBody(client, request, deadline) ?: return
+            AgentStream.receive(String(body, Charsets.UTF_8))
+            respond(client, 204, "No Content", null)
+            return
+        }
         if (request.path != "/mcp" && request.path != "/mcp/") { respond(client, 404, "Not Found", null); return }
         if (request.method != "POST") { respond(client, 405, "Method Not Allowed", null, "Allow" to "POST"); return }
         val body = readBody(client, request, deadline) ?: return

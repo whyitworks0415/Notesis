@@ -136,15 +136,16 @@ class AgentSetupTest {
             // Termux takes the sidebar's requests, set once however often the setup ran, and the helper they go through is there.
             assertEquals(1, File(home, ".termux/termux.properties").readLines().count { it == "allow-external-apps = true" })
             assertEquals(ASK_HELPER_SCRIPT + "\n", File(home, ".notesis/ask").readText())
+            assertEquals(STREAM_SCRIPT + "\n", File(home, ".notesis/stream.js").readText())
             assertTrue(JSONObject(File(home, ".gemini/settings.json").readText()).getJSONObject("mcpServers").getJSONObject("notesis").getBoolean("trust"))
             // The helper hands the request to the agent as one word, whatever is in it.
-            val asked = ProcessBuilder("bash", File(home, ".notesis/ask").path, "claude", "continue").redirectErrorStream(true)
+            val asked = ProcessBuilder("bash", File(home, ".notesis/ask").path, "claude", "7", "continue").redirectErrorStream(true)
             asked.environment().apply { put("HOME", home.path); put("PATH", bin.path + ":" + get("PATH")) }
             val ask = asked.start()
             ask.outputStream.use { it.write("Add \"an\" outline; \$(rm -rf ~)".toByteArray()) }
             assertEquals(0, ask.waitFor())
             assertTrue(log.readLines().last(), log.readLines().last() == "claude -p Add \"an\" outline; \$(rm -rf ~) " +
-                "--allowedTools mcp__notesis__notesis_run,mcp__notesis__notesis_help --continue")
+                "--output-format stream-json --verbose --allowedTools mcp__notesis__notesis_run,mcp__notesis__notesis_help --continue")
             // An earlier conversation is carried on by its id, and the conversations are listed from the agent's own files.
             fun helper(vararg args: String, input: String = ""): String {
                 val pb = ProcessBuilder(listOf("bash", File(home, ".notesis/ask").path) + args).redirectErrorStream(true)
@@ -155,10 +156,13 @@ class AgentSetupTest {
                 proc.waitFor()
                 return out
             }
-            helper("codex", "resume", "019a-77f2", input = "Go on")
+            helper("codex", "8", "resume", "019a-77f2", input = "Go on")
             assertEquals("codex exec --skip-git-repo-check resume 019a-77f2 Go on", log.readLines().last())
-            helper("gemini", "continue", input = "More")
-            assertEquals("gemini --resume latest -p More", log.readLines().last())
+            helper("gemini", "9", "continue", input = "More")
+            // After the answer, the helper lists the conversations to say which one it was.
+            assertEquals(listOf("gemini --resume latest -p More", "gemini --list-sessions"), log.readLines().takeLast(2))
+            // A shell line runs as typed, its output the answer.
+            assertEquals("hello", helper("shell", "10", input = "echo hello").trim())
             val projects = File(home, ".claude/projects/" + home.path.replace(Regex("[^A-Za-z0-9]"), "-")).apply { mkdirs() }
             File(projects, "5f1c-aa.jsonl").writeText("{\"type\":\"summary\"}\n" +
                 "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"Outline the PDF note\"}}\n")
@@ -283,6 +287,38 @@ class AgentSetupTest {
         for (command in Regex("`([a-z]+(?: [a-z-]+)?)[ `]").findAll(AGENT_GUIDE).map { it.groupValues[1] }) {
             if (command in setOf("notesis_help", "notesis_run", "termux-setup-storage", "next")) continue
             assertTrue(command, COMMAND_USAGE.containsKey(command) || COMMAND_USAGE.containsKey(command.substringBefore(' ')))
+        }
+    }
+
+    /** The relay reads Claude Code's stream-json and hands back the answer, with its conversation, whether or not Notesis listens. */
+    @Test
+    fun `the stream relay gives back the answer and the conversation`() {
+        assumeTrue(has("node"))
+        val root = Files.createTempDirectory("notesis-stream").toFile()
+        try {
+            val script = File(root, "stream.js").apply { writeText(STREAM_SCRIPT) }
+            val events = listOf(
+                """{"type":"system","subtype":"init","session_id":"5f1c-aa"}""",
+                """{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"Look at the note"},{"type":"tool_use","name":"mcp__notesis__notesis_run","input":{"command":"list"}}]}}""",
+                """{"type":"user","message":{"content":[{"type":"tool_result","content":"3 notes"}]}}""",
+                """{"type":"result","result":"There are 3 notes.","usage":{"input_tokens":10,"output_tokens":5}}""",
+                "not json",
+            ).joinToString("\n")
+            fun relay(mode: String, input: String): String {
+                // A home with no connection written: nothing to send to, and nothing waits on it.
+                val pb = ProcessBuilder("node", script.path, mode, "4").redirectErrorStream(false)
+                pb.environment()["HOME"] = root.path
+                pb.environment()["USERPROFILE"] = root.path
+                val proc = pb.start()
+                proc.outputStream.use { it.write(input.toByteArray()) }
+                val out = proc.inputStream.readBytes().toString(Charsets.UTF_8)
+                assertEquals(0, proc.waitFor())
+                return out
+            }
+            assertEquals("5f1c-aa" to "There are 3 notes.", splitSession(relay("claude", events)))
+            assertEquals("one\ntwo", relay("raw", "one\ntwo\n").trim())
+        } finally {
+            root.deleteRecursively()
         }
     }
 }

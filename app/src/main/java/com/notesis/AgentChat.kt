@@ -44,12 +44,13 @@ private val SESSION_ID = Regex("^[A-Za-z0-9._-]{1,100}$")
 
 /**
  * What Termux runs for one request to [agent]: Debian, the helper, the agent's
- * name, and which conversation it goes on - the last one ([carryOn]), the
- * earlier one [resumeId] chosen from the list, or a new one. Fixed words only:
- * the request itself goes on standard input.
+ * name, the request's number (so what it does on the way reaches the right
+ * message), and which conversation it goes on - the last one ([carryOn]), the
+ * one [resumeId] names, or a new one. Fixed words only: the request itself
+ * goes on standard input.
  */
-internal fun agentAskArguments(agent: AgentCli, carryOn: Boolean, resumeId: String? = null): List<String> {
-    val base = listOf("login", "debian", "--", "bash", ASK_HELPER, agent.command)
+internal fun agentAskArguments(agent: AgentCli, carryOn: Boolean, resumeId: String? = null, request: Long = 0L): List<String> {
+    val base = listOf("login", "debian", "--", "bash", ASK_HELPER, agent.command, request.toString())
     return when {
         resumeId != null -> {
             require(SESSION_ID.matches(resumeId)) { "Not a conversation id" }
@@ -59,6 +60,13 @@ internal fun agentAskArguments(agent: AgentCli, carryOn: Boolean, resumeId: Stri
         else -> base
     }
 }
+
+/** What Termux runs for a shell line typed after `!`: the line on standard input, its output shown as it comes. */
+internal fun shellArguments(request: Long): List<String> =
+    listOf("login", "debian", "--", "bash", ASK_HELPER, "shell", request.toString())
+
+/** What Termux runs to put the helpers in Debian: the app's own fixed script ([helperFilesScript]) on standard input. */
+internal val HELPER_INSTALL_ARGUMENTS = listOf("login", "debian", "--", "bash", "-s")
 
 /** What Termux runs to list [agent]'s earlier conversations, one a line: id, when, title. */
 internal fun agentSessionsArguments(agent: AgentCli): List<String> =
@@ -76,52 +84,68 @@ internal fun parseSessions(stdout: String): List<AgentSession> = stdout.lines().
 
 /**
  * The helper: the request from standard input, given to each agent in its
- * one-shot mode, in a new conversation, the last one, or one picked from the
- * list. Claude Code is allowed the Notesis tools and nothing else without
- * asking; the owner's own rules (ask first, or make at once) still decide each
- * change in Notesis. `ask sessions AGENT` lists the conversations instead.
+ * one-shot mode, in a new conversation, the last one, or one by its id; what
+ * the agent does on the way is shown in Notesis as it comes ([STREAM_SCRIPT]),
+ * and its answer comes back last, with the conversation's id. Claude Code is
+ * allowed the Notesis tools and nothing else without asking, and - where it
+ * can leave them out - is not sent its own tools, which every request would
+ * otherwise carry; the owner's own rules (ask first, or make at once) still
+ * decide each change in Notesis. `ask shell` runs a line the owner typed
+ * after `!`; `ask sessions AGENT` lists the conversations.
  */
 internal val ASK_HELPER_SCRIPT = """
 #!/bin/bash
-# Notesis: asks an agent once, or lists its earlier conversations.
-#   ask AGENT [continue | resume ID]   the request comes on standard input
-#   ask sessions AGENT                 one conversation a line: id, when, title
+# Notesis: asks an agent once, runs a shell line, or lists an agent's earlier conversations.
+#   ask AGENT REQ [continue | resume ID]   the request on standard input, its progress shown in Notesis
+#   ask shell REQ                          a shell line on standard input, its output shown as it comes
+#   ask sessions AGENT                     one conversation a line: id, when, title
 cd "${'$'}HOME"
-if [ "${'$'}1" = sessions ]; then
-  case "${'$'}2" in
-    gemini) gemini --list-sessions 2>&1 | node "${'$'}HOME/.notesis/sessions.js" gemini ;;
-    opencode) opencode session list --format json 2>/dev/null | node "${'$'}HOME/.notesis/sessions.js" opencode ;;
-    *) node "${'$'}HOME/.notesis/sessions.js" "${'$'}2" </dev/null ;;
+N="${'$'}HOME/.notesis"
+list() {
+  case "${'$'}1" in
+    gemini) gemini --list-sessions 2>&1 | node "${'$'}N/sessions.js" gemini ;;
+    opencode) opencode session list --format json 2>/dev/null | node "${'$'}N/sessions.js" opencode ;;
+    *) node "${'$'}N/sessions.js" "${'$'}1" </dev/null ;;
   esac
-  exit
-fi
+}
+if [ "${'$'}1" = sessions ]; then list "${'$'}2"; exit; fi
+set -o pipefail
+agent="${'$'}1"; req="${'$'}2"; how="${'$'}3"; id="${'$'}4"
+if [ "${'$'}agent" = shell ]; then bash -s 2>&1 | node "${'$'}N/stream.js" raw "${'$'}req"; exit; fi
 prompt="${'$'}(cat)"
-how="${'$'}2"
-id="${'$'}3"
-case "${'$'}1" in
+# What an agent writes on its error output as it works is shown too, and still reaches the answer.
+show() { node "${'$'}N/stream.js" err "${'$'}req"; }
+case "${'$'}agent" in
   claude)
     case "${'$'}how" in continue) set -- --continue ;; resume) set -- --resume "${'$'}id" ;; *) set -- ;; esac
-    exec claude -p "${'$'}prompt" --allowedTools mcp__notesis__notesis_run,mcp__notesis__notesis_help "${'$'}@" ;;
+    [ -f "${'$'}N/claude-tools" ] && set -- "${'$'}@" --tools ""
+    claude -p "${'$'}prompt" --output-format stream-json --verbose --allowedTools mcp__notesis__notesis_run,mcp__notesis__notesis_help "${'$'}@" | node "${'$'}N/stream.js" claude "${'$'}req"
+    exit ;;
   codex)
     case "${'$'}how" in
-      continue) exec codex exec --skip-git-repo-check resume --last "${'$'}prompt" ;;
-      resume) exec codex exec --skip-git-repo-check resume "${'$'}id" "${'$'}prompt" ;;
-      *) exec codex exec --skip-git-repo-check "${'$'}prompt" ;;
-    esac ;;
+      continue) codex exec --skip-git-repo-check resume --last "${'$'}prompt" ;;
+      resume) codex exec --skip-git-repo-check resume "${'$'}id" "${'$'}prompt" ;;
+      *) codex exec --skip-git-repo-check "${'$'}prompt" ;;
+    esac 2> >(show) | node "${'$'}N/stream.js" raw "${'$'}req" ;;
   gemini)
     case "${'$'}how" in
-      continue) exec gemini --resume latest -p "${'$'}prompt" ;;
-      resume) exec gemini --resume "${'$'}id" -p "${'$'}prompt" ;;
-      *) exec gemini -p "${'$'}prompt" ;;
-    esac ;;
+      continue) gemini --resume latest -p "${'$'}prompt" ;;
+      resume) gemini --resume "${'$'}id" -p "${'$'}prompt" ;;
+      *) gemini -p "${'$'}prompt" ;;
+    esac 2> >(show) | node "${'$'}N/stream.js" raw "${'$'}req" ;;
   opencode)
     case "${'$'}how" in
-      continue) exec opencode run --continue "${'$'}prompt" ;;
-      resume) exec opencode run --session "${'$'}id" "${'$'}prompt" ;;
-      *) exec opencode run "${'$'}prompt" ;;
-    esac ;;
-  *) echo "Notesis: no agent called ${'$'}1" >&2; exit 2 ;;
+      continue) opencode run --continue "${'$'}prompt" ;;
+      resume) opencode run --session "${'$'}id" "${'$'}prompt" ;;
+      *) opencode run "${'$'}prompt" ;;
+    esac 2> >(show) | node "${'$'}N/stream.js" raw "${'$'}req" ;;
+  *) echo "Notesis: no agent called ${'$'}agent" >&2; exit 2 ;;
 esac
+status=${'$'}?
+# Which conversation it was, so the sidebar's thread goes on with this one and no other.
+s="${'$'}(list "${'$'}agent" 2>/dev/null | head -n 1 | cut -f1)"
+[ -n "${'$'}s" ] && echo "NOTESIS-SESSION ${'$'}s"
+exit ${'$'}status
 """.trimIndent()
 
 /**
@@ -182,6 +206,105 @@ for (const [id, at, title] of out.slice(0, 40)) {
 }
 """.trimIndent()
 
+/**
+ * Passes on what an agent does as it does it - its thinking, its words, the
+ * tools it calls and what they answer - to the Notesis connection (`/events`,
+ * with the connection's token), one event a call, and writes the answer on
+ * standard output at the end for Termux to hand back. Claude Code's
+ * stream-json is read event by event, other agents' plain lines as they come.
+ * With the connection off it only passes the answer on.
+ */
+internal val STREAM_SCRIPT = """
+// Notesis: an agent's progress to the sidebar as it comes; its answer on standard output at the end.
+//   node stream.js claude REQ   Claude Code's stream-json
+//   node stream.js raw REQ      plain lines: shown as they come, and all of them the answer
+//   node stream.js err REQ      plain lines from an error output: shown, and passed on there
+const fs = require("fs"), http = require("http"), path = require("path"), os = require("os"), readline = require("readline");
+const [mode, req] = process.argv.slice(2);
+const dir = path.join(os.homedir(), ".notesis");
+let target = null, token = "";
+try {
+  target = new URL("/events", fs.readFileSync(path.join(dir, "url"), "utf8").trim());
+  token = fs.readFileSync(path.join(dir, "token"), "utf8").trim();
+} catch (e) { target = null; }
+const queue = []; let busy = false;
+function send(kind, text) {
+  if (!target || text == null) return;
+  text = String(text);
+  if (!text.trim()) return;
+  queue.push(JSON.stringify({ request: req, kind, text: text.length > 4000 ? text.slice(0, 4000) + "…" : text }));
+  pump();
+}
+function pump() {
+  if (busy || !queue.length || !target) return;
+  busy = true;
+  const body = queue.shift();
+  const r = http.request(target, { method: "POST", headers: { "Content-Type": "application/json",
+    "Authorization": "Bearer " + token, "Content-Length": Buffer.byteLength(body) } },
+    (res) => { res.resume(); res.on("end", () => { busy = false; pump(); }); });
+  // Notesis not listening: the answer still comes back through Termux.
+  r.on("error", () => { busy = false; target = null; queue.length = 0; });
+  r.setTimeout(3000, () => r.destroy());
+  r.end(body);
+}
+const textOf = (c) => typeof c === "string" ? c : Array.isArray(c) ? c.map((p) => (p && p.text) || "").join("\n") : "";
+let answer = "", last = "", session = "";
+const lines = readline.createInterface({ input: process.stdin });
+lines.on("line", (line) => {
+  if (mode === "raw") { answer += line + "\n"; send("text", line); return; }
+  if (mode === "err") { process.stderr.write(line + "\n"); send("output", line); return; }
+  let e;
+  try { e = JSON.parse(line); } catch (x) { send("output", line); return; }
+  if (e.session_id) session = e.session_id;
+  if (e.type === "assistant" && e.message) {
+    for (const p of e.message.content || []) {
+      if (p.type === "thinking") send("thinking", p.thinking);
+      else if (p.type === "text") { last = p.text; send("text", p.text); }
+      else if (p.type === "tool_use") send("tool", String(p.name || "").replace(/^mcp__notesis__/, "") + " " + JSON.stringify(p.input || {}).slice(0, 400));
+    }
+  } else if (e.type === "user" && e.message && Array.isArray(e.message.content)) {
+    for (const p of e.message.content) if (p.type === "tool_result") send("output", textOf(p.content).slice(0, 1500));
+  } else if (e.type === "result") {
+    if (typeof e.result === "string") answer = e.result;
+    const u = e.usage || {};
+    send("usage", [u.input_tokens, u.cache_read_input_tokens, u.cache_creation_input_tokens, u.output_tokens].map((n) => n || 0).join(" "));
+  }
+});
+lines.on("close", () => {
+  if (mode === "err") return;
+  if (session) process.stdout.write("NOTESIS-SESSION " + session + "\n");
+  process.stdout.write(answer || last);
+  // What is still on its way to the sidebar goes first, but not for long.
+  const end = Date.now() + 2000;
+  (function wait() { if ((queue.length || busy) && Date.now() < end) setTimeout(wait, 50); })();
+});
+""".trimIndent()
+
+/** Which helpers this app writes; Debian's are brought up to it before the next request (see [AgentChat.send]). */
+internal const val HELPER_VERSION = 2
+
+/**
+ * Writes the helpers into Debian's ~/.notesis. The setup script runs it, and
+ * the app itself does (this fixed script, on standard input) when the ones
+ * there are older than [HELPER_VERSION]. Whether this Claude Code can leave
+ * its own tools out is asked once here, not on every request.
+ */
+internal fun helperFilesScript(): String = buildString {
+    appendLine("mkdir -p \"\$HOME/.notesis\" && chmod 700 \"\$HOME/.notesis\"")
+    appendLine("cat > \"\$HOME/.notesis/ask\" <<'NOTESIS_ASK'")
+    append(ASK_HELPER_SCRIPT.trimEnd('\n')).append('\n')
+    appendLine("NOTESIS_ASK")
+    appendLine("chmod 700 \"\$HOME/.notesis/ask\"")
+    appendLine("cat > \"\$HOME/.notesis/sessions.js\" <<'NOTESIS_SESSIONS'")
+    append(SESSIONS_SCRIPT.trimEnd('\n')).append('\n')
+    appendLine("NOTESIS_SESSIONS")
+    appendLine("cat > \"\$HOME/.notesis/stream.js\" <<'NOTESIS_STREAM'")
+    append(STREAM_SCRIPT.trimEnd('\n')).append('\n')
+    appendLine("NOTESIS_STREAM")
+    appendLine("if command -v claude >/dev/null && claude --help 2>/dev/null | grep -q -- '--tools '; then " +
+        "touch \"\$HOME/.notesis/claude-tools\"; else rm -f \"\$HOME/.notesis/claude-tools\"; fi")
+}
+
 /** Every agent here carries on a conversation, and picks up an earlier one, in its own way (see [ASK_HELPER_SCRIPT]). */
 internal fun carriesOn(agent: AgentCli): Boolean = true
 
@@ -213,8 +336,93 @@ internal fun askReply(stdout: String, stderr: String, exitCode: Int, error: Int,
     }
 }
 
-/** One message in the sidebar. */
-internal data class ChatMessage(val mine: Boolean, val text: String, val agent: String = "", val failed: Boolean = false)
+/** One step of what an agent did on the way to an answer, as [STREAM_SCRIPT] reports it. */
+internal data class LiveStep(val kind: String, val text: String) {
+    companion object {
+        const val THINKING = "thinking"
+        const val TEXT = "text"
+        const val TOOL = "tool"
+        const val OUTPUT = "output"
+        const val USAGE = "usage"
+    }
+}
+
+/** One message in the sidebar; an answer keeps the [steps] it was reached by. */
+internal data class ChatMessage(
+    val mine: Boolean,
+    val text: String,
+    val agent: String = "",
+    val failed: Boolean = false,
+    val steps: List<LiveStep> = emptyList(),
+)
+
+/**
+ * One conversation in the sidebar, a tab of its own: its agent, and the id of
+ * the agent's own conversation it goes on, so two tabs never carry on each
+ * other's - "the last one" is whichever ran last, in any tab.
+ */
+internal class ChatThread(val id: Long, agent: AgentCli, title: String = "", agentSession: String? = null) {
+    var agent by mutableStateOf(agent)
+    var title by mutableStateOf(title)
+    var agentSession by mutableStateOf(agentSession)
+    val messages = mutableStateListOf<ChatMessage>()
+    /** Kept from before tabs: an answered conversation with no id goes on as "the last one". */
+    var carryOn by mutableStateOf(false)
+}
+
+/** What the owner typed, when it is not words for the agent. */
+internal sealed class ChatInput {
+    data class Ask(val words: String) : ChatInput()
+    /** `/word rest`: one of the sidebar's own commands, or else the agent's own, passed on as typed. */
+    data class Slash(val name: String, val rest: String) : ChatInput()
+    /** `!line`: run in Debian, its output shown. */
+    data class Shell(val line: String) : ChatInput()
+    /** `notesis …` (or `n …`): a note command run here, no agent and no tokens. */
+    data class Notes(val line: String) : ChatInput()
+}
+
+/** The sidebar's own commands; any other `/word` is the agent's. */
+internal val SIDEBAR_COMMANDS = linkedMapOf(
+    "new" to "a new conversation in its own tab",
+    "close" to "close this tab",
+    "clear" to "empty this tab and start its conversation afresh",
+    "agent" to "/agent claude|codex|gemini|opencode: who answers in this tab",
+    "sessions" to "the agent's earlier conversations, to carry one on here",
+    "stop" to "stop waiting for the answer",
+    "help" to "these commands",
+)
+
+internal fun parseChatInput(text: String): ChatInput {
+    val t = text.trim()
+    return when {
+        t.startsWith("!") -> ChatInput.Shell(t.drop(1).trim())
+        t.startsWith("/") && t.length > 1 && !t[1].isWhitespace() -> {
+            val name = t.drop(1).substringBefore(' ').lowercase()
+            ChatInput.Slash(name, t.substringAfter(' ', "").trim())
+        }
+        Regex("^(notesis|n)\\s+\\S", RegexOption.IGNORE_CASE).containsMatchIn(t) -> ChatInput.Notes(t.substringAfter(' ').trim())
+        else -> ChatInput.Ask(t)
+    }
+}
+
+/** The conversation id an answer ends with ([ASK_HELPER_SCRIPT]), and the answer without that line. */
+internal fun splitSession(stdout: String): Pair<String?, String> {
+    var id: String? = null
+    val kept = stdout.lines().filter { line ->
+        val found = line.trim().removePrefix("NOTESIS-SESSION ").takeIf { line.trim().startsWith("NOTESIS-SESSION ") }
+        if (found != null && SESSION_ID.matches(found)) { id = found; false } else true
+    }
+    return id to kept.joinToString("\n").trim()
+}
+
+/** Tokens as `input cacheRead cacheWrite output`, said short: "12.3k in (10k cached) · 410 out". */
+internal fun usageLine(raw: String): String? {
+    val n = raw.trim().split(' ').map { it.toLongOrNull() ?: return null }
+    if (n.size < 4) return null
+    fun k(v: Long) = if (v >= 1000) "%.1fk".format(v / 1000.0) else v.toString()
+    val input = n[0] + n[1] + n[2]
+    return "${k(input)} in" + (if (n[1] > 0) " (${k(n[1])} cached)" else "") + " · ${k(n[3])} out"
+}
 
 /** The commands agents ran through the connection lately, newest last, for the sidebar to show while it waits. */
 internal object AgentActivity {
@@ -222,7 +430,7 @@ internal object AgentActivity {
     val lines = mutableStateListOf<String>()
 
     fun add(commands: List<String>, ok: Boolean) {
-        val shown = commands.map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }.map { it.take(120) }
+        val shown = commands.map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }.map { it.take(400) }
         android.os.Handler(android.os.Looper.getMainLooper()).post {
             for (line in shown) lines += (if (ok) "› " else "✗ ") + line
             while (lines.size > KEEP) lines.removeAt(0)
@@ -230,23 +438,42 @@ internal object AgentActivity {
     }
 }
 
-/** The sidebar's state: kept while the app runs, the conversation kept in the app's settings. */
+/** What the agent asked from the sidebar is doing, as [STREAM_SCRIPT] sends it through the connection. */
+internal object AgentStream {
+    /** One event, from the connection's thread: kept for the request it belongs to, if that one is waiting. */
+    fun receive(body: String) {
+        val json = runCatching { JSONObject(body) }.getOrNull() ?: return
+        val request = json.optString("request").toLongOrNull() ?: return
+        val kind = json.optString("kind").takeIf { it in KINDS } ?: return
+        val text = json.optString("text").take(MAX_TEXT)
+        android.os.Handler(android.os.Looper.getMainLooper()).post { AgentChat.step(request, LiveStep(kind, text)) }
+    }
+
+    private val KINDS = setOf(LiveStep.THINKING, LiveStep.TEXT, LiveStep.TOOL, LiveStep.OUTPUT, LiveStep.USAGE)
+    private const val MAX_TEXT = 4_000
+}
+
+/** The sidebar's state: kept while the app runs, the conversations kept in the app's settings. */
 internal object AgentChat {
     var open by mutableStateOf(false)
-    var agent by mutableStateOf(AgentCli.CLAUDE)
-    val messages = mutableStateListOf<ChatMessage>()
-    /** The request waiting for its answer, and when it went. */
+    /** Never empty: there is always a tab to type in, before the saved ones are read too. */
+    val threads = mutableStateListOf(ChatThread(0L, AgentCli.CLAUDE))
+    var current by mutableStateOf(0)
+        private set
+    val thread: ChatThread get() = threads[current.coerceIn(0, threads.lastIndex)]
+    val messages get() = thread.messages
+    val agent: AgentCli get() = thread.agent
+    /** The request waiting for its answer, which tab it is for, and when it went. */
     var waiting by mutableStateOf<Long?>(null)
+        private set
+    var waitingThread by mutableStateOf<Long?>(null)
         private set
     var sentAt by mutableStateOf(0L)
         private set
+    /** What the waiting request has done so far, as it comes. */
+    val live = mutableStateListOf<LiveStep>()
     /** Where the activity list stood when the request went, so only what it caused is shown. */
     var activityFrom by mutableStateOf(0)
-        private set
-    /** Whether the next request carries on the conversation. */
-    var carryOn by mutableStateOf(false)
-    /** An earlier conversation picked from the list, which the next request goes on. */
-    var resume by mutableStateOf<AgentSession?>(null)
         private set
     /** The agent's earlier conversations, while the list is open; null when it is not. */
     var sessions by mutableStateOf<List<AgentSession>?>(null)
@@ -269,44 +496,104 @@ internal object AgentChat {
         if (read) return
         read = true
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        agent = AgentCli.entries.firstOrNull { it.name == prefs.getString("agent", null) } ?: AgentCli.CLAUDE
+        val loaded = ArrayList<ChatThread>()
         runCatching {
-            val saved = JSONArray(prefs.getString("messages", "[]"))
-            for (i in 0 until saved.length()) saved.getJSONObject(i).let {
-                messages += ChatMessage(it.optBoolean("mine"), it.optString("text"), it.optString("agent"), it.optBoolean("failed"))
+            val saved = JSONArray(prefs.getString("threads", "[]"))
+            for (i in 0 until saved.length()) {
+                val t = saved.getJSONObject(i)
+                val cli = AgentCli.entries.firstOrNull { it.name == t.optString("agent") } ?: AgentCli.CLAUDE
+                val thread = ChatThread(t.optLong("id", ++nextId), cli, t.optString("title"),
+                    t.optString("session").takeIf { SESSION_ID.matches(it) })
+                thread.carryOn = t.optBoolean("carryOn")
+                thread.messages += messagesFrom(t.optJSONArray("messages") ?: JSONArray())
+                loaded += thread
             }
         }
-        carryOn = messages.isNotEmpty()
+        if (loaded.isNotEmpty()) { threads.clear(); threads += loaded }
+        else if (threads.size == 1 && threads[0].messages.isEmpty()) {
+            // Before tabs there was one conversation: it becomes the first tab, carried on as it was.
+            val cli = AgentCli.entries.firstOrNull { it.name == prefs.getString("agent", null) } ?: AgentCli.CLAUDE
+            val first = ChatThread(++nextId, cli)
+            runCatching { first.messages += messagesFrom(JSONArray(prefs.getString("messages", "[]"))) }
+            first.carryOn = first.messages.isNotEmpty()
+            first.title = first.messages.firstOrNull { it.mine }?.text?.let(::titleOf).orEmpty()
+            threads[0] = first
+        }
+        current = prefs.getInt("current", 0).coerceIn(0, threads.lastIndex)
+    }
+
+    private fun messagesFrom(array: JSONArray): List<ChatMessage> = (0 until array.length()).map { i ->
+        val it = array.getJSONObject(i)
+        val steps = it.optJSONArray("steps")?.let { s ->
+            (0 until s.length()).mapNotNull { j -> s.optJSONObject(j)?.let { o -> LiveStep(o.optString("k"), o.optString("t")) } }
+        }.orEmpty()
+        ChatMessage(it.optBoolean("mine"), it.optString("text"), it.optString("agent"), it.optBoolean("failed"), steps)
     }
 
     private fun save(context: Context) {
-        val list = JSONArray(messages.takeLast(KEEP_MESSAGES).map {
-            JSONObject().put("mine", it.mine).put("text", it.text.take(8_000)).put("agent", it.agent).put("failed", it.failed)
+        val list = JSONArray(threads.takeLast(MAX_THREADS).map { t ->
+            JSONObject().put("id", t.id).put("agent", t.agent.name).put("title", t.title).put("session", t.agentSession ?: "")
+                .put("carryOn", t.carryOn)
+                .put("messages", JSONArray(t.messages.takeLast(KEEP_MESSAGES).map {
+                    JSONObject().put("mine", it.mine).put("text", it.text.take(MAX_SAVED_TEXT)).put("agent", it.agent).put("failed", it.failed)
+                        .put("steps", JSONArray(it.steps.takeLast(KEEP_STEPS).map { s -> JSONObject().put("k", s.kind).put("t", s.text.take(600)) }))
+                }))
         })
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString("messages", list.toString()).putString("agent", agent.name).apply()
+            .putString("threads", list.toString()).putInt("current", current).remove("messages").apply()
+    }
+
+    /** The first words of a request, as a tab's name. */
+    private fun titleOf(words: String): String = words.lines().first().trim().take(28)
+
+    fun select(context: Context, index: Int) {
+        if (index !in threads.indices) return
+        current = index
+        sessions = null
+        save(context)
+    }
+
+    /** A new tab for [cli], the current one's agent unless named. */
+    fun newThread(context: Context, cli: AgentCli = agent) {
+        threads += ChatThread(++nextId, cli)
+        current = threads.lastIndex
+        sessions = null
+        save(context)
+    }
+
+    fun closeThread(context: Context, index: Int = current) {
+        if (index !in threads.indices || threads[index].id == waitingThread) return
+        threads.removeAt(index)
+        if (threads.isEmpty()) threads += ChatThread(++nextId, AgentCli.CLAUDE)
+        if (current > index || current > threads.lastIndex) current = (current - 1).coerceAtLeast(0)
+        save(context)
     }
 
     fun clear(context: Context) {
-        messages.clear()
-        carryOn = false
-        resume = null
+        if (thread.id == waitingThread) return
+        thread.messages.clear()
+        thread.agentSession = null
+        thread.carryOn = false
+        thread.title = ""
         save(context)
     }
 
+    /** Who answers in this tab. A tab that has talked to another agent keeps it: the new one gets a tab of its own. */
     fun choose(context: Context, cli: AgentCli) {
-        if (cli != agent) { carryOn = false; resume = null; sessions = null }
-        agent = cli
-        save(context)
+        if (cli == agent) return
+        if (thread.messages.isEmpty()) { thread.agent = cli; thread.agentSession = null; sessions = null; save(context) }
+        else newThread(context, cli)
     }
 
-    /** Goes on [session] from the next request; what this sidebar showed of another conversation is put away. */
+    /** Goes on [session] in a tab of its own. */
     fun pick(context: Context, session: AgentSession) {
-        resume = session
         sessions = null
-        carryOn = false
-        messages.clear()
-        messages += ChatMessage(false, "Carrying on an earlier conversation: {0}".tr.replace("{0}",
+        val tab = threads.indexOfFirst { it.agent == agent && it.agentSession == session.id }
+        if (tab >= 0) { select(context, tab); return }
+        val t = if (thread.messages.isEmpty()) thread else ChatThread(++nextId, agent).also { threads += it; current = threads.lastIndex }
+        t.agentSession = session.id
+        t.title = session.title.take(28)
+        t.messages += ChatMessage(false, "Carrying on an earlier conversation: {0}".tr.replace("{0}",
             listOf(session.title, session.at).filter { it.isNotBlank() }.joinToString(" · ")), agent.label)
         save(context)
     }
@@ -329,6 +616,9 @@ internal object AgentChat {
     }
 
     private var sessionsRequest = 0L
+    private var installRequest = 0L
+    /** A request held while the helpers are brought up to date: what was typed, and for which tab. */
+    private var held: Pair<String, Long>? = null
 
     /** Hands [arguments] (and [stdin]) to Termux to run in the background, the answer to come back as request [id]. */
     private fun runInTermux(app: Context, id: Long, arguments: List<String>, stdin: String?, label: String): Boolean {
@@ -352,29 +642,71 @@ internal object AgentChat {
 
     private var lastStartError: String? = null
 
-    /** Sends [words] to Termux; false when Termux could not be asked (the reason is added as a message). */
-    fun send(context: Context, words: String): Boolean {
+    private fun failed(app: Context, text: String) {
+        thread.messages += ChatMessage(false, text, agent.label, failed = true)
+        save(app)
+    }
+
+    /**
+     * Sends [words] to the agent, or to Debian's shell after `!`; false when
+     * Termux could not be asked (the reason is added as a message). The
+     * helpers in Debian are brought up to date first, once, when they are older
+     * than this app's.
+     */
+    fun send(context: Context, words: String, shell: Boolean = false): Boolean {
         if (waiting != null || words.isBlank()) return false
         val app = context.applicationContext
+        val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val t = thread
+        t.messages += ChatMessage(true, if (shell) "!" + words.trim() else words.trim(), t.agent.label)
+        if (t.title.isEmpty()) t.title = titleOf(words)
         val id = ++nextId
-        val cli = agent
-        messages += ChatMessage(true, words.trim(), cli.label)
-        val arguments = agentAskArguments(cli, carryOn && carriesOn(cli), resume?.id)
-        if (!runInTermux(app, id, arguments, askText(words, note?.second, note?.first), "Notesis: ${cli.label}")) {
-            messages += ChatMessage(false, "Termux could not be asked: " + (lastStartError ?: "is Termux installed and up to date?"),
-                cli.label, failed = true)
-            save(app)
+        if (prefs.getInt("helpers", 0) < HELPER_VERSION) {
+            held = (if (shell) "!$words" else words) to t.id
+            installRequest = id
+            if (!runInTermux(app, id, HELPER_INSTALL_ARGUMENTS, helperFilesScript(), "Notesis: helpers")) {
+                held = null
+                failed(app, "Termux could not be asked: " + (lastStartError ?: "is Termux installed and up to date?"))
+                return false
+            }
+            begin(app, id, t)
+            return true
+        }
+        return dispatch(app, id, t, words, shell)
+    }
+
+    private fun dispatch(app: Context, id: Long, t: ChatThread, words: String, shell: Boolean): Boolean {
+        val cli = t.agent
+        val arguments = if (shell) shellArguments(id) else agentAskArguments(cli, t.carryOn && t.agentSession == null, t.agentSession, id)
+        // An agent's own command (`/compact`) goes as typed: a note named before it would make it words.
+        val stdin = if (shell || words.trimStart().startsWith("/")) words.trim() else askText(words, note?.second, note?.first)
+        if (!runInTermux(app, id, arguments, stdin, if (shell) "Notesis: shell" else "Notesis: ${cli.label}")) {
+            failed(app, "Termux could not be asked: " + (lastStartError ?: "is Termux installed and up to date?"))
             return false
         }
+        begin(app, id, t)
+        return true
+    }
+
+    private fun begin(app: Context, id: Long, t: ChatThread) {
         waiting = id
+        waitingThread = t.id
         sentAt = System.currentTimeMillis()
         activityFrom = AgentActivity.lines.size
+        live.clear()
         save(app)
-        return true
+    }
+
+    /** One step of the waiting request, from [AgentStream]. */
+    fun step(request: Long, step: LiveStep) {
+        if (request != waiting) return
+        live += step
+        while (live.size > KEEP_LIVE) live.removeAt(0)
     }
 
     /** Termux's answer to request [id]. */
     fun finish(context: Context, id: Long, stdout: String, stderr: String, exitCode: Int, error: Int, errorMessage: String) {
+        val app = context.applicationContext
         if (id == sessionsRequest && loadingSessions) {
             loadingSessions = false
             val (text, failed) = askReply(stdout, stderr, exitCode, error, errorMessage)
@@ -383,24 +715,67 @@ internal object AgentChat {
             return
         }
         if (waiting != id) return
-        val (text, failed) = askReply(stdout, stderr, exitCode, error, errorMessage)
-        messages += ChatMessage(false, text, agent.label, failed)
-        // Once a picked conversation has answered, it is the latest: the next request carries on from it.
-        if (!failed) { carryOn = true; resume = null }
+        val t = threads.firstOrNull { it.id == waitingThread }
         waiting = null
-        save(context.applicationContext)
+        waitingThread = null
+        if (id == installRequest) {
+            val (text, failed) = askReply(stdout, stderr, exitCode, error, errorMessage)
+            val (words, tab) = held ?: return
+            held = null
+            if (failed || t == null) {
+                (t ?: thread).messages += ChatMessage(false, "The helpers in Debian could not be brought up to date: {0} Run the setup script again in Termux (Agent connection → On this tablet).".tr
+                    .replace("{0}", text.take(300)), agent.label, failed = true)
+                save(app)
+                return
+            }
+            app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putInt("helpers", HELPER_VERSION).apply()
+            if (t.id == tab) dispatch(app, ++nextId, t, words.removePrefix("!"), words.startsWith("!"))
+            return
+        }
+        val (session, answer) = splitSession(stdout)
+        val (text, failed) = askReply(answer, stderr, exitCode, error, errorMessage)
+        val steps = live.filter { it.kind != LiveStep.TEXT || it.text.trim() != text.trim() }.toList()
+        live.clear()
+        val target = t ?: thread
+        target.messages += ChatMessage(false, text, target.agent.label, failed, steps)
+        if (session != null) target.agentSession = session
+        // Once it has answered, the next request carries on from here.
+        if (!failed) target.carryOn = true
+        save(app)
     }
 
     /** Stops waiting for an answer that is not coming (Termux was closed, say); the agent may still finish in Termux. */
     fun stopWaiting(context: Context) {
+        val t = threads.firstOrNull { it.id == waitingThread } ?: thread
         waiting = null
-        messages += ChatMessage(false, "Stopped waiting. If the agent is still working in Termux, its changes still come through.", agent.label, true)
+        waitingThread = null
+        held = null
+        t.messages += ChatMessage(false, "Stopped waiting. If the agent is still working in Termux, its changes still come through.", t.agent.label,
+            true, live.toList())
+        live.clear()
+        save(context.applicationContext)
+    }
+
+    /** Words the sidebar says itself, in this tab, not from an agent: a command's answer, a note command's output. */
+    fun say(context: Context, text: String, failed: Boolean = false) {
+        thread.messages += ChatMessage(false, text, "Notesis", failed)
+        save(context.applicationContext)
+    }
+
+    /** What the owner typed as `/word` with no agent behind it. */
+    fun mine(context: Context, text: String) {
+        thread.messages += ChatMessage(true, text, agent.label)
         save(context.applicationContext)
     }
 
     internal const val EXTRA_REQUEST = "notesis.request"
     private const val PREFS = "agent-chat"
     private const val KEEP_MESSAGES = 60
+    private const val MAX_THREADS = 12
+    private const val KEEP_STEPS = 40
+    private const val KEEP_LIVE = 300
+    /** An answer is kept whole up to this: a long one cut on saving lost its end when the app came back. */
+    private const val MAX_SAVED_TEXT = 60_000
 }
 
 /** Where Termux sends a request's result: its output, errors and exit code. */
