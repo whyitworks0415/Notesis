@@ -7098,11 +7098,10 @@ private fun NoteScreen(
         // canvas saves every change itself.
         // On the sidebar's springs, moved by its layer, its glass not blurred
         // again on each frame of the slide (see [SlideInPanel]).
-        SlideInPanel(
-            visible = showLayers && canvas != null,
-            modifier = Modifier.align(Alignment.CenterEnd).padding(end = webOverlap),
-        ) {
-            canvas?.let { view -> LayerPanel(view, onClose = { showLayers = false }) }
+        SlideInSheet(visible = showLayers && canvas != null) { appear ->
+            canvas?.let { view ->
+                LayerPanel(view, onClose = { showLayers = false }, modifier = Modifier.padding(end = webOverlap), appear = appear)
+            }
         }
         if (pullingForPage) Box(
             Modifier
@@ -7254,11 +7253,8 @@ private fun NoteScreen(
         Isolated {
         // Opened by hand, it closes the usual way again.
         LaunchedEffect(showPages) { if (showPages) pagesClosedByPen = false }
-        SlideInPanel(
-            visible = showPages,
-            instantExit = pagesClosedByPen,
-            modifier = Modifier.align(Alignment.CenterEnd).padding(end = webOverlap),
-        ) {
+        SlideInSheet(visible = showPages, instantExit = pagesClosedByPen) { appear ->
+        Box(Modifier.fillMaxSize().padding(end = webOverlap)) {
             // Split, the panel can be about any part's note (see sources below).
             val sidePane = sidebarPane.takeIf { it == 0 || paneViews.containsKey(it) } ?: 0
             val sideCanvas = if (sidePane != 0) paneViews[sidePane] else canvas
@@ -7489,7 +7485,9 @@ private fun NoteScreen(
                         }
                     }
                 },
+            appear = appear,
             )
+        }
         }
         }
 
@@ -7654,7 +7652,7 @@ private fun NoteScreen(
                         Modifier
                             .align(Alignment.CenterStart)
                             .height(120.dp)
-                            .width(20.dp)
+                            .width(24.dp)
                             .pointerInput(webWidth) {
                                 fun letGo() {
                                     // Pulled well past its narrowest, the panel is put away.

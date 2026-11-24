@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -164,6 +165,13 @@ internal fun SettingsSidebarFrame(
     modifier: Modifier = Modifier,
     /** How far in the panel is, 0 off past its edge to 1 in place; see [AnimatedSettingsSidebar]. */
     appear: () -> Float = { 1f },
+    closeLabel: String = "Close settings",
+    resizeLabel: String = "Resize settings panel",
+    /** The width kept for a wanted width on a screen this wide, both in dp; and the narrowest it keeps. */
+    widthRule: (requested: Float, screen: Float) -> Float = ::settingsSidebarWidth,
+    minDp: Float = SETTINGS_SIDEBAR_MIN_DP,
+    /** Buttons in the header, before Close. */
+    actions: @Composable RowScope.() -> Unit = {},
     body: @Composable () -> Unit,
 ) {
     BoxWithConstraints(modifier.fillMaxSize()) {
@@ -179,7 +187,7 @@ internal fun SettingsSidebarFrame(
         val springBack = remember { androidx.compose.animation.core.Animatable(0f) }
         val springScope = androidx.compose.runtime.rememberCoroutineScope()
         // The draft as the drag left it, stretched past its widest included.
-        val shown = draft ?: (settingsSidebarWidth(widthDp, screen) + springBack.value)
+        val shown = draft ?: (widthRule(widthDp, screen) + springBack.value)
         val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
         val latestShown by rememberUpdatedState(shown)
         val latestScreen by rememberUpdatedState(screen)
@@ -204,7 +212,7 @@ internal fun SettingsSidebarFrame(
                                 // width first, it grew for a moment on the way out.
                                 if (pulledToClose(past)) { latestClose(); return }
                                 val stretched = draft
-                                val kept = stretched?.let { settingsSidebarWidth(it, latestScreen) }
+                                val kept = stretched?.let { widthRule(it, latestScreen) }
                                 if (kept != null) latestCommit(kept)
                                 past = 0f
                                 draft = null
@@ -228,7 +236,7 @@ internal fun SettingsSidebarFrame(
                                 val grow = (if (rtl) dragAmount else -dragAmount) / density
                                 val wanted = (reach ?: latestShown) + grow
                                 reach = wanted
-                                val held = settingsSidebarWidth(wanted, latestScreen)
+                                val held = widthRule(wanted, latestScreen)
                                 val over = wanted - held
                                 // Past its widest it gives a little, stiffer the further it is
                                 // pulled, and comes back to its widest when let go.
@@ -236,18 +244,18 @@ internal fun SettingsSidebarFrame(
                                 draft = if (over > 0f) held + rubberBand(over, SIDEBAR_STRETCH_DP) else held
                                 if (over > 0f && !wasOver) Haptics.tick(hapticView)
                                 val wasClosing = pulledToClose(past)
-                                past = (SETTINGS_SIDEBAR_MIN_DP - wanted).coerceAtLeast(0f)
+                                past = (minDp - wanted).coerceAtLeast(0f)
                                 if (pulledToClose(past) != wasClosing) Haptics.snap(hapticView)
                             }
                         }
                         .semantics {
-                            contentDescription = "Resize settings panel"
+                            contentDescription = resizeLabel
                             customActions = listOf(
                                 CustomAccessibilityAction("Make wider") {
-                                    latestCommit(settingsSidebarWidth(latestShown + 60f, latestScreen)); true
+                                    latestCommit(widthRule(latestShown + 60f, latestScreen)); true
                                 },
                                 CustomAccessibilityAction("Make narrower") {
-                                    latestCommit(settingsSidebarWidth(latestShown - 60f, latestScreen)); true
+                                    latestCommit(widthRule(latestShown - 60f, latestScreen)); true
                                 },
                             )
                         },
@@ -283,7 +291,7 @@ internal fun SettingsSidebarFrame(
                         }
                         .windowInsetsPadding(ChromeInsets.only(WindowInsetsSides.Bottom + WindowInsetsSides.End)),
                 ) {
-                    SidebarHeader(title, canGoBack, onBack, onClose)
+                    SidebarHeader(title, canGoBack, onBack, onClose, closeLabel, actions)
                     HorizontalDivider(color = scheme.outlineVariant)
                     // The pages pad their content by [SIDEBAR_INSET], so the
                     // cards and rows on them are concentric with the panel.
@@ -297,7 +305,14 @@ internal fun SettingsSidebarFrame(
 }
 
 @Composable
-private fun SidebarHeader(title: String, canGoBack: Boolean, onBack: () -> Unit, onClose: () -> Unit) {
+private fun SidebarHeader(
+    title: String,
+    canGoBack: Boolean,
+    onBack: () -> Unit,
+    onClose: () -> Unit,
+    closeLabel: String,
+    actions: @Composable RowScope.() -> Unit,
+) {
     val scheme = MaterialTheme.colorScheme
     Row(
         Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(Ui.Space.s),
@@ -327,13 +342,14 @@ private fun SidebarHeader(title: String, canGoBack: Boolean, onBack: () -> Unit,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f).padding(horizontal = Ui.Space.s).semantics { heading() },
         )
+        actions()
         Box(
             Modifier
                 .size(Ui.Size.touch)
                 .clip(CircleShape)
                 .background(scheme.surfaceContainerHigh)
                 .clickable(role = Role.Button, onClick = onClose)
-                .semantics { contentDescription = "Close settings" },
+                .semantics { contentDescription = closeLabel },
             contentAlignment = Alignment.Center,
         ) {
             AppIcon(AppIcons.close, null, Modifier.size(Ui.Icon.regular))

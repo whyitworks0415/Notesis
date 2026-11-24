@@ -650,7 +650,7 @@ private class HandleTrack {
  * saved when it is let go.
  */
 @Composable
-internal fun LayerPanel(view: InkCanvasView, onClose: () -> Unit, modifier: Modifier = Modifier) {
+internal fun LayerPanel(view: InkCanvasView, onClose: () -> Unit, modifier: Modifier = Modifier, appear: () -> Float = { 1f }) {
     // Read so the panel follows every change made through the canvas, undo included.
     val revision = view.layersRevision.intValue
     val layers = view.layers
@@ -795,33 +795,28 @@ internal fun LayerPanel(view: InkCanvasView, onClose: () -> Unit, modifier: Modi
         }
     }
 
-    SkinSurface(
-        modifier = modifier
-            .windowInsetsPadding(ChromeInsets)
-            .padding(Ui.Space.m)
-            .widthIn(max = 320.dp)
-            .fillMaxWidth()
-            .fillMaxHeight(0.86f),
-        role = ChromeRole.SIDEBAR,
+    // The same panel as settings, the pages and the agent: its header, its edge to drag, its way in.
+    var width by remember { mutableFloatStateOf(PAGE_SIDEBAR_MIN_DP + 80f) }
+    SettingsSidebarFrame(
+        title = "Layers", canGoBack = false, onBack = {}, onClose = onClose,
+        widthDp = width, onWidthChange = { width = it }, modifier = modifier, appear = appear,
+        closeLabel = "Close layers", resizeLabel = "Resize the layer panel",
+        widthRule = ::pageSidebarWidth, minDp = PAGE_SIDEBAR_MIN_DP,
+        actions = {
+            AppIconButton(
+                onClick = {
+                    val added = view.addLayer()
+                    if (added != null) opacityFor = null
+                },
+                icon = addIcon,
+                contentDescription = "Add layer",
+                enabled = layers.canAdd(),
+            )
+        },
     ) {
         Column {
             // ---- header: fixed, only the list below scrolls ----
             Column(Modifier.padding(start = Ui.Space.l, end = Ui.Space.xs, top = Ui.Space.s)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    AppIcon(AppIcons.layers, null, Modifier.size(Ui.Icon.small))
-                    Spacer(Modifier.width(Ui.Space.s))
-                    Text("Layers", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                    AppIconButton(
-                        onClick = {
-                            val added = view.addLayer()
-                            if (added != null) opacityFor = null
-                        },
-                        icon = addIcon,
-                        contentDescription = "Add layer",
-                        enabled = layers.canAdd(),
-                    )
-                    AppIconButton(onClick = onClose, icon = AppIcons.close, contentDescription = "Close layers")
-                }
                 Text(
                     "Layers apply to every page of this note.",
                     style = MaterialTheme.typography.bodySmall,

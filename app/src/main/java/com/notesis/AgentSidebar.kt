@@ -45,6 +45,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -58,9 +59,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
-
-/** The narrowest the agent sidebar is dragged to. */
-private val SIDEBAR_MIN = 300.dp
 
 /** How Termux is opened from Notesis: beside it (split screen), in a window over it, or on its own. */
 internal enum class TermuxWindow { BESIDE, WINDOW, FULL }
@@ -94,17 +92,12 @@ internal fun openTermux(context: Context, window: TermuxWindow): Boolean {
 @Composable
 internal fun AgentSidebarHost() {
     Box(Modifier.fillMaxSize()) {
-        AnimatedVisibility(
-            visible = AgentChat.open,
-            modifier = Modifier.align(Alignment.CenterEnd),
-            enter = slideInHorizontally { it } + fadeIn(),
-            exit = slideOutHorizontally { it } + fadeOut(),
-        ) { AgentSidebar() }
+        SlideInSheet(visible = AgentChat.open) { appear -> AgentSidebar(appear) }
     }
 }
 
 @Composable
-private fun AgentSidebar() {
+private fun AgentSidebar(appear: () -> Float) {
     val context = LocalContext.current
     val chat = AgentChat
     var draft by remember { mutableStateOf("") }
@@ -142,49 +135,26 @@ private fun AgentSidebar() {
         if (count > 0) list.animateScrollToItem(count - 1)
     }
 
-    val corner = chromeCorner()
-    val shape = RoundedCornerShape(topStart = corner, bottomStart = corner)
-    val wide = LocalConfiguration.current.screenWidthDp.dp
-    val density = androidx.compose.ui.platform.LocalDensity.current
-    // As wide as the owner last dragged it, kept between openings; from a narrow column to most of the screen.
+    // As wide as the owner last dragged it, kept between openings; the same panel as settings and the pages.
     val prefs = remember { context.getSharedPreferences("agent-chat", android.content.Context.MODE_PRIVATE) }
-    val widest = wide * 0.9f
-    var width by remember { mutableStateOf(prefs.getFloat("width", 420f).dp.coerceIn(SIDEBAR_MIN, widest.coerceAtLeast(SIDEBAR_MIN))) }
-    Row(Modifier.fillMaxHeight().safeDrawingPadding().padding(vertical = 8.dp)) {
-    // The handle on the open edge: dragged left the sidebar grows, right it shrinks.
-    Box(
-        Modifier
-            .fillMaxHeight()
-            .width(20.dp)
-            .draggable(
-                orientation = Orientation.Horizontal,
-                state = rememberDraggableState { delta ->
-                    width = (width - with(density) { delta.toDp() }).coerceIn(SIDEBAR_MIN, widest.coerceAtLeast(SIDEBAR_MIN))
-                },
-                onDragStopped = { prefs.edit().putFloat("width", width.value).apply() },
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(Modifier.width(4.dp).height(48.dp).background(MaterialTheme.colorScheme.outline, RoundedCornerShape(2.dp)))
-    }
-    Column(
-        Modifier
-            .fillMaxHeight()
-            .width(width)
-            .skinMaterial(shape, panel = true)
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Ask an agent", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+    var width by remember { mutableFloatStateOf(prefs.getFloat("width", 420f)) }
+    SettingsSidebarFrame(
+        title = "Ask an agent", canGoBack = false, onBack = {}, onClose = { chat.open = false },
+        widthDp = width, onWidthChange = { width = it; prefs.edit().putFloat("width", it).apply() }, appear = appear,
+        closeLabel = "Close the agent panel", resizeLabel = "Resize the agent panel",
+        actions = {
             if (termux) IconButton(onClick = { openTermux(context, TermuxWindow.BESIDE) }) {
                 Icon(AppIcons.terminal, contentDescription = "Open Termux beside")
             }
             IconButton(onClick = { chat.clear(context) }, enabled = waiting == null) {
                 Icon(AppIcons.reset, contentDescription = "New conversation")
             }
-            IconButton(onClick = { chat.open = false }) { Icon(AppIcons.close, contentDescription = "Close") }
-        }
+        },
+    ) {
+    Column(
+        Modifier.fillMaxSize().padding(Ui.Space.l),
+        verticalArrangement = Arrangement.spacedBy(Ui.Space.s),
+    ) {
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             for (cli in AgentCli.entries) SettingsChoiceChip(cli == chat.agent, { if (waiting == null) chat.choose(context, cli) }, cli.label)
         }

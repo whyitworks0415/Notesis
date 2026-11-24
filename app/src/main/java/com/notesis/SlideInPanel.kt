@@ -34,7 +34,31 @@ internal fun SlideInPanel(
     instantExit: Boolean = false,
     content: @Composable () -> Unit,
 ) {
-    val animate = rememberMotionAllowed()
+    val progress = slideProgress(visible, instantExit) ?: return
+    Box(modifier.slideInDraw(blur = true, sliding = { slidingNow(progress.value) }) { size -> (1f - progress.value.coerceIn(0f, 1f)) * size.width }) {
+        content()
+    }
+}
+
+/**
+ * A side sheet ([SettingsSidebarFrame]) on the same springs, handed how far in
+ * it is: the frame moves itself, so the pages, the agent and settings all come
+ * in alike, their content a beat behind the panel.
+ */
+@Composable
+internal fun SlideInSheet(
+    visible: Boolean,
+    instantExit: Boolean = false,
+    content: @Composable (appear: () -> Float) -> Unit,
+) {
+    val progress = slideProgress(visible, instantExit) ?: return
+    content { progress.value }
+}
+
+/** How far in a panel is, 0 to 1, while it is on screen at all; null once it has gone. */
+@Composable
+private fun slideProgress(visible: Boolean, instantExit: Boolean): Animatable<Float, *>? {
+    val animate = rememberMotionAllowed() && !LocalSkinSettings.current.highContrast
     val progress = remember { Animatable(if (visible) 1f else 0f) }
     val velocity = remember { floatArrayOf(0f) }
     var present by remember { mutableStateOf(visible) }
@@ -57,10 +81,7 @@ internal fun SlideInPanel(
             present = false
         }
     }
-    if (!visible && !present) return
-    Box(modifier.slideInDraw(blur = true, sliding = { slidingNow(progress.value) }) { size -> (1f - progress.value.coerceIn(0f, 1f)) * size.width }) {
-        content()
-    }
+    return if (!visible && !present) null else progress
 }
 
 /**

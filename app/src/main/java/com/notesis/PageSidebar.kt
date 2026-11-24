@@ -292,6 +292,8 @@ internal fun PageSidebar(
     sources: List<Pair<Int, String>> = emptyList(),
     source: Int = 0,
     onSource: (Int) -> Unit = {},
+    /** How far in the panel is; see [SlideInSheet]. */
+    appear: () -> Float = { 1f },
 ) {
     val doc = document ?: return
     val pages = doc.pages
@@ -385,73 +387,13 @@ internal fun PageSidebar(
         return rememberPageThumbnail("${page.id}:${page.strokes.size}:${page.loaded}:$thumbWidthPx",
             stale = { stalePageThumbnail(index) }) { onReady -> pageThumbnail(index, thumbWidthPx, onReady) }
     }
-    BoxWithConstraints(Modifier.fillMaxHeight().windowInsetsPadding(ChromeInsets)) {
-        val screen = maxWidth.value
-        var draft by remember { mutableStateOf<Float?>(null) }
-        var reach by remember { mutableStateOf<Float?>(null) }
-        var past by remember { mutableFloatStateOf(0f) }
-        val shown = pageSidebarWidth(draft ?: widthDp, screen)
-        val latestShown by rememberUpdatedState(shown)
-        val latestScreen by rememberUpdatedState(screen)
-        val latestCommit by rememberUpdatedState(onWidthChange)
-        val latestClose by rememberUpdatedState(onClose)
-        Row(
-            Modifier
-                .fillMaxHeight()
-                .padding(vertical = 12.dp)
-                .padding(end = 12.dp)
-                // Pulled past its narrowest it follows the finger out, to be let go of.
-                .graphicsLayer { translationX = past.dp.toPx() },
-        ) {
-            // The inner edge: drag it for a wider or narrower panel.
-            Box(
-                Modifier
-                    .width(20.dp)
-                    .fillMaxHeight()
-                    .pointerInput(Unit) {
-                        fun letGo() {
-                            // Let go well past its narrowest, it slides out from where the
-                            // finger left it, still that narrow: put back to its own width
-                            // first, it grew for a moment on the way out.
-                            if (pulledToClose(past)) { latestClose(); return }
-                            draft?.let { latestCommit(it) }
-                            past = 0f
-                            draft = null
-                            reach = null
-                        }
-                        detectHorizontalDragGestures(
-                            onDragStart = { draft = latestShown; reach = latestShown },
-                            onDragEnd = { letGo() },
-                            onDragCancel = { letGo() },
-                        ) { change, dragAmount ->
-                            change.consume()
-                            val wanted = (reach ?: latestShown) - dragAmount / density
-                            reach = wanted
-                            draft = pageSidebarWidth(wanted, latestScreen)
-                            past = (PAGE_SIDEBAR_MIN_DP - wanted).coerceAtLeast(0f)
-                        }
-                    }
-                    .semantics {
-                        contentDescription = "Resize the page panel"
-                        customActions = listOf(
-                            CustomAccessibilityAction("Make wider") {
-                                latestCommit(pageSidebarWidth(latestShown + 60f, latestScreen)); true
-                            },
-                            CustomAccessibilityAction("Make narrower") {
-                                latestCommit(pageSidebarWidth(latestShown - 60f, latestScreen)); true
-                            },
-                        )
-                    },
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(
-                    Modifier
-                        .size(width = 5.dp, height = 56.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.outline.copy(alpha = if (draft != null) 0.95f else 0.6f)),
-                )
-            }
-            SkinSurface(modifier = Modifier.width(shown.dp).fillMaxHeight(), flushEnd = true, role = ChromeRole.SIDEBAR) {
+    // The same panel as settings and the agent: its header, its edge to drag, its way in.
+    SettingsSidebarFrame(
+        title = "Pages", canGoBack = false, onBack = {}, onClose = onClose,
+        widthDp = widthDp, onWidthChange = onWidthChange, appear = appear,
+        closeLabel = "Close the page panel", resizeLabel = "Resize the page panel",
+        widthRule = ::pageSidebarWidth, minDp = PAGE_SIDEBAR_MIN_DP,
+    ) {
                 Column {
                     // Split, which note's pages, contents and tape the panel is about.
                     if (sources.size > 1) {
@@ -860,8 +802,6 @@ internal fun PageSidebar(
                         }
                     }
                 }
-            }
-        }
     }
 }
 

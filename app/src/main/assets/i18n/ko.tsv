@@ -1866,3 +1866,7 @@ The app turns when the tablet turns. Switch off to keep it the way it is now.	�
 Held as it is now ({0}), however the tablet is turned, and opens that way. Switch on to turn with the tablet again.	태블릿을 어떻게 돌려도 지금 방향({0})으로 고정되고, 다음에 열 때도 이 방향입니다. 켜면 다시 태블릿을 따라 돌아갑니다.
 Screen turns	화면 회전 켜짐
 Screen held	화면 회전 잠김
+Close the page panel	페이지 패널 닫기
+Close the agent panel	에이전트 패널 닫기
+Resize the agent panel	에이전트 패널 크기 조정
+Resize the layer panel	레이어 패널 크기 조정
