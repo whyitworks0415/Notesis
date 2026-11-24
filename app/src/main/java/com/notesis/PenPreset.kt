@@ -140,6 +140,8 @@ data class CanvasGestures(
     val eraseText: Boolean = false,
     val holdToDraw: Boolean = true,
     val snapToAlign: Boolean = true,
+    /** Which guides a dragged selection catches on ([SnapTo]). */
+    val snapTo: Int = SnapTo.ALL,
     val keepAspect: Boolean = true,
     val oneFinger: Int = FINGER_SCROLL,
     val twoFingers: Int = TWO_ZOOM_PAN,
@@ -210,6 +212,7 @@ fun InkCanvasView.applyGestures(gestures: CanvasGestures) {
     eraseText = gestures.eraseText
     holdToDraw = gestures.holdToDraw
     snapToAlign = gestures.snapToAlign
+    snapTargets = gestures.snapTo
     keepAspect = gestures.keepAspect
     oneFinger = gestures.oneFinger
     twoFingers = gestures.twoFingers
@@ -598,6 +601,7 @@ class PenStore(context: Context) {
             eraseText = prefs.getBoolean("eraseText", false),
             holdToDraw = holdToShape(),
             snapToAlign = prefs.getBoolean("snapToAlign", true),
+            snapTo = prefs.getInt("snapTo", SnapTo.ALL),
             keepAspect = prefs.getBoolean("keepAspect", true),
             oneFinger = prefs.getInt("oneFinger", defaultOneFinger),
             twoFingers = prefs.getInt("twoFingers", TWO_ZOOM_PAN),
@@ -637,6 +641,7 @@ class PenStore(context: Context) {
             .putBoolean("eraseText", value.eraseText)
             .putBoolean("holdToDraw", value.holdToDraw)
             .putBoolean("snapToAlign", value.snapToAlign)
+            .putInt("snapTo", value.snapTo)
             .putBoolean("keepAspect", value.keepAspect)
             .putInt("oneFinger", value.oneFinger)
             .putInt("twoFingers", value.twoFingers)

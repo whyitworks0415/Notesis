@@ -1307,8 +1307,9 @@ class InkCanvasView @JvmOverloads constructor(
     var eraseImages: Boolean = false
     var eraseText: Boolean = false
 
-    /** A dragged selection catches on the page's edges and middle and on pictures' edges. */
+    /** A dragged selection catches on guides; [snapTargets] says which ([SnapTo]). */
     var snapToAlign: Boolean = true
+    var snapTargets: Int = SnapTo.ALL
 
     /** Dragging a picture's corner keeps its proportions; off, width and height go their own ways. */
     var keepAspect: Boolean = true
@@ -1409,6 +1410,11 @@ class InkCanvasView @JvmOverloads constructor(
     /** Where the dragged selection caught, in page units, or NaN; drawn as guides. */
     private var guideX = Float.NaN
     private var guideY = Float.NaN
+    /** Evenly spaced, the neighbours' near edges either side (NaN where none): drawn as the gaps it matched. */
+    private val spacingX = floatArrayOf(Float.NaN, Float.NaN)
+    private val spacingY = floatArrayOf(Float.NaN, Float.NaN)
+    /** What this drag can catch on, gathered once when it starts rather than on every move. */
+    private var snapCache: SnapGuides? = null
 
     /**
      * Reading rather than writing: the pen selects PDF text by dragging, the
@@ -8482,22 +8488,56 @@ class InkCanvasView @JvmOverloads constructor(
     private fun snapLassoMove() {
         val page = pageOf(lassoPage) ?: return
         val reach = SNAP_ALIGN_PX / currentScale()
-        val xs = ArrayList<Float>()
-        val ys = ArrayList<Float>()
-        xs += 0f; xs += page.width / 2f; xs += page.width
-        ys += 0f; ys += page.height / 2f; ys += page.height
-        for (image in page.images) {
-            if (lassoImages.any { it === image }) continue
-            xs += image.x; xs += image.x + image.width
-            ys += image.y; ys += image.y + image.height
-        }
+        val guides = snapCache ?: snapGuidesFor(page).also { snapCache = it }
         val b = lassoBounds
-        val snapX = alignOffset(floatArrayOf(b.left + lassoDx, b.centerX() + lassoDx, b.right + lassoDx), xs, reach)
-        val snapY = alignOffset(floatArrayOf(b.top + lassoDy, b.centerY() + lassoDy, b.bottom + lassoDy), ys, reach)
+        var snapX = alignOffset(floatArrayOf(b.left + lassoDx, b.centerX() + lassoDx, b.right + lassoDx), guides.xs, reach)
+        var snapY = alignOffset(floatArrayOf(b.top + lassoDy, b.centerY() + lassoDy, b.bottom + lassoDy), guides.ys, reach)
+        spacingX.fill(Float.NaN)
+        spacingY.fill(Float.NaN)
+        if (guides.boxes.isNotEmpty()) {
+            val even = evenSpacing(guides.boxes, b.left + lassoDx, b.right + lassoDx, b.top + lassoDy, b.bottom + lassoDy, reach, 0)
+            // An even gap wins over a line only when it is the nearer catch.
+            if (even != null && (snapX == null || kotlin.math.abs(even[0]) < kotlin.math.abs(snapX.first))) {
+                snapX = null; lassoDx += even[0]; spacingX[0] = even[1]; spacingX[1] = even[2]
+            }
+            val evenY = evenSpacing(guides.boxes, b.top + lassoDy, b.bottom + lassoDy, b.left + lassoDx, b.right + lassoDx, reach, 1)
+            if (evenY != null && (snapY == null || kotlin.math.abs(evenY[0]) < kotlin.math.abs(snapY.first))) {
+                snapY = null; lassoDy += evenY[0]; spacingY[0] = evenY[1]; spacingY[1] = evenY[2]
+            }
+        }
         guideX = snapX?.second ?: Float.NaN
         guideY = snapY?.second ?: Float.NaN
         snapX?.let { lassoDx += it.first }
         snapY?.let { lassoDy += it.first }
+    }
+
+    /** [evenGapShift] along x ([axis] 0) or y (1), among the boxes level with [across0]..[across1] on the other axis. */
+    private fun evenSpacing(boxes: FloatArray, lo: Float, hi: Float, across0: Float, across1: Float, reach: Float, axis: Int): FloatArray? {
+        val starts = ArrayList<Float>()
+        val ends = ArrayList<Float>()
+        for (i in boxes.indices step 4) {
+            val a0 = boxes[i + 1 - axis]; val a1 = boxes[i + 3 - axis]
+            if (a0 < across1 && a1 > across0) { starts += boxes[i + axis]; ends += boxes[i + 2 + axis] }
+        }
+        return evenGapShift(lo, hi, starts.toFloatArray(), ends.toFloatArray(), reach)
+    }
+
+    private fun snapGuidesFor(page: Page): SnapGuides {
+        val objects = ArrayList<Float>()
+        for (image in page.images) {
+            if (lassoImages.any { it === image }) continue
+            objects += listOf(image.x, image.y, image.x + image.width, image.y + image.height)
+        }
+        val ink = if (snapTargets and SnapTo.INK == 0) FloatArray(0) else {
+            val boxes = ArrayList<Float>()
+            for (stroke in page.strokes) {
+                if (stroke in lassoStrokes) continue
+                val box = stroke.shape.computeBoundingBox() ?: continue
+                boxes += listOf(box.xMin, box.yMin, box.xMax, box.yMax)
+            }
+            inkBlocks(boxes.toFloatArray(), INK_BLOCK_GAP)
+        }
+        return snapGuides(page.width, page.height, objects.toFloatArray(), ink, snapTargets)
     }
 
     private fun dragVertex(event: MotionEvent, pointerIndex: Int) {
@@ -8574,6 +8614,9 @@ class InkCanvasView @JvmOverloads constructor(
     private fun finishLassoMove() {
         guideX = Float.NaN
         guideY = Float.NaN
+        spacingX.fill(Float.NaN)
+        spacingY.fill(Float.NaN)
+        snapCache = null
         movingLasso = false
         liftedLassoStrokes = null
         val page = pageOf(lassoPage) ?: return
@@ -10136,6 +10179,7 @@ class InkCanvasView @JvmOverloads constructor(
         private val outlines = java.util.WeakHashMap<Stroke, android.graphics.Path>()
         private val outlinePoint = MutableVec()
         private val selectionBox = RectF()
+        private val gapBox = RectF()
         private var lassoDashScale = Float.NaN
         private var lassoDashEffect: android.graphics.DashPathEffect? = null
         private val handle = Paint().apply { isAntiAlias = true; color = 0xFF3B7DDD.toInt() }
@@ -11320,12 +11364,19 @@ class InkCanvasView @JvmOverloads constructor(
             overlay.pathEffect = lassoDashes(scale)
             canvas.drawRect(selectionBox, overlay)
             overlay.pathEffect = null
-            if (movingLasso && (!guideX.isNaN() || !guideY.isNaN())) {
+            if (movingLasso) {
                 val page = pageOf(lassoPage) ?: return
                 overlay.color = 0xFFE91E63.toInt()
                 overlay.strokeWidth = 1f / scale
                 if (!guideX.isNaN()) canvas.drawLine(guideX, 0f, guideX, page.height, overlay)
                 if (!guideY.isNaN()) canvas.drawLine(0f, guideY, page.width, guideY, overlay)
+                // The gaps it matched, drawn across them at the selection's middle.
+                overlay.strokeWidth = 2f / scale
+                val box = gapBox.apply { set(lassoBounds); offset(lassoDx, lassoDy) }
+                if (!spacingX[0].isNaN()) canvas.drawLine(spacingX[0], box.centerY(), box.left, box.centerY(), overlay)
+                if (!spacingX[1].isNaN()) canvas.drawLine(box.right, box.centerY(), spacingX[1], box.centerY(), overlay)
+                if (!spacingY[0].isNaN()) canvas.drawLine(box.centerX(), spacingY[0], box.centerX(), box.top, overlay)
+                if (!spacingY[1].isNaN()) canvas.drawLine(box.centerX(), box.bottom, box.centerX(), spacingY[1], overlay)
             }
         }
 
@@ -11696,6 +11747,8 @@ class InkCanvasView @JvmOverloads constructor(
         const val DETAIL_THRESHOLD_PX = 2048
         const val SHADOW = 4f
         const val SNAP_ALIGN_PX = 10f
+        /** Strokes closer than this, in page units, stand in one block for the guides: a word, a line. */
+        const val INK_BLOCK_GAP = 24f
         const val PULL_FOR_PAGE_PX = 90f
         const val VERTEX_HANDLE_PX = 9f
         const val MAX_EDITABLE_INPUTS = SHAPE_EDITABLE_INPUTS

@@ -7941,6 +7941,26 @@ private fun PasteBar(
             SettingsChoiceChip(selected = gestures.snapToAlign,
                 onClick = { onGestures(gestures.copy(snapToAlign = !gestures.snapToAlign)) },
                 label = "Snap to align", modifier = Modifier.padding(start = 6.dp))
+            // What it lines up with, each on its own, as Canva's guides.
+            if (gestures.snapToAlign) Box {
+                var guides by remember { mutableStateOf(false) }
+                TextButton(onClick = { guides = true }) { Text("Guides") }
+                DropdownMenu(guides, onDismissRequest = { guides = false }) {
+                    listOf(
+                        "Page edges and centre" to SnapTo.PAGE,
+                        "Page margins" to SnapTo.MARGINS,
+                        "Pictures and text boxes" to SnapTo.OBJECTS,
+                        "Handwriting" to SnapTo.INK,
+                        "Even spacing" to SnapTo.SPACING,
+                    ).forEach { (label, bit) ->
+                        val on = gestures.snapTo and bit != 0
+                        DropdownMenuItem(
+                            text = { Text((if (on) "✓ " else "    ") + label) },
+                            onClick = { onGestures(gestures.copy(snapTo = gestures.snapTo xor bit)) },
+                        )
+                    }
+                }
+            }
             SettingsChoiceChip(selected = gestures.keepAspect,
                 onClick = { onGestures(gestures.copy(keepAspect = !gestures.keepAspect)) },
                 label = "Keep aspect ratio", modifier = Modifier.padding(start = 6.dp))

@@ -75,8 +75,45 @@ class InkGesturesTest {
     @Test
     fun alignTakesTheNearestTargetWithinReach() {
         // Middle at 98 is 2 from the page middle at 100; the left edge is 7 from 0.
-        val snap = alignOffset(floatArrayOf(7f, 98f, 189f), listOf(0f, 100f, 200f), reach = 10f)
+        val snap = alignOffset(floatArrayOf(7f, 98f, 189f), floatArrayOf(0f, 100f, 200f), reach = 10f)
         assertEquals(2f to 100f, snap)
-        assertEquals(null, alignOffset(floatArrayOf(30f), listOf(0f, 100f), reach = 10f))
+        assertEquals(null, alignOffset(floatArrayOf(30f), floatArrayOf(0f, 100f), reach = 10f))
+    }
+
+    @Test
+    fun `guides follow the switches`() {
+        val pic = floatArrayOf(100f, 100f, 300f, 200f)
+        val pageOnly = snapGuides(1000f, 2000f, pic, FloatArray(0), SnapTo.PAGE)
+        assertEquals(listOf(0f, 500f, 1000f), pageOnly.xs.toList())
+        assertEquals(0, pageOnly.boxes.size)
+        val all = snapGuides(1000f, 2000f, pic, FloatArray(0), SnapTo.ALL)
+        assertTrue(65f in all.xs.toList() && 935f in all.xs.toList())
+        assertTrue(200f in all.xs.toList() && 150f in all.ys.toList())
+        assertEquals(pic.toList(), all.boxes.toList())
+    }
+
+    @Test
+    fun `strokes near each other make one block`() {
+        val letters = floatArrayOf(0f, 0f, 10f, 20f, 14f, 2f, 24f, 20f, 300f, 0f, 310f, 20f)
+        val blocks = inkBlocks(letters, gap = 8f)
+        assertEquals(listOf(0f, 0f, 24f, 20f, 300f, 0f, 310f, 20f), blocks.toList())
+        // A stroke joining two blocks makes them one.
+        assertEquals(4, inkBlocks(floatArrayOf(0f, 0f, 10f, 10f, 30f, 0f, 40f, 10f, 9f, 0f, 31f, 10f), 2f).size)
+    }
+
+    @Test
+    fun `a selection centres between its neighbours`() {
+        // Boxes at 0..100 and 300..400; the selection 160..210 is 60 from one and 90 from the other.
+        val shift = evenGapShift(160f, 210f, floatArrayOf(0f, 300f), floatArrayOf(100f, 400f), reach = 20f)!!
+        assertEquals(15f, shift[0], 0.001f)
+        assertEquals(100f, shift[1]); assertEquals(300f, shift[2])
+    }
+
+    @Test
+    fun `a selection keeps the gap its neighbours keep`() {
+        // 0..100 and 130..230 stand 30 apart; the selection after them, at 268..300, catches 30 from 230.
+        val shift = evenGapShift(268f, 300f, floatArrayOf(0f, 130f), floatArrayOf(100f, 230f), reach = 10f)!!
+        assertEquals(-8f, shift[0], 0.001f)
+        assertEquals(null, evenGapShift(400f, 450f, floatArrayOf(0f, 130f), floatArrayOf(100f, 230f), reach = 10f))
     }
 }
