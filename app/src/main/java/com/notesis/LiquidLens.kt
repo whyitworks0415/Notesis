@@ -4,7 +4,6 @@ import android.os.Build
 import android.graphics.RenderEffect
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.BackdropEffectScope
-import com.kyant.backdrop.effects.effect
 import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.sqrt
@@ -190,12 +189,41 @@ internal class LiquidLensParams(
     val opacity: Float = 1f,
 )
 
+/**
+ * The lens's one program for the whole app. Backdrop keeps a shader per pane
+ * and drops it when the pane goes, so every popup that opened built (compiled)
+ * the program again on the main thread - twice a pane for iOS, which draws two
+ * layers. An effect takes a copy of the uniforms when it is made, so one
+ * shader can serve every pane; all of them are made on the main thread.
+ */
+// Typed loosely so nothing below Android 13 names the class.
+private var sharedLensShader: Any? = null
+private var sharedLensFailed = false
+
+@androidx.annotation.RequiresApi(Build.VERSION_CODES.TIRAMISU)
+private fun lensShader(): android.graphics.RuntimeShader? {
+    (sharedLensShader as? android.graphics.RuntimeShader)?.let { return it }
+    if (sharedLensFailed) return null
+    // A shader that fails to build on some GPU leaves the page unbent rather than the app closed.
+    return runCatching { android.graphics.RuntimeShader(LIQUID_LENS_AGSL) }.getOrNull()
+        .also { if (it == null) sharedLensFailed = true else sharedLensShader = it }
+}
+
 /** The lens of [p] over what Backdrop has drawn so far; nothing below Android 13. */
 internal fun BackdropEffectScope.liquidLens(p: LiquidLensParams) {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+    lensEffect(p, renderEffect)?.let { renderEffect = it }
+}
+
+/**
+ * The lens of [p] as an effect over [input] (the page as it comes, if null),
+ * or null where it cannot run. It may widen [BackdropEffectScope.padding]
+ * for a lens that bends outwards, as [liquidLens] always has.
+ */
+internal fun BackdropEffectScope.lensEffect(p: LiquidLensParams, input: RenderEffect?): RenderEffect? {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return null
     val w = size.width
     val h = size.height
-    if (!(w > 1f) || !(h > 1f)) return
+    if (!(w > 1f) || !(h > 1f)) return null
     val short = min(w, h)
     var bevel = p.bevel
     var refract = p.refract
@@ -220,8 +248,7 @@ internal fun BackdropEffectScope.liquidLens(p: LiquidLensParams) {
     val margin = padding
     val r = p.cornerRadius.coerceIn(0f, short / 2f)
     val lightLen = sqrt(p.lightX * p.lightX + p.lightY * p.lightY).takeIf { it > 1e-4f } ?: 1f
-    // A shader that fails to build on some GPU leaves the page unbent rather than the app closed.
-    val shader = runCatching { obtainRuntimeShader("NotesisLiquidLens", LIQUID_LENS_AGSL).apply {
+    val shader = lensShader()?.apply {
         setFloatUniform("margin", margin)
         setFloatUniform("viewSize", w, h)
         setFloatUniform("radii", r, r, r, r)
@@ -245,6 +272,7 @@ internal fun BackdropEffectScope.liquidLens(p: LiquidLensParams) {
         setFloatUniform("bodyShade", p.bodyShade)
         setFloatUniform("outAlpha", p.opacity.coerceIn(0f, 1f))
         setFloatUniform("rimEven", p.rimEven.coerceIn(0f, 1f))
-    } }.getOrNull() ?: return
-    effect(RenderEffect.createRuntimeShaderEffect(shader, "content"))
+    } ?: return null
+    val lens = RenderEffect.createRuntimeShaderEffect(shader, "content")
+    return if (input != null) RenderEffect.createChainEffect(lens, input) else lens
 }

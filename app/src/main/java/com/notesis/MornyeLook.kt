@@ -21,7 +21,6 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.Backdrop
@@ -181,7 +180,9 @@ internal fun Modifier.mornyeGlass(
     val body = fill.copy(alpha = fill.alpha * amount)
     val samples = m.clarity > 0.2f
     val sigma = mornyeBlurSigma(m.clarity)
-    val base = drawBackdrop(
+    // Black at 8% (14% in the dark), 8 soft, 2 down (see [paneShadow]).
+    val base = (if (shadows) paneShadow(shape, 8.dp, 2.dp, Color.Black.copy(alpha = if (dark) 0.14f else 0.08f), amount) else this)
+        .drawBackdrop(
         backdrop = backdrop,
         shape = { shape },
         effects = {
@@ -198,10 +199,7 @@ internal fun Modifier.mornyeGlass(
             }
         },
         highlight = null,
-        // Black at 8% (14% in the dark), 8 soft, 2 down.
-        shadow = if (shadows) {
-            { Shadow(radius = 8.dp, offset = DpOffset(0.dp, 2.dp), color = Color.Black.copy(alpha = if (dark) 0.14f else 0.08f), alpha = amount) }
-        } else null,
+        shadow = null,
         exportedBackdrop = exportedBackdrop,
         onDrawSurface = { drawRect(body) },
     )
@@ -341,6 +339,20 @@ internal class MornyeSquircleShape(corner: CornerSize) : CornerBasedShape(corner
         bottomStart: Float,
         layoutDirection: LayoutDirection,
     ): Outline {
+        // One draw of a pane asks for its outline several times - its clip,
+        // its backdrop, its rim, its shadow - and every call worked out up to
+        // 320 points with a power each. The last one is kept for its size.
+        val cached = last
+        if (cached != null && lastW == size.width && lastH == size.height && lastR == topStart) return cached
+        return buildOutline(size, topStart).also { last = it; lastW = size.width; lastH = size.height; lastR = topStart }
+    }
+
+    private var last: Outline? = null
+    private var lastW = Float.NaN
+    private var lastH = Float.NaN
+    private var lastR = Float.NaN
+
+    private fun buildOutline(size: Size, topStart: Float): Outline {
         val points = squirclePoints(size.width, size.height, topStart)
         if (points.size < 16) return Outline.Rectangle(androidx.compose.ui.geometry.Rect(0f, 0f, size.width, size.height))
         val path = Path()

@@ -1,5 +1,10 @@
 package com.notesis
 
+import android.graphics.RenderEffect
+import android.os.Build
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
@@ -13,7 +18,6 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.Backdrop
@@ -23,7 +27,6 @@ import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.colorControls
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.highlight.Highlight
-import com.kyant.backdrop.shadow.Shadow
 import org.json.JSONObject
 
 /**
@@ -270,7 +273,7 @@ internal fun Modifier.styledLiquidGlass(
  * Before the pane is measured Backdrop's size is unspecified - NaN - and a
  * rounded shape asked for its outline at that size throws, so there is none.
  */
-private fun cornerOf(shape: Shape, size: Size, layoutDirection: LayoutDirection, density: Density): Float {
+internal fun cornerOf(shape: Shape, size: Size, layoutDirection: LayoutDirection, density: Density): Float {
     if (size.isUnspecified || !(size.width > 0f) || !(size.height > 0f)) return 0f
     // A squircle draws as a path but still names its corner, which the lens bends along.
     if (shape is androidx.compose.foundation.shape.CornerBasedShape) {
@@ -314,8 +317,8 @@ private fun Modifier.iosGlass(
     val travelX = (-kotlin.math.cos(angle)).toFloat() * (if (dark) -1f else 1f)
     val lightY = kotlin.math.sin(angle).toFloat() * (if (dark) -1f else 1f)
     val rimEven = if (g.rimAllRound) 1f else 0f
-    fun glassLens(scope: com.kyant.backdrop.BackdropEffectScope, opacity: Float, spec: Float) = with(scope) {
-        liquidLens(LiquidLensParams(
+    fun lensParams(scope: com.kyant.backdrop.BackdropEffectScope, opacity: Float, spec: Float) = with(scope) {
+        LiquidLensParams(
             cornerRadius = cornerOf(shape, size, layoutDirection, this),
             bevel = g.bevelDp.dp.toPx() * amount,
             refract = g.bendDp.dp.toPx() * amount,
@@ -328,19 +331,48 @@ private fun Modifier.iosGlass(
             edgeAbsorb = g.edgeAbsorption,
             bodyShade = if (dark) IosGlass.DARK_BODY_SHADE * amount else 0f,
             opacity = opacity,
-        ))
+        )
     }
+    fun glassLens(scope: com.kyant.backdrop.BackdropEffectScope, opacity: Float, spec: Float) =
+        scope.liquidLens(lensParams(scope, opacity, spec))
+    // ios27Light's BoxShadow: black at 0x04, 10 soft, 7 down; none in the dark.
+    val shadow = if (shadows && !dark) Modifier.paneShadow(shape, 10.dp, 7.dp, Color.Black.copy(alpha = 4f / 255f), amount)
+        else Modifier
+    val shade = if (rim && g.rimShade > 0f) Modifier.rimShade(shape, g.rimShade * amount, dark) else Modifier
     if (LabPerformance.efficientNow) {
         // One sampling/lens pass instead of a clear pass followed by a frosted pass.
-        return drawBackdrop(backdrop = backdrop, shape = { shape }, effects = {
+        return this.then(shadow).drawBackdrop(backdrop = backdrop, shape = { shape }, effects = {
             blur(labBlurDp(g.frost, true).dp.toPx() * amount)
             glassLens(this, 1f, rimLight)
-        }, highlight = null, shadow = if (shadows && !dark) {
-            { Shadow(radius = 10.dp, offset = DpOffset(0.dp, 7.dp), color = Color.Black.copy(alpha = 4f / 255f), alpha = amount) }
-        } else null, exportedBackdrop = exportedBackdrop, onDrawSurface = { drawRect(body) })
-            .then(if (rim && g.rimShade > 0f) Modifier.rimShade(shape, g.rimShade * amount, dark) else Modifier)
+        }, highlight = null, shadow = null, exportedBackdrop = exportedBackdrop, onDrawSurface = { drawRect(body) })
+            .then(shade)
     }
-    val base = drawBackdrop(
+    if (exportedBackdrop == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        // The same two layers, the frost over the clear glass, blended in one
+        // pane: the page is recorded, clipped and kept once instead of twice.
+        return this.then(shadow).drawBackdrop(
+            backdrop = backdrop,
+            shape = { shape },
+            effects = {
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return@drawBackdrop
+                val clear = lensEffect(lensParams(this, 1f, 0f), blurEffect(g.blur.dp.toPx() * amount))
+                    ?: blurEffect(g.blur.dp.toPx() * amount)
+                val frost = lensEffect(lensParams(this, frostOpacity, rimLight), blurEffect(g.frost.dp.toPx() * amount))
+                if (frost == null) {
+                    renderEffect = clear
+                } else {
+                    renderEffect = RenderEffect.createBlendModeEffect(
+                        clear ?: RenderEffect.createOffsetEffect(0f, 0f), frost, android.graphics.BlendMode.SRC_OVER)
+                }
+            },
+            highlight = null,
+            shadow = null,
+            onDrawSurface = { drawRect(body) },
+        ).then(shade)
+    }
+    // Something records this pane for the panes over it (a side panel):
+    // the clear layer alone, as it always was, and the frost on its own.
+    val base = this.then(shadow).drawBackdrop(
         backdrop = backdrop,
         shape = { shape },
         effects = {
@@ -348,10 +380,7 @@ private fun Modifier.iosGlass(
             glassLens(this, 1f, 0f)
         },
         highlight = null,
-        // ios27Light's BoxShadow: black at 0x04, 10 soft, 7 down; none in the dark.
-        shadow = if (shadows && !dark) {
-            { Shadow(radius = 10.dp, offset = DpOffset(0.dp, 7.dp), color = Color.Black.copy(alpha = 4f / 255f), alpha = amount) }
-        } else null,
+        shadow = null,
         exportedBackdrop = exportedBackdrop,
     )
     return base
@@ -366,8 +395,44 @@ private fun Modifier.iosGlass(
             shadow = null,
             onDrawSurface = { drawRect(body) },
         )
-        .then(if (rim && g.rimShade > 0f) Modifier.rimShade(shape, g.rimShade * amount, dark) else Modifier)
+        .then(shade)
 }
+
+/** A Gaussian blur of [radius] px as Backdrop's blur makes it, or none for nothing. */
+private fun blurEffect(radius: Float): RenderEffect? =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && radius > 0f)
+        RenderEffect.createBlurEffect(radius, radius, android.graphics.Shader.TileMode.CLAMP) else null
+
+/**
+ * The shadow a glass pane casts, drawn round it and never under it, on the
+ * pane's round-rectangle outline rather than its own: a blurred round
+ * rectangle the GPU draws by itself, where Backdrop's shadow blurred the
+ * squircle's path as a mask on the CPU every time the pane was drawn. Under a
+ * blur this soft the two corners cannot be told apart.
+ */
+internal fun Modifier.paneShadow(shape: Shape, radius: Dp, offsetY: Dp, color: Color, alpha: Float): Modifier =
+    drawWithCache {
+        val corner = cornerOf(shape, size, layoutDirection, this)
+        val blur = radius.toPx()
+        val dy = offsetY.toPx()
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = color.copy(alpha = (color.alpha * alpha).coerceIn(0f, 1f)).toArgb()
+            if (blur > 0f) maskFilter = android.graphics.BlurMaskFilter(blur, android.graphics.BlurMaskFilter.Blur.NORMAL)
+        }
+        val inside = android.graphics.Path().apply {
+            addRoundRect(0f, 0f, size.width, size.height, corner, corner, android.graphics.Path.Direction.CW)
+        }
+        onDrawWithContent {
+            if (paint.alpha > 0 && size.width > 0f && size.height > 0f) drawIntoCanvas { c ->
+                val canvas = c.nativeCanvas
+                canvas.save()
+                canvas.clipOutPath(inside)
+                canvas.drawRoundRect(0f, dy, size.width, size.height + dy, corner, corner, paint)
+                canvas.restore()
+            }
+            drawContent()
+        }
+    }
 
 /** The rim shade: a hairline of shadow just inside the outline, [strength] 1 at the presets. */
 private fun Modifier.rimShade(shape: Shape, strength: Float, dark: Boolean): Modifier = drawWithCache {
