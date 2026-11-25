@@ -157,10 +157,12 @@ private fun BoxWithConstraintsScope.ClockPill(kind: PillKind) {
             // The panel grows out of the pill when the pill opens it.
             .onGloballyPositioned { pillCenter[0] = it.localToScreen(Offset(it.size.width / 2f, it.size.height / 2f)) }
             .then(if (alert) Modifier.alertGlow(scheme.primary) else Modifier)
-            .skinShadow(shape)
-            .clip(shape)
-            .background(if (alert) scheme.primaryContainer else scheme.surfaceContainerLow)
-            .border(0.75.dp, scheme.outlineVariant.copy(alpha = 0.6f), shape)
+            // The chrome's own material, so the pill is glass where the bar is;
+            // an alert keeps its solid colour to stand out from the page.
+            .then(if (alert) {
+                Modifier.skinShadow(shape).clip(shape).background(scheme.primaryContainer)
+                    .border(0.75.dp, scheme.outlineVariant.copy(alpha = 0.6f), shape)
+            } else Modifier.skinMaterial(shape).clip(shape))
             .pointerInput(Unit) {
                 detectDragGestures(onDragEnd = { clock.saveButtonPlace() }) { change, drag ->
                     change.consume()
