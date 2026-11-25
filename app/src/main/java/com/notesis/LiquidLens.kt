@@ -69,12 +69,19 @@ half4 main(float2 coord) {
     if (cov <= 0.004) {
         return half4(0.0);
     }
-    float2 n = float2(
-        lensSDF(p + float2(1.0, 0.0)) - lensSDF(p - float2(1.0, 0.0)),
-        lensSDF(p + float2(0.0, 1.0)) - lensSDF(p - float2(0.0, 1.0))
-    );
-    float nLen = length(n);
-    n = nLen > 0.0001 ? n / nLen : float2(0.0, -1.0);
+    // Deeper than both the bevel and the rim's light reaches, the page is not
+    // bent and no light is added: one sample and no normal give the same colour.
+    float bandW = clamp(bevel * 0.3, 2.0, rimBandMax);
+    bool inner = -d > max(max(bevel, 1.0), 3.0 + bandW);
+    float2 n = float2(0.0, -1.0);
+    if (!inner) {
+        n = float2(
+            lensSDF(p + float2(1.0, 0.0)) - lensSDF(p - float2(1.0, 0.0)),
+            lensSDF(p + float2(0.0, 1.0)) - lensSDF(p - float2(0.0, 1.0))
+        );
+        float nLen = length(n);
+        n = nLen > 0.0001 ? n / nLen : float2(0.0, -1.0);
+    }
 
     float t = clamp(-d / max(bevel, 1.0), 0.0, 1.0);
     float edge = 1.0 - t;
@@ -91,13 +98,18 @@ half4 main(float2 coord) {
     float2 cG = clamp(coord + offset, sampleLo, sampleHi);
     float2 cB = clamp(coord + offset * (1.0 + dispersion * slope), sampleLo, sampleHi);
     float3 col;
-    if (rimSoft > 0.01 && slope > 0.001) {
+    if (inner) {
+        col = content.eval(cG).rgb;
+    } else if (rimSoft > 0.01 && slope > 0.001) {
         float2 sm = n * (rimSoft * slope);
         col = float3(
             (content.eval(cR).r + content.eval(clamp(cR - sm, sampleLo, sampleHi)).r + content.eval(clamp(cR + sm, sampleLo, sampleHi)).r) / 3.0,
             (content.eval(cG).g + content.eval(clamp(cG - sm, sampleLo, sampleHi)).g + content.eval(clamp(cG + sm, sampleLo, sampleHi)).g) / 3.0,
             (content.eval(cB).b + content.eval(clamp(cB - sm, sampleLo, sampleHi)).b + content.eval(clamp(cB + sm, sampleLo, sampleHi)).b) / 3.0
         );
+    } else if (dispersion <= 0.0001) {
+        // No colour fringing: the three channels read one place, so read it once.
+        col = content.eval(cG).rgb;
     } else {
         col = float3(content.eval(cR).r, content.eval(cG).g, content.eval(cB).b);
     }
@@ -133,7 +145,6 @@ half4 main(float2 coord) {
     float facing = dot(n, -lightDir);
     float lobeF = pow(max(facing, 0.0), 4.5);
     float lobeB = pow(max(-facing, 0.0), 4.5);
-    float bandW = clamp(bevel * 0.3, 2.0, rimBandMax);
     float glowIn = clamp((-d - 1.0) / 2.0, 0.0, 1.0);
     float glow = glowIn * pow(clamp(1.0 - (-d - 3.0) / bandW, 0.0, 1.0), 1.5) * cov;
     float hair = clamp(1.0 - abs(d + 1.0) / 2.0, 0.0, 1.0) * cov;
