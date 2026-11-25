@@ -506,9 +506,20 @@ internal fun AppearanceSettings(
                     SettingsToggle("Efficient glass", LabPerformance.efficientGlass,
                         { LabPerformance.setEfficientGlass(context, it) },
                         hint = "Uses one iOS glass pass and less surface blur. Off keeps the original glass.")
+                    Text("New ink on the glass", style = MaterialTheme.typography.bodyLarge)
+                    LiquidSegmentedControl(
+                        segments = listOf("While writing", "After each stroke", "After a pause"),
+                        selectedIndex = LabPerformance.glassInkShown,
+                        onSelected = { LabPerformance.setGlassInk(context, it) },
+                        modifier = Modifier.fillMaxWidth(),
+                        useLiquidGlass = false,
+                    )
+                    SettingsNote("When ink just written or erased shows through the glass. While writing draws the glass again " +
+                        "for every change the pen makes, the heaviest; after each stroke draws it once as the pen lifts; " +
+                        "after a pause waits until the pen has rested, the lightest.")
                     SettingsToggle("Glass follows scrolling", LabPerformance.glassFollowsScrollShown,
                         { LabPerformance.setGlassFollowsScroll(context, it) },
-                        hint = "On, the glass shows the page moving under it while you scroll. Off, it keeps its picture until the page stops, which is lighter on the GPU and the battery. It always holds still while the pen writes.")
+                        hint = "On, the glass shows the page moving under it while you scroll. Off, it keeps its picture until the page stops, which is lighter on the GPU and the battery.")
                     GlassGroup(skin, settings, onChange, onSkin)
                 }
                 AppearanceGroup.COLORS -> ColorsGroup(skin, settings, onChange)
@@ -855,6 +866,7 @@ private fun IosGlassControls(g: IosGlass, appAccent: Int, dark: Boolean, onChang
     MornyeAccentPicker(g.accent, appAccent, dark) { onChange(g.copy(accent = it)) }
     SettingsToggle("Smooth corners", g.smoothCorners, { onChange(g.copy(smoothCorners = it)) },
         hint = "Mornye's squircle: the corner eases out of the straight edge instead of turning on a circle.")
+    IosPartsControls(g.parts) { onChange(g.copy(parts = it)) }
     SettingsNote("From liquid_glass_widgets 1.16.1 (MIT), whose iOS 27 regular presets were measured against the " +
         "native control: a frosted body over a lightly blurred page, a paraxial rim and the native springs. " +
         "The defaults are set by eye from there. Dark mode takes its dark preset, moved in proportion to what is set here.")
@@ -907,9 +919,48 @@ private fun IosGlassControls(g: IosGlass, appAccent: Int, dark: Boolean, onChang
         default = d.corner, note = "29 by default; its GlassMenu's is 32.",
     ) { onChange(g.copy(corner = it)) }
     ProjectMotionControls(g.motion, "liquid_glass_widgets") { onChange(g.copy(motion = it)) }
-    OutlinedButton(onClick = { onChange(d.copy(motion = g.motion, accent = g.accent)) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to the defaults") }
-    OutlinedButton(onClick = { onChange(IosGlass.PRESET.copy(motion = g.motion, accent = g.accent)) }, modifier = Modifier.heightIn(min = 48.dp)) {
+    OutlinedButton(onClick = { onChange(d.copy(motion = g.motion, accent = g.accent, parts = g.parts)) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to the defaults") }
+    OutlinedButton(onClick = { onChange(IosGlass.PRESET.copy(motion = g.motion, accent = g.accent, parts = g.parts)) }, modifier = Modifier.heightIn(min = 48.dp)) {
         Text("Use the ios27Light preset as measured")
+    }
+}
+
+/**
+ * Each part of iOS's glass on or off: what it is, and roughly what leaving it
+ * out saves. The lightest glass that still reads as glass is the frost alone.
+ */
+@Composable
+private fun IosPartsControls(parts: IosParts, onChange: (IosParts) -> Unit) {
+    SettingsSectionHeader("Parts")
+    SettingsNote("Each part of the glass, on or off. A part that is off is not drawn at all, so the glass costs " +
+        "less; all on is iOS's glass as it was. If the pen or popups lag, try the clear layer, the lens and the " +
+        "buttons first: those cost the most.")
+    SettingsToggle("Clear layer", parts.clearLayer, { onChange(parts.copy(clearLayer = it)) },
+        hint = "The page through the lens, unblurred, under the frost. Off, the page shows through as it is: one lens pass less for every pane.")
+    SettingsToggle("Frost layer", parts.frostLayer, { onChange(parts.copy(frostLayer = it)) },
+        hint = "The blurred cloud over the page. With both layers off the glass is a plain tinted pane that never looks at the page, the lightest of all.")
+    SettingsToggle("Lens", parts.lens, { onChange(parts.copy(lens = it)) },
+        hint = "The bending at the rim, and the rim light, saturation and edge drawn with it. Off, the layers are plain blur.")
+    SettingsToggle("Saturation", parts.saturation, { onChange(parts.copy(saturation = it)) },
+        hint = "The colour lift through the glass.")
+    SettingsToggle("Edge absorption", parts.edgeAbsorption, { onChange(parts.copy(edgeAbsorption = it)) },
+        hint = "The bevel darkening towards the edge.")
+    SettingsToggle("Rim light", parts.rimLight, { onChange(parts.copy(rimLight = it)) },
+        hint = "Light caught along the edge.")
+    SettingsToggle("Rim shade", parts.rimShade, { onChange(parts.copy(rimShade = it)) },
+        hint = "The fine dark line just inside the edge.")
+    SettingsToggle("Shadow", parts.shadow, { onChange(parts.copy(shadow = it)) },
+        hint = "The soft shadow each pane casts.")
+    SettingsToggle("Glass colour", parts.body, { onChange(parts.copy(body = it)) },
+        hint = "The pale colour over the glass. Off, only the layers above show, and text on a panel can be harder to read.")
+    SettingsToggle("Glass buttons", parts.buttonGlass, { onChange(parts.copy(buttonGlass = it)) },
+        hint = "Round buttons standing on their own as glass, each a pane of its own. Off, they are solid.")
+    SettingsToggle("Glass sliders and switches", parts.controlGlass, { onChange(parts.copy(controlGlass = it)) },
+        hint = "Sliders and switches that turn to a lens while held. Off, the plain ones.")
+    SettingsToggle("Glass clock", parts.clockGlass, { onChange(parts.copy(clockGlass = it)) },
+        hint = "The floating clock as glass. Off, solid.")
+    if (parts != IosParts()) {
+        OutlinedButton(onClick = { onChange(IosParts()) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Turn every part on") }
     }
 }
 

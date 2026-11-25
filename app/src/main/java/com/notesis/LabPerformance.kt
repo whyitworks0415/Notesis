@@ -5,6 +5,23 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 
+internal const val GLASS_INK_LIVE = 0
+internal const val GLASS_INK_AFTER_STROKE = 1
+internal const val GLASS_INK_AFTER_PAUSE = 2
+
+/**
+ * Whether the page under the glass is recorded where the glass sees it, for an
+ * interaction [state]: while a finger moves the page if [followsScroll], while
+ * the pen is down only for [GLASS_INK_LIVE], and once the stroke has ended
+ * unless the glass waits for a pause.
+ */
+internal fun glassFollowsPage(state: Interaction, followsScroll: Boolean, ink: Int): Boolean = when (state) {
+    Interaction.MOVING -> followsScroll
+    Interaction.WRITING -> ink == GLASS_INK_LIVE
+    Interaction.SETTLING -> ink != GLASS_INK_AFTER_PAUSE
+    Interaction.IDLE -> false
+}
+
 /** A visible quality tradeoff, saved only inside this separate installation. */
 internal object LabPerformance {
     var efficientGlass by mutableStateOf(false)
@@ -34,6 +51,24 @@ internal object LabPerformance {
         context.getSharedPreferences("lab", Context.MODE_PRIVATE).edit().putBoolean("glassFollowsScroll", enabled).apply()
     }
 
+    /**
+     * When the glass shows ink just written or erased: [GLASS_INK_LIVE] as the
+     * pen goes (the glass drawn again for every change, the heaviest),
+     * [GLASS_INK_AFTER_STROKE] once each stroke or erase ends, or
+     * [GLASS_INK_AFTER_PAUSE] once the pen has rested. Read as the page is drawn.
+     */
+    @Volatile var glassInk = GLASS_INK_AFTER_STROKE
+        private set
+    var glassInkShown by mutableStateOf(GLASS_INK_AFTER_STROKE)
+        private set
+
+    fun setGlassInk(context: Context, mode: Int) {
+        val m = mode.coerceIn(GLASS_INK_LIVE, GLASS_INK_AFTER_PAUSE)
+        glassInk = m
+        glassInkShown = m
+        context.getSharedPreferences("lab", Context.MODE_PRIVATE).edit().putInt("glassInk", m).apply()
+    }
+
     /** Hint the system about the pen's threads while writing (see [WritingBoost]); on until compared. */
     var writingBoost by mutableStateOf(true)
         private set
@@ -55,6 +90,8 @@ internal object LabPerformance {
         }
         efficientGlass = prefs.getBoolean("efficientGlass", false)
         glassFollowsScroll = prefs.getBoolean("glassFollowsScroll", true)
+        glassInk = prefs.getInt("glassInk", GLASS_INK_AFTER_STROKE).coerceIn(GLASS_INK_LIVE, GLASS_INK_AFTER_PAUSE)
+        glassInkShown = glassInk
         glassFollowsScrollShown = glassFollowsScroll
         writingBoost = prefs.getBoolean("writingBoost", true)
         nativePresent = prefs.getBoolean("nativePresent", false)

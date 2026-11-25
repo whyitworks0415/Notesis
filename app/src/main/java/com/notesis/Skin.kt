@@ -722,7 +722,7 @@ fun SkinSlider(
     // Under Liquid glass, whichever recipe, the glass slider it had before
     // 0.91.0: a white handle at rest that turns to a lens while it is held.
     // It keeps the glass it was designed with, however the panels are tuned.
-    if (LocalSkin.current.isRefractive) {
+    if (LocalSkin.current.isRefractive && LocalSkinSettings.current.iosPartOn(LocalSkin.current) { it.controlGlass }) {
         CompositionLocalProvider(LocalSkinSettings provides LocalSkinSettings.current.controlOptics()) {
             LiquidGlassSlider(
                 value = value,
@@ -838,7 +838,7 @@ internal fun sliderValue(fraction: Float, range: ClosedFloatingPointRange<Float>
 fun SkinSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     val view = androidx.compose.ui.platform.LocalView.current
     // The glass switch under Liquid glass, as the slider (see [SkinSlider]).
-    if (LocalSkin.current.isRefractive) {
+    if (LocalSkin.current.isRefractive && LocalSkinSettings.current.iosPartOn(LocalSkin.current) { it.controlGlass }) {
         CompositionLocalProvider(LocalSkinSettings provides LocalSkinSettings.current.controlOptics()) {
             LiquidGlassSwitch(checked) { on -> Haptics.tick(view); onCheckedChange(on) }
         }

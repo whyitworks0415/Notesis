@@ -7,6 +7,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.background
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.isUnspecified
@@ -134,8 +135,11 @@ data class IosGlass(
     /** Mornye's continuous corners (see [MornyeSquircleShape]) rather than round ones. */
     val smoothCorners: Boolean = true,
     val motion: ProjectMotion = ProjectMotion(),
+    /** Which parts of the glass are drawn at all; see [IosParts]. */
+    val parts: IosParts = IosParts(),
 ) {
     fun toJson(): JSONObject = JSONObject()
+        .put("parts", parts.toJson())
         .put("thickness", thickness.toDouble()).put("refractiveIndex", refractiveIndex.toDouble())
         .put("blur", blur.toDouble()).put("frost", frost.toDouble()).put("frostOpacity", frostOpacity.toDouble())
         .put("saturation", saturation.toDouble()).put("bodyOpacity", bodyOpacity.toDouble())
@@ -177,7 +181,7 @@ data class IosGlass(
             val d = IosGlass()
             if (json == null) return d
             val read = readJson(json, d)
-            return if (read.copy(motion = PRESET.motion) == PRESET) d.copy(motion = read.motion) else read
+            return if (read.copy(motion = PRESET.motion, parts = PRESET.parts) == PRESET) d.copy(motion = read.motion, parts = read.parts) else read
         }
 
         private fun readJson(json: JSONObject, d: IosGlass): IosGlass {
@@ -199,10 +203,76 @@ data class IosGlass(
                 accent = MornyeAccent.fromName(json.optString("accent", d.accent.name)),
                 smoothCorners = json.optBoolean("smoothCorners", d.smoothCorners),
                 motion = ProjectMotion.fromJson(json.optJSONObject("motion")),
+                parts = IosParts.fromJson(json.optJSONObject("parts")),
             )
         }
     }
 }
+
+/**
+ * Every part iOS's glass is made of, each one on or off, so the glass can be
+ * pared down to what the tablet keeps up with. A part that is off is not
+ * drawn at all - not drawn at nothing - so it costs nothing. All on is the
+ * glass as it has always been.
+ */
+data class IosParts(
+    /** The page through the lens, unblurred, under the frost. Off, the page shows through as it is. */
+    val clearLayer: Boolean = true,
+    /** The frost: the lens over a heavy blur, at its opacity. */
+    val frostLayer: Boolean = true,
+    /** The lens shader itself - the bending at the rim and everything drawn in it. Off, plain blur. */
+    val lens: Boolean = true,
+    /** The colour lift through the glass. */
+    val saturation: Boolean = true,
+    /** The bevel darkening towards the edge. */
+    val edgeAbsorption: Boolean = true,
+    /** The light caught along the rim. */
+    val rimLight: Boolean = true,
+    /** The fine dark line just inside the edge. */
+    val rimShade: Boolean = true,
+    /** The shadow the pane casts. */
+    val shadow: Boolean = true,
+    /** The pale glass colour over it all. */
+    val body: Boolean = true,
+    /** Round buttons standing on their own (beside the bar, the page's corners) as glass of their own. */
+    val buttonGlass: Boolean = true,
+    /** Sliders and switches as glass controls that turn to a lens while held. */
+    val controlGlass: Boolean = true,
+    /** The floating clock as glass. */
+    val clockGlass: Boolean = true,
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("clearLayer", clearLayer).put("frostLayer", frostLayer).put("lens", lens)
+        .put("saturation", saturation).put("edgeAbsorption", edgeAbsorption)
+        .put("rimLight", rimLight).put("rimShade", rimShade).put("shadow", shadow).put("body", body)
+        .put("buttonGlass", buttonGlass).put("controlGlass", controlGlass).put("clockGlass", clockGlass)
+
+    /** Whether the page is sampled at all: with both layers off the pane is a plain tinted one. */
+    val samplesPage: Boolean get() = clearLayer || frostLayer
+
+    companion object {
+        fun fromJson(json: JSONObject?): IosParts {
+            val d = IosParts()
+            if (json == null) return d
+            fun b(key: String, default: Boolean) = json.optBoolean(key, default)
+            return IosParts(
+                clearLayer = b("clearLayer", d.clearLayer), frostLayer = b("frostLayer", d.frostLayer),
+                lens = b("lens", d.lens), saturation = b("saturation", d.saturation),
+                edgeAbsorption = b("edgeAbsorption", d.edgeAbsorption), rimLight = b("rimLight", d.rimLight),
+                rimShade = b("rimShade", d.rimShade), shadow = b("shadow", d.shadow), body = b("body", d.body),
+                buttonGlass = b("buttonGlass", d.buttonGlass), controlGlass = b("controlGlass", d.controlGlass),
+                clockGlass = b("clockGlass", d.clockGlass),
+            )
+        }
+    }
+}
+
+/**
+ * Whether a part of the chrome is glass: always, unless the look is iOS's
+ * and that part has been switched off in its [IosParts].
+ */
+internal fun SkinSettings.iosPartOn(skin: Skin, part: (IosParts) -> Boolean): Boolean =
+    skin != Skin.LIQUID_GLASS || liquidStyle != LiquidStyle.IOS || part(ios.parts)
 
 /** The corner Liquid glass's chrome takes under the recipe in use. */
 val SkinSettings.glassCorner: Float
@@ -303,13 +373,18 @@ private fun Modifier.iosGlass(
     exportedBackdrop: LayerBackdrop?,
     amount: Float,
 ): Modifier {
-    val saturation = 1f + ((if (dark) g.saturation * IosGlass.DARK_SATURATION else g.saturation) - 1f) * amount
+    val p = g.parts
+    val saturation = if (!p.saturation) 1f
+        else 1f + ((if (dark) g.saturation * IosGlass.DARK_SATURATION else g.saturation) - 1f) * amount
     val frostOpacity = ((if (dark) g.frostOpacity * IosGlass.DARK_FROST else g.frostOpacity) * amount).coerceIn(0f, 1f)
     // A white-only dark preset washed out over white paper. Keep a charcoal
     // reading floor; the existing optical passes still draw the curved rim.
-    val body = if (dark) iosDarkReadingMaterial(panel, amount, g.bodyOpacity)
-        else Color(0xFFF8F8F8).copy(alpha = (g.bodyOpacity * amount).coerceIn(0f, 1f))
-    val rimLight = if (rim) (if (dark) g.rimLight * IosGlass.DARK_RIM_LIGHT else g.rimLight) * amount else 0f
+    val body = when {
+        !p.body -> Color.Transparent
+        dark -> iosDarkReadingMaterial(panel, amount, g.bodyOpacity)
+        else -> Color(0xFFF8F8F8).copy(alpha = (g.bodyOpacity * amount).coerceIn(0f, 1f))
+    }
+    val rimLight = if (rim && p.rimLight) (if (dark) g.rimLight * IosGlass.DARK_RIM_LIGHT else g.rimLight) * amount else 0f
     // ios27Light lights from the top (pi / 2), ios27Dark from the bottom; the
     // shader takes the way the light travels: from the angle set, towards
     // the opposite side, turned round in the dark.
@@ -328,22 +403,32 @@ private fun Modifier.iosGlass(
             spec = spec,
             rimEven = rimEven,
             saturation = saturation,
-            edgeAbsorb = g.edgeAbsorption,
+            edgeAbsorb = if (p.edgeAbsorption) g.edgeAbsorption else 0f,
             bodyShade = if (dark) IosGlass.DARK_BODY_SHADE * amount else 0f,
             opacity = opacity,
         )
     }
-    fun glassLens(scope: com.kyant.backdrop.BackdropEffectScope, opacity: Float, spec: Float) =
-        scope.liquidLens(lensParams(scope, opacity, spec))
+    // One layer of the glass over a blur of [blurPx]: through the lens, or
+    // with the lens off a plain colour filter for its saturation and opacity.
+    // Null is the page as it is.
+    fun com.kyant.backdrop.BackdropEffectScope.layer(blurPx: Float, opacity: Float, spec: Float): RenderEffect? {
+        val blurred = blurEffect(blurPx)
+        if (p.lens) lensEffect(lensParams(this, opacity, spec), blurred)?.let { return it }
+        return colourEffect(saturation, opacity, blurred)
+    }
     // ios27Light's BoxShadow: black at 0x04, 10 soft, 7 down; none in the dark.
-    val shadow = if (shadows && !dark) Modifier.paneShadow(shape, 10.dp, 7.dp, Color.Black.copy(alpha = 4f / 255f), amount)
-        else Modifier
-    val shade = if (rim && g.rimShade > 0f) Modifier.rimShade(shape, g.rimShade * amount, dark) else Modifier
+    val shadow = if (shadows && !dark && p.shadow)
+        Modifier.paneShadow(shape, 10.dp, 7.dp, Color.Black.copy(alpha = 4f / 255f), amount) else Modifier
+    val shade = if (rim && p.rimShade && g.rimShade > 0f) Modifier.rimShade(shape, g.rimShade * amount, dark) else Modifier
+    if (!p.samplesPage) {
+        // Neither layer: a tinted pane that never looks at the page.
+        return this.then(shadow).background(body, shape).then(shade)
+    }
     if (LabPerformance.efficientNow) {
         // One sampling/lens pass instead of a clear pass followed by a frosted pass.
         return this.then(shadow).drawBackdrop(backdrop = backdrop, shape = { shape }, effects = {
-            blur(labBlurDp(g.frost, true).dp.toPx() * amount)
-            glassLens(this, 1f, rimLight)
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return@drawBackdrop
+            renderEffect = layer(labBlurDp(g.frost, true).dp.toPx() * amount, 1f, rimLight)
         }, highlight = null, shadow = null, exportedBackdrop = exportedBackdrop, onDrawSurface = { drawRect(body) })
             .then(shade)
     }
@@ -355,14 +440,13 @@ private fun Modifier.iosGlass(
             shape = { shape },
             effects = {
                 if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return@drawBackdrop
-                val clear = lensEffect(lensParams(this, 1f, 0f), blurEffect(g.blur.dp.toPx() * amount))
-                    ?: blurEffect(g.blur.dp.toPx() * amount)
-                val frost = lensEffect(lensParams(this, frostOpacity, rimLight), blurEffect(g.frost.dp.toPx() * amount))
-                if (frost == null) {
-                    renderEffect = clear
-                } else {
-                    renderEffect = RenderEffect.createBlendModeEffect(
+                val clear = if (p.clearLayer) layer(g.blur.dp.toPx() * amount, 1f, 0f) else null
+                val frost = if (p.frostLayer) layer(g.frost.dp.toPx() * amount, frostOpacity, rimLight) else null
+                renderEffect = when {
+                    p.clearLayer && p.frostLayer -> if (frost == null) clear else RenderEffect.createBlendModeEffect(
                         clear ?: RenderEffect.createOffsetEffect(0f, 0f), frost, android.graphics.BlendMode.SRC_OVER)
+                    p.frostLayer -> frost
+                    else -> clear
                 }
             },
             highlight = null,
@@ -372,30 +456,45 @@ private fun Modifier.iosGlass(
     }
     // Something records this pane for the panes over it (a side panel):
     // the clear layer alone, as it always was, and the frost on its own.
-    val base = this.then(shadow).drawBackdrop(
+    var result = this.then(shadow)
+    if (p.clearLayer) result = result.drawBackdrop(
         backdrop = backdrop,
         shape = { shape },
         effects = {
-            blur(g.blur.dp.toPx() * amount)
-            glassLens(this, 1f, 0f)
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return@drawBackdrop
+            renderEffect = layer(g.blur.dp.toPx() * amount, 1f, 0f)
         },
         highlight = null,
         shadow = null,
         exportedBackdrop = exportedBackdrop,
     )
-    return base
-        .drawBackdrop(
-            backdrop = backdrop,
-            shape = { shape },
-            effects = {
-                blur(g.frost.dp.toPx() * amount)
-                glassLens(this, frostOpacity, rimLight)
-            },
-            highlight = null,
-            shadow = null,
-            onDrawSurface = { drawRect(body) },
-        )
-        .then(shade)
+    if (p.frostLayer) result = result.drawBackdrop(
+        backdrop = backdrop,
+        shape = { shape },
+        effects = {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return@drawBackdrop
+            renderEffect = layer(g.frost.dp.toPx() * amount, frostOpacity, rimLight)
+        },
+        highlight = null,
+        shadow = null,
+        exportedBackdrop = if (p.clearLayer) null else exportedBackdrop,
+        onDrawSurface = { drawRect(body) },
+    ) else result = result.background(body, shape)
+    return result.then(shade)
+}
+
+/**
+ * A colour filter for [saturation] and [opacity] over [input], or [input]
+ * itself where neither changes anything: the lens's own colour work, for
+ * glass drawn without the lens.
+ */
+private fun colourEffect(saturation: Float, opacity: Float, input: RenderEffect?): RenderEffect? {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return input
+    if (saturation == 1f && opacity >= 1f) return input
+    val matrix = android.graphics.ColorMatrix().apply { setSaturation(saturation) }
+    if (opacity < 1f) matrix.postConcat(android.graphics.ColorMatrix().apply { setScale(1f, 1f, 1f, opacity.coerceIn(0f, 1f)) })
+    val filter = android.graphics.ColorMatrixColorFilter(matrix)
+    return if (input != null) RenderEffect.createColorFilterEffect(filter, input) else RenderEffect.createColorFilterEffect(filter)
 }
 
 /** A Gaussian blur of [radius] px as Backdrop's blur makes it, or none for nothing. */

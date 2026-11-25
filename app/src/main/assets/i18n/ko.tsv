@@ -1891,4 +1891,30 @@ these commands	이 명령 목록
 The helpers in Debian could not be brought up to date: {0} Run the setup script again in Termux (Agent connection → On this tablet).	Debian의 도우미를 새로 고치지 못했습니다: {0} Termux에서 설정 스크립트를 다시 실행하세요 (Agent 연결 → 이 태블릿에서).
 Type / for commands, ! to run a line in Debian, notesis … for a note command without the agent.	/ 를 입력하면 명령, ! 는 Debian에서 한 줄 실행, notesis … 는 Agent 없이 노트 명령입니다.
 Glass follows scrolling	스크롤할 때 유리도 따라가기
-On, the glass shows the page moving under it while you scroll. Off, it keeps its picture until the page stops, which is lighter on the GPU and the battery. It always holds still while the pen writes.	켜면 스크롤하는 동안 유리 아래로 페이지가 움직이는 모습이 보입니다. 끄면 페이지가 멈출 때까지 직전 그림을 유지해 GPU와 배터리 부담이 줄어듭니다. 펜으로 쓰는 동안에는 항상 멈춰 있습니다.
+On, the glass shows the page moving under it while you scroll. Off, it keeps its picture until the page stops, which is lighter on the GPU and the battery.	켜면 스크롤하는 동안 유리 아래로 페이지가 움직이는 모습이 보입니다. 끄면 페이지가 멈출 때까지 직전 그림을 유지해 GPU와 배터리 부담이 줄어듭니다.
+Parts	구성 요소
+Each part of the glass, on or off. A part that is off is not drawn at all, so the glass costs less; all on is iOS's glass as it was. If the pen or popups lag, try the clear layer, the lens and the buttons first: those cost the most.	유리를 이루는 요소를 하나씩 켜고 끕니다. 끈 요소는 아예 그리지 않으므로 그만큼 가벼워집니다. 모두 켜면 원래의 iOS 유리입니다. 펜이나 팝업이 버벅이면 맑은 층, 렌즈, 버튼부터 꺼 보세요. 이 셋이 가장 무겁습니다.
+Clear layer	맑은 층
+The page through the lens, unblurred, under the frost. Off, the page shows through as it is: one lens pass less for every pane.	서리 아래에 흐리지 않은 페이지를 렌즈로 비추는 층입니다. 끄면 페이지가 그대로 비치고, 유리 면마다 렌즈 계산이 한 번 줄어듭니다.
+Frost layer	서리 층
+The blurred cloud over the page. With both layers off the glass is a plain tinted pane that never looks at the page, the lightest of all.	페이지 위의 흐린 서리입니다. 두 층을 모두 끄면 페이지를 보지 않는 단순한 반투명 면이 되어 가장 가볍습니다.
+The bending at the rim, and the rim light, saturation and edge drawn with it. Off, the layers are plain blur.	테두리에서 페이지를 휘게 하는 렌즈와, 그 안에서 함께 그리는 테두리 빛, 채도, 가장자리입니다. 끄면 층이 단순한 블러가 됩니다.
+The colour lift through the glass.	유리를 통해 보이는 색을 더 선명하게 합니다.
+The bevel darkening towards the edge.	가장자리로 갈수록 어두워지는 효과입니다.
+Light caught along the edge.	테두리를 따라 맺히는 빛입니다.
+Shadow	그림자
+The soft shadow each pane casts.	유리 면마다 드리우는 부드러운 그림자입니다.
+Glass colour	유리 색
+The pale colour over the glass. Off, only the layers above show, and text on a panel can be harder to read.	유리 위에 덮는 옅은 색입니다. 끄면 위의 층만 보이고, 패널의 글자가 읽기 어려울 수 있습니다.
+Glass buttons	유리 버튼
+Round buttons standing on their own as glass, each a pane of its own. Off, they are solid.	따로 떠 있는 둥근 버튼을 각각 유리로 그립니다. 끄면 불투명한 버튼이 됩니다.
+Glass sliders and switches	유리 슬라이더와 스위치
+Sliders and switches that turn to a lens while held. Off, the plain ones.	누르는 동안 렌즈가 되는 슬라이더와 스위치입니다. 끄면 일반 컨트롤이 됩니다.
+Glass clock	유리 시계
+The floating clock as glass. Off, solid.	떠 있는 시계를 유리로 그립니다. 끄면 불투명하게 그립니다.
+Turn every part on	모든 요소 켜기
+New ink on the glass	유리에 새 필기 반영
+After each stroke	획마다
+After a pause	잠시 멈춘 뒤
+When ink just written or erased shows through the glass. While writing draws the glass again for every change the pen makes, the heaviest; after each stroke draws it once as the pen lifts; after a pause waits until the pen has rested, the lightest.	방금 쓰거나 지운 필기가 언제 유리에 비칠지 정합니다. 쓰는 동안은 펜이 바꿀 때마다 유리를 다시 그려 가장 무겁습니다. 획마다는 펜을 뗄 때 한 번 그립니다. 잠시 멈춘 뒤는 펜을 쉰 뒤에 그려 가장 가볍습니다.
+While writing	쓰는 동안

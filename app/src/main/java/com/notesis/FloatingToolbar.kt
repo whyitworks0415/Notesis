@@ -483,7 +483,9 @@ private fun GlassActionButton(
             indication = LocalIndication.current, onClick = onClick),
         contentAlignment = Alignment.Center) {
         val body = Modifier.matchParentSize().graphicsLayer { scaleX = grow; scaleY = grow }
-        val pane = if (persistentGlass) body.skinMaterial(CircleShape) else body.background(visibleFill, shape)
+        // A button of its own is glass, unless iOS's glass has been pared down without it.
+        val glass = persistentGlass && LocalSkinSettings.current.iosPartOn(LocalSkin.current) { it.buttonGlass }
+        val pane = if (glass) body.skinMaterial(CircleShape) else body.background(visibleFill, shape)
         // No glow under the finger: a white wash on every press read as a grey flash.
         Box(pane)
         Column(Modifier.padding(horizontal = Ui.Space.s, vertical = Ui.Space.xs),

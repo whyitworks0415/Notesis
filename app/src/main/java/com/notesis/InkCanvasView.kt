@@ -3235,6 +3235,10 @@ class InkCanvasView @JvmOverloads constructor(
         // Counted per canvas: the reference panel lifting its pen, or being
         // closed, no longer ends the note's own stroke for the background work.
         if (active) InteractionGovernor.beginWriting(this) else InteractionGovernor.endWriting(this)
+        // The pen has lifted: the page is drawn once more so the glass over it
+        // takes what was just written or erased, an erase leaving no redraw of
+        // its own behind. Only where glass looks through the page.
+        if (!active && dry.glassWatching && LabPerformance.glassInk != GLASS_INK_AFTER_PAUSE) dry.postInvalidateOnAnimation()
     }
 
     /**
@@ -10853,6 +10857,9 @@ class InkCanvasView @JvmOverloads constructor(
          */
         private val pageVersion = androidx.compose.runtime.mutableIntStateOf(0)
 
+        /** Whether any glass has taken the page to look through. */
+        val glassWatching: Boolean get() = heldNodes[0] >= 0
+
         /** The page as last recorded, held still from now on for the glass; null before the first. */
         fun holdForBackdrop(): android.graphics.RenderNode? {
             pageVersion.intValue
@@ -10871,7 +10878,8 @@ class InkCanvasView @JvmOverloads constructor(
                 return
             }
             // Following a finger, where that is chosen, the glass sees the page move.
-            val follow = LabPerformance.glassFollowsScroll && InteractionGovernor.state == Interaction.MOVING
+            // The ink just written reaches it as soon as the stroke ends, by default.
+            val follow = glassFollowsPage(InteractionGovernor.state, LabPerformance.glassFollowsScroll, LabPerformance.glassInk)
             val target = pageNodeToRecord(liveNode, heldNodes[0], heldNodes[1], follow)
             liveNode = target
             val pageNode = pageNodes[target]

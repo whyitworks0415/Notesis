@@ -144,6 +144,7 @@ private fun BoxWithConstraintsScope.ClockPill(kind: PillKind) {
     val free by rememberUpdatedState(Offset(freeWidth, freeHeight))
     val alert = kind == PillKind.ALARM || kind == PillKind.TIMER_DONE
     val shape = Ui.Shape.pill
+    val glass = !alert && LocalSkinSettings.current.iosPartOn(LocalSkin.current) { it.clockGlass }
     Row(
         Modifier
             // Read while placing, so dragging moves the pill without recomposing it.
@@ -159,8 +160,9 @@ private fun BoxWithConstraintsScope.ClockPill(kind: PillKind) {
             .then(if (alert) Modifier.alertGlow(scheme.primary) else Modifier)
             // The chrome's own material, so the pill is glass where the bar is;
             // an alert keeps its solid colour to stand out from the page.
-            .then(if (alert) {
-                Modifier.skinShadow(shape).clip(shape).background(scheme.primaryContainer)
+            .then(if (!glass) {
+                Modifier.skinShadow(shape).clip(shape)
+                    .background(if (alert) scheme.primaryContainer else scheme.surfaceContainerLow)
                     .border(0.75.dp, scheme.outlineVariant.copy(alpha = 0.6f), shape)
             } else Modifier.skinMaterial(shape).clip(shape))
             .pointerInput(Unit) {
