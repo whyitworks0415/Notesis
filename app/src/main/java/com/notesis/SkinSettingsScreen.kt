@@ -506,6 +506,9 @@ internal fun AppearanceSettings(
                     SettingsToggle("Efficient glass", LabPerformance.efficientGlass,
                         { LabPerformance.setEfficientGlass(context, it) },
                         hint = "Uses one iOS glass pass and less surface blur. Off keeps the original glass.")
+                    SettingsToggle("Glass follows scrolling", LabPerformance.glassFollowsScrollShown,
+                        { LabPerformance.setGlassFollowsScroll(context, it) },
+                        hint = "On, the glass shows the page moving under it while you scroll. Off, it keeps its picture until the page stops, which is lighter on the GPU and the battery. It always holds still while the pen writes.")
                     GlassGroup(skin, settings, onChange, onSkin)
                 }
                 AppearanceGroup.COLORS -> ColorsGroup(skin, settings, onChange)

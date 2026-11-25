@@ -294,6 +294,11 @@ class MainActivity : ComponentActivity() {
         MotionPrefs.load(this)
         val lookStore = SkinSettingsStore(this)
         AppSkin.load(this)
+        // The lens's program built while nothing else is going on, rather than
+        // on the main thread in the frame the first popup of the glass opens.
+        if (AppSkin.current == Skin.LIQUID_GLASS) {
+            android.os.Looper.myQueue().addIdleHandler { prewarmLiquidLens(); false }
+        }
         acceptDocumentIntent(intent)
         setContent {
             // Hoisted to the top so a change repaints every bar at once rather

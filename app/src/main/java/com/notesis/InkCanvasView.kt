@@ -913,6 +913,20 @@ internal fun Tool.isDabbed(): Boolean =
  * after [LIFE_MS], so the trail follows the pen and fades behind it without
  * ever touching the page or its history.
  */
+/**
+ * Which of three page nodes to record the page into: the one last recorded,
+ * unless the glass holds it ([held0], [held1], -1 for none), and then the
+ * first it holds neither of. [follow] records into the node the glass took
+ * last ([held0]), so the glass sees the page move.
+ */
+internal fun pageNodeToRecord(live: Int, held0: Int, held1: Int, follow: Boolean): Int {
+    if (follow) return if (held0 >= 0) held0 else live
+    if (live != held0 && live != held1) return live
+    var target = 0
+    while (target == held0 || target == held1) target++
+    return target
+}
+
 private class GestureTrailView(context: Context) : View(context) {
     private val xs = FloatArray(CAPACITY)
     private val ys = FloatArray(CAPACITY)
@@ -6554,8 +6568,9 @@ class InkCanvasView @JvmOverloads constructor(
      * was written.
      */
     fun drawBackdrop(canvas: Canvas) {
-        if (!canvas.isHardwareAccelerated || !dry.pageNode.hasDisplayList()) return
-        canvas.drawRenderNode(dry.pageNode)
+        if (!canvas.isHardwareAccelerated) return
+        val node = dry.holdForBackdrop() ?: return
+        canvas.drawRenderNode(node)
     }
 
     /**
@@ -10815,14 +10830,51 @@ class InkCanvasView @JvmOverloads constructor(
         /**
          * The page, recorded on its own so the glass above can show it
          * without drawing this whole view a second time. See [drawBackdrop].
+         *
+         * The glass records the node it is handed, and a recording of a node
+         * follows whatever that node holds. With one node, every scroll frame,
+         * every committed stroke and every tile that arrived re-recorded what
+         * the glass looked through, and every pane of glass - the bar, each
+         * of its buttons, the clock - ran its blur and lens again on the GPU,
+         * while the pen wrote and the page moved, though the glass is meant to
+         * keep its last picture then. So the page goes into one of three
+         * nodes: the last two handed to the glass are held still, and the
+         * page is recorded into the other. The glass follows the page again
+         * when it next records, once the pen and the page are at rest.
          */
-        val pageNode = android.graphics.RenderNode("notesis-page")
+        private val pageNodes = Array(3) { android.graphics.RenderNode("notesis-page-$it") }
+        private var liveNode = 0
+        private val heldNodes = intArrayOf(-1, -1)
+
+        /**
+         * Counted up each time the page is recorded again. The glass reads it
+         * while it records, so a page that changes while it may follow brings
+         * a new recording; while it holds still, it is not read and costs nothing.
+         */
+        private val pageVersion = androidx.compose.runtime.mutableIntStateOf(0)
+
+        /** The page as last recorded, held still from now on for the glass; null before the first. */
+        fun holdForBackdrop(): android.graphics.RenderNode? {
+            pageVersion.intValue
+            val node = pageNodes[liveNode]
+            if (!node.hasDisplayList()) return null
+            if (heldNodes[0] != liveNode) {
+                heldNodes[1] = heldNodes[0]
+                heldNodes[0] = liveNode
+            }
+            return node
+        }
 
         override fun draw(canvas: Canvas) {
             if (!canvas.isHardwareAccelerated) {
                 super.draw(canvas)
                 return
             }
+            // Following a finger, where that is chosen, the glass sees the page move.
+            val follow = LabPerformance.glassFollowsScroll && InteractionGovernor.state == Interaction.MOVING
+            val target = pageNodeToRecord(liveNode, heldNodes[0], heldNodes[1], follow)
+            liveNode = target
+            val pageNode = pageNodes[target]
             pageNode.setPosition(0, 0, width, height)
             // Turned, the page reaches past the view's edges into the screen's corners.
             pageNode.setClipToBounds(viewRotation == 0f)
@@ -10834,6 +10886,10 @@ class InkCanvasView @JvmOverloads constructor(
                 pageNode.endRecording()
             }
             canvas.drawRenderNode(pageNode)
+            // This view may be drawn inside Compose's drawing, which notes what
+            // is read: reading the count here as well would make every recording
+            // ask for the next.
+            androidx.compose.runtime.snapshots.Snapshot.withoutReadObservation { pageVersion.intValue++ }
         }
 
         override fun onDraw(canvas: Canvas) {

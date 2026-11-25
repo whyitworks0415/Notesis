@@ -209,6 +209,64 @@ private fun lensShader(): android.graphics.RuntimeShader? {
         .also { if (it == null) sharedLensFailed = true else sharedLensShader = it }
 }
 
+/** Builds the lens's program ahead of its first pane; nothing below Android 13. */
+internal fun prewarmLiquidLens() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+    val shader = lensShader() ?: return
+    runCatching { warmLensOnGpu(shader) }
+}
+
+/**
+ * Draws the lens once, off screen and eight pixels square, the way iOS's
+ * glass draws it - the clear layer, and the frost over a blur - so the GPU's
+ * programs for it are built (or loaded from the system's cache of them) now
+ * rather than in the frame the first popup opens.
+ */
+@androidx.annotation.RequiresApi(Build.VERSION_CODES.TIRAMISU)
+private fun warmLensOnGpu(shader: android.graphics.RuntimeShader) {
+    val side = 8
+    val reader = android.media.ImageReader.newInstance(side, side, android.graphics.PixelFormat.RGBA_8888, 1,
+        android.hardware.HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or android.hardware.HardwareBuffer.USAGE_GPU_COLOR_OUTPUT)
+    val renderer = android.graphics.HardwareRenderer()
+    val main = android.os.Handler(android.os.Looper.getMainLooper())
+    var finished = false
+    fun finish() {
+        if (finished) return
+        finished = true
+        runCatching { renderer.destroy() }
+        runCatching { reader.close() }
+    }
+    try {
+        val glass = android.graphics.RenderNode("notesis-lens-warm").apply {
+            setPosition(0, 0, side, side)
+            val lens = RenderEffect.createRuntimeShaderEffect(shader, "content")
+            val frost = RenderEffect.createChainEffect(lens,
+                RenderEffect.createBlurEffect(4f, 4f, android.graphics.Shader.TileMode.CLAMP))
+            setRenderEffect(RenderEffect.createBlendModeEffect(lens, frost, android.graphics.BlendMode.SRC_OVER))
+            val canvas = beginRecording()
+            canvas.drawColor(android.graphics.Color.WHITE)
+            endRecording()
+        }
+        val root = android.graphics.RenderNode("notesis-lens-warm-root").apply {
+            setPosition(0, 0, side, side)
+            val canvas = beginRecording()
+            canvas.drawRenderNode(glass)
+            endRecording()
+        }
+        reader.setOnImageAvailableListener({ r ->
+            runCatching { r.acquireLatestImage()?.close() }
+            finish()
+        }, main)
+        renderer.setContentRoot(root)
+        renderer.setSurface(reader.surface)
+        renderer.createRenderRequest().syncAndDraw()
+        // Never left holding the renderer if the frame does not come.
+        main.postDelayed({ finish() }, 3_000L)
+    } catch (t: Throwable) {
+        finish()
+    }
+}
+
 /** The lens of [p] over what Backdrop has drawn so far; nothing below Android 13. */
 internal fun BackdropEffectScope.liquidLens(p: LiquidLensParams) {
     lensEffect(p, renderEffect)?.let { renderEffect = it }

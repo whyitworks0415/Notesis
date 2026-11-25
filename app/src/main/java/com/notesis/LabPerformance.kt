@@ -17,6 +17,23 @@ internal object LabPerformance {
      */
     val efficientNow: Boolean get() = efficientGlass || InteractionGovernor.heatStep >= 1
 
+    /**
+     * Whether the glass follows the page while a finger moves it. Off, it
+     * keeps the picture it had until the page comes to rest, as it always does
+     * while the pen writes: no glass is drawn again for each frame of a scroll.
+     * Read on the UI thread as the page is drawn, so a plain field.
+     */
+    @Volatile var glassFollowsScroll = true
+        private set
+    var glassFollowsScrollShown by mutableStateOf(true)
+        private set
+
+    fun setGlassFollowsScroll(context: Context, enabled: Boolean) {
+        glassFollowsScroll = enabled
+        glassFollowsScrollShown = enabled
+        context.getSharedPreferences("lab", Context.MODE_PRIVATE).edit().putBoolean("glassFollowsScroll", enabled).apply()
+    }
+
     /** Hint the system about the pen's threads while writing (see [WritingBoost]); on until compared. */
     var writingBoost by mutableStateOf(true)
         private set
@@ -37,6 +54,8 @@ internal object LabPerformance {
             prefs.edit().putBoolean("efficientGlass", false).putBoolean("originalChromeV1", true).apply()
         }
         efficientGlass = prefs.getBoolean("efficientGlass", false)
+        glassFollowsScroll = prefs.getBoolean("glassFollowsScroll", true)
+        glassFollowsScrollShown = glassFollowsScroll
         writingBoost = prefs.getBoolean("writingBoost", true)
         nativePresent = prefs.getBoolean("nativePresent", false)
     }

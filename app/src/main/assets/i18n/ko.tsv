@@ -1890,3 +1890,5 @@ stop waiting for the answer	답 기다리기 그만두기
 these commands	이 명령 목록
 The helpers in Debian could not be brought up to date: {0} Run the setup script again in Termux (Agent connection → On this tablet).	Debian의 도우미를 새로 고치지 못했습니다: {0} Termux에서 설정 스크립트를 다시 실행하세요 (Agent 연결 → 이 태블릿에서).
 Type / for commands, ! to run a line in Debian, notesis … for a note command without the agent.	/ 를 입력하면 명령, ! 는 Debian에서 한 줄 실행, notesis … 는 Agent 없이 노트 명령입니다.
+Glass follows scrolling	스크롤할 때 유리도 따라가기
+On, the glass shows the page moving under it while you scroll. Off, it keeps its picture until the page stops, which is lighter on the GPU and the battery. It always holds still while the pen writes.	켜면 스크롤하는 동안 유리 아래로 페이지가 움직이는 모습이 보입니다. 끄면 페이지가 멈출 때까지 직전 그림을 유지해 GPU와 배터리 부담이 줄어듭니다. 펜으로 쓰는 동안에는 항상 멈춰 있습니다.
