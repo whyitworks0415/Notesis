@@ -1568,6 +1568,9 @@ class InkCanvasView @JvmOverloads constructor(
      */
     var onViewportInteractionChanged: ((Boolean) -> Unit)? = null
 
+    /** Whether chrome needs the previous page node to stay unchanged. Read only on the UI thread. */
+    internal var holdGlassBackdrop: () -> Boolean = { false }
+
     /**
      * Whether the tip is drawn ahead of the pen.
      *
@@ -3242,7 +3245,9 @@ class InkCanvasView @JvmOverloads constructor(
         // The pen has lifted: the page is drawn once more so the glass over it
         // takes what was just written or erased, an erase leaving no redraw of
         // its own behind. Only where glass looks through the page.
-        if (!active && dry.glassWatching && LabPerformance.glassInk != GLASS_INK_AFTER_PAUSE) dry.postInvalidateOnAnimation()
+        if (!active && dry.glassWatching && !holdGlassBackdrop() && LabPerformance.glassInk != GLASS_INK_AFTER_PAUSE) {
+            dry.postInvalidateOnAnimation()
+        }
     }
 
     /**
@@ -3526,12 +3531,18 @@ class InkCanvasView @JvmOverloads constructor(
         }
     }
 
-    /** On a thumbnail worker: sleeps while a pen is down anywhere, for at most [THUMBNAIL_WRITING_WAIT_MS]. */
-    private fun waitWhileWriting() {
-        if (InteractionGovernor.state != Interaction.WRITING) return
+    /** Gives the canvas priority before the worker starts a thumbnail. */
+    private fun waitForThumbnailBudget(key: String, sidebar: Boolean) {
+        fun busy(): Boolean {
+            val interaction = InteractionGovernor.state
+            return if (sidebar) interaction != Interaction.IDLE else interaction == Interaction.WRITING
+        }
+        if (!busy()) return
         WorkStats.thumbnailsHeld.incrementAndGet()
         var waited = 0L
-        while (InteractionGovernor.state == Interaction.WRITING && waited < THUMBNAIL_WRITING_WAIT_MS && !disposed) {
+        while (!disposed && busy() && waited < THUMBNAIL_WRITING_WAIT_MS &&
+            (!sidebar || key in thumbnailsWanted)
+        ) {
             try {
                 Thread.sleep(THUMBNAIL_WRITING_POLL_MS)
             } catch (_: InterruptedException) {
@@ -3591,11 +3602,8 @@ class InkCanvasView @JvmOverloads constructor(
         val pageId = page.id
         val accepted = runCatching {
             thumbnailWorker.execute {
-                // A picture is extra work: while a pen writes - here or in
-                // another pane - it waits for the lift rather than take a
-                // core and memory bandwidth from the ink, up to a limit so a
-                // long session of writing still gets its cards in the end.
-                waitWhileWriting()
+                // Sidebar pictures also give way to panning and its settle work.
+                waitForThumbnailBudget(key, sidebar = skipWhenUnwanted)
                 // Asked for by a card that has since left: nobody to show it to.
                 if (key in skippable && key !in thumbnailsWanted) {
                     post { thumbnailsPending -= key; skippable -= key }
@@ -10901,7 +10909,10 @@ class InkCanvasView @JvmOverloads constructor(
             }
             // Following a finger, where that is chosen, the glass sees the page move.
             // The ink just written reaches it as soon as the stroke ends, by default.
-            val follow = glassFollowsPage(InteractionGovernor.state, LabPerformance.glassFollowsScroll, LabPerformance.glassInk)
+            // A held display list references this node directly. Merely pausing
+            // the Compose recording cannot stop lens work if we mutate it here.
+            val hold = heldNodes[0] >= 0 && androidx.compose.runtime.snapshots.Snapshot.withoutReadObservation { holdGlassBackdrop() }
+            val follow = glassFollowsPage(InteractionGovernor.state, LabPerformance.glassFollowsScroll, LabPerformance.glassInk, hold)
             val target = pageNodeToRecord(liveNode, heldNodes[0], heldNodes[1], follow)
             liveNode = target
             val pageNode = pageNodes[target]

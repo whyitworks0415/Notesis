@@ -28,6 +28,8 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,6 +48,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.roundToInt
@@ -102,6 +106,7 @@ internal fun rememberPageThumbnail(
     ask: (onReady: () -> Unit) -> InkCanvasView.ThumbnailRequest?,
 ): Bitmap? {
     var picture by remember { mutableStateOf(stale()) }
+    val scope = rememberCoroutineScope()
     DisposableEffect(key) {
         var live = true
         var cancel: () -> Unit = {}
@@ -110,9 +115,18 @@ internal fun rememberPageThumbnail(
             cancel = request.cancel
             request.picture?.let { picture = it }
         }
-        fetch()
+        // Asking for a new picture copies the page's stroke list on the UI
+        // thread. Keep the last picture until the pen and viewport are idle.
+        val wait = if (InteractionGovernor.state == Interaction.IDLE) {
+            fetch()
+            null
+        } else scope.launch {
+            snapshotFlow { InteractionGovernor.observed }.first { it == Interaction.IDLE }
+            fetch()
+        }
         onDispose {
             live = false
+            wait?.cancel()
             cancel()
         }
     }

@@ -56,4 +56,10 @@ class IosPartsTest {
         val old = IosGlass().toJson().apply { remove("resolution") }
         assertEquals(0.5f, IosGlass.fromJson(old).resolution)
     }
+
+    @Test fun `a held backdrop defers even live glass updates`() {
+        for (state in Interaction.entries) {
+            assertFalse(glassFollowsPage(state, followsScroll = true, ink = GLASS_INK_LIVE, holdBackdrop = true))
+        }
+    }
 }

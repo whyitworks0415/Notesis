@@ -110,13 +110,47 @@ internal data class LiquidGlassLensFrame(
     val continuous: Boolean = true,
 )
 
+/** Shared on the UI thread. Each bar still owns the effect with its own uniforms. */
+private var selectionProgram: Any? = null
+private var selectionProgramAttempted = false
+
+internal fun prewarmSelectionLens(context: Context) {
+    if (Build.VERSION.SDK_INT >= 33) selectionLensProgram(context)
+}
+
+@RequiresApi(33)
+private fun selectionLensProgram(context: Context): RuntimeShader? {
+    if (!selectionProgramAttempted) {
+        selectionProgramAttempted = true
+        selectionProgram = runCatching {
+            val source = context.assets.open("liquidglass/liquid_glass.agsl").bufferedReader().use { it.readText() }
+            RuntimeShader(source).apply {
+                setFloatUniform("u_diagonalFlip", 0f)
+                setFloatUniform("u_borderSoftness", 0f)
+                setFloatUniform("u_borderColor", 0f, 0f, 0f, 0f)
+                setFloatUniform("u_borderAlpha", 1f)
+                setFloatUniform("u_lightIntensity", 1f)
+                setFloatUniform("u_lightColor", 1f, 1f, 1f, 178f / 255)
+                setFloatUniform("u_shadowColor", 0f, 0f, 0f, 0f)
+                setFloatUniform("u_lightDirection", 0f)
+                setFloatUniform("u_packB", 0f, 0f, 1f, 1f)
+                setFloatUniform("u_packC", 0f, 1f, 0f, 1f)
+                setFloatUniform("u_lightSpread", 0.5f)
+                setFloatUniform("u_imageOffset", 0f, 0f)
+                setFloatUniform("u_honorBackdropAlpha", 1f)
+                setFloatUniform("u_xformRow", 1f, 0f, 0f, 1f)
+                setFloatUniform("u_xformOff", 0f, 0f)
+            }
+        }.getOrNull()
+    }
+    return selectionProgram as? RuntimeShader
+}
+
 /** Uniform packing follows packLiquidGlassUniforms, with pixel-space sampling. */
 @RequiresApi(33)
-internal class LiquidGlassShader(context: Context) {
-    val shader = RuntimeShader(context.assets.open("liquidglass/liquid_glass.agsl").bufferedReader().use { it.readText() })
+private class LiquidGlassShader(private val shader: RuntimeShader) {
     // Android RenderEffect snapshots the RuntimeShader's uniforms. Reusing an
     // effect after mutating the shader silently keeps the previous optics.
-    lateinit var nativeEffect: RenderEffect; private set
     lateinit var effect: androidx.compose.ui.graphics.RenderEffect; private set
     private var previousFrame: LiquidGlassLensFrame? = null
     private var previousResolution = Size.Zero
@@ -131,29 +165,13 @@ internal class LiquidGlassShader(context: Context) {
         shader.setFloatUniform("u_lensGeom", frame.size.width, frame.size.height, frame.radius,
             if (frame.continuous) 2f else 0f)
         shader.setFloatUniform("u_warp", 1f, frame.distortion * p, frame.band * density * p * presence / frame.scale.x, 0f)
-        shader.setFloatUniform("u_diagonalFlip", 0f)
         shader.setFloatUniform("u_borderWidth", frame.borderWidth * 2 * density * p * rim)
-        shader.setFloatUniform("u_borderSoftness", 0f)
-        shader.setFloatUniform("u_borderColor", 0f, 0f, 0f, 0f)
-        shader.setFloatUniform("u_borderAlpha", 1f)
-        shader.setFloatUniform("u_lightIntensity", 1f)
-        shader.setFloatUniform("u_lightColor", 1f, 1f, 1f, 178f / 255)
-        shader.setFloatUniform("u_shadowColor", 0f, 0f, 0f, 0f)
-        shader.setFloatUniform("u_lightDirection", 0f)
         shader.setFloatUniform("u_lensColor", frame.fill.red, frame.fill.green, frame.fill.blue, frame.fill.alpha * (1 - p))
         shader.setFloatUniform("u_packA", 0f, frame.dispersion * p, 1f, 0f)
-        shader.setFloatUniform("u_packB", 0f, 0f, 1f, 1f)
-        shader.setFloatUniform("u_packC", 0f, 1f, 0f, 1f)
-        shader.setFloatUniform("u_lightSpread", 0.5f)
-        shader.setFloatUniform("u_imageOffset", 0f, 0f)
         shader.setFloatUniform("u_imageSize", resolution.width, resolution.height)
-        shader.setFloatUniform("u_honorBackdropAlpha", 1f)
         shader.setFloatUniform("u_shapeAaPx", density)
         shader.setFloatUniform("u_shapeScale", frame.scale.x, frame.scale.y)
-        shader.setFloatUniform("u_xformRow", 1f, 0f, 0f, 1f)
-        shader.setFloatUniform("u_xformOff", 0f, 0f)
-        nativeEffect = RenderEffect.createRuntimeShaderEffect(shader, "u_texture_input")
-        effect = nativeEffect.asComposeRenderEffect()
+        effect = RenderEffect.createRuntimeShaderEffect(shader, "u_texture_input").asComposeRenderEffect()
         previousFrame = frame
         previousResolution = resolution
         previousDensity = density
@@ -167,12 +185,12 @@ internal fun Modifier.liquidGlassLens(enabled: Boolean, active: () -> Boolean = 
     val context = LocalContext.current
     // A settled bar draws no capture/effect, but retains its compiled program
     // for the next gesture. Reduced effects never initialize this lazy value.
-    val compiled = remember(context) { lazy { LiquidGlassShader(context) } }
+    val compiled = remember(context) { lazy { selectionLensProgram(context)?.let(::LiquidGlassShader) } }
     if (!enabled) return this
     val capture = rememberGraphicsLayer()
     return drawWithContent {
         if (size.width <= 0f || size.height <= 0f || !active()) { drawContent(); return@drawWithContent }
-        val shader = compiled.value
+        val shader = compiled.value ?: run { drawContent(); return@drawWithContent }
         shader.update(size, frame(size, density), density)
         capture.renderEffect = shader.effect
         capture.record { this@drawWithContent.drawContent() }

@@ -2,6 +2,7 @@ package com.notesis
 
 import androidx.compose.runtime.rememberCoroutineScope
 
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 import androidx.compose.foundation.background
@@ -27,6 +28,7 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -167,6 +169,7 @@ fun LiquidGlassBar(
     val rtl = !vertical && LocalLayoutDirection.current == LayoutDirection.Rtl
     val latestSelect by rememberUpdatedState(onSelected)
     val selected = selectedIndex.takeIf { it in items.indices }
+    val latestSelected by rememberUpdatedState(selected)
     // On a surface it does not own, a lens keeps to the strip's own height.
     val contained = lift && surface == GlassBarSurface.NONE
     // Under a recipe whose slide is switched on, its springs; otherwise this app's.
@@ -175,29 +178,48 @@ fun LiquidGlassBar(
     val motion = remember(items.size, rtl, lift, slideKey) {
         LiquidGlassMotion((selected ?: 0).toFloat(), lifts = lift, profile = slide)
     }
-    var wake by remember { mutableIntStateOf(0) }
-    var frameRevision by remember { mutableIntStateOf(0) }
+    var wake by remember(motion) { mutableIntStateOf(0) }
+    var frameRevision by remember(motion) { mutableIntStateOf(0) }
     val latestHold by rememberUpdatedState(holdFor)
     val holdScope = rememberCoroutineScope()
-    fun choose(index: Int) {
-        if (lensAllowed && latestHold(index)) {
-            // It opens a popup: the popup's first frame - a window of its
-            // own, composed and drawn whole - is a long one, and a lens on
-            // its way across stopped dead for it. It sets off once that
-            // frame is behind it.
-            holdScope.launch { awaitPopupFrames(); motion.select(index.toFloat()); wake++ }
-        } else {
-            if (lensAllowed) motion.select(index.toFloat()) else motion.snap(index.toFloat())
-            wake++
+    var pending by remember(motion) { mutableStateOf<Job?>(null) }
+    val dispatched = remember(motion) { intArrayOf(-1) }
+    DisposableEffect(motion) { onDispose { pending?.cancel() } }
+
+    fun moveTo(index: Int, release: Boolean) {
+        when {
+            !lensAllowed -> motion.snap(index.toFloat())
+            release -> motion.release(index.toFloat())
+            else -> motion.select(index.toFloat())
         }
+        wake++
+    }
+
+    fun choose(index: Int, release: Boolean = false) {
+        pending?.cancel()
+        pending = null
+        dispatched[0] = index
+        if (lensAllowed && latestHold(index)) {
+            // Keep only one pending target. The window can prepare while the
+            // lens is still, even when the tap came through the drag handler.
+            pending = holdScope.launch {
+                awaitPopupFrames()
+                moveTo(index, release)
+                pending = null
+            }
+        } else moveTo(index, release)
         latestSelect(index)
     }
-    LaunchedEffect(selected, lensAllowed) {
-        if (selected != null) {
-            if (lensAllowed && latestHold(selected)) awaitPopupFrames()
-            if (lensAllowed) motion.select(selected.toFloat()) else motion.snap(selected.toFloat())
-            wake++
+    LaunchedEffect(motion, selected, lensAllowed) {
+        // The callback above already moved or scheduled this selection.
+        if (lensAllowed && selected != null && dispatched[0] == selected) {
+            dispatched[0] = -1
+            return@LaunchedEffect
         }
+        dispatched[0] = -1
+        pending?.cancel()
+        pending = null
+        if (selected != null) moveTo(selected, release = false) else wake++
     }
     val withIcons = items.any { it.icon != null }
     val chromeScale = LocalChromeScale.current
@@ -236,13 +258,14 @@ fun LiquidGlassBar(
             var observed = -1
             var last = 0L
             while (isActive) {
-                if (!motion.running) {
-                    snapshotFlow { wake }.first { it != observed }
+                if (!motion.running || pending != null) {
+                    snapshotFlow { wake.takeIf { pending == null } }.first { it != null && it != observed }
                     observed = wake
                     last = 0L
                     if (!motion.running) continue
                 }
                 val now = withFrameNanos { it }
+                if (pending != null) { last = 0L; continue }
                 if (last != 0L) motion.tick(now / 1e9, (now - last) / 1e9, latestCell)
                 frameRevision++
                 last = now
@@ -302,20 +325,22 @@ fun LiquidGlassBar(
                 }
                 if (vertical) {
                     EvenCells(vertical = true,
-                        modifier = shellModifier.fillMaxHeight().width(cellHeight).align(Alignment.Center).padding(vertical = padding)) {
+                        modifier = shellModifier.graphicsLayer().fillMaxHeight().width(cellHeight).align(Alignment.Center).padding(vertical = padding)) {
                         items.forEachIndexed { index, item -> Cell(index, item, Modifier) }
                     }
                 } else {
                     EvenCells(vertical = false,
-                        modifier = shellModifier.fillMaxWidth().height(cellHeight).align(Alignment.Center).padding(horizontal = padding)) {
+                        modifier = shellModifier.graphicsLayer().fillMaxWidth().height(cellHeight).align(Alignment.Center).padding(horizontal = padding)) {
                         items.forEachIndexed { index, item -> Cell(index, item, Modifier) }
                     }
                 }
             }
         @Composable
         fun Frost() {
-            val capsule = if (vertical) Modifier.fillMaxHeight().width(barHeight).align(Alignment.Center)
-                else Modifier.fillMaxWidth().height(barHeight).align(Alignment.Center)
+            // The selection changes every frame, but the glass recipe and
+            // icons beneath it do not need to be recorded for each position.
+            val capsule = if (vertical) Modifier.fillMaxHeight().width(barHeight).align(Alignment.Center).graphicsLayer()
+                else Modifier.fillMaxWidth().height(barHeight).align(Alignment.Center).graphicsLayer()
             when (surface) {
                 // A round corner, as the toolbar and the other skins' strip draw
                 // theirs - and the only outline Backdrop's lens can take.
@@ -354,14 +379,22 @@ fun LiquidGlassBar(
                 }
                 drawContent()
             })
-            IconShell(false, Modifier.pointerInput(widthPx, items.size, rtl, lensAllowed) {
+            IconShell(false, Modifier.pointerInput(widthPx, items.size, rtl, lensAllowed, motion) {
                 if (!lensAllowed) return@pointerInput
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                     var lastPosition = down.position
                     fun along(at: Offset) = if (vertical) at.y else at.x
+                    fun indexAt(at: Offset) = liquidGlassPosition(along(at) - paddingPx, widthPx, items.size, rtl).roundToInt()
                     down.consume()
-                    motion.grab(liquidGlassPosition(along(lastPosition) - paddingPx, widthPx, items.size, rtl)); wake++
+                    if (pending != null) { pending?.cancel(); pending = null; wake++ }
+                    // A tap on a popup tool must not start travelling on
+                    // down and then pause on up. A drag still follows the pen.
+                    var grabbed = !latestHold(indexAt(down.position))
+                    if (grabbed) {
+                        motion.grab(liquidGlassPosition(along(lastPosition) - paddingPx, widthPx, items.size, rtl))
+                        wake++
+                    }
                     var released = false
                     try {
                         while (!released) {
@@ -369,17 +402,21 @@ fun LiquidGlassBar(
                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
                             if (change.isConsumed) break
                             lastPosition = change.position
-                            motion.follow(liquidGlassDragPosition(along(lastPosition) - paddingPx, widthPx, items.size, rtl))
+                            val target = liquidGlassDragPosition(along(lastPosition) - paddingPx, widthPx, items.size, rtl)
+                            if (!grabbed && change.pressed && abs(along(lastPosition) - along(down.position)) > viewConfiguration.touchSlop) {
+                                motion.grab(target)
+                                grabbed = true
+                                wake++
+                            }
+                            if (grabbed) motion.follow(target)
                             change.consume()
                             released = !change.pressed
                         }
                         if (released) {
-                            val next = liquidGlassPosition(along(lastPosition) - paddingPx, widthPx, items.size, rtl).roundToInt()
-                            motion.release(next.toFloat()); wake++
-                            latestSelect(next)
+                            choose(indexAt(lastPosition), release = motion.dragging)
                         }
                     } finally {
-                        if (motion.dragging) { motion.release((selected ?: 0).toFloat()); wake++ }
+                        if (!released && motion.dragging) { motion.release((latestSelected ?: 0).toFloat()); wake++ }
                     }
                 }
             })

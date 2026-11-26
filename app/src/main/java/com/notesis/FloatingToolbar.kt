@@ -86,6 +86,11 @@ internal enum class GlassToolbarTool(val mode: EditMode?, val label: String) {
     LASSO(EditMode.LASSO, "Lasso"), CAPTURE(EditMode.CAPTURE, "Capture"), AI(null, "AI"),
 }
 
+/** The tools whose tap also prepares a popup. [activeMode] is the mode before the tap. */
+internal fun GlassToolbarTool.opensPopup(activeMode: EditMode): Boolean =
+    this == GlassToolbarTool.AI || this == GlassToolbarTool.SHAPE ||
+        (mode == activeMode && (this == GlassToolbarTool.TEXT || activeMode in PenStore.DEFAULTS))
+
 /** The tools the bar shows at [level], as arranged in [ToolbarLayout]. */
 internal fun glassToolbarTools(level: Int): List<GlassToolbarTool> = ToolbarLayout.config.tools(level)
 
@@ -676,7 +681,7 @@ internal fun FloatingToolbar(
                                         selectedIndex = selected, onSelected = { pick(tools[it]) },
                                         showLabels = false, compact = false, corner = outer,
                                         surface = GlassBarSurface.LIQUID, vertical = true, role = ChromeRole.TOOLBAR,
-                                        holdFor = { tools.getOrNull(it) == GlassToolbarTool.AI })
+                                        holdFor = { tools.getOrNull(it)?.opensPopup(mode) == true })
                                     else ToolStrip(tools, selected, compact = false, corner = outer,
                                         ownSurface = true, toolColors = toolColors, onPick = ::pick, vertical = true)
                                 }
@@ -716,7 +721,7 @@ internal fun FloatingToolbar(
                                     showLabels = false, compact = full, corner = stripCorner,
                                     surface = if (full) GlassBarSurface.NONE else GlassBarSurface.LIQUID,
                                     lift = !full, role = ChromeRole.TOOLBAR,
-                                    holdFor = { tools.getOrNull(it) == GlassToolbarTool.AI })
+                                    holdFor = { tools.getOrNull(it)?.opensPopup(mode) == true })
                                   else ToolStrip(tools, selected, compact = full, corner = stripCorner,
                                     ownSurface = !full, toolColors = toolColors, onPick = ::pick)
                                 }

@@ -297,7 +297,11 @@ class MainActivity : ComponentActivity() {
         // The lens's program built while nothing else is going on, rather than
         // on the main thread in the frame the first popup of the glass opens.
         if (AppSkin.current == Skin.LIQUID_GLASS) {
-            android.os.Looper.myQueue().addIdleHandler { prewarmLiquidLens(); false }
+            android.os.Looper.myQueue().addIdleHandler {
+                prewarmLiquidLens()
+                prewarmSelectionLens(applicationContext)
+                false
+            }
         }
         acceptDocumentIntent(intent)
         setContent {
@@ -5167,13 +5171,17 @@ private fun NoteScreen(
 
     // Adding a page asks what kind: size, paper and where it goes.
     var addingPage by remember { mutableStateOf(false) }
+    var pageTemplateRevision by remember { mutableIntStateOf(0) }
+    val pageTemplates by produceState(emptyList<UserPageTemplate>(), store, pageTemplateRevision) {
+        value = withContext(Dispatchers.IO) { store.pageTemplates() }
+    }
     if (addingPage) AddPageDialog(
-        userTemplates = remember(edits) { store.pageTemplates() },
+        userTemplates = pageTemplates,
         onDismiss = { addingPage = false },
         templateFile = store::templateFile,
-        onRenameTemplate = store::renamePageTemplate,
-        onDeleteTemplate = store::deletePageTemplate,
-        onMoveTemplate = store::movePageTemplate,
+        onRenameTemplate = { id, name -> store.renamePageTemplate(id, name).also { if (it) pageTemplateRevision++ } },
+        onDeleteTemplate = { id -> store.deletePageTemplate(id).also { if (it) pageTemplateRevision++ } },
+        onMoveTemplate = { id, delta -> store.movePageTemplate(id, delta).also { if (it) pageTemplateRevision++ } },
         noteId = note.id,
         onAdd = { spec ->
         addingPage = false
@@ -5376,6 +5384,14 @@ private fun NoteScreen(
     // in battery saver, where the panes go solid instead (see SkinSurface).
     val skin = LocalSkin.current
     val look = LocalSkinSettings.current
+    val refractiveBackdrop by rememberUpdatedState(skin.isRefractive)
+    val holdForIosSidebar by rememberUpdatedState(skin == Skin.LIQUID_GLASS && look.liquidStyle == LiquidStyle.IOS)
+    val holdGlassBackdrop: () -> Boolean = remember {
+        {
+            refractiveBackdrop && (ChromeMotion.busy ||
+                (holdForIosSidebar && (showPages || showLayers || settingsNav != null || AgentChat.open)))
+        }
+    }
     val backdrop = rememberBackdrop(
         active = skin == Skin.GLASSMORPHISM && BACKDROP_DRAWABLE &&
             (look.blur > 0.1f || look.vibrancy > 0.01f) && !InteractionGovernor.observedPowerSave,
@@ -5569,6 +5585,7 @@ private fun NoteScreen(
                 },
                 update = { view ->
                     view.onDrawingChanged = null
+                    view.holdGlassBackdrop = holdGlassBackdrop
                     view.onViewportInteractionChanged = { moving ->
                         movingPage = moving
                         if (!moving) zoom = liveZoom[0]
@@ -5824,7 +5841,13 @@ private fun NoteScreen(
                         captureNoteId = paneNotes[id]
                         captured = bitmap
                     },
-                    onView = { v -> if (v != null) paneViews[id] = v else paneViews.remove(id) },
+                    onView = { v ->
+                        if (v == null) paneViews.remove(id)
+                        else {
+                            v.holdGlassBackdrop = holdGlassBackdrop
+                            paneViews[id] = v
+                        }
+                    },
                     onActive = { activePane = id },
                     onEdited = { paneEdits++ },
                 ) }
@@ -7426,7 +7449,7 @@ private fun NoteScreen(
                         sideEdited()
                     }
                 },
-                userTemplates = remember(edits) { store.pageTemplates() },
+                userTemplates = pageTemplates,
                 // Remembered, so the way back returns to where the panel was opened from.
                 onJump = { sideCanvas?.jumpToPage(it) },
                 onReveal = { index, revealed ->

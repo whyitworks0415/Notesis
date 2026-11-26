@@ -15,12 +15,14 @@ internal const val GLASS_INK_AFTER_PAUSE = 2
  * the pen is down only for [GLASS_INK_LIVE], and once the stroke has ended
  * unless the glass waits for a pause.
  */
-internal fun glassFollowsPage(state: Interaction, followsScroll: Boolean, ink: Int): Boolean = when (state) {
-    Interaction.MOVING -> followsScroll
-    Interaction.WRITING -> ink == GLASS_INK_LIVE
-    Interaction.SETTLING -> ink != GLASS_INK_AFTER_PAUSE
-    Interaction.IDLE -> false
-}
+internal fun glassFollowsPage(state: Interaction, followsScroll: Boolean, ink: Int,
+    holdBackdrop: Boolean = false,
+): Boolean = !holdBackdrop && when (state) {
+        Interaction.MOVING -> followsScroll
+        Interaction.WRITING -> ink == GLASS_INK_LIVE
+        Interaction.SETTLING -> ink != GLASS_INK_AFTER_PAUSE
+        Interaction.IDLE -> false
+    }
 
 /** A visible quality tradeoff, saved only inside this separate installation. */
 internal object LabPerformance {
