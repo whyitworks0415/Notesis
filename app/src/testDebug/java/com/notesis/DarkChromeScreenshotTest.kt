@@ -1,5 +1,6 @@
 package com.notesis
 
+import android.graphics.BitmapFactory
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
@@ -9,11 +10,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.graphics.toPixelMap
-import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.unit.dp
 import com.github.takahirom.roborazzi.captureRoboImage
@@ -24,6 +21,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -107,13 +105,21 @@ class DarkChromeScreenshotTest {
             MaterialTheme(colorScheme = scheme) {
                 ProvideSkin(skin, look) {
                     Box(Modifier.fillMaxSize().background(Color.Magenta)) {
-                        SkinSurface(Modifier.size(144.dp).testTag("sidebar"), role = ChromeRole.SIDEBAR) {}
+                        SkinSurface(Modifier.fillMaxSize(), role = ChromeRole.SIDEBAR) {}
                     }
                 }
             }
         }
-        val image = compose.onNodeWithTag("sidebar").captureToImage().toPixelMap()
-        assertEquals(scheme.surfaceContainer.copy(alpha = 1f).toArgb(), image[image.width / 2, image.height / 2].toArgb())
+        val mode = if (dark) "dark" else "light"
+        val file = File("build/outputs/roborazzi/ios-sidebar-$mode.png")
+        compose.waitForIdle()
+        compose.onRoot().captureRoboImage(file.path)
+        val bitmap = requireNotNull(BitmapFactory.decodeFile(file.path))
+        try {
+            assertEquals(scheme.surfaceContainer.copy(alpha = 1f).toArgb(), bitmap.getPixel(bitmap.width / 2, bitmap.height / 2))
+        } finally {
+            bitmap.recycle()
+        }
     }
 
     @Test fun iosSidebarIsOpaqueInLightMode() = checkOpaqueSidebar(dark = false)
