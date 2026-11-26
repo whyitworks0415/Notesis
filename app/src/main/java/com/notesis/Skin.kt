@@ -415,10 +415,11 @@ fun SkinSurface(
             tonalElevation = 0.dp,
             shadowElevation = if (LocalSkinSettings.current.shadows) CHROME_SHADOW else 0.dp,
         ) {
+            // A sidebar's controls have no view of the note behind them.
+            // An embedded appearance preview supplies its own backdrop.
             if (sidebar) CompositionLocalProvider(
                 LocalBackdrop provides NoBackdrop,
                 LocalLiquidGlassBackdrop provides null,
-                LocalLiquidGlassEffectsAllowed provides false,
                 content = content,
             ) else content()
         }
