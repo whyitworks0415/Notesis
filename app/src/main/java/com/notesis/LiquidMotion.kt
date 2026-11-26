@@ -42,7 +42,7 @@ internal fun SkinSettings.slideProfile(): SlideProfile? {
     return when (liquidStyle) {
         // GlassSpring.interactive() while the finger drags it, snappy(350 ms)
         // when it is let go; the lens lifts and settles on snappy(300 ms).
-        LiquidStyle.IOS, LiquidStyle.IOS_LITE -> {
+        LiquidStyle.IOS -> {
             val drag = stiffnessFor(150)
             val land = stiffnessFor(350)
             val lift = stiffnessFor(300)
@@ -87,7 +87,7 @@ internal fun SkinSettings.pressRecipe(): PressRecipe? {
     return when (liquidStyle) {
         // LiquidStretch.nativePressGrowth: ~17 pt along the longest side, on
         // snappy(250 ms, +0.1) into the press and bouncy(280 ms, +0.15) out.
-        LiquidStyle.IOS, LiquidStyle.IOS_LITE -> PressRecipe(
+        LiquidStyle.IOS -> PressRecipe(
             scale = { w, h, d -> 1f + 17f * d / max(max(w, h), 1f) },
             press = spring(dampingRatio = 1f - 0.25f, stiffness = stiffnessFor(250).toFloat()),
             release = spring(dampingRatio = 1f - 0.45f, stiffness = stiffnessFor(280).toFloat()),
@@ -151,9 +151,7 @@ internal fun SkinSettings.openProfile(): OpenProfile? {
         LiquidStyle.IOS -> PourOpen
         // Mornye's context menu: poured out of the button (see [PourOpen]).
         LiquidStyle.MORNYE -> PourOpen
-        // The light one opens as Liquid glass does: a pour reshapes the glass on every
-        // frame of the opening, and every frame of it worked the blur out again.
-        LiquidStyle.IOS_LITE, LiquidStyle.NOTESIS -> null
+        LiquidStyle.NOTESIS -> null
     }
 }
 

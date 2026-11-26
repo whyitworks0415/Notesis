@@ -811,12 +811,6 @@ private fun GlassGroup(skin: Skin, settings: SkinSettings, onChange: (SkinSettin
             }
             return
         }
-        LiquidStyle.IOS_LITE -> {
-            IosLiteGlassControls(settings.ios, settings.accent, settings.themeMode == AppThemeMode.DARK) {
-                onChange(settings.copy(ios = it))
-            }
-            return
-        }
         LiquidStyle.MORNYE -> {
             MornyeGlassControls(settings.mornye, settings.accent, settings.themeMode == AppThemeMode.DARK) {
                 onChange(settings.copy(mornye = it))
@@ -940,57 +934,6 @@ private fun IosGlassControls(g: IosGlass, appAccent: Int, dark: Boolean, onChang
     OutlinedButton(onClick = { onChange(IosGlass.PRESET.copy(motion = g.motion, accent = g.accent, parts = g.parts, resolution = g.resolution)) }, modifier = Modifier.heightIn(min = 48.dp)) {
         Text("Use the ios27Light preset as measured")
     }
-}
-
-/**
- * iOS light's settings: the numbers it shares with iOS that it draws - its
- * colour, corners, blur, body and rim. The lens, the layers, the resolution
- * and the parts belong to iOS's own way of drawing and are not shown here.
- */
-@Composable
-private fun IosLiteGlassControls(g: IosGlass, appAccent: Int, dark: Boolean, onChange: (IosGlass) -> Unit) {
-    val d = IosGlass()
-    SettingsNote("iOS's look drawn the light way: the page blurred once for each pane, with iOS's colours, rim, " +
-        "shadow and corners. No lens runs over a pane at rest and menus open as Liquid glass's do. " +
-        "These numbers are shared with iOS.")
-    MornyeAccentPicker(g.accent, appAccent, dark) { onChange(g.copy(accent = it)) }
-    SettingsToggle("Smooth corners", g.smoothCorners, { onChange(g.copy(smoothCorners = it)) },
-        hint = "Mornye's squircle: the corner eases out of the straight edge instead of turning on a circle.")
-    SettingsSectionHeader("Material")
-    AppearanceSlider("Blur", "%.1f".format(g.blur), g.blur, IosGlass.BLUR_RANGE, step = 0.1f, default = d.blur,
-        note = "The page under the glass, barely softened.",
-    ) { onChange(g.copy(blur = it)) }
-    AppearanceSlider("Frost", "%.0f".format(g.frost), g.frost, IosGlass.FROST_RANGE, step = 1f, default = d.frost,
-        note = "The cloud over it, as a blur.",
-    ) { onChange(g.copy(frost = it)) }
-    AppearanceSlider("Frost opacity", "%.0f%%".format(g.frostOpacity * 100), g.frostOpacity, 0f..1f, step = 0.01f,
-        default = d.frostOpacity, note = "How far the one blur leans from the light one towards the frost.",
-    ) { onChange(g.copy(frostOpacity = it)) }
-    AppearanceSlider("Saturation", "%.1f×".format(g.saturation), g.saturation, IosGlass.SATURATION_RANGE, step = 0.1f,
-        default = d.saturation,
-    ) { onChange(g.copy(saturation = it)) }
-    AppearanceSlider("Body", "%.0f%%".format(g.bodyOpacity * 100), g.bodyOpacity, 0f..1f, step = 0.01f,
-        default = d.bodyOpacity, note = "The #F8F8F8 glass colour over it all.",
-    ) { onChange(g.copy(bodyOpacity = it)) }
-    SettingsSectionHeader("Rim")
-    AppearanceSlider("Rim light", "%.2f".format(g.rimLight), g.rimLight, 0f..2f, step = 0.05f, default = d.rimLight,
-        note = "Light caught along the edge, where it faces the light.",
-    ) { onChange(g.copy(rimLight = it)) }
-    AppearanceSlider("Light from", lightAngleLabel(g.lightAngle), g.lightAngle, IosGlass.LIGHT_ANGLE_RANGE, step = 5f,
-        default = d.lightAngle,
-        note = "Where the rim is brightest. 90° lights the top and bottom and leaves the left and right ends faint; " +
-            "0° or 180° lights the ends instead, 45° or 135° the corners.",
-        disabledReason = if (g.rimAllRound) "The rim is lit all the way round" else null,
-    ) { onChange(g.copy(lightAngle = it)) }
-    SettingsToggle("Light all the way round", g.rimAllRound, { onChange(g.copy(rimAllRound = it)) },
-        hint = "The same light along every edge, with no faint ends.")
-    AppearanceSlider("Rim shade", "%.2f".format(g.rimShade), g.rimShade, 0f..2f, step = 0.05f, default = d.rimShade,
-        note = "The fine dark line just inside the edge.",
-    ) { onChange(g.copy(rimShade = it)) }
-    AppearanceSlider("Corner radius", "%.0f dp".format(g.corner), g.corner, SkinSettings.CORNER_RANGE, step = 1f,
-        default = d.corner, note = "29 by default; its GlassMenu's is 32.",
-    ) { onChange(g.copy(corner = it)) }
-    OutlinedButton(onClick = { onChange(d.copy(motion = g.motion, accent = g.accent, parts = g.parts, resolution = g.resolution)) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to the defaults") }
 }
 
 /**

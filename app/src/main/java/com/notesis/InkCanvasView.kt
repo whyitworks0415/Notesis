@@ -2110,6 +2110,8 @@ class InkCanvasView @JvmOverloads constructor(
 
     private val predictionHead = PredictionHeadView(context)
     private val subframe = SubframeBlurView(context)
+    /** Keeps the window drawing while a stroke goes into the front buffer; see [PenHeartbeat]. */
+    private val penHeartbeat = PenHeartbeat(context)
     private val subframeTrack = SubframeTrack()
 
     /** [SUBFRAME_OFF], [SUBFRAME_BLUR] or [SUBFRAME_GHOST]: the pen's in-between travel shown ahead of the tip. */
@@ -2852,6 +2854,8 @@ class InkCanvasView @JvmOverloads constructor(
         addView(compatWet, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(predictionHead, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(subframe, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        addView(penHeartbeat, LayoutParams(1, 1))
+        penHeartbeat.writing = { activeStrokeId != null }
         addView(gestureTrailView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(eyedropper, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         wet.textureBitmapStore = PencilTextureStore
@@ -5055,6 +5059,12 @@ class InkCanvasView @JvmOverloads constructor(
                             compatWetStrokeId = id
                         }
                         id
+                    }
+                    // The front buffer shows the ink only as often as the screen refreshes,
+                    // and a window that draws nothing while the pen moves lets it slow down.
+                    if (activeStrokeId != null && penHeartbeatWanted(compatWetInk,
+                            autoInkStreak(MotionPrefs.blurs(BlurPart.INK), displayHz) || subframe.mode != SUBFRAME_OFF)) {
+                        penHeartbeat.start()
                     }
                     // This returns before asynchronous front-buffer rendering finishes.
                     if (latencyMonitoringEnabled && !compatWetInk) {

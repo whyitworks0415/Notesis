@@ -271,3 +271,69 @@ private const val AUTO_STREAK_MAX_HZ = 75f
  */
 internal fun streakStrength(strength: Float): Float =
     if (!strength.isFinite()) 1f else (strength.coerceIn(0f, 1f) / 0.5f).coerceIn(0f, 1.33f)
+
+/**
+ * Whether the window should draw a frame of its own on every vsync while a
+ * stroke goes into the front buffer: on the front-buffer path ([compatWetInk]
+ * false), unless something else already draws one each pen frame (a streak,
+ * [streakActive]). The front buffer alone left the window drawing nothing
+ * while the pen moved, and a screen that sees no new frames slows its own
+ * refresh: on a 120 Hz tablet the ink then reached the panel in visible steps.
+ */
+internal fun penHeartbeatWanted(compatWetInk: Boolean, streakActive: Boolean): Boolean =
+    !compatWetInk && !streakActive
+
+/**
+ * Keeps the window drawing - one pixel in a corner, all but transparent,
+ * changed each frame so the frame is not dropped as empty - for as long as
+ * [writing] says a stroke is being written, so the screen keeps its full rate
+ * and shows the front buffer's ink every refresh. Nothing else is drawn
+ * again: the pixel's own view is the only thing invalidated.
+ */
+internal class PenHeartbeat(context: android.content.Context) : android.view.View(context) {
+    private val paint = android.graphics.Paint()
+    private var tick = false
+    private var running = false
+    var writing: () -> Boolean = { false }
+
+    init {
+        isClickable = false
+        isFocusable = false
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+        // Asked for as fast a rate as there is, where the system lets a view say so.
+        if (android.os.Build.VERSION.SDK_INT >= 35) {
+            runCatching { requestedFrameRate = REQUESTED_FRAME_RATE_CATEGORY_HIGH }
+        }
+    }
+
+    private val frame = android.view.Choreographer.FrameCallback {
+        if (!running || !writing() || !isAttachedToWindow) { running = false; return@FrameCallback }
+        tick = !tick
+        invalidate()
+        android.view.Choreographer.getInstance().postFrameCallback(nextFrame())
+    }
+
+    private fun nextFrame(): android.view.Choreographer.FrameCallback = frame
+
+    /** From the stroke's first point; stops by itself once [writing] says the stroke is over. */
+    fun start() {
+        if (running) return
+        running = true
+        android.view.Choreographer.getInstance().postFrameCallback(frame)
+    }
+
+    fun stop() {
+        running = false
+        android.view.Choreographer.getInstance().removeFrameCallback(frame)
+    }
+
+    override fun onDetachedFromWindow() {
+        stop()
+        super.onDetachedFromWindow()
+    }
+
+    override fun onDraw(canvas: android.graphics.Canvas) {
+        paint.color = android.graphics.Color.argb(if (tick) 2 else 1, 0, 0, 0)
+        canvas.drawRect(0f, 0f, 1f, 1f, paint)
+    }
+}
