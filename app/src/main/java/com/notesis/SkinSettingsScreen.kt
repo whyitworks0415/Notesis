@@ -866,6 +866,17 @@ private fun IosGlassControls(g: IosGlass, appAccent: Int, dark: Boolean, onChang
     MornyeAccentPicker(g.accent, appAccent, dark) { onChange(g.copy(accent = it)) }
     SettingsToggle("Smooth corners", g.smoothCorners, { onChange(g.copy(smoothCorners = it)) },
         hint = "Mornye's squircle: the corner eases out of the straight edge instead of turning on a circle.")
+    Text("Glass resolution", style = MaterialTheme.typography.bodyLarge)
+    LiquidSegmentedControl(
+        segments = listOf("Full", "Half", "Quarter"),
+        selectedIndex = IOS_RESOLUTIONS.indexOfFirst { it == iosResolution(g.resolution) }.coerceAtLeast(0),
+        onSelected = { onChange(g.copy(resolution = IOS_RESOLUTIONS[it])) },
+        modifier = Modifier.fillMaxWidth(),
+        useLiquidGlass = false,
+    )
+    SettingsNote("How finely the glass is worked out. Half does a quarter of the work for each pane and quarter a " +
+        "sixteenth; the frost looks the same, the page under the clear layer and the light on the rim a little softer. " +
+        "Full is the glass as it was.")
     IosPartsControls(g.parts) { onChange(g.copy(parts = it)) }
     SettingsNote("From liquid_glass_widgets 1.16.1 (MIT), whose iOS 27 regular presets were measured against the " +
         "native control: a frosted body over a lightly blurred page, a paraxial rim and the native springs. " +
@@ -919,8 +930,8 @@ private fun IosGlassControls(g: IosGlass, appAccent: Int, dark: Boolean, onChang
         default = d.corner, note = "29 by default; its GlassMenu's is 32.",
     ) { onChange(g.copy(corner = it)) }
     ProjectMotionControls(g.motion, "liquid_glass_widgets") { onChange(g.copy(motion = it)) }
-    OutlinedButton(onClick = { onChange(d.copy(motion = g.motion, accent = g.accent, parts = g.parts)) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to the defaults") }
-    OutlinedButton(onClick = { onChange(IosGlass.PRESET.copy(motion = g.motion, accent = g.accent, parts = g.parts)) }, modifier = Modifier.heightIn(min = 48.dp)) {
+    OutlinedButton(onClick = { onChange(d.copy(motion = g.motion, accent = g.accent, parts = g.parts, resolution = g.resolution)) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to the defaults") }
+    OutlinedButton(onClick = { onChange(IosGlass.PRESET.copy(motion = g.motion, accent = g.accent, parts = g.parts, resolution = g.resolution)) }, modifier = Modifier.heightIn(min = 48.dp)) {
         Text("Use the ios27Light preset as measured")
     }
 }

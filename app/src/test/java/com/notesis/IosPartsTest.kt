@@ -44,4 +44,16 @@ class IosPartsTest {
         assertTrue(glassFollowsPage(Interaction.MOVING, followsScroll = true, ink = GLASS_INK_AFTER_PAUSE))
         assertFalse(glassFollowsPage(Interaction.MOVING, followsScroll = false, ink = GLASS_INK_LIVE))
     }
+
+    @Test fun `the glass is worked out at half the resolution by default, and one of three`() {
+        assertEquals(0.5f, IosGlass().resolution)
+        assertEquals(0.25f, iosResolution(0.3f))
+        assertEquals(1f, iosResolution(2f))
+        assertEquals(0.5f, iosResolution(Float.NaN))
+        val quarter = IosGlass(resolution = 0.25f)
+        assertEquals(0.25f, IosGlass.fromJson(quarter.toJson()).resolution)
+        // Saved before there was a choice, the glass takes the default.
+        val old = IosGlass().toJson().apply { remove("resolution") }
+        assertEquals(0.5f, IosGlass.fromJson(old).resolution)
+    }
 }

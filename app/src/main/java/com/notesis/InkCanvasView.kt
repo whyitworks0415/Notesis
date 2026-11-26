@@ -10414,6 +10414,8 @@ class InkCanvasView @JvmOverloads constructor(
             var scale = 0f
             var epsilon = 0f
             var strokes: List<Stroke> = emptyList()
+            /** The board's own list this square was recorded from, while the board has not changed since. */
+            var group: List<Stroke>? = null
             var meshInk = false
             /** Where the recording's corner sits, in the square's own units. */
             var left = 0f
@@ -10466,8 +10468,12 @@ class InkCanvasView @JvmOverloads constructor(
                 val cx = (key shr 32).toInt() * BOARD_ORIGIN_STEP
                 val cy = key.toInt() * BOARD_ORIGIN_STEP
                 val cell = boardCells.getOrPut(key) { BoardCell(android.graphics.RenderNode("board")) }
-                val same = cell.node.hasDisplayList() && cell.meshInk == meshInk && cell.strokes.size == strokes.size &&
-                    cell.strokes.indices.all { cell.strokes[it] === strokes[it] }
+                // The board's lists stay the same objects until it changes, so a square
+                // recorded from this one is known to be current without going through
+                // its strokes - which, every frame of a scroll, was every board stroke.
+                val same = cell.node.hasDisplayList() && cell.meshInk == meshInk && (cell.group === strokes ||
+                    (cell.strokes.size == strokes.size && cell.strokes.indices.all { cell.strokes[it] === strokes[it] })
+                        .also { if (it) cell.group = strokes })
                 // Off screen is skipped. A recorded square knows how far its ink runs; one not recorded yet
                 // is given room round its square, since a stroke may run on well past where it began.
                 val l: Float; val t: Float; val r: Float; val b: Float
@@ -10558,6 +10564,11 @@ class InkCanvasView @JvmOverloads constructor(
             val width = kotlin.math.ceil((maxX - minX) * scale).toInt().coerceIn(1, MAX_BOARD_NODE_PX)
             val height = kotlin.math.ceil((maxY - minY) * scale).toInt().coerceIn(1, MAX_BOARD_NODE_PX)
             cell.node.setPosition(0, 0, width, height)
+            // Kept as a texture the GPU draws once and then only places, while it is
+            // not too big to keep: a square is ink in meshes, which were all drawn
+            // again for every frame of a scroll or a zoom, where a page's ink is a
+            // picture. Too big, it is drawn as it was rather than hold the memory.
+            cell.node.setUseCompositingLayer(width.toLong() * height <= MAX_BOARD_LAYER_PIXELS, null)
             val canvas = cell.node.beginRecording(width, height)
             try {
                 canvas.scale(scale, scale)
@@ -10570,6 +10581,7 @@ class InkCanvasView @JvmOverloads constructor(
             cell.scale = scale
             cell.epsilon = epsilon
             cell.strokes = strokes.toList()
+            cell.group = strokes
             cell.meshInk = meshInk
             cell.left = minX
             cell.top = minY
@@ -11792,6 +11804,8 @@ class InkCanvasView @JvmOverloads constructor(
         const val WET_HANDOFF_TIMEOUT_MS = 250L
         /** The widest a recorded square of the board is drawn at; past it the recording is cut, never the ink lost. */
         const val MAX_BOARD_NODE_PX = 8192
+        /** The most pixels a board square is kept as a texture at: 2048 square, 16 MB. */
+        const val MAX_BOARD_LAYER_PIXELS = 2048L * 2048L
         /** The grid whiteboard strokes are moved to an origin on: see boardStroke. */
         const val BOARD_ORIGIN_STEP = 512f
         /** A few pens, colours and zoom levels; see [currentBrush]. */

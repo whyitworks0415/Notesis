@@ -137,9 +137,15 @@ data class IosGlass(
     val motion: ProjectMotion = ProjectMotion(),
     /** Which parts of the glass are drawn at all; see [IosParts]. */
     val parts: IosParts = IosParts(),
+    /**
+     * The resolution the glass is worked out at, as a share of the screen's:
+     * 1, a half or a quarter (see [lowResGlass]). A half by default, the
+     * frost being a blur either way.
+     */
+    val resolution: Float = 0.5f,
 ) {
     fun toJson(): JSONObject = JSONObject()
-        .put("parts", parts.toJson())
+        .put("parts", parts.toJson()).put("resolution", resolution.toDouble())
         .put("thickness", thickness.toDouble()).put("refractiveIndex", refractiveIndex.toDouble())
         .put("blur", blur.toDouble()).put("frost", frost.toDouble()).put("frostOpacity", frostOpacity.toDouble())
         .put("saturation", saturation.toDouble()).put("bodyOpacity", bodyOpacity.toDouble())
@@ -181,7 +187,8 @@ data class IosGlass(
             val d = IosGlass()
             if (json == null) return d
             val read = readJson(json, d)
-            return if (read.copy(motion = PRESET.motion, parts = PRESET.parts) == PRESET) d.copy(motion = read.motion, parts = read.parts) else read
+            val own = PRESET.copy(motion = read.motion, parts = read.parts, resolution = read.resolution)
+            return if (read == own) d.copy(motion = read.motion, parts = read.parts, resolution = read.resolution) else read
         }
 
         private fun readJson(json: JSONObject, d: IosGlass): IosGlass {
@@ -204,10 +211,17 @@ data class IosGlass(
                 smoothCorners = json.optBoolean("smoothCorners", d.smoothCorners),
                 motion = ProjectMotion.fromJson(json.optJSONObject("motion")),
                 parts = IosParts.fromJson(json.optJSONObject("parts")),
+                resolution = iosResolution(json.optDouble("resolution", d.resolution.toDouble()).toFloat()),
             )
         }
     }
 }
+
+/** The resolutions iOS's glass can be worked out at: the nearest of full, a half and a quarter. */
+internal val IOS_RESOLUTIONS = floatArrayOf(1f, 0.5f, 0.25f)
+
+internal fun iosResolution(value: Float): Float =
+    if (!value.isFinite()) 0.5f else IOS_RESOLUTIONS.minByOrNull { kotlin.math.abs(it - value) } ?: 0.5f
 
 /**
  * Every part iOS's glass is made of, each one on or off, so the glass can be
@@ -424,6 +438,47 @@ private fun Modifier.iosGlass(
         // Neither layer: a tinted pane that never looks at the page.
         return this.then(shadow).background(body, shape).then(shade)
     }
+    // Both layers blended as one effect, whichever way the pane is drawn.
+    fun combine(clear: RenderEffect?, frost: RenderEffect?): RenderEffect? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return clear
+        return when {
+            p.clearLayer && p.frostLayer -> if (frost == null) clear else RenderEffect.createBlendModeEffect(
+                clear ?: RenderEffect.createOffsetEffect(0f, 0f), frost, android.graphics.BlendMode.SRC_OVER)
+            p.frostLayer -> frost
+            else -> clear
+        }
+    }
+    if (g.resolution < 1f && exportedBackdrop == null && !LabPerformance.efficientNow &&
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        // Worked out at a half or a quarter of the screen's resolution (see [lowResGlass]):
+        // every length the lens and the blur take is that much shorter in the layer.
+        fun paramsAt(f: GlassFrame, opacity: Float, spec: Float) = LiquidLensParams(
+            cornerRadius = f.corner * f.scale,
+            bevel = g.bevelDp * f.density * amount * f.scale,
+            refract = g.bendDp * f.density * amount * f.scale,
+            falloff = 0f,
+            dispersion = g.dispersion,
+            lightX = travelX, lightY = lightY,
+            spec = spec,
+            rimEven = rimEven,
+            saturation = saturation,
+            edgeAbsorb = if (p.edgeAbsorption) g.edgeAbsorption else 0f,
+            bodyShade = if (dark) IosGlass.DARK_BODY_SHADE * amount else 0f,
+            opacity = opacity,
+        )
+        fun layerAt(f: GlassFrame, blurDp: Float, opacity: Float, spec: Float): RenderEffect? {
+            val blurred = blurEffect(blurDp * f.density * amount * f.scale)
+            if (p.lens) lensEffectSized(paramsAt(f, opacity, spec), f.width, f.height, 0f,
+                110f * f.density * f.scale, blurred)?.let { return it }
+            return colourEffect(saturation, opacity, blurred)
+        }
+        return this.then(shadow).lowResGlass(backdrop, shape, g.resolution, body) { f ->
+            combine(
+                if (p.clearLayer) layerAt(f, g.blur, 1f, 0f) else null,
+                if (p.frostLayer) layerAt(f, g.frost, frostOpacity, rimLight) else null,
+            )
+        }.then(shade)
+    }
     if (LabPerformance.efficientNow) {
         // One sampling/lens pass instead of a clear pass followed by a frosted pass.
         return this.then(shadow).drawBackdrop(backdrop = backdrop, shape = { shape }, effects = {
@@ -442,12 +497,7 @@ private fun Modifier.iosGlass(
                 if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return@drawBackdrop
                 val clear = if (p.clearLayer) layer(g.blur.dp.toPx() * amount, 1f, 0f) else null
                 val frost = if (p.frostLayer) layer(g.frost.dp.toPx() * amount, frostOpacity, rimLight) else null
-                renderEffect = when {
-                    p.clearLayer && p.frostLayer -> if (frost == null) clear else RenderEffect.createBlendModeEffect(
-                        clear ?: RenderEffect.createOffsetEffect(0f, 0f), frost, android.graphics.BlendMode.SRC_OVER)
-                    p.frostLayer -> frost
-                    else -> clear
-                }
+                renderEffect = combine(clear, frost)
             },
             highlight = null,
             shadow = null,

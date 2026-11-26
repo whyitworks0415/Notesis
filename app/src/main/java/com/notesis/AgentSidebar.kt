@@ -68,6 +68,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.style.TextOverflow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -299,12 +305,18 @@ private fun AgentSidebar(appear: () -> Float) {
             OutlinedTextField(
                 value = draft,
                 onValueChange = { draft = it },
-                modifier = Modifier.weight(1f).heightIn(min = Ui.Size.touch),
+                modifier = Modifier.weight(1f).heightIn(min = Ui.Size.touch)
+                    // The return key starts a new line, as in any message box on a tablet;
+                    // Ctrl and return on a keyboard sends, as the Send button does.
+                    .onPreviewKeyEvent { event ->
+                        if (event.type == KeyEventType.KeyDown && event.key == Key.Enter && event.isCtrlPressed) {
+                            send(); true
+                        } else false
+                    },
                 placeholder = { Text("Ask, / for commands, ! for a shell line…") },
                 maxLines = 6,
                 enabled = termux || draft.startsWith("notesis") || draft.startsWith("/"),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { send() }),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
             )
             Button(onClick = ::send, enabled = waiting == null && !notesRunning && draft.isNotBlank()) { Text("Send") }
         }

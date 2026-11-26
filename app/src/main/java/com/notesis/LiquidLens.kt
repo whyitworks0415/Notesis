@@ -282,12 +282,28 @@ internal fun BackdropEffectScope.lensEffect(p: LiquidLensParams, input: RenderEf
     val w = size.width
     val h = size.height
     if (!(w > 1f) || !(h > 1f)) return null
+    // Bent outwards, the lens reads past its own edge: keep that much of the page.
+    val reach = min(p.refract, 0.5f * min(w, h))
+    if (p.outward && padding < reach) padding = reach
+    return lensEffectSized(p, w, h, padding, 110.dp.toPx(), input)
+}
+
+/**
+ * [lensEffect] for a layer of [w] by [h] pixels with [margin] of page round
+ * it, outside Backdrop's own drawing: the glass drawn at a lower resolution
+ * than the screen uses it (see [lowResGlass]). [adaptiveRef] is 110 dp in
+ * this layer's pixels, for [LiquidLensParams.adaptiveScale].
+ */
+internal fun lensEffectSized(p: LiquidLensParams, w: Float, h: Float, margin: Float, adaptiveRef: Float,
+    input: RenderEffect?): RenderEffect? {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return null
+    if (!(w > 1f) || !(h > 1f)) return null
     val short = min(w, h)
     var bevel = p.bevel
     var refract = p.refract
     var band = 6f
     if (p.adaptiveScale) {
-        val ref = 110.dp.toPx()
+        val ref = adaptiveRef
         bevel = min(bevel, short * 0.3f).coerceAtLeast(2f)
         refract = min(refract, 0.7f * short * min(1f, short / ref))
         band = min(6f, short * 0.05f).coerceAtLeast(2f)
@@ -301,9 +317,6 @@ internal fun BackdropEffectScope.lensEffect(p: LiquidLensParams, input: RenderEf
         } else bevel * 0.5f
         refract = min(refract, cap)
     }
-    // Bent outwards, the lens reads past its own edge: keep that much of the page.
-    if (p.outward && padding < refract) padding = refract
-    val margin = padding
     val r = p.cornerRadius.coerceIn(0f, short / 2f)
     val lightLen = sqrt(p.lightX * p.lightX + p.lightY * p.lightY).takeIf { it > 1e-4f } ?: 1f
     val shader = lensShader()?.apply {
