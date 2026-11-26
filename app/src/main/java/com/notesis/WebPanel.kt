@@ -339,14 +339,15 @@ internal fun WebPanel(
 
     // Beside the note it stands on the window's end edge, square into it; floating it is round all round.
     val outline = edgePanelShape(corner, flushEnd = insets && onMove == null)
-    SkinSurface(modifier = modifier, corner = corner, flushEnd = insets && onMove == null, role = ChromeRole.SIDEBAR) {
+    SkinSurface(modifier = modifier, corner = corner, flushEnd = insets && onMove == null,
+        role = if (popup) ChromeRole.POPUP else ChromeRole.SIDEBAR) {
         // The whole panel keeps clear of the system bars, not just its header: a
         // chat composer pinned to the bottom of the page was sitting under the
         // navigation bar with nothing holding it up.
         Column(
             Modifier
                 .fillMaxHeight()
-                // Round, as the glass is: the page's colour and the page itself
+                // Follow the panel's outline: the page's colour and the page itself
                 // were painted square into the corners, so the round corner
                 // showed a white square of the chat's background instead of
                 // what lies behind the panel.

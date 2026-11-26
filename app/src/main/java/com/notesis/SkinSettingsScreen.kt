@@ -758,8 +758,6 @@ private fun PanelsGroup(skin: Skin, settings: SkinSettings, onChange: (SkinSetti
     ChromeRoleControls(ChromeRole.POPUP, "Popups",
         "The Functions menu, the pen panel, Tools and the other panels that open from the bar, and a page shown large.",
         settings, onChange, solidStyle)
-    ChromeRoleControls(ChromeRole.SIDEBAR, "Sidebars",
-        "Settings, the page panel and the layer panel along the window's edge.", settings, onChange, solidStyle)
     AppearanceSlider("Dim behind popups", "%.0f%%".format(settings.popupDim * 100), settings.popupDim,
         SkinSettings.POPUP_DIM_RANGE, step = 0.01f, default = defaults.popupDim,
         note = "How much the page darkens behind a tool or pen panel.",

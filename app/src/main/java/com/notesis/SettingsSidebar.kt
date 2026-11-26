@@ -193,94 +193,95 @@ internal fun SettingsSidebarFrame(
         val latestScreen by rememberUpdatedState(screen)
         val latestCommit by rememberUpdatedState(onWidthChange)
         val scheme = MaterialTheme.colorScheme
-        Row(Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(shown.dp)
-            // Slides in from the end edge it stands on and back out past it,
-            // moved in the draw rather than by its layer (see [slideInDraw]).
-            // Pulled past its narrowest it follows the finger out, to be let go of.
-            .slideInDraw(blur = true, sliding = { slidingNow(appear()) }) { size -> (1f - appear().coerceIn(0f, 1f)) * size.width + past.dp.toPx() }) {
-            val hapticView = androidx.compose.ui.platform.LocalView.current
-            if (!full) {
-                Box(
-                    Modifier
-                        .width(24.dp)
-                        .fillMaxHeight()
-                        .pointerInput(rtl) {
-                            fun letGo() {
-                                // Pulled far enough past its narrowest, it goes; it slides
-                                // the rest of the way out from where the finger left it.
-                                // Kept at the width it was pulled to: put back to its own
-                                // width first, it grew for a moment on the way out.
-                                if (pulledToClose(past)) { latestClose(); return }
-                                val stretched = draft
-                                val kept = stretched?.let { widthRule(it, latestScreen) }
-                                if (kept != null) latestCommit(kept)
-                                past = 0f
-                                draft = null
-                                reach = null
-                                val over = if (stretched != null && kept != null) stretched - kept else 0f
-                                if (over > 0.5f) springScope.launch {
-                                    springBack.snapTo(over)
-                                    ChromeMotion.during { springBack.animateTo(0f, SIDEBAR_SPRING_BACK.paced()) }
-                                }
-                            }
-                            detectHorizontalDragGestures(
-                                onDragStart = {
-                                    draft = latestShown; reach = latestShown
-                                    springScope.launch { springBack.snapTo(0f) }
-                                },
-                                onDragEnd = { letGo() },
-                                onDragCancel = { letGo() },
-                            ) { change, dragAmount ->
-                                change.consume()
-                                // Pulling the inner edge toward the middle widens the panel.
-                                val grow = (if (rtl) dragAmount else -dragAmount) / density
-                                val wanted = (reach ?: latestShown) + grow
-                                reach = wanted
-                                val held = widthRule(wanted, latestScreen)
-                                val over = wanted - held
-                                // Past its widest it gives a little, stiffer the further it is
-                                // pulled, and comes back to its widest when let go.
-                                val wasOver = (draft ?: held) > held + 0.5f
-                                draft = if (over > 0f) held + rubberBand(over, SIDEBAR_STRETCH_DP) else held
-                                if (over > 0f && !wasOver) Haptics.tick(hapticView)
-                                val wasClosing = pulledToClose(past)
-                                past = (minDp - wanted).coerceAtLeast(0f)
-                                if (pulledToClose(past) != wasClosing) Haptics.snap(hapticView)
-                            }
-                        }
-                        .semantics {
-                            contentDescription = resizeLabel
-                            customActions = listOf(
-                                CustomAccessibilityAction("Make wider") {
-                                    latestCommit(widthRule(latestShown + 60f, latestScreen)); true
-                                },
-                                CustomAccessibilityAction("Make narrower") {
-                                    latestCommit(widthRule(latestShown - 60f, latestScreen)); true
-                                },
-                            )
-                        },
-                    contentAlignment = Alignment.Center,
-                ) {
+        SkinSurface(
+            modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(shown.dp)
+                // Pulled past its narrowest, the whole panel follows the finger out.
+                .slideInDraw(blur = true, sliding = { slidingNow(appear()) }) { size ->
+                    (1f - appear().coerceIn(0f, 1f)) * size.width + past.dp.toPx()
+                },
+            corner = if (full) 0.dp else Ui.Corner.sheet,
+            flushEnd = true,
+            role = ChromeRole.SIDEBAR,
+        ) {
+            Row(Modifier.fillMaxSize()) {
+                val hapticView = androidx.compose.ui.platform.LocalView.current
+                if (!full) {
                     Box(
                         Modifier
-                            .size(width = 5.dp, height = 56.dp)
-                            .clip(CircleShape)
-                            .background(scheme.outline.copy(alpha = if (draft != null) 0.95f else 0.6f)),
-                    )
+                            .width(24.dp)
+                            .fillMaxHeight()
+                            .pointerInput(rtl) {
+                                fun letGo() {
+                                    // Pulled far enough past its narrowest, it goes; it slides
+                                    // the rest of the way out from where the finger left it.
+                                    // Kept at the width it was pulled to: put back to its own
+                                    // width first, it grew for a moment on the way out.
+                                    if (pulledToClose(past)) { latestClose(); return }
+                                    val stretched = draft
+                                    val kept = stretched?.let { widthRule(it, latestScreen) }
+                                    if (kept != null) latestCommit(kept)
+                                    past = 0f
+                                    draft = null
+                                    reach = null
+                                    val over = if (stretched != null && kept != null) stretched - kept else 0f
+                                    if (over > 0.5f) springScope.launch {
+                                        springBack.snapTo(over)
+                                        ChromeMotion.during { springBack.animateTo(0f, SIDEBAR_SPRING_BACK.paced()) }
+                                    }
+                                }
+                                detectHorizontalDragGestures(
+                                    onDragStart = {
+                                        draft = latestShown; reach = latestShown
+                                        springScope.launch { springBack.snapTo(0f) }
+                                    },
+                                    onDragEnd = { letGo() },
+                                    onDragCancel = { letGo() },
+                                ) { change, dragAmount ->
+                                    change.consume()
+                                    // Pulling the inner edge toward the middle widens the panel.
+                                    val grow = (if (rtl) dragAmount else -dragAmount) / density
+                                    val wanted = (reach ?: latestShown) + grow
+                                    reach = wanted
+                                    val held = widthRule(wanted, latestScreen)
+                                    val over = wanted - held
+                                    // Past its widest it gives a little, stiffer the further it is
+                                    // pulled, and comes back to its widest when let go.
+                                    val wasOver = (draft ?: held) > held + 0.5f
+                                    draft = if (over > 0f) held + rubberBand(over, SIDEBAR_STRETCH_DP) else held
+                                    if (over > 0f && !wasOver) Haptics.tick(hapticView)
+                                    val wasClosing = pulledToClose(past)
+                                    past = (minDp - wanted).coerceAtLeast(0f)
+                                    if (pulledToClose(past) != wasClosing) Haptics.snap(hapticView)
+                                }
+                            }
+                            .semantics {
+                                contentDescription = resizeLabel
+                                customActions = listOf(
+                                    CustomAccessibilityAction("Make wider") {
+                                        latestCommit(widthRule(latestShown + 60f, latestScreen)); true
+                                    },
+                                    CustomAccessibilityAction("Make narrower") {
+                                        latestCommit(widthRule(latestShown - 60f, latestScreen)); true
+                                    },
+                                )
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            Modifier
+                                .size(width = 5.dp, height = 56.dp)
+                                .clip(CircleShape)
+                                .background(scheme.outline.copy(alpha = if (draft != null) 0.95f else 0.6f)),
+                        )
+                    }
                 }
-            }
-            SkinSurface(Modifier.weight(1f).fillMaxHeight(), corner = if (full) 0.dp else Ui.Corner.sheet,
-                flushEnd = true, role = ChromeRole.SIDEBAR) {
-                // A veil over the glass: a column of settings has to be read,
-                // and the page behind it should only be a hint.
                 Column(
                     Modifier
-                        .fillMaxSize()
+                        .weight(1f)
+                        .fillMaxHeight()
                         // What it holds arrives a beat after the panel and a
                         // little further, so it settles into the panel rather
                         // than being carried in pasted to it.
-                        // Its lead is a move in the draw too, so the glass on the
-                        // pages is not moved on screen and blurred again either.
                         .slideInDraw { (1f - appear().coerceIn(0f, 1f)) * SIDEBAR_CONTENT_LEAD.toPx() }
                         .graphicsLayer {
                             // Faded draw by draw rather than through a layer the

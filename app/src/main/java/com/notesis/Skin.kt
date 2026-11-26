@@ -398,18 +398,30 @@ fun SkinSurface(
     val skin = LocalSkin.current
     val radius = if (flush) 0.dp else (corner ?: chromeCorner())
     val shape = edgePanelShape(radius, flushEnd)
-    if (skin == Skin.MATERIAL) {
+    val sidebar = role == ChromeRole.SIDEBAR
+    if (sidebar || skin == Skin.MATERIAL) {
         val scheme = MaterialTheme.colorScheme
         Surface(
             modifier = modifier,
             shape = shape,
-            color = if (role == ChromeRole.TOOLBAR) scheme.surfaceContainerLow else scheme.surfaceContainer,
+            // Glass themes supply translucent container colours for their popups.
+            color = when {
+                sidebar -> scheme.surfaceContainer.copy(alpha = 1f)
+                role == ChromeRole.TOOLBAR -> scheme.surfaceContainerLow
+                else -> scheme.surfaceContainer
+            },
             contentColor = scheme.onSurface,
             border = BorderStroke(0.75.dp, scheme.outlineVariant.copy(alpha = 0.6f)),
             tonalElevation = 0.dp,
             shadowElevation = if (LocalSkinSettings.current.shadows) CHROME_SHADOW else 0.dp,
-            content = content,
-        )
+        ) {
+            if (sidebar) CompositionLocalProvider(
+                LocalBackdrop provides NoBackdrop,
+                LocalLiquidGlassBackdrop provides null,
+                LocalLiquidGlassEffectsAllowed provides false,
+                content = content,
+            ) else content()
+        }
         return
     }
     val tokens = skin.tokens()

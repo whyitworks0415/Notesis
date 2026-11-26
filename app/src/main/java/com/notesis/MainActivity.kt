@@ -5385,13 +5385,7 @@ private fun NoteScreen(
     val skin = LocalSkin.current
     val look = LocalSkinSettings.current
     val refractiveBackdrop by rememberUpdatedState(skin.isRefractive)
-    val holdForIosSidebar by rememberUpdatedState(skin == Skin.LIQUID_GLASS && look.liquidStyle == LiquidStyle.IOS)
-    val holdGlassBackdrop: () -> Boolean = remember {
-        {
-            refractiveBackdrop && (ChromeMotion.busy ||
-                (holdForIosSidebar && (showPages || showLayers || settingsNav != null || AgentChat.open)))
-        }
-    }
+    val holdGlassBackdrop: () -> Boolean = remember { { refractiveBackdrop && ChromeMotion.busy } }
     val backdrop = rememberBackdrop(
         active = skin == Skin.GLASSMORPHISM && BACKDROP_DRAWABLE &&
             (look.blur > 0.1f || look.vibrancy > 0.01f) && !InteractionGovernor.observedPowerSave,

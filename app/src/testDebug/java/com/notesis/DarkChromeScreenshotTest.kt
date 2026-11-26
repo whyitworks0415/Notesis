@@ -8,7 +8,12 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.toPixelMap
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.unit.dp
 import com.github.takahirom.roborazzi.captureRoboImage
@@ -88,4 +93,29 @@ class DarkChromeScreenshotTest {
 
     @Test fun materialDark() = show(true, "material-studio-dark")
     @Test fun materialLight() = show(false, "material-studio-light")
+
+    private fun checkOpaqueSidebar(dark: Boolean) {
+        val skin = Skin.LIQUID_GLASS
+        val look = SkinSettings(
+            themeMode = if (dark) AppThemeMode.DARK else AppThemeMode.LIGHT,
+            liquidStyle = LiquidStyle.IOS,
+            sidebarClarity = 1f,
+            dynamicColor = false,
+        )
+        val scheme = skinColors(lookScheme(null, look), look, skin)
+        compose.setContent {
+            MaterialTheme(colorScheme = scheme) {
+                ProvideSkin(skin, look) {
+                    Box(Modifier.fillMaxSize().background(Color.Magenta)) {
+                        SkinSurface(Modifier.size(144.dp).testTag("sidebar"), role = ChromeRole.SIDEBAR) {}
+                    }
+                }
+            }
+        }
+        val image = compose.onNodeWithTag("sidebar").captureToImage().toPixelMap()
+        assertEquals(scheme.surfaceContainer.copy(alpha = 1f).toArgb(), image[image.width / 2, image.height / 2].toArgb())
+    }
+
+    @Test fun iosSidebarIsOpaqueInLightMode() = checkOpaqueSidebar(dark = false)
+    @Test fun iosSidebarIsOpaqueInDarkMode() = checkOpaqueSidebar(dark = true)
 }
