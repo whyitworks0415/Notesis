@@ -2,6 +2,10 @@ package com.notesis
 
 import android.os.Build
 import android.graphics.RenderEffect
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.graphics.asAndroidPath
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.BackdropEffectScope
 import kotlin.math.min
@@ -212,6 +216,7 @@ private fun lensShader(): android.graphics.RuntimeShader? {
 /** Builds the lens's program ahead of its first pane; nothing below Android 13. */
 internal fun prewarmLiquidLens() {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+    rimShader()
     val shader = lensShader() ?: return
     runCatching { warmLensOnGpu(shader) }
 }
@@ -347,3 +352,116 @@ internal fun lensEffectSized(p: LiquidLensParams, w: Float, h: Float, margin: Fl
     val lens = RenderEffect.createRuntimeShaderEffect(shader, "content")
     return if (input != null) RenderEffect.createChainEffect(lens, input) else lens
 }
+
+/**
+ * The light along iOS's rim on its own, as the lens drew it: a rounded
+ * rectangle's edge, its normal, and two lobes of light where that normal
+ * faces the way the light travels and the way it comes from - a hairline
+ * just inside the edge and a faint glow inside that - so the edge is bright
+ * where it faces the light and faint along the sides between.
+ */
+private const val IOS_RIM_AGSL = """
+uniform float2 size;
+uniform float  radius;
+uniform float2 lightDir;
+uniform float  strength;
+uniform float  bandW;
+uniform float  rimEven;
+
+float sdBox(float2 p, float2 b, float r) {
+    float2 q = abs(p) - b + r;
+    return length(max(q, float2(0.0))) + min(max(q.x, q.y), 0.0) - r;
+}
+
+half4 main(float2 coord) {
+    float2 c = size * 0.5;
+    float2 p = coord - c;
+    float d = sdBox(p, c, radius);
+    float cov = clamp(0.5 - d / 1.5, 0.0, 1.0);
+    if (cov <= 0.004 || -d > 3.0 + bandW) {
+        return half4(0.0);
+    }
+    float2 n = float2(
+        sdBox(p + float2(1.0, 0.0), c, radius) - sdBox(p - float2(1.0, 0.0), c, radius),
+        sdBox(p + float2(0.0, 1.0), c, radius) - sdBox(p - float2(0.0, 1.0), c, radius)
+    );
+    float nLen = length(n);
+    n = nLen > 0.0001 ? n / nLen : float2(0.0, -1.0);
+    float facing = dot(n, -lightDir);
+    float lobeF = pow(max(facing, 0.0), 4.5);
+    float lobeB = pow(max(-facing, 0.0), 4.5);
+    float glowIn = clamp((-d - 1.0) / 2.0, 0.0, 1.0);
+    float glow = glowIn * pow(clamp(1.0 - (-d - 3.0) / bandW, 0.0, 1.0), 1.5) * cov;
+    float hair = clamp(1.0 - abs(d + 1.0) / 2.0, 0.0, 1.0) * cov;
+    float lobes = mix(lobeF + lobeB, 1.0, rimEven);
+    float spec = clamp((hair * 0.70 * lobes + glow * 0.10 * mix(lobeF, 0.5, rimEven)) * strength, 0.0, 1.0);
+    return half4(half3(spec), half(spec));
+}
+"""
+
+private var sharedRimShader: Any? = null
+private var sharedRimFailed = false
+
+@androidx.annotation.RequiresApi(Build.VERSION_CODES.TIRAMISU)
+private fun rimShader(): android.graphics.RuntimeShader? {
+    (sharedRimShader as? android.graphics.RuntimeShader)?.let { return it }
+    if (sharedRimFailed) return null
+    return runCatching { android.graphics.RuntimeShader(IOS_RIM_AGSL) }.getOrNull()
+        .also { if (it == null) sharedRimFailed = true else sharedRimShader = it }
+}
+
+/**
+ * Draws [iosRimLight]'s light over a pane of [shape]: light travelling
+ * ([lightX], [lightY]), [strength] as the rim light setting gives it,
+ * [rimEven] 1 for light all the way round, and a bevel of [bevelDp] that the
+ * glow inside the hairline is measured from. Only the band along the edge is
+ * drawn, so it costs a few pixels' width of the outline. One program for every
+ * pane: the paint takes a copy of the shader's uniforms when the stroke is drawn.
+ */
+internal fun androidx.compose.ui.Modifier.iosRimLight(
+    shape: androidx.compose.ui.graphics.Shape,
+    lightX: Float,
+    lightY: Float,
+    strength: Float,
+    rimEven: Float,
+    bevelDp: Float,
+): androidx.compose.ui.Modifier = this.then(androidx.compose.ui.Modifier.drawWithCache {
+    val w = size.width
+    val h = size.height
+    val corner = cornerOf(shape, size, layoutDirection, this).coerceIn(0f, min(w, h) / 2f)
+    val band = (bevelDp.dp.toPx() * 0.3f).coerceIn(2f, 6f)
+    val path = android.graphics.Path().apply {
+        when (val outline = shape.createOutline(size, layoutDirection, this@drawWithCache)) {
+            is androidx.compose.ui.graphics.Outline.Generic -> set(outline.path.asAndroidPath())
+            else -> addRoundRect(0f, 0f, w, h, corner, corner, android.graphics.Path.Direction.CW)
+        }
+    }
+    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        style = android.graphics.Paint.Style.STROKE
+        strokeWidth = (3f + band) * 2f + 2f
+    }
+    val len = sqrt(lightX * lightX + lightY * lightY).takeIf { it > 1e-4f } ?: 1f
+    onDrawWithContent {
+        drawContent()
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || !(w > 1f) || !(h > 1f) || strength <= 0f) {
+            return@onDrawWithContent
+        }
+        val shader = rimShader() ?: return@onDrawWithContent
+        shader.setFloatUniform("size", w, h)
+        shader.setFloatUniform("radius", corner)
+        shader.setFloatUniform("lightDir", lightX / len, lightY / len)
+        shader.setFloatUniform("strength", strength)
+        shader.setFloatUniform("bandW", band)
+        shader.setFloatUniform("rimEven", rimEven.coerceIn(0f, 1f))
+        paint.shader = shader
+        drawIntoCanvas { c ->
+            val canvas = c.nativeCanvas
+            canvas.save()
+            canvas.clipPath(path)
+            canvas.drawPath(path, paint)
+            canvas.restore()
+        }
+        // Not left holding the shared shader once the stroke is recorded.
+        paint.shader = null
+    }
+})

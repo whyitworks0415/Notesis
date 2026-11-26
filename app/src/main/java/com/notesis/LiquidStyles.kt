@@ -433,7 +433,16 @@ private fun Modifier.iosGlass(
     // ios27Light's BoxShadow: black at 0x04, 10 soft, 7 down; none in the dark.
     val shadow = if (shadows && !dark && p.shadow)
         Modifier.paneShadow(shape, 10.dp, 7.dp, Color.Black.copy(alpha = 4f / 255f), amount) else Modifier
-    val shade = if (rim && p.rimShade && g.rimShade > 0f) Modifier.rimShade(shape, g.rimShade * amount, dark) else Modifier
+    val rimShadeMod = if (rim && p.rimShade && g.rimShade > 0f) Modifier.rimShade(shape, g.rimShade * amount, dark) else Modifier
+    // The light along the rim, drawn on its own at the screen's resolution
+    // (see [iosRimLight]) rather than inside the lens: it stays where the
+    // light falls - bright where the edge faces it, faint along the sides -
+    // however the glass under it is drawn, whole, blended or at a lower
+    // resolution. The lens is then given no light of its own.
+    val ownRim = rimLight > 0f && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+    val shade = if (ownRim) rimShadeMod.then(Modifier.iosRimLight(shape, travelX, lightY, rimLight, rimEven,
+        g.bevelDp * amount)) else rimShadeMod
+    val lensLight = if (ownRim) 0f else rimLight
     if (!p.samplesPage) {
         // Neither layer: a tinted pane that never looks at the page.
         return this.then(shadow).background(body, shape).then(shade)
@@ -475,7 +484,7 @@ private fun Modifier.iosGlass(
         return this.then(shadow).lowResGlass(backdrop, shape, g.resolution, body) { f ->
             combine(
                 if (p.clearLayer) layerAt(f, g.blur, 1f, 0f) else null,
-                if (p.frostLayer) layerAt(f, g.frost, frostOpacity, rimLight) else null,
+                if (p.frostLayer) layerAt(f, g.frost, frostOpacity, lensLight) else null,
             )
         }.then(shade)
     }
@@ -483,7 +492,7 @@ private fun Modifier.iosGlass(
         // One sampling/lens pass instead of a clear pass followed by a frosted pass.
         return this.then(shadow).drawBackdrop(backdrop = backdrop, shape = { shape }, effects = {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return@drawBackdrop
-            renderEffect = layer(labBlurDp(g.frost, true).dp.toPx() * amount, 1f, rimLight)
+            renderEffect = layer(labBlurDp(g.frost, true).dp.toPx() * amount, 1f, lensLight)
         }, highlight = null, shadow = null, exportedBackdrop = exportedBackdrop, onDrawSurface = { drawRect(body) })
             .then(shade)
     }
@@ -496,7 +505,7 @@ private fun Modifier.iosGlass(
             effects = {
                 if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return@drawBackdrop
                 val clear = if (p.clearLayer) layer(g.blur.dp.toPx() * amount, 1f, 0f) else null
-                val frost = if (p.frostLayer) layer(g.frost.dp.toPx() * amount, frostOpacity, rimLight) else null
+                val frost = if (p.frostLayer) layer(g.frost.dp.toPx() * amount, frostOpacity, lensLight) else null
                 renderEffect = combine(clear, frost)
             },
             highlight = null,
@@ -523,7 +532,7 @@ private fun Modifier.iosGlass(
         shape = { shape },
         effects = {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return@drawBackdrop
-            renderEffect = layer(g.frost.dp.toPx() * amount, frostOpacity, rimLight)
+            renderEffect = layer(g.frost.dp.toPx() * amount, frostOpacity, lensLight)
         },
         highlight = null,
         shadow = null,
