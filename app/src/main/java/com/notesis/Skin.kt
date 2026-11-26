@@ -413,13 +413,12 @@ fun SkinSurface(
         return
     }
     val tokens = skin.tokens()
-    val glassHost = if (skin == Skin.LIQUID_GLASS) rememberLiquidGlassBackdrop() else null
     val surfaceModifier = if (skin == Skin.LIQUID_GLASS) {
         // A round rectangle, as in the other looks: Backdrop's lens can take no other outline.
         modifier.liquidGlassSurface(
             shape, LocalSkinSettings.current,
             elevation = if (flush) 0.dp else tokens.shadow, rim = !flush,
-            exportedBackdrop = glassHost,
+            fullResolution = true,
         ).then(if (flush) Modifier.flushEdge(tokens) else Modifier).chromeVeil(role, shape)
     } else {
         modifier
@@ -428,11 +427,7 @@ fun SkinSurface(
             .chromeVeil(role, shape)
     }
     Box(surfaceModifier) {
-        CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
-            if (glassHost != null) {
-                CompositionLocalProvider(LocalLiquidGlassHostBackdrop provides glassHost) { content() }
-            } else content()
-        }
+        CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface, content = content)
     }
 }
 

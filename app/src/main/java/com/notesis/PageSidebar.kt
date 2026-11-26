@@ -477,12 +477,12 @@ internal fun PageSidebar(
                             // A practice page put away with its host's attachments is left out, as it is on the canvas.
                             val laidOut = pages.filterIndexed { i, _ -> doc.isShown(i) }
                             val shownPages = if (bookmarksOnly) laidOut.filter { it.bookmarked } else laidOut
-                            val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
-                            // Opened on the page in hand rather than at the first.
-                            LaunchedEffect(Unit) {
-                                val at = shownPages.indexOfFirst { pageIndices[it.id] == currentPage }
-                                if (at > 0) gridState.scrollToItem(at)
-                            }
+                            // Measure the current page's row first rather than
+                            // preparing the first rows and immediately jumping.
+                            val firstCard = shownPages.indexOfFirst { pageIndices[it.id] == currentPage }.coerceAtLeast(0)
+                            val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState(
+                                initialFirstVisibleItemIndex = firstCard,
+                            )
                             val haptics = LocalHapticFeedback.current
                             val order by rememberUpdatedState(shownPages.map { it.id })
                             LazyVerticalGrid(

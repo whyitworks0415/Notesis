@@ -54,9 +54,9 @@ internal class PopupGrowth(shown: Boolean) {
         // and drawing all of it - is the slow one, and a curve started on it
         // lost its first steps to that frame and jumped. It goes out unseen;
         // the curve starts on the frame after.
-        if (animate && width.value == 0f && height.value == 0f) awaitFirstFrames()
+        val firstFrame = width.value == 0f && height.value == 0f
         // Opened again while closing: on from where it is, at the speed it has.
-        move(1f, animate, POPUP_OPEN, if (midFlight()) Float.NaN else POPUP_OPEN_VELOCITY)
+        move(1f, animate, POPUP_OPEN, if (midFlight()) Float.NaN else POPUP_OPEN_VELOCITY, firstFrame)
     }
 
     /** At rest and shut. */
@@ -76,7 +76,9 @@ internal class PopupGrowth(shown: Boolean) {
         move(0f, animate, POPUP_CLOSE, if (midFlight()) Float.NaN else 0f)
     }
 
-    private suspend fun move(target: Float, animate: Boolean, spec: AnimationSpec<Float>, velocity: Float) {
+    private suspend fun move(target: Float, animate: Boolean, spec: AnimationSpec<Float>, velocity: Float,
+        firstFrame: Boolean = false,
+    ) {
         if (!animate) {
             velocities.fill(0f)
             width.snapTo(target)
@@ -88,6 +90,9 @@ internal class PopupGrowth(shown: Boolean) {
         val widthStart = if (velocity.isNaN()) velocities[0] else velocity
         val heightStart = if (velocity.isNaN()) velocities[1] else velocity
         ChromeMotion.during {
+            // The note can keep its existing glass recording while the
+            // popup is prepared, just as it does during the visible reveal.
+            if (firstFrame) awaitFirstFrames()
             coroutineScope {
                 launch {
                     width.animateTo(target, spec.paced(), initialVelocity = widthStart) { velocities[0] = this.velocity }

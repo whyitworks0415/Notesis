@@ -154,7 +154,6 @@ internal fun ToolbarPreviewStage(
         CompositionLocalProvider(
             LocalBackdrop provides backdrop,
             LocalLiquidGlassBackdrop provides aligned,
-            LocalLiquidGlassHostBackdrop provides null,
             LocalGlassPopupBackdrop provides null,
         ) {
             Box(

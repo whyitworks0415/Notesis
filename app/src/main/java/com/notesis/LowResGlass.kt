@@ -34,7 +34,7 @@ import kotlin.math.ceil
  * pixels, how much smaller than the screen it is, the screen's density and
  * the pane's corner in screen pixels.
  */
-internal class GlassFrame(val width: Float, val height: Float, val scale: Float, val density: Float, val corner: Float)
+internal data class GlassFrame(val width: Float, val height: Float, val scale: Float, val density: Float, val corner: Float)
 
 /**
  * Glass worked out at [scale] of the screen's resolution and then drawn up to
@@ -71,7 +71,7 @@ private class LowResGlassElement(
         node.shape = shape
         node.scale = scale
         node.surface = surface
-        node.effect = effect
+        node.updateEffect(effect)
         node.invalidateDraw()
     }
 
@@ -98,9 +98,17 @@ private class LowResGlassNode(
     var shape: Shape,
     var scale: Float,
     var surface: Color,
-    var effect: (GlassFrame) -> RenderEffect?,
+    private var effect: (GlassFrame) -> RenderEffect?,
 ) : Modifier.Node(), DrawModifierNode, GlobalPositionAwareModifierNode {
     private var layer: GraphicsLayer? = null
+    private var appliedFrame: GlassFrame? = null
+
+    fun updateEffect(effect: (GlassFrame) -> RenderEffect?) {
+        if (this.effect !== effect) {
+            this.effect = effect
+            appliedFrame = null
+        }
+    }
 
     // Read while drawing, so the pane is drawn again when it moves over the page.
     private var coordinates: LayoutCoordinates? by mutableStateOf(null, neverEqualPolicy())
@@ -114,6 +122,7 @@ private class LowResGlassNode(
     override fun onDetach() {
         layer?.let { requireGraphicsContext().releaseGraphicsLayer(it) }
         layer = null
+        appliedFrame = null
         coordinates = null
     }
 
@@ -133,8 +142,12 @@ private class LowResGlassNode(
                     with(backdrop) { drawBackdrop(this@draw, at, null) }
                 }
             }
-            val corner = cornerOf(shape, size, layoutDirection, this)
-            layer.renderEffect = effect(GlassFrame(w.toFloat(), h.toFloat(), s, density, corner))?.asComposeRenderEffect()
+            val frame = GlassFrame(w.toFloat(), h.toFloat(), s, density, cornerOf(shape, size, layoutDirection, this))
+            // A new page position changes the input recording, not its optics.
+            if (appliedFrame != frame) {
+                layer.renderEffect = effect(frame)?.asComposeRenderEffect()
+                appliedFrame = frame
+            }
             clip.reset()
             when (val outline = shape.createOutline(size, layoutDirection, this)) {
                 is Outline.Generic -> clip.addPath(outline.path)

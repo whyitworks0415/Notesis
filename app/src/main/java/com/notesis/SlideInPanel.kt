@@ -65,11 +65,12 @@ private fun slideProgress(visible: Boolean, instantExit: Boolean): Animatable<Fl
     LaunchedEffect(visible, animate) {
         if (visible) {
             present = true
-            if (animate) {
+            if (animate) ChromeMotion.during {
                 // The first frame with the panel in it is the slow one; the
                 // slide starts after it, not on it.
                 if (progress.value == 0f) awaitFirstFrames()
-                ChromeMotion.during { progress.animateTo(1f, sidebarOpen(), initialVelocity = velocity[0]) { velocity[0] = this.velocity }; velocity[0] = 0f }
+                progress.animateTo(1f, sidebarOpen(), initialVelocity = velocity[0]) { velocity[0] = this.velocity }
+                velocity[0] = 0f
             } else {
                 velocity[0] = 0f
                 progress.snapTo(1f)

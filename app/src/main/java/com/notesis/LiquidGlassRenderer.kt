@@ -9,7 +9,6 @@ import androidx.annotation.RequiresApi
 import androidx.compose.foundation.background
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
@@ -34,7 +33,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.drawBackdrop
-import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.colorFilter
 import kotlin.math.PI
@@ -43,9 +41,6 @@ import kotlin.math.cos
 import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.sqrt
-
-// The surface behind a nested bar, without that bar or its moving lens.
-internal val LocalLiquidGlassHostBackdrop = compositionLocalOf<LayerBackdrop?> { null }
 
 /** Ported continuous outline; the path and the upstream shader share a curve. */
 internal fun liquidGlassPath(size: Size, radius: Float): Path {
@@ -193,7 +188,7 @@ internal fun Modifier.liquidGlassSurface(
     navigation: Boolean = false,
     elevation: Dp = 3.dp,
     rim: Boolean = true,
-    exportedBackdrop: LayerBackdrop? = null,
+    fullResolution: Boolean = false,
 ): Modifier {
     // Mornye's continuous corners whether or not the lens can run, so its
     // panes keep one outline when the effects are off.
@@ -206,7 +201,7 @@ internal fun Modifier.liquidGlassSurface(
     // Another recipe draws the whole pane its own way, rim and shadow included.
     if (lensAllowed && settings.liquidStyle != LiquidStyle.NOTESIS) {
         return styledLiquidGlass(settings.liquidStyle, settings, shape, backdrop!!, panel = !navigation, dark = dark,
-            shadows = settings.shadows && elevation > 0.dp, rim = rim, exportedBackdrop = exportedBackdrop)
+            shadows = settings.shadows && elevation > 0.dp, rim = rim, fullResolution = fullResolution)
     }
     val useBlur = lensAllowed && clarity > 0
     val sigma = when {
@@ -239,7 +234,7 @@ internal fun Modifier.liquidGlassSurface(
     result = if (useBlur) result.drawBackdrop(backdrop!!, shape = { shape }, effects = {
         blur(labBlurDp(sigma, LabPerformance.efficientNow) * density)
         if (dark) colorFilter(dimFilter)
-    }, highlight = null, shadow = null, exportedBackdrop = exportedBackdrop, onDrawSurface = { drawRect(tint) })
+    }, highlight = null, shadow = null, onDrawSurface = { drawRect(tint) })
     else result.background(tint, shape)
     if (rim) result = result.drawWithContent {
         drawContent()

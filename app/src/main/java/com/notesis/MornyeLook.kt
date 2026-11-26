@@ -24,7 +24,6 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.Backdrop
-import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
@@ -170,7 +169,6 @@ internal fun Modifier.mornyeGlass(
     dark: Boolean,
     shadows: Boolean,
     rim: Boolean,
-    exportedBackdrop: LayerBackdrop?,
     amount: Float,
 ): Modifier {
     // The same outline for the glass, its lens, its shadow and its rim, so
@@ -200,7 +198,6 @@ internal fun Modifier.mornyeGlass(
         },
         highlight = null,
         shadow = null,
-        exportedBackdrop = exportedBackdrop,
         onDrawSurface = { drawRect(body) },
     )
     return if (rim && m.outlines) base.mornyeRim(shape, emphasized = panel, dark = dark, strength = amount) else base

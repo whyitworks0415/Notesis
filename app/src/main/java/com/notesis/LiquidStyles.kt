@@ -2,6 +2,8 @@ package com.notesis
 
 import android.graphics.RenderEffect
 import android.os.Build
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
@@ -22,7 +24,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.Backdrop
-import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.colorControls
@@ -334,6 +335,7 @@ private val BUTTON_SIZE = 64.dp
  * while a pane morphs. Only called where the lens may run (API 33 and up,
  * effects allowed).
  */
+@Composable
 internal fun Modifier.styledLiquidGlass(
     style: LiquidStyle,
     settings: SkinSettings,
@@ -343,12 +345,12 @@ internal fun Modifier.styledLiquidGlass(
     dark: Boolean,
     shadows: Boolean,
     rim: Boolean = true,
-    exportedBackdrop: LayerBackdrop? = null,
+    fullResolution: Boolean = false,
     amount: Float = 1f,
 ): Modifier = when (style) {
     LiquidStyle.IOS -> iosGlass(settings.ios, if (settings.ios.smoothCorners) mornyeSquircle(shape) else shape,
-        backdrop, panel, dark, shadows, rim, exportedBackdrop, amount)
-    LiquidStyle.MORNYE -> mornyeGlass(settings.mornye, shape, backdrop, panel, dark, shadows, rim, exportedBackdrop, amount)
+        backdrop, panel, dark, shadows, rim, fullResolution, amount)
+    LiquidStyle.MORNYE -> mornyeGlass(settings.mornye, shape, backdrop, panel, dark, shadows, rim, amount)
     LiquidStyle.NOTESIS -> this
 }
 
@@ -376,6 +378,7 @@ internal fun cornerOf(shape: Shape, size: Size, layoutDirection: LayoutDirection
  * body colour over both, the light caught along the rim, and the rim shade
  * as a hairline just inside the edge.
  */
+@Composable
 private fun Modifier.iosGlass(
     g: IosGlass,
     shape: Shape,
@@ -384,7 +387,7 @@ private fun Modifier.iosGlass(
     dark: Boolean,
     shadows: Boolean,
     rim: Boolean,
-    exportedBackdrop: LayerBackdrop?,
+    fullResolution: Boolean,
     amount: Float,
 ): Modifier {
     val p = g.parts
@@ -457,7 +460,7 @@ private fun Modifier.iosGlass(
             else -> clear
         }
     }
-    if (g.resolution < 1f && exportedBackdrop == null && !LabPerformance.efficientNow &&
+    if (g.resolution < 1f && !fullResolution && !LabPerformance.efficientNow &&
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         // Worked out at a half or a quarter of the screen's resolution (see [lowResGlass]):
         // every length the lens and the blur take is that much shorter in the layer.
@@ -481,22 +484,27 @@ private fun Modifier.iosGlass(
                 110f * f.density * f.scale, blurred)?.let { return it }
             return colourEffect(saturation, opacity, blurred)
         }
-        return this.then(shadow).lowResGlass(backdrop, shape, g.resolution, body) { f ->
-            combine(
-                if (p.clearLayer) layerAt(f, g.blur, 1f, 0f) else null,
-                if (p.frostLayer) layerAt(f, g.frost, frostOpacity, lensLight) else null,
-            )
-        }.then(shade)
+        // Keep the effect factory stable when the pane is recomposed for an
+        // unrelated reason, so its draw node can keep the installed effect.
+        val effect = remember(g, dark, amount, lensLight) {
+            { f: GlassFrame ->
+                combine(
+                    if (p.clearLayer) layerAt(f, g.blur, 1f, 0f) else null,
+                    if (p.frostLayer) layerAt(f, g.frost, frostOpacity, lensLight) else null,
+                )
+            }
+        }
+        return this.then(shadow).lowResGlass(backdrop, shape, g.resolution, body, effect).then(shade)
     }
     if (LabPerformance.efficientNow) {
         // One sampling/lens pass instead of a clear pass followed by a frosted pass.
         return this.then(shadow).drawBackdrop(backdrop = backdrop, shape = { shape }, effects = {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return@drawBackdrop
             renderEffect = layer(labBlurDp(g.frost, true).dp.toPx() * amount, 1f, lensLight)
-        }, highlight = null, shadow = null, exportedBackdrop = exportedBackdrop, onDrawSurface = { drawRect(body) })
+        }, highlight = null, shadow = null, onDrawSurface = { drawRect(body) })
             .then(shade)
     }
-    if (exportedBackdrop == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         // The same two layers, the frost over the clear glass, blended in one
         // pane: the page is recorded, clipped and kept once instead of twice.
         return this.then(shadow).drawBackdrop(
@@ -513,8 +521,7 @@ private fun Modifier.iosGlass(
             onDrawSurface = { drawRect(body) },
         ).then(shade)
     }
-    // Something records this pane for the panes over it (a side panel):
-    // the clear layer alone, as it always was, and the frost on its own.
+    // Keep the separate draws on older Android, where the lens cannot run.
     var result = this.then(shadow)
     if (p.clearLayer) result = result.drawBackdrop(
         backdrop = backdrop,
@@ -525,7 +532,6 @@ private fun Modifier.iosGlass(
         },
         highlight = null,
         shadow = null,
-        exportedBackdrop = exportedBackdrop,
     )
     if (p.frostLayer) result = result.drawBackdrop(
         backdrop = backdrop,
@@ -536,7 +542,6 @@ private fun Modifier.iosGlass(
         },
         highlight = null,
         shadow = null,
-        exportedBackdrop = if (p.clearLayer) null else exportedBackdrop,
         onDrawSurface = { drawRect(body) },
     ) else result = result.background(body, shape)
     return result.then(shade)

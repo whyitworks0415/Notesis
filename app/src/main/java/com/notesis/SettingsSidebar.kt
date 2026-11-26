@@ -384,8 +384,14 @@ internal fun AnimatedSettingsSidebar(
             present = true
             // The first frame with the sidebar in it is the slow one; the slide
             // starts after it (see PopupGrowth.open), not on it.
-            if (animate && progress.value == 0f) awaitFirstFrames()
-            if (animate) ChromeMotion.during { progress.animateTo(1f, sidebarOpen(), initialVelocity = velocity[0]) { velocity[0] = this.velocity }; velocity[0] = 0f } else { velocity[0] = 0f; progress.snapTo(1f) }
+            if (animate) ChromeMotion.during {
+                if (progress.value == 0f) awaitFirstFrames()
+                progress.animateTo(1f, sidebarOpen(), initialVelocity = velocity[0]) { velocity[0] = this.velocity }
+                velocity[0] = 0f
+            } else {
+                velocity[0] = 0f
+                progress.snapTo(1f)
+            }
         } else {
             if (progress.value == 0f && !progress.isRunning) { velocity[0] = 0f; present = false; return@LaunchedEffect }
             if (animate) ChromeMotion.during { progress.animateTo(0f, sidebarClose(), initialVelocity = velocity[0]) { velocity[0] = this.velocity }; velocity[0] = 0f } else { velocity[0] = 0f; progress.snapTo(0f) }

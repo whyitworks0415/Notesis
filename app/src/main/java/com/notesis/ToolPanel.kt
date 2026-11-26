@@ -18,6 +18,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -109,7 +110,13 @@ internal fun ToolPanel(
 
     Dialog(onDismissRequest = onOutside, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         // A light dim: the page should still be readable round the panel.
-        (LocalView.current.parent as? DialogWindowProvider)?.window?.setDimAmount(LocalSkinSettings.current.popupDim)
+        val window = (LocalView.current.parent as? DialogWindowProvider)?.window
+        val dim = LocalSkinSettings.current.popupDim
+        SideEffect {
+            // Setting the same attributes again queues window work on every
+            // recomposition, even when only a control inside the panel changed.
+            if (window != null && window.attributes.dimAmount != dim) window.setDimAmount(dim)
+        }
         // The panel's own corner is the one fixed radius, and everything
         // inside follows it, one inset in. It is the toolbar's and its menu's,
         // on the same round outline (see [chromeCorner]).
