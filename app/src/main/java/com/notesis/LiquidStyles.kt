@@ -9,8 +9,10 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.background
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.isUnspecified
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Shape
@@ -48,6 +50,7 @@ import org.json.JSONObject
 enum class LiquidStyle(val label: String, val blurb: String) {
     NOTESIS("Liquid glass", "A lens that bends the page. The selection glides after your fingertip."),
     IOS("iOS", "iOS's glass as liquid_glass_widgets measured it, with Mornye's colours, continuous corners and pouring menus."),
+    IOS_LITE("iOS light", "iOS's look drawn as lightly as Liquid glass: one blur for each pane, with iOS's colours, rim, shadow and corners, and no lens on panes at rest."),
     MORNYE("Mornye", "Mornye's glass: a clear tinted body, a fine lit rim, iOS colours and an accent of your choice."),
     ;
 
@@ -288,11 +291,14 @@ data class IosParts(
 internal fun SkinSettings.iosPartOn(skin: Skin, part: (IosParts) -> Boolean): Boolean =
     skin != Skin.LIQUID_GLASS || liquidStyle != LiquidStyle.IOS || part(ios.parts)
 
+/** iOS's look, drawn either way: its colours, corners, accent and motion are the same for both. */
+internal val LiquidStyle.looksIos: Boolean get() = this == LiquidStyle.IOS || this == LiquidStyle.IOS_LITE
+
 /** The corner Liquid glass's chrome takes under the recipe in use. */
 val SkinSettings.glassCorner: Float
     get() = when (liquidStyle) {
         LiquidStyle.NOTESIS -> corner
-        LiquidStyle.IOS -> ios.corner
+        LiquidStyle.IOS, LiquidStyle.IOS_LITE -> ios.corner
         LiquidStyle.MORNYE -> mornye.corner
     }
 
@@ -300,7 +306,7 @@ val SkinSettings.glassCorner: Float
 val SkinSettings.projectMotion: ProjectMotion?
     get() = when (liquidStyle) {
         LiquidStyle.NOTESIS -> null
-        LiquidStyle.IOS -> ios.motion
+        LiquidStyle.IOS, LiquidStyle.IOS_LITE -> ios.motion
         LiquidStyle.MORNYE -> mornye.motion
     }
 
@@ -348,9 +354,105 @@ internal fun Modifier.styledLiquidGlass(
 ): Modifier = when (style) {
     LiquidStyle.IOS -> iosGlass(settings.ios, if (settings.ios.smoothCorners) mornyeSquircle(shape) else shape,
         backdrop, panel, dark, shadows, rim, exportedBackdrop, amount)
+    LiquidStyle.IOS_LITE -> iosLiteGlass(settings.ios, if (settings.ios.smoothCorners) mornyeSquircle(shape) else shape,
+        backdrop, panel, dark, shadows, rim, exportedBackdrop, amount)
     LiquidStyle.MORNYE -> mornyeGlass(settings.mornye, shape, backdrop, panel, dark, shadows, rim, exportedBackdrop, amount)
     LiquidStyle.NOTESIS -> this
 }
+
+/**
+ * The one blur iOS light draws in place of iOS's two layers: the clear
+ * layer's blur moved towards the frost's as far as the frost shows, in dp.
+ * iOS draws the page lightly blurred and lays the heavily blurred page over
+ * it at the frost's opacity; one blur part of the way between the two reads
+ * much the same, and costs one pass instead of two lens passes and a blend.
+ */
+internal fun iosLiteBlurDp(blur: Float, frost: Float, frostOpacity: Float): Float {
+    val share = frostOpacity.coerceIn(0f, 1f)
+    return (blur + (frost - blur) * share).coerceAtLeast(0f)
+}
+
+/**
+ * iOS's look drawn the way Liquid glass draws its own (see [liquidGlassSurface]):
+ * the page blurred once with iOS's colour lift, its pale body over it, its
+ * light along the rim drawn as a line rather than by a shader, its rim shade
+ * and its soft shadow. No lens runs over a pane at rest, and there is one
+ * layer where iOS has two. The numbers are iOS's own ([IosGlass]), so the two
+ * styles can be set alike and told apart by how they feel.
+ */
+private fun Modifier.iosLiteGlass(
+    g: IosGlass,
+    shape: Shape,
+    backdrop: Backdrop,
+    panel: Boolean,
+    dark: Boolean,
+    shadows: Boolean,
+    rim: Boolean,
+    exportedBackdrop: LayerBackdrop?,
+    amount: Float,
+): Modifier {
+    val saturation = 1f + ((if (dark) g.saturation * IosGlass.DARK_SATURATION else g.saturation) - 1f) * amount
+    val frostOpacity = (if (dark) g.frostOpacity * IosGlass.DARK_FROST else g.frostOpacity).coerceIn(0f, 1f)
+    val blurDp = iosLiteBlurDp(g.blur, g.frost, frostOpacity) * amount
+    val body = if (dark) iosDarkReadingMaterial(panel, amount, g.bodyOpacity)
+        else Color(0xFFF8F8F8).copy(alpha = (g.bodyOpacity * amount).coerceIn(0f, 1f))
+    val rimLight = if (rim) ((if (dark) g.rimLight * IosGlass.DARK_RIM_LIGHT else g.rimLight) * amount) else 0f
+    val shadow = if (shadows && !dark) Modifier.paneShadow(shape, 10.dp, 7.dp, Color.Black.copy(alpha = 4f / 255f), amount)
+        else Modifier
+    val glass = this.then(shadow).drawBackdrop(
+        backdrop = backdrop,
+        shape = { shape },
+        effects = {
+            colorControls(saturation = saturation)
+            if (blurDp > 0f) blur(blurDp.dp.toPx())
+        },
+        highlight = null,
+        shadow = null,
+        exportedBackdrop = exportedBackdrop,
+        onDrawSurface = { drawRect(body) },
+    )
+    val shaded = if (rim && g.rimShade > 0f) glass.rimShade(shape, g.rimShade * amount, dark) else glass
+    return if (rimLight > 0f) shaded.iosLiteRim(shape, rimLight, g.lightAngle, g.rimAllRound, dark) else shaded
+}
+
+/**
+ * iOS's rim light as a line: a fine stroke just inside the edge, bright where
+ * the edge faces the light from [lightAngle] (90 is the top) and on the side
+ * opposite, faint along the two ends - or even all round. A gradient on a
+ * stroke, drawn with the pane; no shader and nothing read from the page.
+ */
+private fun Modifier.iosLiteRim(shape: Shape, strength: Float, lightAngle: Float, allRound: Boolean, dark: Boolean): Modifier =
+    drawWithCache {
+        val width = 1.dp.toPx()
+        val inset = width / 2f + 0.5.dp.toPx()
+        val inner = Size((size.width - inset * 2).coerceAtLeast(0f), (size.height - inset * 2).coerceAtLeast(0f))
+        val outline = shape.createOutline(inner, layoutDirection, this)
+        val peak = ((if (dark) 0.22f else 0.55f) * strength / 2f).coerceIn(0f, 0.9f)
+        val brush = if (allRound) {
+            androidx.compose.ui.graphics.SolidColor(Color.White.copy(alpha = peak * 0.7f))
+        } else {
+            // Along the way the light travels: bright where it comes in, faint across the middle,
+            // and a softer catch where it leaves, as light inside glass does.
+            val angle = Math.toRadians(lightAngle.toDouble())
+            val dx = kotlin.math.cos(angle).toFloat()
+            val dy = -kotlin.math.sin(angle).toFloat()
+            val reach = maxOf(inner.width, inner.height) / 2f
+            val c = Offset(inner.width / 2f, inner.height / 2f)
+            val from = Offset(c.x + dx * reach, c.y + dy * reach)
+            val to = Offset(c.x - dx * reach, c.y - dy * reach)
+            Brush.linearGradient(
+                0f to Color.White.copy(alpha = peak),
+                0.28f to Color.White.copy(alpha = peak * 0.12f),
+                0.72f to Color.White.copy(alpha = peak * 0.12f),
+                1f to Color.White.copy(alpha = peak * 0.55f),
+                start = from, end = to,
+            )
+        }
+        onDrawWithContent {
+            drawContent()
+            translate(inset, inset) { drawOutline(outline, brush, style = Stroke(width)) }
+        }
+    }
 
 /**
  * The corner of [shape] at this size, for a shader that draws its own outline.

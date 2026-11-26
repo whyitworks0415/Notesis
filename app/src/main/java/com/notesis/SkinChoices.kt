@@ -171,7 +171,7 @@ internal fun SkinPreview(skin: Skin, modifier: Modifier, style: LiquidStyle = Li
             }
             Skin.LIQUID_GLASS -> when (style) {
                 // The iOS material: a pale frosted body, a bright hairline on top, a faint shade under it.
-                LiquidStyle.IOS -> {
+                LiquidStyle.IOS, LiquidStyle.IOS_LITE -> {
                     drawRoundRect(Color(0xFFF8F8F8).copy(alpha = 0.72f), bar.topLeft, bar.size, radius)
                     drawRoundRect(Color.Black.copy(alpha = 0.10f), bar.topLeft, bar.size, radius, style = Stroke(0.75.dp.toPx()))
                     drawRoundRect(
@@ -204,7 +204,7 @@ internal fun SkinPreview(skin: Skin, modifier: Modifier, style: LiquidStyle = Li
         val picked = when {
             skin != Skin.LIQUID_GLASS -> accent
             style == LiquidStyle.MORNYE -> Color(MornyeAccent.RED.light)
-            style == LiquidStyle.IOS -> Color(MornyeAccent.BLUE.light)
+            style.looksIos -> Color(MornyeAccent.BLUE.light)
             else -> accent
         }
         val step = bar.width / 4f

@@ -1922,3 +1922,8 @@ Glass resolution	유리 해상도
 Half	절반
 Quarter	4분의 1
 How finely the glass is worked out. Half does a quarter of the work for each pane and quarter a sixteenth; the frost looks the same, the page under the clear layer and the light on the rim a little softer. Full is the glass as it was.	유리를 얼마나 세밀하게 계산할지 정합니다. 절반은 유리 면마다 계산이 4분의 1, 4분의 1은 16분의 1로 줄어듭니다. 서리는 그대로 보이고, 맑은 층 아래 페이지와 테두리 빛이 조금 부드러워집니다. 전체는 원래의 유리입니다.
+iOS light	iOS 라이트
+iOS's look drawn as lightly as Liquid glass: one blur for each pane, with iOS's colours, rim, shadow and corners, and no lens on panes at rest.	iOS의 모양을 Liquid glass만큼 가볍게 그립니다. 유리마다 흐리기는 한 번만 하고, iOS의 색·테두리·그림자·모서리를 씁니다. 가만히 있는 유리에는 렌즈를 돌리지 않습니다.
+iOS's look drawn the light way: the page blurred once for each pane, with iOS's colours, rim, shadow and corners. No lens runs over a pane at rest and menus open as Liquid glass's do. These numbers are shared with iOS.	iOS의 모양을 가벼운 방식으로 그립니다. 유리마다 페이지를 한 번만 흐리고, iOS의 색·테두리·그림자·모서리를 씁니다. 가만히 있는 유리에는 렌즈를 돌리지 않고, 메뉴는 Liquid glass처럼 열립니다. 아래 값은 iOS 스타일과 함께 씁니다.
+The page under the glass, barely softened.	유리 아래 페이지를 아주 살짝 흐립니다.
+How far the one blur leans from the light one towards the frost.	한 번의 흐리기가 약한 흐림에서 서리 쪽으로 얼마나 기울지 정합니다.

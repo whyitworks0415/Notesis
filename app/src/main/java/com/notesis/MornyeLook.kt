@@ -110,7 +110,7 @@ data class MornyeGlass(
 internal val SkinSettings.smoothCorners: Boolean
     get() = when (liquidStyle) {
         LiquidStyle.MORNYE -> mornye.smoothCorners
-        LiquidStyle.IOS -> ios.smoothCorners
+        LiquidStyle.IOS, LiquidStyle.IOS_LITE -> ios.smoothCorners
         LiquidStyle.NOTESIS -> false
     }
 
@@ -288,10 +288,10 @@ internal fun lookScheme(context: Context?, skin: Skin, look: SkinSettings): Colo
     // iOS takes Mornye's colours too - iOS's grouped greys and an accent of
     // its own, blue unless another is chosen.
     if (skin == Skin.LIQUID_GLASS && look.liquidStyle != LiquidStyle.NOTESIS) {
-        val chosen = if (look.liquidStyle == LiquidStyle.IOS) look.ios.accent else look.mornye.accent
+        val chosen = if (look.liquidStyle.looksIos) look.ios.accent else look.mornye.accent
         val accent = chosen.argb(dark, look.accent)
         val grouped = mornyeScheme(schemeFrom(accent, look.highContrast, dark), accent, dark)
-        return if (look.liquidStyle == LiquidStyle.IOS) iosChromeScheme(grouped, dark) else grouped
+        return if (look.liquidStyle.looksIos) iosChromeScheme(grouped, dark) else grouped
     }
     val wallpaper = skin == Skin.MATERIAL && look.dynamicColor && !look.highContrast &&
         context != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S

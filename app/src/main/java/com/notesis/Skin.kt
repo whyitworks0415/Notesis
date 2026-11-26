@@ -1001,7 +1001,7 @@ fun skinColors(base: ColorScheme, look: SkinSettings, skin: Skin = Skin.MATERIAL
         skin.isRefractive -> REFRACTIVE_POPUP_ALPHA
         else -> POPUP_ALPHA
     }
-    val tint = if (look.themeMode == AppThemeMode.DARK && skin.isRefractive && look.liquidStyle == LiquidStyle.IOS) {
+    val tint = if (look.themeMode == AppThemeMode.DARK && skin.isRefractive && look.liquidStyle.looksIos) {
         Color.Transparent
     } else darkAwareTint(Color(look.tint), look.themeMode == AppThemeMode.DARK)
     fun glassy(container: Color): Color =
