@@ -7,6 +7,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.isFinite
 import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.translate
@@ -43,10 +44,12 @@ internal val LocalBackdropMotion = compositionLocalOf<(() -> Float)?> { null }
  */
 internal fun DrawScope.drawBackdropAligned(layer: GraphicsLayer, sourceOrigin: Offset, coordinates: LayoutCoordinates?) {
     if (coordinates == null || !coordinates.isAttached || layer.isReleased) return
+    if (layer.size.width <= 0 || layer.size.height <= 0) return
     val width = coordinates.size.width.toFloat()
     val height = coordinates.size.height.toFloat()
     val near = coordinates.localToScreen(Offset.Zero)
     val far = coordinates.localToScreen(Offset(width, height))
+    if (!near.isFinite || !far.isFinite || !sourceOrigin.isFinite) return
     val a = backdropAlignment(sourceOrigin.x, sourceOrigin.y, near.x, near.y, far.x, far.y, width, height)
     withTransform({
         scale(a.scaleX, a.scaleY, pivot = Offset.Zero)

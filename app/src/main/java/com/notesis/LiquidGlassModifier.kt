@@ -53,6 +53,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.Backdrop as KyantBackdrop
 import com.kyant.backdrop.backdrops.LayerBackdrop
@@ -73,6 +74,10 @@ internal val LocalLiquidGlassEffectsAllowed = compositionLocalOf<Boolean?> { nul
 @Composable
 fun rememberLiquidGlassBackdrop(): LayerBackdrop = rememberLayerBackdrop()
 
+/** A pause can reuse a recording only if it exists at the current size. */
+internal fun shouldRecordGlassBackdrop(recorded: IntSize, requested: IntSize, paused: Boolean): Boolean =
+    requested.width > 0 && requested.height > 0 && (!paused || recorded != requested)
+
 /** 컨트롤이 굴절시킬 배경을 기록합니다. 컨트롤 자체에는 붙이지 않습니다. */
 fun Modifier.captureLiquidGlassBackdrop(
     backdrop: LayerBackdrop,
@@ -85,8 +90,11 @@ fun Modifier.captureLiquidGlassBackdrop(
     // second page recording and full-screen texture upload during input.
     return this.drawWithContent {
         drawContent()
-        if (paused?.invoke() != true) {
-            backdrop.graphicsLayer.record { source?.invoke(this) ?: this@drawWithContent.drawContent() }
+        val layer = backdrop.graphicsLayer
+        val requested = IntSize(size.width.toInt(), size.height.toInt())
+        val hold = paused?.invoke() == true
+        if (!layer.isReleased && shouldRecordGlassBackdrop(layer.size, requested, hold)) {
+            layer.record(requested) { source?.invoke(this) ?: this@drawWithContent.drawContent() }
         }
     }
 }

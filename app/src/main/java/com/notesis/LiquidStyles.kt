@@ -140,8 +140,8 @@ data class IosGlass(
     val parts: IosParts = IosParts(),
     /**
      * The resolution the glass is worked out at, as a share of the screen's:
-     * 1, a half or a quarter (see [lowResGlass]). A half by default, the
-     * frost being a blur either way.
+     * 1, a half or a quarter for frosted-only glass (see [lowResGlass]).
+     * The clear layer keeps the resolution of the page.
      */
     val resolution: Float = 0.5f,
 ) {
@@ -223,6 +223,10 @@ internal val IOS_RESOLUTIONS = floatArrayOf(1f, 0.5f, 0.25f)
 
 internal fun iosResolution(value: Float): Float =
     if (!value.isFinite()) 0.5f else IOS_RESOLUTIONS.minByOrNull { kotlin.math.abs(it - value) } ?: 0.5f
+
+/** Fine ink in the clear layer must not pass through a smaller pixel grid as it moves. */
+internal fun iosGlassRenderScale(requested: Float, clearLayer: Boolean, fullResolution: Boolean): Float =
+    if (clearLayer || fullResolution) 1f else iosResolution(requested)
 
 /**
  * Every part iOS's glass is made of, each one on or off, so the glass can be
@@ -460,7 +464,8 @@ private fun Modifier.iosGlass(
             else -> clear
         }
     }
-    if (g.resolution < 1f && !fullResolution && !LabPerformance.efficientNow &&
+    val resolution = iosGlassRenderScale(g.resolution, p.clearLayer, fullResolution)
+    if (resolution < 1f && !LabPerformance.efficientNow &&
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         // Worked out at a half or a quarter of the screen's resolution (see [lowResGlass]):
         // every length the lens and the blur take is that much shorter in the layer.
@@ -494,7 +499,7 @@ private fun Modifier.iosGlass(
                 )
             }
         }
-        return this.then(shadow).lowResGlass(backdrop, shape, g.resolution, body, effect).then(shade)
+        return this.then(shadow).lowResGlass(backdrop, shape, resolution, body, effect).then(shade)
     }
     if (LabPerformance.efficientNow) {
         // One sampling/lens pass instead of a clear pass followed by a frosted pass.
