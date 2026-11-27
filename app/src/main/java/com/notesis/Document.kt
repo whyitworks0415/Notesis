@@ -1723,6 +1723,7 @@ class NoteStore(context: Context) {
             it.board.strokes.addAll(readStrokes(File(root, "$id/${Document.BOARD_FILE}")))
             // The tape laid off the pages, beside the board's ink.
             it.board.masks.addAll(readStrokes(File(root, "$id/${Document.BOARD_MASK_FILE}")).map { stroke -> PageMask(stroke) })
+            json.optJSONObject("board")?.let { board -> it.board.images.addAll(imagesFrom(board)) }
             it.board.dirty = false
         }
     }
@@ -2645,6 +2646,8 @@ class NoteStore(context: Context) {
             .put("strokeCount", document.pages.sumOf { strokeCountOf(it) })
             .put("pages", pages)
             .put("layers", document.layers.toJson())
+        // Text boxes and pictures put off the pages, on the whiteboard; its ink and tape have files of their own.
+        if (document.board.images.isNotEmpty()) json.put("board", JSONObject().put("images", imagesToJson(document.board)))
         File(root, "$id/meta.json").writeText(json.toString())
     }
 

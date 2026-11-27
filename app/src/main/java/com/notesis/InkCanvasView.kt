@@ -6560,9 +6560,11 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** Whether a pen down off the pages writes on the whiteboard: ink or the eraser, nothing else. */
     private fun boardTakes(event: MotionEvent): Boolean {
-        // Off the pages takes what the pages take - ink, tape, the lasso, shapes, a capture - but
-        // pictures and text, which belong to a page and would be lost between them.
-        if (!whiteboard || readMode || imageMode) return false
+        // Off the pages takes what the pages take - ink, tape, the lasso, shapes, a capture, text
+        // boxes - and a hand on a picture or text box already put there. A picture is still put
+        // on a page: it comes in at a page's middle.
+        if (!whiteboard || readMode) return false
+        if (imageMode) return textMode || document.board.images.isNotEmpty()
         if (lassoMode || captureMode || maskMode) return true
         if (shapeKind == ShapeKind.CHECKBOX) return false
         if (shapeKind != null) return true
@@ -9059,13 +9061,20 @@ class InkCanvasView @JvmOverloads constructor(
     /** A text box was resized by hand: the host draws its text again to the box's new width. */
     var onTextBoxResized: ((PageImage) -> Unit)? = null
 
-    /** The page a picture or text box is on, or -1. */
-    fun pageIndexOfImage(image: PageImage): Int = document.pages.indexOfFirst { page -> page.images.any { it === image } }
+    /** Whether a page index from this view (as [pageIndexOfImage] gives it) means off the pages, the whiteboard. */
+    fun isBoard(index: Int): Boolean = index == BOARD_INDEX
+
+    /** The page a picture or text box is on, [BOARD_INDEX] for one off the pages, or -1. */
+    fun pageIndexOfImage(image: PageImage): Int {
+        if (document.board.images.any { it === image }) return BOARD_INDEX
+        return document.pages.indexOfFirst { page -> page.images.any { it === image } }
+    }
 
     fun putTextBox(imageId: String, bitmapWidth: Int, bitmapHeight: Int, content: TextBoxContent,
         replacing: PageImage? = null, at: Triple<Int, Float, Float>? = null, box: Int = PageImage.BOX_NONE) {
-        val page = if (replacing != null) document.pages.firstOrNull { replacing in it.images } ?: return
-            else document.pages.getOrNull(at?.first ?: currentPage) ?: return
+        val page = if (replacing != null) {
+            (document.pages.firstOrNull { replacing in it.images } ?: document.board.takeIf { replacing in it.images }) ?: return
+        } else pageOf(at?.first ?: currentPage) ?: return
         val boxWidth = bitmapWidth / 2f
         val boxHeight = bitmapHeight / 2f
         val image = replacing?.copy(id = imageId, width = boxWidth, height = boxHeight, textContent = content)
@@ -9158,7 +9167,7 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun beginImageGesture(event: MotionEvent, index: Int) {
-        val page = document.pages[index]
+        val page = pageOf(index) ?: return
         pageLocalInto(event.x, event.y, index, imageGrab)
         val x = imageGrab[0]
         val y = imageGrab[1]
@@ -9268,8 +9277,8 @@ class InkCanvasView @JvmOverloads constructor(
     private fun dragImage(event: MotionEvent, pointerIndex: Int) {
         val image = selectedImage ?: return
         val page = selectedImagePage ?: return
-        val index = document.pages.indexOf(page)
-        if (index < 0) return
+        val index = if (page === document.board) BOARD_INDEX else document.pages.indexOf(page)
+        if (index == -1) return
         pageLocalInto(event.getX(pointerIndex), event.getY(pointerIndex), index, imagePoint)
         if (resizingImage) {
             val aspect = if (image.height > 0f) image.width / image.height else 1f
@@ -9466,7 +9475,9 @@ class InkCanvasView @JvmOverloads constructor(
         val region = CaptureRegion(BOARD_INDEX, rect, currentScale(), rect.width(), rect.height(), -1,
             boardStrokesIn(rect.left, rect.top, rect.right, rect.bottom) +
                 document.board.masks.filter { !it.revealed }.map { it.stroke },
-            emptyList(), pieces)
+            document.board.images.filter { RectF.intersects(rect, RectF(it.x, it.y, it.x + it.width, it.y + it.height)) }
+                .map { it to imageLoader?.invoke(it.id) },
+            pieces)
         lastCapture = region
         val preview = (CAPTURE_PREVIEW_PX / max(rect.width(), rect.height())).coerceAtMost(CAPTURE_MAX_SCALE)
         refiner.execute {
@@ -9507,6 +9518,16 @@ class InkCanvasView @JvmOverloads constructor(
                 canvas.clipRect(0f, 0f, local.width() * scale, local.height() * scale)
                 paintRegion(canvas, local, piece.region.pageWidth, piece.region.pageHeight, piece.region.pdfIndex,
                     piece.region.strokes, piece.region.images, scale, w, h, spent)
+                canvas.restore()
+            }
+            // The board's own text boxes and pictures, under its ink, from their kept pictures.
+            for ((image, bitmap) in region.images) {
+                if (bitmap == null || bitmap.isRecycled) continue
+                val box = RectF((image.x - rect.left) * scale, (image.y - rect.top) * scale,
+                    (image.x + image.width - rect.left) * scale, (image.y + image.height - rect.top) * scale)
+                canvas.save()
+                if (image.rotation != 0f) canvas.rotate(image.rotation, box.centerX(), box.centerY())
+                canvas.drawBitmap(bitmap, null, box, Paint(Paint.FILTER_BITMAP_FLAG).apply { alpha = (image.opacity * 255).toInt() })
                 canvas.restore()
             }
             val renderer = CanvasStrokeRenderer.create(PencilTextureStore)
@@ -11208,6 +11229,11 @@ class InkCanvasView @JvmOverloads constructor(
                 if (whiteboard) {
                     scoped.save()
                     scoped.concat(documentToScreen)
+                    // Text boxes and pictures off the pages, under the board's ink as a page's are under its own.
+                    if (document.board.images.isNotEmpty()) {
+                        pageCull.set(viewport[0], viewport[1], viewport[2], viewport[3])
+                        drawImages(scoped, document.board)
+                    }
                     val boardEpsilon = epsilonFor(tessellationBucket(currentScale()))
                     val rebuilds = intArrayOf(BOARD_REBUILDS_PER_FRAME)
                     val boardLifted = lassoPage == BOARD_INDEX && movingLasso
@@ -11225,6 +11251,7 @@ class InkCanvasView @JvmOverloads constructor(
                     if (boardLifted) for (stroke in lassoStrokes) drawBoardStroke(scoped, scope, stroke, boardEpsilon, rebuilds, lassoDx, lassoDy)
                     drawBoardMasks(scoped, scope, boardEpsilon, rebuilds)
                     flushBoardBuilds()
+                    if (document.board === selectedImagePage) drawImageHandles(scoped)
                     if (lassoPage == BOARD_INDEX) drawLasso(scoped)
                     if (shapePage == BOARD_INDEX && drawingShape) drawShapePreview(scoped)
                     if (polyPage == BOARD_INDEX && polyPoints.isNotEmpty()) {

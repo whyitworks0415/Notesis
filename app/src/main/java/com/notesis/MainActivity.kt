@@ -5127,7 +5127,8 @@ private fun NoteScreen(
         commitInlineText()
         val view = canvas ?: return
         val pageIndex = position?.first ?: replacing?.let(view::pageIndexOfImage) ?: return
-        if (pageIndex < 0) return
+        // Off the pages (the whiteboard) is a place for text too.
+        if (pageIndex < 0 && !view.isBoard(pageIndex)) return
         val x = position?.second ?: replacing?.x ?: 0f
         val y = position?.third ?: replacing?.y ?: 0f
         val at = view.windowPointOfPage(pageIndex, x, y)
