@@ -118,6 +118,15 @@ fun tessellationBucket(scale: Float): Float {
  * app rather than one per view: a thread each would stay behind for every note
  * opened, and it idles away when there is nothing to read.
  */
+/**
+ * Builds whiteboard strokes at a new fidelity off the UI thread. A note with a
+ * lot off its pages rebuilt two dozen strokes in every frame after each zoom,
+ * on the UI thread, until all were done: a stutter as long as the board was big.
+ */
+private val BOARD_BUILDER = java.util.concurrent.ThreadPoolExecutor(
+    0, 1, 5L, java.util.concurrent.TimeUnit.SECONDS, java.util.concurrent.LinkedBlockingQueue(),
+) { runnable -> Thread(runnable, "notesis-board").apply { isDaemon = true; priority = Thread.NORM_PRIORITY - 1 } }
+
 private val STAND_IN_WORKER = java.util.concurrent.ThreadPoolExecutor(
     0, 1, 5L, java.util.concurrent.TimeUnit.SECONDS, java.util.concurrent.LinkedBlockingQueue(),
 ) { runnable -> Thread(runnable, "notesis-stand-in").apply { isDaemon = true; priority = Thread.NORM_PRIORITY - 1 } }
@@ -2114,8 +2123,8 @@ class InkCanvasView @JvmOverloads constructor(
 
     private val predictionHead = PredictionHeadView(context)
     private val subframe = SubframeBlurView(context)
-    /** Keeps the window drawing while a stroke goes into the front buffer; see [PenHeartbeat]. */
-    private val penHeartbeat = PenHeartbeat(context)
+    /** Keeps the screen at full rate while a stroke goes into the front buffer; see [PenPulseSurface]. */
+    private val penPulse = PenPulseSurface(context)
     private val subframeTrack = SubframeTrack()
 
     /** [SUBFRAME_OFF], [SUBFRAME_BLUR] or [SUBFRAME_GHOST]: the pen's in-between travel shown ahead of the tip. */
@@ -2222,7 +2231,7 @@ class InkCanvasView @JvmOverloads constructor(
     private val recentBrushes = RecentCache<BrushKey, Brush>(RECENT_BRUSHES)
 
     private var activeStylusPointer: Int? = null
-    private var activeStrokeId: InProgressStrokeId? = null
+    @Volatile private var activeStrokeId: InProgressStrokeId? = null
     private var activePage: Page? = null
     private var lastStylusX = Float.NaN
     private var lastStylusY = Float.NaN
@@ -2858,8 +2867,9 @@ class InkCanvasView @JvmOverloads constructor(
         addView(compatWet, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(predictionHead, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(subframe, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-        addView(penHeartbeat, LayoutParams(1, 1))
-        penHeartbeat.writing = { activeStrokeId != null }
+        addView(penPulse, LayoutParams(1, 1))
+        // Read on the pulse's own thread: a stale answer costs at most one more pixel.
+        penPulse.writing = { activeStrokeId != null }
         addView(gestureTrailView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(eyedropper, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         wet.textureBitmapStore = PencilTextureStore
@@ -5074,7 +5084,7 @@ class InkCanvasView @JvmOverloads constructor(
                     // and a window that draws nothing while the pen moves lets it slow down.
                     if (activeStrokeId != null && InkTuning.heartbeat &&
                         penHeartbeatWanted(compatWetInk, inkStreakNow() || subframe.mode != SUBFRAME_OFF)) {
-                        penHeartbeat.start()
+                        penPulse.start(displayHz)
                     }
                     // This returns before asynchronous front-buffer rendering finishes.
                     if (latencyMonitoringEnabled && !compatWetInk) {
@@ -10471,6 +10481,9 @@ class InkCanvasView @JvmOverloads constructor(
             if (boardGroupsRevision == board.revision && boardGroupsSize == board.strokes.size) return boardGroups
             val alive = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Stroke, Boolean>()).apply { addAll(board.strokes) }
             boardOrigins.keys.retainAll(alive)
+            // Erased or moved strokes take their built copies with them.
+            boardDrawn.keys.retainAll(alive)
+            boardPending.keys.retainAll(alive)
             boardGroups = board.strokes.groupBy(::boardKey)
             boardGroupsRevision = board.revision
             boardGroupsSize = board.strokes.size
@@ -10523,7 +10536,19 @@ class InkCanvasView @JvmOverloads constructor(
                 if (stale && (!same || !interacting)) {
                     // Built at this zoom's fidelity, each near the square's corner; all of them, or it waits a frame.
                     val built = strokes.map { boardStroke(it, epsilon, budget) }
-                    if (built.any { it == null || it.dx != cx || it.dy != cy }) {
+                    if (built.any { it == null || it.dx != cx || it.dy != cy || abs(it.epsilon - epsilon) >= EPSILON_SLOP }) {
+                        // Strokes only added since the square was recorded (one just written):
+                        // the recording, and the new ones over it, until they are built.
+                        if (!same && cell.node.hasDisplayList() && cell.meshInk == meshInk && cell.strokes.size < strokes.size) {
+                            val current = java.util.Collections.newSetFromMap(IdentityHashMap<Stroke, Boolean>()).apply { addAll(strokes) }
+                            if (cell.strokes.all { it in current }) {
+                                drawBoardCellNode(canvas, cell, cx, cy)
+                                val recorded = java.util.Collections.newSetFromMap(IdentityHashMap<Stroke, Boolean>()).apply { addAll(cell.strokes) }
+                                for (stroke in strokes) if (stroke !in recorded) drawBoardStroke(canvas, scope, stroke, epsilon, budget, 0f, 0f)
+                                drawnCount += strokes.size
+                                continue
+                            }
+                        }
                         if (!same) {
                             for (stroke in strokes) {
                                 val drawn = boardDrawn[stroke]
@@ -10537,15 +10562,21 @@ class InkCanvasView @JvmOverloads constructor(
                     } else recordBoardCell(cell, built.map { it!!.stroke }, strokes, scale, epsilon)
                 }
                 if (!cell.node.hasDisplayList()) continue
-                canvas.save()
-                canvas.translate(cx + cell.left, cy + cell.top)
-                val inverse = 1f / cell.scale
-                canvas.scale(inverse, inverse)
-                canvas.drawRenderNode(cell.node)
-                canvas.restore()
+                drawBoardCellNode(canvas, cell, cx, cy)
                 drawnCount += strokes.size
             }
+            flushBoardBuilds()
             return drawnCount
+        }
+
+        /** A square's recording, placed where its ink is, at the zoom it was recorded for. */
+        private fun drawBoardCellNode(canvas: Canvas, cell: BoardCell, cx: Float, cy: Float) {
+            canvas.save()
+            canvas.translate(cx + cell.left, cy + cell.top)
+            val inverse = 1f / cell.scale
+            canvas.scale(inverse, inverse)
+            canvas.drawRenderNode(cell.node)
+            canvas.restore()
         }
 
         /** One board stroke, built near its square's corner for precision (see [boardStroke]), moved by ([dx], [dy]). */
@@ -10631,11 +10662,60 @@ class InkCanvasView @JvmOverloads constructor(
          */
         private fun boardStroke(stroke: Stroke, epsilon: Float, budget: IntArray): BoardDrawn? {
             boardDrawn[stroke]?.let { if (abs(it.epsilon - epsilon) < EPSILON_SLOP) return it }
-            if (budget[0] <= 0 || stroke.inputs.size == 0) {
-                postInvalidateOnAnimation()
+            if (stroke.inputs.size == 0) return boardDrawn[stroke]
+            // A stroke or two in the frame - the one just written shows at once -
+            // and the rest on the board's own thread, the old ones drawn meanwhile.
+            if (budget[0] <= 0) {
+                queueBoardBuild(stroke, epsilon)
                 return boardDrawn[stroke]
             }
             budget[0]--
+            val drawn = buildBoardStroke(stroke, epsilon, meshInk) ?: return boardDrawn[stroke]
+            boardDrawn[stroke] = drawn
+            return drawn
+        }
+
+        /** Strokes waiting for the board's thread, with the fidelity each was asked for. */
+        private val boardPending = java.util.IdentityHashMap<Stroke, Float>()
+        private val boardBatch = ArrayList<Stroke>()
+
+        private fun queueBoardBuild(stroke: Stroke, epsilon: Float) {
+            val asked = boardPending[stroke]
+            if (asked != null && abs(asked - epsilon) < EPSILON_SLOP) return
+            boardPending[stroke] = epsilon
+            boardBatch += stroke
+        }
+
+        /** Hands what [queueBoardBuild] gathered this frame to the board's thread, as one job. */
+        private fun flushBoardBuilds() {
+            if (boardBatch.isEmpty()) return
+            val strokes = boardBatch.toList()
+            val epsilons = FloatArray(strokes.size) { boardPending[strokes[it]] ?: 0f }
+            val mesh = meshInk
+            boardBatch.clear()
+            BOARD_BUILDER.execute {
+                val built = arrayOfNulls<BoardDrawn>(strokes.size)
+                for (i in strokes.indices) {
+                    if (disposed) return@execute
+                    built[i] = runCatching { buildBoardStroke(strokes[i], epsilons[i], mesh) }.getOrNull()
+                }
+                post {
+                    if (disposed) return@post
+                    for (i in strokes.indices) {
+                        val stroke = strokes[i]
+                        val asked = boardPending[stroke] ?: continue
+                        // Asked again at another fidelity meanwhile: that job brings it.
+                        if (abs(asked - epsilons[i]) >= EPSILON_SLOP) continue
+                        boardPending.remove(stroke)
+                        built[i]?.let { boardDrawn[stroke] = it }
+                    }
+                    invalidate()
+                }
+            }
+        }
+
+        /** [stroke] built at [epsilon] near its square's corner; see [boardStroke]. Any thread. */
+        private fun buildBoardStroke(stroke: Stroke, epsilon: Float, meshInk: Boolean): BoardDrawn? {
             val opaque = Color.alpha(stroke.brush.colorIntArgb) == 255
             val family = (if (meshInk && opaque) Tool.meshFamilyOf(stroke.brush.family) else null) ?: stroke.brush.family
             val drawn = runCatching {
@@ -10660,8 +10740,7 @@ class InkCanvasView @JvmOverloads constructor(
                 val brush = stroke.brush.copy(family = family,
                     epsilon = inkEpsilon(stroke.brush.family, stroke.brush.size, epsilon))
                 BoardDrawn(epsilon, Stroke(brush, inputs.toImmutable()), dx, dy)
-            }.getOrNull() ?: return boardDrawn[stroke]
-            boardDrawn[stroke] = drawn
+            }.getOrNull()
             return drawn
         }
 
@@ -11145,6 +11224,7 @@ class InkCanvasView @JvmOverloads constructor(
                     for (stroke in visibleBoard) drawBoardStroke(scoped, scope, stroke, boardEpsilon, rebuilds, 0f, 0f)
                     if (boardLifted) for (stroke in lassoStrokes) drawBoardStroke(scoped, scope, stroke, boardEpsilon, rebuilds, lassoDx, lassoDy)
                     drawBoardMasks(scoped, scope, boardEpsilon, rebuilds)
+                    flushBoardBuilds()
                     if (lassoPage == BOARD_INDEX) drawLasso(scoped)
                     if (shapePage == BOARD_INDEX && drawingShape) drawShapePreview(scoped)
                     if (polyPage == BOARD_INDEX && polyPoints.isNotEmpty()) {
@@ -11827,7 +11907,8 @@ class InkCanvasView @JvmOverloads constructor(
         const val LINK_PREVIEW_HOLD_MS = 600L
         const val MAX_SCREEN_BRUSHES = 256
         /** How many whiteboard strokes may be built afresh in one frame; see boardStroke. */
-        const val BOARD_REBUILDS_PER_FRAME = 24
+        /** Whiteboard strokes built in the frame itself; the rest go to [BOARD_BUILDER]. */
+        const val BOARD_REBUILDS_PER_FRAME = 2
         /** Kept pictures held at once while their pages load; each is up to a screenful. */
         const val MAX_STAND_INS = 4
         /** Longest side, in pixels, a page is drawn at from its mesh cache to stand in while it loads. */

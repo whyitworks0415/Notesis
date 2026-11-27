@@ -44,7 +44,7 @@ internal object InkTuning {
     @Volatile var backgroundRaster = true
     /** At pen-up the tiny hook at the start or end of a stroke, and a pause held still, are tidied away. */
     @Volatile var tidyAtLift = true
-    /** The window keeps drawing one pixel while the pen writes, so the screen keeps its rate (see [PenHeartbeat]). */
+    /** A one-pixel surface of its own posts a frame every vsync while the pen writes, so the screen keeps its rate (see [PenPulseSurface]). */
     @Volatile var heartbeat = true
     /** Motion blur's writing streak on every screen, not only at 60 Hz. */
     @Volatile var streakAtAllRates = false

@@ -284,56 +284,85 @@ internal fun penHeartbeatWanted(compatWetInk: Boolean, streakActive: Boolean): B
     !compatWetInk && !streakActive
 
 /**
- * Keeps the window drawing - one pixel in a corner, all but transparent,
- * changed each frame so the frame is not dropped as empty - for as long as
- * [writing] says a stroke is being written, so the screen keeps its full rate
- * and shows the front buffer's ink every refresh. Nothing else is drawn
- * again: the pixel's own view is the only thing invalidated.
+ * Keeps the screen at its full rate while a stroke is written, without the
+ * window drawing at all: a one-pixel surface of its own in a corner, all but
+ * transparent, posted a new frame on every vsync by a thread of its own, and
+ * asking the system for the panel's fastest rate (Android 11 and up).
+ *
+ * The front buffer draws the ink but posts no frames, and a screen that sees
+ * none slows down, so the ink reached the panel in steps. Drawing a pixel in
+ * the window instead kept the rate but made the whole window - Compose and the
+ * system's frame-rate bookkeeping - draw on every vsync, on the same UI thread
+ * the pen's events come in on. This surface touches neither.
  */
-internal class PenHeartbeat(context: android.content.Context) : android.view.View(context) {
-    private val paint = android.graphics.Paint()
+internal class PenPulseSurface(context: android.content.Context) : android.view.SurfaceView(context),
+    android.view.SurfaceHolder.Callback {
+    private val lock = Any()
+    private var ready = false
+    @Volatile private var running = false
+    @Volatile private var rateHz = 0f
     private var tick = false
-    private var running = false
-    var writing: () -> Boolean = { false }
+    private var thread: android.os.HandlerThread? = null
+    private var handler: android.os.Handler? = null
+    /** Asked on the pulse's own thread before each frame; false once the stroke is over. */
+    @Volatile var writing: () -> Boolean = { false }
 
     init {
+        setZOrderOnTop(true)
+        holder.setFormat(android.graphics.PixelFormat.TRANSLUCENT)
+        holder.addCallback(this)
         isClickable = false
         isFocusable = false
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
-        // Asked for as fast a rate as there is, where the system lets a view say so.
-        if (android.os.Build.VERSION.SDK_INT >= 35) {
-            runCatching { requestedFrameRate = REQUESTED_FRAME_RATE_CATEGORY_HIGH }
+    }
+
+    private val frame = object : android.view.Choreographer.FrameCallback {
+        override fun doFrame(frameTimeNanos: Long) {
+            if (!running || !writing()) { running = false; return }
+            synchronized(lock) {
+                if (!ready) { running = false; return }
+                val canvas = runCatching { holder.surface.lockHardwareCanvas() }.getOrNull()
+                if (canvas != null) {
+                    tick = !tick
+                    canvas.drawColor(android.graphics.Color.argb(if (tick) 2 else 1, 0, 0, 0), android.graphics.PorterDuff.Mode.SRC)
+                    runCatching { holder.surface.unlockCanvasAndPost(canvas) }
+                }
+            }
+            android.view.Choreographer.getInstance().postFrameCallback(this)
         }
     }
 
-    private val frame = android.view.Choreographer.FrameCallback {
-        if (!running || !writing() || !isAttachedToWindow) { running = false; return@FrameCallback }
-        tick = !tick
-        invalidate()
-        android.view.Choreographer.getInstance().postFrameCallback(nextFrame())
-    }
-
-    private fun nextFrame(): android.view.Choreographer.FrameCallback = frame
-
-    /** From the stroke's first point; stops by itself once [writing] says the stroke is over. */
-    fun start() {
+    /** From the stroke's first point, at the screen's [hz]; stops by itself once [writing] says the stroke is over. */
+    fun start(hz: Float) {
+        rateHz = hz
         if (running) return
+        val h = handler ?: return
         running = true
-        android.view.Choreographer.getInstance().postFrameCallback(frame)
+        h.post {
+            synchronized(lock) {
+                if (ready && android.os.Build.VERSION.SDK_INT >= 30 && rateHz >= 1f) {
+                    runCatching { holder.surface.setFrameRate(rateHz, android.view.Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE) }
+                }
+            }
+            android.view.Choreographer.getInstance().postFrameCallback(frame)
+        }
     }
 
-    fun stop() {
+    override fun surfaceCreated(holder: android.view.SurfaceHolder) {
+        val t = android.os.HandlerThread("pen-pulse", android.os.Process.THREAD_PRIORITY_DISPLAY).also { it.start() }
+        thread = t
+        handler = android.os.Handler(t.looper)
+        synchronized(lock) { ready = true }
+    }
+
+    override fun surfaceChanged(holder: android.view.SurfaceHolder, format: Int, width: Int, height: Int) = Unit
+
+    override fun surfaceDestroyed(holder: android.view.SurfaceHolder) {
         running = false
-        android.view.Choreographer.getInstance().removeFrameCallback(frame)
-    }
-
-    override fun onDetachedFromWindow() {
-        stop()
-        super.onDetachedFromWindow()
-    }
-
-    override fun onDraw(canvas: android.graphics.Canvas) {
-        paint.color = android.graphics.Color.argb(if (tick) 2 else 1, 0, 0, 0)
-        canvas.drawRect(0f, 0f, 1f, 1f, paint)
+        // Held while a frame is drawn, so the surface is never let go in the middle of one.
+        synchronized(lock) { ready = false }
+        handler = null
+        thread?.quitSafely()
+        thread = null
     }
 }
