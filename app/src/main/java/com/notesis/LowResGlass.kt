@@ -13,6 +13,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.addOutline
 import androidx.compose.ui.graphics.asComposeRenderEffect
+import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.scale
@@ -135,14 +136,15 @@ private class LowResGlassNode(
         val at = coordinates
         if (layer != null && at != null && at.isAttached && size.width >= 1f && size.height >= 1f) {
             val s = scale
-            val w = ceil(size.width * s).toInt().coerceAtLeast(1)
-            val h = ceil(size.height * s).toInt().coerceAtLeast(1)
-            layer.record(IntSize(w, h)) {
+            val w = size.width * s
+            val h = size.height * s
+            layer.record(IntSize(ceil(w).toInt(), ceil(h).toInt())) {
                 scale(s, s, pivot = Offset.Zero) {
                     with(backdrop) { drawBackdrop(this@draw, at, null) }
                 }
             }
-            val frame = GlassFrame(w.toFloat(), h.toFloat(), s, density, cornerOf(shape, size, layoutDirection, this))
+            // Round the allocation up, while keeping the lens at its actual size.
+            val frame = GlassFrame(w, h, s, density, cornerOf(shape, size, layoutDirection, this))
             // A new page position changes the input recording, not its optics.
             if (appliedFrame != frame) {
                 layer.renderEffect = effect(frame)?.asComposeRenderEffect()
@@ -157,6 +159,9 @@ private class LowResGlassNode(
                 scale(1f / s, 1f / s, pivot = Offset.Zero) { drawLayer(layer) }
                 if (surface.alpha > 0f) drawRect(surface)
             }
+        } else if (surface.alpha > 0f && size.width > 0f && size.height > 0f) {
+            // While waiting for layout coordinates, keep the glass's own colour.
+            drawOutline(shape.createOutline(size, layoutDirection, this), surface)
         }
         drawContent()
     }

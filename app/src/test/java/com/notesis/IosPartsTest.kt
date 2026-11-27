@@ -1,5 +1,6 @@
 package com.notesis
 
+import androidx.compose.ui.unit.IntSize
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -45,7 +46,7 @@ class IosPartsTest {
         assertFalse(glassFollowsPage(Interaction.MOVING, followsScroll = false, ink = GLASS_INK_LIVE))
     }
 
-    @Test fun `the glass is worked out at half the resolution by default, and one of three`() {
+    @Test fun `frosted glass saves half resolution by default, and one of three`() {
         assertEquals(0.5f, IosGlass().resolution)
         assertEquals(0.25f, iosResolution(0.3f))
         assertEquals(1f, iosResolution(2f))
@@ -55,6 +56,23 @@ class IosPartsTest {
         // Saved before there was a choice, the glass takes the default.
         val old = IosGlass().toJson().apply { remove("resolution") }
         assertEquals(0.5f, IosGlass.fromJson(old).resolution)
+    }
+
+    @Test fun `clear glass keeps native resolution and frosted only glass can render smaller`() {
+        assertEquals(1f, iosGlassRenderScale(0.25f, clearLayer = true, fullResolution = false))
+        assertEquals(1f, iosGlassRenderScale(0.5f, clearLayer = false, fullResolution = true))
+        assertEquals(0.5f, iosGlassRenderScale(0.5f, clearLayer = false, fullResolution = false))
+        assertEquals(0.25f, iosGlassRenderScale(0.25f, clearLayer = false, fullResolution = false))
+    }
+
+    @Test fun `paused capture keeps a valid recording and fills the first or resized frame`() {
+        val portrait = IntSize(800, 1200)
+        val landscape = IntSize(1200, 800)
+        assertTrue(shouldRecordGlassBackdrop(IntSize.Zero, portrait, paused = true))
+        assertFalse(shouldRecordGlassBackdrop(portrait, portrait, paused = true))
+        assertTrue(shouldRecordGlassBackdrop(portrait, landscape, paused = true))
+        assertTrue(shouldRecordGlassBackdrop(portrait, portrait, paused = false))
+        assertFalse(shouldRecordGlassBackdrop(portrait, IntSize.Zero, paused = false))
     }
 
     @Test fun `a held backdrop defers even live glass updates`() {

@@ -53,6 +53,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.Backdrop as KyantBackdrop
 import com.kyant.backdrop.backdrops.LayerBackdrop
@@ -85,8 +86,11 @@ fun Modifier.captureLiquidGlassBackdrop(
     // second page recording and full-screen texture upload during input.
     return this.drawWithContent {
         drawContent()
-        if (paused?.invoke() != true) {
-            backdrop.graphicsLayer.record { source?.invoke(this) ?: this@drawWithContent.drawContent() }
+        val layer = backdrop.graphicsLayer
+        val requested = IntSize(size.width.toInt(), size.height.toInt())
+        val hold = paused?.invoke() == true
+        if (!layer.isReleased && shouldRecordGlassBackdrop(layer.size, requested, hold)) {
+            layer.record(requested) { source?.invoke(this) ?: this@drawWithContent.drawContent() }
         }
     }
 }

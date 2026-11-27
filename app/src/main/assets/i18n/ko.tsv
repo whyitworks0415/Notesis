@@ -1955,3 +1955,4 @@ Tidy the ends at pen-up	펜을 뗄 때 끝 정리
 Tile budget per frame	프레임당 타일 예산
 When frames fall behind, fewer strokes are drawn into tiles each frame. Off, always the full amount.	프레임이 밀리면 프레임마다 타일에 그리는 획 수를 줄입니다. 끄면 항상 전부 그립니다.
 Writing streak at every refresh rate	모든 주사율에서 필기 잔상
+The clear layer uses full resolution to keep fine lines steady while the page moves.	페이지가 움직일 때도 가는 필기선이 깜박이지 않도록 맑은 층은 원본 해상도로 그립니다.
