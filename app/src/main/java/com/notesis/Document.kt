@@ -2042,13 +2042,7 @@ class NoteStore(context: Context) {
                     .put("y", image.y.toDouble())
                     .put("w", image.width.toDouble())
                     .put("h", image.height.toDouble())
-                    .put("text", image.textContent?.let { content -> JSONObject()
-                        .put("value", content.text).put("size", content.size.toDouble()).put("color", content.color)
-                        .put("html", content.html ?: "").put("font", content.font).put("bg", content.background)
-                        .put("corner", content.corner.toDouble()).put("pad", content.padding.toDouble())
-                        .put("min", content.minSize.toDouble())
-                        .put("md", content.markdown)
-                        .put("wrap", content.wrapWidth.toDouble()) })
+                    .put("text", image.textContent?.toJson())
                     .put("locked", image.locked)
                     .put("group", image.group)
                     .put("opacity", image.opacity.toDouble())
@@ -2091,25 +2085,7 @@ class NoteStore(context: Context) {
                 y = item.optDouble("y").toFloat(),
                 width = item.optDouble("w").toFloat(),
                 height = item.optDouble("h").toFloat(),
-                textContent = item.optJSONObject("text")?.let { content ->
-                    // A table box from before tables were taken out comes back as its text.
-                    val table = content.optJSONArray("table")?.let { rows ->
-                        (0 until rows.length()).map { r ->
-                            val row = rows.optJSONArray(r) ?: JSONArray()
-                            (0 until row.length()).map { c -> row.optString(c) }
-                        }
-                    }
-                    TextBoxContent(table?.let(::tableAsText) ?: content.optString("value"), content.optDouble("size", 32.0).toFloat(),
-                        content.optInt("color", 0xFF000000.toInt()),
-                        html = content.optString("html", "").ifBlank { null },
-                        font = content.optString("font", ""),
-                        background = content.optInt("bg", 0),
-                        corner = content.optDouble("corner", 0.0).toFloat(),
-                        padding = content.optDouble("pad", TextBoxContent.DEFAULT_PADDING.toDouble()).toFloat(),
-                        minSize = content.optDouble("min", 0.0).toFloat(),
-                        markdown = content.optBoolean("md", false),
-                        wrapWidth = content.optDouble("wrap", 0.0).toFloat())
-                },
+                textContent = item.optJSONObject("text")?.let(::textBoxContentFrom),
                 locked = item.optBoolean("locked", false),
                 group = item.optInt("group", 0),
                 opacity = item.optDouble("opacity", 1.0).toFloat().coerceIn(0f, 1f),

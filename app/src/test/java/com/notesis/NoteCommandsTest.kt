@@ -127,6 +127,88 @@ class NoteCommandsTest {
     }
 
     @Test
+    fun `text takes its look from the options, and text style changes only the look`() {
+        val memory = MemoryNotes().apply { add("n1", "Maths") }
+        val commands = NoteCommands(memory)
+        val made = json(commands.run("text add Maths 1 \"# Sum\\n\$x^2\$\" --md --size 40 --align center --line 1.5 --letter 0.05 " +
+            "--font serif --bold --bg #FFF59D --border red --border-width 3 --para 10 --indent 1 --pad 12"))
+        assertTrue(made.toString(), made.getBoolean("ok"))
+        val box = memory.pages.getValue("n1")[0].images.single().textContent!!
+        assertEquals("# Sum\n\$x^2\$", box.text)
+        assertTrue(box.markdown)
+        assertEquals(40f, box.size)
+        assertEquals(TextBoxContent.ALIGN_CENTER, box.align)
+        assertEquals(1.5f, box.lineSpacing)
+        assertEquals(0.05f, box.letterSpacing)
+        assertEquals("serif", box.font)
+        assertTrue(box.bold)
+        assertEquals(0xFFFFF59D.toInt(), box.background)
+        assertEquals(0xFFD32F2F.toInt(), box.border)
+        assertEquals(3f, box.borderWidth)
+        assertEquals(10f, box.paragraphSpacing)
+        assertEquals(1f, box.indent)
+        assertEquals(12f, box.padding)
+
+        val listed = json(commands.run("text list Maths")).getJSONObject("result").getJSONArray("pages").getJSONObject(0)
+            .getJSONArray("boxes").getJSONObject(0)
+        assertEquals("center", listed.getJSONObject("style").getString("align"))
+        assertEquals("#FFF59D", listed.getJSONObject("style").getString("bg"))
+
+        val styled = json(commands.run("text style Maths 1 1 --align right --no-bold --bg none --plain"))
+        assertTrue(styled.toString(), styled.getBoolean("ok"))
+        val after = memory.pages.getValue("n1")[0].images.single().textContent!!
+        assertEquals(box.text, after.text)
+        assertEquals(TextBoxContent.ALIGN_END, after.align)
+        assertFalse(after.bold)
+        assertFalse(after.markdown)
+        assertEquals(0, after.background)
+        assertEquals(40f, after.size)
+        // Nothing to change, an unknown font, or both ways at once: refused, and the box stays.
+        assertFalse(json(commands.run("text style Maths 1 1")).getBoolean("ok"))
+        assertFalse(json(commands.run("text style Maths 1 1 --font comic")).getBoolean("ok"))
+        assertFalse(json(commands.run("text style Maths 1 1 --md --plain")).getBoolean("ok"))
+        assertFalse(json(commands.run("text style Maths 1 1 --size 500")).getBoolean("ok"))
+        // New text keeps the look.
+        commands.run("text edit Maths 1 1 \"Other\" --size 20")
+        val edited = memory.pages.getValue("n1")[0].images.single().textContent!!
+        assertEquals("Other", edited.text)
+        assertEquals(20f, edited.size)
+        assertEquals(TextBoxContent.ALIGN_END, edited.align)
+        commands.run("undo")
+        assertEquals(box.text, memory.pages.getValue("n1")[0].images.single().textContent!!.text)
+    }
+
+    @Test
+    fun `text goes beside the pages too, and is listed, changed and taken away there`() {
+        val memory = MemoryNotes().apply { add("n1", "Maths") }
+        val commands = NoteCommands(memory)
+        val made = json(commands.run("text add Maths board \"Beside\" --near 2 --x 1300 --y 40 --size 28"))
+        assertTrue(made.toString(), made.getBoolean("ok"))
+        val image = memory.boards.getValue("n1").single()
+        assertEquals("Beside", image.textContent?.text)
+        assertEquals(28f, image.textContent?.size)
+        val document = memory.load("n1")
+        assertEquals(document.leftOf(1) + 1300f, image.x)
+        assertEquals(document.topOf(1) + 40f, image.y)
+        val listed = json(commands.run("text list Maths --pages board")).getJSONObject("result")
+        assertEquals("Beside", listed.getJSONArray("board").getJSONObject(0).getString("text"))
+        assertEquals(0, listed.getJSONArray("pages").length())
+        assertTrue(json(commands.run("note read Maths")).getJSONObject("result").getJSONObject("board").has("text"))
+        assertTrue(json(commands.run("text style Maths board 1 --italic")).getBoolean("ok"))
+        assertTrue(memory.boards.getValue("n1").single().textContent!!.italic)
+        assertTrue(json(commands.run("text edit Maths board 1 \"Moved on\"")).getBoolean("ok"))
+        assertEquals("Moved on", memory.boards.getValue("n1").single().textContent?.text)
+        assertTrue(json(commands.run("text rm Maths board 1")).getBoolean("ok"))
+        assertTrue(memory.boards.getValue("n1").isEmpty())
+        assertFalse(json(commands.run("text rm Maths board 1")).getBoolean("ok"))
+        commands.run("undo")
+        assertEquals(1, memory.boards.getValue("n1").size)
+        // Each says plainly what it would do before it is allowed.
+        assertEquals("Change how text box {1} beside the pages of “{0}” looks",
+            describeCommand(commandWords("text style Maths board 1 --bold")!!, memory.notes()).template)
+    }
+
+    @Test
     fun `names, folders, tags and the trash, each undone`() {
         val memory = MemoryNotes().apply { add("n1", "Maths", tags = listOf("old")) }
         val commands = NoteCommands(memory)

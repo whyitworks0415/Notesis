@@ -7155,7 +7155,7 @@ private fun NoteScreen(
                 onMoreStyles = {
                     // The full editor, with what has been typed so far.
                     val base = target.initial ?: TextBoxContent(inlineDraft)
-                    textDialogInitial = base.copy(text = inlineDraft, size = inlineSize)
+                    textDialogInitial = base.copy(text = inlineDraft, size = inlineSize, html = null, markdown = textMarkdown)
                     replacingText = target.replacing
                     textPosition = target.position
                     inlineText = null
@@ -7169,9 +7169,9 @@ private fun NoteScreen(
             title = { Text("Text tool") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(Ui.Space.s)) {
-                    SettingsToggle("Markdown", textMarkdown, {
+                    SettingsToggle("Markdown and LaTeX", textMarkdown, {
                         textMarkdown = it; penStore.textMarkdown = it
-                    }, hint = "# heading, **bold**, *italic*, - list, - [ ] box, `code`, > quote")
+                    }, hint = "# heading, **bold**, *italic*, - list, - [ ] box, `code`, > quote, | table |, \$x^2\$, \$\$\\frac{a}{b}\$\$")
                     SettingsNote("Tap the page to type there.")
                 }
             },

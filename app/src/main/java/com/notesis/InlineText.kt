@@ -101,25 +101,47 @@ internal fun InlineTextEditor(
                     .padding(horizontal = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                TextButton(onClick = { onSize((size - 4f).coerceAtLeast(12f)) }) { Text("A−") }
-                TextButton(onClick = { onSize((size + 4f).coerceAtMost(96f)) }) { Text("A+") }
+                TextButton(onClick = { onSize((size - 4f).coerceAtLeast(TextBoxContent.SIZE_RANGE.start)) }) { Text("A−") }
+                TextButton(onClick = { onSize((size + 4f).coerceAtMost(TextBoxContent.SIZE_RANGE.endInclusive)) }) { Text("A+") }
                 TextButton(onClick = onMoreStyles) { Text("Styles") }
                 TextButton(onClick = onDone) { Text("Done") }
             }
             BasicTextField(
                 value = text,
                 onValueChange = onText,
-                textStyle = TextStyle(fontSize = fontSize, color = Color(target.initial?.color ?: 0xFF000000.toInt())),
+                textStyle = inlineTextStyle(target.initial, fontSize),
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                 visualTransformation = if (markdown) MarkdownLiveTransformation else VisualTransformation.None,
                 modifier = Modifier.focusRequester(focus)
                     .then(if (wrap != null) Modifier.width(wrap) else Modifier.widthIn(min = 160.dp, max = 720.dp))
-                    .background(Color.White.copy(alpha = 0.92f))
+                    .background(target.initial?.background?.takeIf { it != 0 }?.let { Color(it) } ?: Color.White.copy(alpha = 0.92f))
                     .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f))
                     .padding(6.dp),
             )
         }
     }
+}
+
+/**
+ * The typed text in the box's own look, as it will be drawn: its font, bold
+ * and italic, colour, letter and line spacing and alignment, so what is
+ * typed on the page does not jump when it is put down.
+ */
+internal fun inlineTextStyle(content: TextBoxContent?, fontSize: androidx.compose.ui.unit.TextUnit): TextStyle {
+    val box = content ?: TextBoxContent("")
+    return TextStyle(
+        fontSize = fontSize,
+        color = Color(box.color),
+        fontFamily = androidx.compose.ui.text.font.FontFamily(box.typeface()),
+        letterSpacing = androidx.compose.ui.unit.TextUnit(box.letterSpacing, androidx.compose.ui.unit.TextUnitType.Em),
+        lineHeight = androidx.compose.ui.unit.TextUnit(box.lineSpacing * 1.2f, androidx.compose.ui.unit.TextUnitType.Em),
+        textAlign = when (box.align) {
+            TextBoxContent.ALIGN_CENTER -> androidx.compose.ui.text.style.TextAlign.Center
+            TextBoxContent.ALIGN_END -> androidx.compose.ui.text.style.TextAlign.End
+            TextBoxContent.ALIGN_JUSTIFY -> androidx.compose.ui.text.style.TextAlign.Justify
+            else -> androidx.compose.ui.text.style.TextAlign.Start
+        },
+    )
 }
 
 /**
@@ -164,7 +186,8 @@ internal object MarkdownLiveTransformation : VisualTransformation {
 }
 
 private val LIVE_MARK = androidx.compose.ui.graphics.Color(0x66808080)
-private val LIVE_INLINE = Regex("""\*\*(.+?)\*\*|~~(.+?)~~|`([^`]+)`|\[([^\]]+)\]\(([^)]*)\)|(?<![*\w])\*([^*\s][^*]*?)\*(?!\*)|(?<!\w)_([^_\s][^_]*?)_(?!\w)""")
+private val LIVE_INLINE = Regex("""\*\*(.+?)\*\*|~~(.+?)~~|`([^`]+)`|\[([^\]]+)\]\(([^)]*)\)|(?<![*\w])\*([^*\s][^*]*?)\*(?!\*)|(?<!\w)_([^_\s][^_]*?)_(?!\w)|\$\$(.+?)\$\$|(?<!\\)\$(?![\s$])((?:\\.|[^$\\])+?)(?<!\s)\$(?!\d)|==(.+?)==""")
+private val LIVE_MATH = androidx.compose.ui.graphics.Color(0xFF7B1FA2)
 
 internal fun markdownLive(source: String): androidx.compose.ui.text.AnnotatedString =
     androidx.compose.ui.text.buildAnnotatedString {
@@ -172,12 +195,12 @@ internal fun markdownLive(source: String): androidx.compose.ui.text.AnnotatedStr
         var lineStart = 0
         for (line in source.split('\n')) {
             val end = lineStart + line.length
-            val heading = Regex("^(#{1,3}) ").find(line)
+            val heading = Regex("^(#{1,6}) ").find(line)
             when {
                 heading != null -> {
                     val level = heading.groupValues[1].length
                     addStyle(androidx.compose.ui.text.SpanStyle(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                        fontSize = androidx.compose.ui.unit.TextUnit(when (level) { 1 -> 1.6f; 2 -> 1.35f; else -> 1.15f },
+                        fontSize = androidx.compose.ui.unit.TextUnit(when (level) { 1 -> 1.6f; 2 -> 1.4f; 3 -> 1.2f; 4 -> 1.1f; 5 -> 1f; else -> 0.95f },
                             androidx.compose.ui.unit.TextUnitType.Em)), lineStart, end)
                     addStyle(androidx.compose.ui.text.SpanStyle(color = LIVE_MARK), lineStart, lineStart + level + 1)
                 }
@@ -209,6 +232,16 @@ internal fun markdownLive(source: String): androidx.compose.ui.text.AnnotatedStr
                     whole.startsWith("`") -> {
                         addStyle(androidx.compose.ui.text.SpanStyle(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                             background = androidx.compose.ui.graphics.Color(0x22808080)), s, e)
+                    }
+                    whole.startsWith("$") -> {
+                        // A formula stays as typed while it is written, in its own colour; it is drawn when the box is put down.
+                        addStyle(androidx.compose.ui.text.SpanStyle(color = LIVE_MATH,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Serif), s, e)
+                    }
+                    whole.startsWith("==") -> {
+                        addStyle(androidx.compose.ui.text.SpanStyle(background = androidx.compose.ui.graphics.Color(0x80FFE44D)), s, e)
+                        addStyle(androidx.compose.ui.text.SpanStyle(color = LIVE_MARK), s, s + 2)
+                        addStyle(androidx.compose.ui.text.SpanStyle(color = LIVE_MARK), e - 2, e)
                     }
                     whole.startsWith("[") -> {
                         addStyle(androidx.compose.ui.text.SpanStyle(color = androidx.compose.ui.graphics.Color(0xFF1E66D0),

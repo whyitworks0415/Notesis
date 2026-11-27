@@ -91,7 +91,9 @@ internal fun describeCommand(words: List<String>, notes: List<NoteMeta>): Change
             listOf(title, page(1), snippet(positional.drop(2).joinToString(" "))), true)
         "toc rm" -> ChangeLine("Remove the outline entry of page {1} of “{0}”", listOf(title, page(1)), true)
         "toc clear" -> ChangeLine("Clear the outline of “{0}”", listOf(title), true)
-        "text add" -> ChangeLine("Add text to page {1} of “{0}”: “{2}”",
+        "text add" -> if (page(1).equals("board", true)) ChangeLine("Add text beside the pages of “{0}”: “{1}”",
+            listOf(title, snippet(positional.drop(2).joinToString(" "))), true)
+            else ChangeLine("Add text to page {1} of “{0}”: “{2}”",
             listOf(title, page(1), snippet(positional.drop(2).joinToString(" "))), true)
         "ink add" -> if (page(1).equals("board", true)) ChangeLine("Draw beside the pages of “{0}”", listOf(title), true)
             else ChangeLine("Draw on page {1} of “{0}”", listOf(title, page(1)), true)
@@ -113,9 +115,16 @@ internal fun describeCommand(words: List<String>, notes: List<NoteMeta>): Change
         "page bookmark" -> if ("off" in flags) ChangeLine("Take the bookmark off page {1} of “{0}”", listOf(title, page(1)), true)
             else ChangeLine("Bookmark page {1} of “{0}”", listOf(title, page(1)), true)
         "toc import-pdf" -> ChangeLine("Set the outline of “{0}” from its PDF's bookmarks", listOf(title), true)
-        "text edit" -> ChangeLine("Change text box {2} on page {1} of “{0}” to “{3}”",
+        "text edit" -> if (page(1).equals("board", true)) ChangeLine("Change text box {1} beside the pages of “{0}” to “{2}”",
+            listOf(title, page(2), snippet(positional.drop(3).joinToString(" "))), true)
+            else ChangeLine("Change text box {2} on page {1} of “{0}” to “{3}”",
             listOf(title, page(1), page(2), snippet(positional.drop(3).joinToString(" "))), true)
-        "text rm" -> ChangeLine("Remove text box {2} from page {1} of “{0}”", listOf(title, page(1), page(2)), true)
+        "text style" -> if (page(1).equals("board", true)) ChangeLine("Change how text box {1} beside the pages of “{0}” looks",
+            listOf(title, page(2)), true)
+            else ChangeLine("Change how text box {2} on page {1} of “{0}” looks", listOf(title, page(1), page(2)), true)
+        "text rm" -> if (page(1).equals("board", true)) ChangeLine("Remove text box {1} from beside the pages of “{0}”",
+            listOf(title, page(2)), true)
+            else ChangeLine("Remove text box {2} from page {1} of “{0}”", listOf(title, page(1), page(2)), true)
         "md write" -> ChangeLine("Replace all the text of “{0}”", listOf(title), true)
         "md append" -> ChangeLine("Add to “{0}”: “{1}”", listOf(title, snippet(positional.drop(1).joinToString(" "))), true)
         "md replace" -> ChangeLine("In “{0}”, change “{1}” to “{2}”", listOf(title, snippet(page(1), 40), snippet(page(2), 40)), true)

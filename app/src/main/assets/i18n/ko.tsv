@@ -1078,7 +1078,7 @@ The text is too long. Split it into more boxes.	글이 너무 깁니다. 상자�
 Add text box	텍스트 상자 추가
 Edit text	텍스트 편집
 Selection color	선택 색
-Font size (12–96)	글자 크기 (12–96)
+Font size (6–200)	글자 크기 (12–96)
 Font	글꼴
 Text color	글자 색
 Background	배경
@@ -1381,7 +1381,7 @@ Tap the page to type there.	페이지를 누르면 그 자리에 바로 씁니�
 Tap the page to put a table there. Cells take numbers, text and formulas such as =SUM(A1:A3).	페이지를 누르면 그 자리에 표를 넣습니다. 칸에는 숫자, 글자, =SUM(A1:A3) 같은 수식을 쓸 수 있습니다.
 Add a table	표 추가
 Add styled text	서식 있는 텍스트 추가
-# heading, **bold**, *italic*, - list, - [ ] box, `code`, > quote	# 제목, **굵게**, *기울임*, - 목록, - [ ] 체크, `코드`, > 인용
+# heading, **bold**, *italic*, - list, - [ ] box, `code`, > quote, | table |, $x^2$, $$\frac{a}{b}$$	# 제목, **굵게**, *기울임*, - 목록, - [ ] 체크, `코드`, > 인용, | 표 |, $x^2$, $$\frac{a}{b}$$
 Styles	서식
 New table	새 표
 Edit table	표 편집
@@ -1956,3 +1956,27 @@ Tile budget per frame	프레임당 타일 예산
 When frames fall behind, fewer strokes are drawn into tiles each frame. Off, always the full amount.	프레임이 밀리면 프레임마다 타일에 그리는 획 수를 줄입니다. 끄면 항상 전부 그립니다.
 Writing streak at every refresh rate	모든 주사율에서 필기 잔상
 The clear layer uses full resolution to keep fine lines steady while the page moves.	페이지가 움직일 때도 가는 필기선이 깜박이지 않도록 맑은 층은 원본 해상도로 그립니다.
+Markdown and LaTeX	Markdown과 LaTeX
+# heading, **bold**, *italic*, ==highlight==, - list, 1. list, | table |, `code`, $x^2$, $$\frac{a}{b}$$	# 제목, **굵게**, *기울임*, ==형광==, - 목록, 1. 목록, | 표 |, `코드`, $x^2$, $$\frac{a}{b}$$
+Formula	수식
+Display formula	블록 수식
+Letters	글자
+Black	아주 굵게
+Typewriter	타자기
+Spacing	간격
+Alignment	정렬
+Center	가운데
+Justify	양쪽 맞춤
+Letter spacing {0}	자간 {0}
+Line spacing {0}	줄 간격 {0}
+Paragraph spacing {0}	문단 간격 {0}
+First-line indent {0}	첫 줄 들여쓰기 {0}
+Box	상자
+Border	테두리
+Border width {0}	테두리 두께 {0}
+Select text and tap B·I·U·S to put the marks around it.	글자를 고르고 B·I·U·S를 누르면 그 둘레에 표시가 들어갑니다.
+Add text beside the pages of “{0}”: “{1}”	“{0}”의 페이지 밖에 글 추가: “{1}”
+Change text box {1} beside the pages of “{0}” to “{2}”	“{0}” 페이지 밖의 글상자 {1}를 “{2}”(으)로 바꾸기
+Change how text box {1} beside the pages of “{0}” looks	“{0}” 페이지 밖의 글상자 {1} 모양 바꾸기
+Change how text box {2} on page {1} of “{0}” looks	“{0}” {1}쪽의 글상자 {2} 모양 바꾸기
+Remove text box {1} from beside the pages of “{0}”	“{0}” 페이지 밖의 글상자 {1} 지우기

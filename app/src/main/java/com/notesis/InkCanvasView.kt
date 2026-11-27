@@ -11401,7 +11401,7 @@ class InkCanvasView @JvmOverloads constructor(
                         val source = bitmap!!
                         val logicalWidth = source.width / 2f
                         val logicalHeight = source.height / 2f
-                        val width = (logicalWidth - content.padding * 2f).toInt().coerceAtLeast(1)
+                        val width = (logicalWidth - content.textInset() * 2f).toInt().coerceAtLeast(1)
                         TextRender(textBoxLayout(content, width, 1f), logicalWidth, logicalHeight)
                     }
                     canvas.save()

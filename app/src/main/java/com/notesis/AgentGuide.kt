@@ -44,6 +44,9 @@ Beside the pages (the whiteboard): `ink add NOTE board --near 3 --path "..."` dr
 
 Write into notes: a Markdown note takes `md append NOTE "TEXT" --under HEADING` or `md replace NOTE OLD NEW`;
 a handwritten page takes `text add NOTE PAGE "TEXT" --md`. In TEXT, \n starts a new line.
+With --md the text is Markdown and LaTeX: # heading, **bold**, ==mark==, lists, | tables |, ${'$'}x^2${'$'} in a line, ${'$'}${'$'}\frac{a}{b}${'$'}${'$'} on its own.
+Its look: `text style NOTE PAGE BOX --size 40 --align center --line 1.4 --bg #FFF59D ...` (`help text style` lists them);
+`text list` gives each box's number and look. PAGE board puts text beside the pages (--near 3 --x X --y Y, as for ink).
 
 Organise: `folder list`, `tags list`, then `note mv`, `note tag`, `folder new` in one batch, so one `undo` takes it all back.
 

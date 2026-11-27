@@ -7,6 +7,8 @@ internal class MemoryNotes : NoteWorkspace {
     val pages = mutableMapOf<String, MutableList<Page>>()
     val ink = mutableMapOf<String, Int>()
     val texts = mutableMapOf<String, String>()
+    /** What is off each note's pages (its text boxes), kept across a load and a save as the store keeps board.bin and meta.json. */
+    val boards = mutableMapOf<String, MutableList<PageImage>>()
     var open: String? = null
     /** Whether the screen showing [open] can be held for a change (the note screen can; a split part cannot). */
     var live = true
@@ -43,8 +45,10 @@ internal class MemoryNotes : NoteWorkspace {
     override fun trashed() = metas.values.filter { it.id in trash }
     override fun isOpen(id: String) = open == id
     override fun load(id: String) = Document(pages.getValue(id).map(::copy).toMutableList())
+        .also { document -> boards[id]?.let { document.board.images.addAll(it.map { image -> image.copy() }) } }
     override fun save(id: String, title: String, document: Document) {
         pages[id] = document.pages.map(::copy).toMutableList(); saves++
+        boards[id] = document.board.images.map { it.copy() }.toMutableList()
     }
     override fun markdown(id: String) = texts[id]
     override fun rename(id: String, title: String): Boolean { metas[id] = metas.getValue(id).copy(title = title); return true }
@@ -62,16 +66,17 @@ internal class MemoryNotes : NoteWorkspace {
     }
     override fun export(id: String, title: String, format: ExportKind, pages: List<Int>, withInk: Boolean) =
         "/out/$title.${format.name.lowercase()}"
-    override fun keep(id: String): Any = pages.getValue(id).map(::copy) to ink.toMap()
+    override fun keep(id: String): Any = Triple(pages.getValue(id).map(::copy), ink.toMap(), boards[id]?.map { it.copy() })
     @Suppress("UNCHECKED_CAST")
     /** How many kept copies were let go, for the tests of undo's housekeeping. */
     var released = 0
     override fun release(kept: Any) { released++ }
 
     override fun bring(id: String, kept: Any) {
-        val (savedPages, savedInk) = kept as Pair<List<Page>, Map<String, Int>>
+        val (savedPages, savedInk, savedBoard) = kept as Triple<List<Page>, Map<String, Int>, List<PageImage>?>
         pages[id] = savedPages.map(::copy).toMutableList()
         ink.clear(); ink.putAll(savedInk)
+        if (savedBoard == null) boards.remove(id) else boards[id] = savedBoard.map { it.copy() }.toMutableList()
     }
 
     override fun pdfOutline(id: String) = outlines[id].orEmpty()

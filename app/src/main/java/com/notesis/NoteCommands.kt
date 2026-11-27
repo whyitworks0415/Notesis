@@ -267,6 +267,72 @@ internal fun commandColor(text: String): Int {
     return (if (hex.length == 6) value or 0xFF000000 else value).toInt()
 }
 
+/** The look options every text command takes, after [TEXT_STYLE_USAGE]. */
+private val TEXT_STYLE_VALUES = setOf("size", "color", "font", "align", "letter", "line", "para", "indent", "pad",
+    "bg", "border", "border-width", "corner", "width")
+private val TEXT_STYLE_FLAGS = setOf("md", "plain", "bold", "no-bold", "italic", "no-italic")
+
+private const val TEXT_STYLE_USAGE = "--size 6-200 --color #RRGGBB --font default|serif|mono|condensed|light|medium|black|casual|cursive|typewriter " +
+    "--bold|--no-bold --italic|--no-italic --align left|center|right|justify --letter EM(-0.1-1) --line X(0.7-3) " +
+    "--para N --indent EM --pad N --bg #RRGGBB|none --border #RRGGBB|none --border-width N --corner N " +
+    "--width W(0 for one line) --md|--plain (Markdown and LaTeX on or off)"
+
+/** [base] with what [args] say about its look; what they leave out stays as it was. */
+private fun textStyleFrom(base: TextBoxContent, args: Args): TextBoxContent {
+    fun colorOrNone(name: String, now: Int): Int = args.text(name)?.let { if (it.equals("none", true) || it == "0") 0 else commandColor(it) } ?: now
+    if (args.has("md") && args.has("plain")) throw CommandError("--md and --plain go one way or the other, not both.")
+    if (args.has("bold") && args.has("no-bold")) throw CommandError("--bold and --no-bold go one way or the other, not both.")
+    if (args.has("italic") && args.has("no-italic")) throw CommandError("--italic and --no-italic go one way or the other, not both.")
+    val font = args.text("font")?.let { fontOf(it) ?: throw CommandError("\"$it\" is not a font here. " +
+        "Use one of: default, " + TEXT_FONTS.drop(1).joinToString(", ") { f -> f.second.lowercase() } + ".") }
+    val align = args.text("align")?.let { alignOf(it) ?: throw CommandError("--align is left, center, right or justify.") }
+    return base.copy(
+        size = args.float("size", TextBoxContent.SIZE_RANGE) ?: base.size,
+        color = args.text("color")?.let(::commandColor) ?: base.color,
+        font = font ?: base.font,
+        align = align ?: base.align,
+        letterSpacing = args.float("letter", TextBoxContent.LETTER_RANGE) ?: base.letterSpacing,
+        lineSpacing = args.float("line", TextBoxContent.LINE_RANGE) ?: base.lineSpacing,
+        paragraphSpacing = args.float("para", TextBoxContent.PARAGRAPH_RANGE) ?: base.paragraphSpacing,
+        indent = args.float("indent", TextBoxContent.INDENT_RANGE) ?: base.indent,
+        padding = args.float("pad", TextBoxContent.PADDING_RANGE) ?: base.padding,
+        corner = args.float("corner", TextBoxContent.CORNER_RANGE) ?: base.corner,
+        background = colorOrNone("bg", base.background),
+        border = colorOrNone("border", base.border),
+        borderWidth = args.float("border-width", TextBoxContent.BORDER_RANGE) ?: base.borderWidth,
+        wrapWidth = args.float("width", 0f..4000f)?.let { if (it < 40f) 0f else it } ?: base.wrapWidth,
+        bold = if (args.has("bold")) true else if (args.has("no-bold")) false else base.bold,
+        italic = if (args.has("italic")) true else if (args.has("no-italic")) false else base.italic,
+        // Markdown keeps its marks as text, so styling kept as HTML (from the full editor) gives way to it.
+        markdown = if (args.has("md")) true else if (args.has("plain")) false else base.markdown,
+        html = if (args.has("md")) null else base.html,
+    )
+}
+
+/** A box's look as `text list` and `text style` give it: only what differs from a plain box, in the words the options take. */
+internal fun textStyleJson(content: TextBoxContent): JSONObject {
+    val plain = TextBoxContent("")
+    fun hex(color: Int) = if ((color ushr 24) == 0xFF) String.format("#%06X", color and 0xFFFFFF) else String.format("#%08X", color)
+    return JSONObject().apply {
+        if (content.size != plain.size) put("size", content.size.clean())
+        if (content.color != plain.color) put("color", hex(content.color))
+        if (content.font.isNotEmpty()) put("font", TEXT_FONTS.firstOrNull { it.first == content.font }?.second?.lowercase() ?: content.font)
+        if (content.bold) put("bold", true)
+        if (content.italic) put("italic", true)
+        if (content.align != plain.align) put("align", alignName(content.align))
+        if (content.letterSpacing != plain.letterSpacing) put("letter", content.letterSpacing.clean())
+        if (content.lineSpacing != plain.lineSpacing) put("line", content.lineSpacing.clean())
+        if (content.paragraphSpacing != plain.paragraphSpacing) put("para", content.paragraphSpacing.clean())
+        if (content.indent != plain.indent) put("indent", content.indent.clean())
+        if (content.padding != plain.padding) put("pad", content.padding.clean())
+        if (content.background != 0) put("bg", hex(content.background))
+        if (content.border != 0) put("border", hex(content.border)).put("border-width", content.borderWidth.clean())
+        if (content.corner != plain.corner) put("corner", content.corner.clean())
+        if (content.wrapWidth > 0f) put("width", content.wrapWidth.clean())
+        if (content.html != null) put("styledParts", true)
+    }
+}
+
 /** A title as it is compared: Hangul composed one way, any case, spaces left out. */
 internal fun noteKey(text: String): String =
     java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFC).lowercase().filter { !it.isWhitespace() }
@@ -419,10 +485,11 @@ internal val COMMAND_USAGE = linkedMapOf(
     "pdf info" to "pdf info NOTE",
     "pdf text" to "pdf text NOTE [--pages 1-3] [--max-chars N]",
     "pdf find" to "pdf find NOTE WORDS",
-    "text list" to "text list NOTE [--pages 1-3]",
-    "text add" to "text add NOTE PAGE TEXT [--x X] [--y Y] [--size PT] [--color #RRGGBB] [--width W] [--md]",
-    "text edit" to "text edit NOTE PAGE BOX TEXT   (BOX is its number in text list)",
-    "text rm" to "text rm NOTE PAGE BOX",
+    "text list" to "text list NOTE [--pages 1-3|board]   (each box's number, text and look)",
+    "text add" to "text add NOTE PAGE|board TEXT [--x X] [--y Y] [--near PAGE] [--width W] [--md] [STYLE]",
+    "text edit" to "text edit NOTE PAGE|board BOX TEXT [STYLE]   (BOX is its number in text list)",
+    "text style" to "text style NOTE PAGE|board BOX STYLE   (STYLE: $TEXT_STYLE_USAGE)",
+    "text rm" to "text rm NOTE PAGE|board BOX",
     "ink add" to "ink add NOTE PAGE|board (--path \"M 10 10 L 200 80\" | --points \"x,y x,y; x,y ...\") [--color #RRGGBB] [--width W] [--near PAGE]",
     "ink erase" to "ink erase NOTE PAGE|board (--rect X,Y,W,H | --all) [--near PAGE]",
     "md outline" to "md outline NOTE",
@@ -625,8 +692,9 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
             "pdf text" -> pdfText(args(setOf("pages", "max-chars")), usage)
             "pdf find" -> pdfFind(args(), usage)
             "text list" -> listText(args(setOf("pages")), usage)
-            "text add" -> addText(args(setOf("x", "y", "size", "color", "width"), setOf("md")), usage)
-            "text edit" -> editText(args(), usage)
+            "text add" -> addText(args(TEXT_STYLE_VALUES + setOf("x", "y", "near"), TEXT_STYLE_FLAGS), usage)
+            "text edit" -> editText(args(TEXT_STYLE_VALUES, TEXT_STYLE_FLAGS), usage)
+            "text style" -> styleText(args(TEXT_STYLE_VALUES, TEXT_STYLE_FLAGS), usage)
             "text rm" -> removeText(args(), usage)
             "ink add" -> addInk(args(setOf("path", "points", "color", "width", "near")), usage)
             "ink erase" -> eraseInk(args(setOf("rect", "near"), setOf("all")), usage)
@@ -651,7 +719,7 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
         return Done(JSONObject().apply {
             put("commands", JSONArray(shown))
             put("notes", "NOTE is a note's id or title. PAGE is a page number from 1, or last. " +
-                "A note open on screen takes the change and shows it at once. PAGE board is the ink beside the pages. " +
+                "A note open on screen takes the change and shows it at once. PAGE board is the ink and text beside the pages. " +
                 "`undo` takes back the last change. A failure has a code (NOT_FOUND, AMBIGUOUS, OPEN_ON_SCREEN, ...) " +
                 "and, for a note not found, the notes it may have meant.")
         })
@@ -792,7 +860,11 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
         json.put("pages", pages)
         // The ink off the pages (the whiteboard), when there is any: how much.
         val boardInk = workspace.inkCount(meta.id, document.board)
-        if (boardInk > 0) json.put("board", JSONObject().put("ink", boardInk))
+        val boardText = document.board.images.mapNotNull { it.textContent?.text }
+        if (boardInk > 0 || boardText.isNotEmpty()) json.put("board", JSONObject().apply {
+            if (boardInk > 0) put("ink", boardInk)
+            if (boardText.isNotEmpty()) put("text", JSONArray(boardText))
+        })
         if (stopped >= 0) {
             json.put("truncated", true)
             val flags = (if (textOnly) " --text-only" else "") + (if (args.has("sizes")) " --sizes" else "")
@@ -945,19 +1017,38 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
     private fun listText(args: Args, usage: String): Done {
         val meta = inkNote(args, usage)
         val document = workspace.load(meta.id)
-        val indices = args.text("pages")?.let { parsePageRange(it, document.pages.size)
+        val range = args.text("pages")
+        val boardOnly = range != null && isBoard(range)
+        val indices = if (boardOnly) emptyList() else range?.let { parsePageRange(it, document.pages.size)
             ?: throw CommandError("\"$it\" is not a page range of this note, which has pages 1 to ${document.pages.size}.", code = "BAD_PAGE") }
             ?: document.pages.indices.toList()
         val pages = indices.mapNotNull { index ->
             val boxes = textBoxes(document.pages[index])
             if (boxes.isEmpty()) null else JSONObject().put("page", index + 1).put("boxes", JSONArray(boxes.withIndex().map { (n, image) ->
-                JSONObject().put("box", n + 1).put("text", image.textContent!!.text).put("x", image.x.clean()).put("y", image.y.clean())
-                    .put("width", image.width.clean()).put("height", image.height.clean())
-                    .also { if (image.textContent.markdown) it.put("md", true) }
+                boxJson(n, image, 0f, 0f)
             }))
         }
-        return Done(JSONObject().put("note", meta.title).put("pages", JSONArray(pages)))
+        val out = JSONObject().put("note", meta.title).put("pages", JSONArray(pages))
+        // Off the pages, where x and y start at the first page's corner, as for `text add NOTE board`.
+        if (range == null || boardOnly) {
+            val boxes = textBoxes(document.board)
+            if (boxes.isNotEmpty()) {
+                val (dx, dy) = boardOrigin(args, document)
+                out.put("board", JSONArray(boxes.withIndex().map { (n, image) -> boxJson(n, image, dx, dy) }))
+            }
+        }
+        return Done(out)
     }
+
+    /** One box for `text list`: its number, text, place and size, and its look where it differs from a plain box. */
+    private fun boxJson(n: Int, image: PageImage, dx: Float, dy: Float): JSONObject {
+        val content = image.textContent!!
+        return JSONObject().put("box", n + 1).put("text", content.text).put("x", (image.x - dx).clean()).put("y", (image.y - dy).clean())
+            .put("width", image.width.clean()).put("height", image.height.clean())
+            .also { if (content.markdown) it.put("md", true) }
+            .also { textStyleJson(content).takeIf { style -> style.length() > 0 }?.let { style -> it.put("style", style) } }
+    }
+
 
     private fun markdownOutline(args: Args, usage: String): Done {
         val meta = markdownNote(args, usage)
@@ -1147,18 +1238,35 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
     }
 
     private fun addText(args: Args, usage: String): Done = changePages(args, usage, "add text") { document ->
-        val index = pageIndex(args.positional.getOrNull(1) ?: throw CommandError("Give the page.", usage), document.pages.size)
+        val word = args.positional.getOrNull(1) ?: throw CommandError("Give the page, or board for off the pages.", usage)
         val text = unescapeText(args.positional.drop(2).joinToString(" ")).trim()
         if (text.isEmpty()) throw CommandError("Give the text.", usage)
         if (text.length > MAX_TEXT) throw CommandError("A text box holds up to $MAX_TEXT characters.")
         val id = meta(args).id
+        if (isBoard(word)) {
+            // Off the pages, from page --near's corner (x past its width is to its right); beside it by default.
+            val near = args.text("near")?.let { pageIndex(it, document.pages.size) } ?: 0
+            val (dx, dy) = boardOrigin(args, document)
+            val x = args.float("x", -MAX_BOARD_REACH..MAX_BOARD_REACH) ?: (document.pages[near].width + TEXT_MARGIN)
+            val y = args.float("y", -MAX_BOARD_REACH..MAX_BOARD_REACH) ?: 0f
+            if (abs(x + dx) > MAX_BOARD_REACH || abs(y + dy) > MAX_BOARD_REACH) throw CommandError("That is too far off the pages.")
+            val width = args.float("width", 40f..MAX_BOARD_TEXT_WIDTH) ?: BOARD_TEXT_WIDTH
+            val content = textStyleFrom(TextBoxContent(text, markdown = args.has("md"), wrapWidth = width), args)
+            val image = workspace.textBox(id, content) ?: throw CommandError("The text box could not be made.")
+            image.x = x + dx
+            image.y = y + dy
+            document.board.images += image
+            return@changePages JSONObject().put("page", "board").put("box", textBoxes(document.board).size)
+                .put("x", x.clean()).put("y", y.clean()).put("width", image.width.clean()).put("height", image.height.clean())
+                .put("note", "Off the pages shows when the note's whiteboard is on (note settings).")
+        }
+        val index = pageIndex(word, document.pages.size)
         val first = document.pages[index]
         val x = args.float("x", 0f..first.width) ?: TEXT_MARGIN
         // Wrapped inside the page unless told otherwise: unwrapped, a long line ran past its edge and was cut there.
         val width = (args.float("width", 40f..first.width) ?: (first.width - x - TEXT_MARGIN)).coerceAtMost(maxOf(40f, first.width - x))
-        val size = args.float("size", 8f..200f) ?: 32f
-        val color = args.text("color")?.let(::commandColor) ?: 0xFF000000.toInt()
-        fun content(part: String) = TextBoxContent(part, size = size, color = color, markdown = args.has("md"), wrapWidth = width)
+        val look = textStyleFrom(TextBoxContent("", markdown = args.has("md")), args)
+        fun content(part: String) = look.copy(text = part, wrapWidth = width)
         val given = args.float("y", 0f..first.height)
         val y = given ?: (first.images.maxOfOrNull { it.y + it.height }?.plus(TEXT_GAP) ?: TEXT_MARGIN)
         // Taller than the room left, the text goes on over new pages after this one instead of off the bottom.
@@ -1401,20 +1509,41 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
     private fun editText(args: Args, usage: String): Done = changePages(args, usage, "edit text") { document ->
         val (page, image) = textBoxAt(args, usage, document)
         val text = unescapeText(args.positional.drop(3).joinToString(" ")).trim()
-        if (text.isEmpty()) throw CommandError("Give the new text; `text rm` takes a box away.", usage)
+        if (text.isEmpty()) throw CommandError("Give the new text; `text rm` takes a box away, `text style` changes only its look.", usage)
         if (text.length > MAX_TEXT) throw CommandError("A text box holds up to $MAX_TEXT characters.")
-        val made = workspace.textBox(meta(args).id, image.textContent!!.copy(text = text)) ?: throw CommandError("The text box could not be made.")
+        // New text drops the old per-part styling (it belonged to the old words); the box's look stays.
+        val placed = replaceTextBox(args, page, image, textStyleFrom(image.textContent!!.copy(text = text, html = null), args))
+        JSONObject().put("page", pageWord(document, page)).put("width", placed.width.clean()).put("height", placed.height.clean())
+    }
+
+    private fun styleText(args: Args, usage: String): Done = changePages(args, usage, "style text") { document ->
+        val (page, image) = textBoxAt(args, usage, document)
+        if (args.options.keys.none { it in TEXT_STYLE_VALUES || it in TEXT_STYLE_FLAGS }) {
+            throw CommandError("Say what to change, for example --size 40 --align center.", usage)
+        }
+        val content = textStyleFrom(image.textContent!!, args)
+        val placed = replaceTextBox(args, page, image, content)
+        JSONObject().put("page", pageWord(document, page)).put("width", placed.width.clean()).put("height", placed.height.clean())
+            .put("style", textStyleJson(content))
+    }
+
+    /** [image] drawn again as [content], in its place and with its lock, group, opacity and turn. */
+    private fun replaceTextBox(args: Args, page: Page, image: PageImage, content: TextBoxContent): PageImage {
+        val made = workspace.textBox(meta(args).id, content) ?: throw CommandError("The text box could not be made.")
         val placed = made.copy(x = image.x, y = image.y).also {
             it.locked = image.locked; it.group = image.group; it.opacity = image.opacity; it.rotation = image.rotation
         }
         page.images[page.images.indexOf(image)] = placed
-        JSONObject().put("page", document.pages.indexOf(page) + 1).put("width", placed.width.clean()).put("height", placed.height.clean())
+        return placed
     }
+
+    /** The page's number for an answer, or "board" for off the pages. */
+    private fun pageWord(document: Document, page: Page): Any = if (page === document.board) "board" else document.pages.indexOf(page) + 1
 
     private fun removeText(args: Args, usage: String): Done = changePages(args, usage, "remove text") { document ->
         val (page, image) = textBoxAt(args, usage, document)
         page.images.remove(image)
-        JSONObject().put("page", document.pages.indexOf(page) + 1).put("removed", snippetOf(image.textContent!!.text))
+        JSONObject().put("page", pageWord(document, page)).put("removed", snippetOf(image.textContent!!.text))
     }
 
     private fun writeMarkdown(args: Args, usage: String): Done = changeMarkdown(args, usage, "write") { _ ->
@@ -1486,12 +1615,14 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
 
     /** The page and text box a line names: NOTE PAGE BOX. */
     private fun textBoxAt(args: Args, usage: String, document: Document): Pair<Page, PageImage> {
-        val index = pageIndex(args.positional.getOrNull(1) ?: throw CommandError("Give the page.", usage), document.pages.size)
-        val page = document.pages[index]
+        val word = args.positional.getOrNull(1) ?: throw CommandError("Give the page, or board for off the pages.", usage)
+        val board = isBoard(word)
+        val page = if (board) document.board else document.pages[pageIndex(word, document.pages.size)]
+        val name = if (board) "Off the pages" else "Page ${document.pages.indexOf(page) + 1}"
         val boxes = textBoxes(page)
-        if (boxes.isEmpty()) throw CommandError("Page ${index + 1} has no text boxes.", code = "NOT_FOUND")
+        if (boxes.isEmpty()) throw CommandError("$name has no text boxes.", code = "NOT_FOUND")
         val raw = args.positional.getOrNull(2) ?: throw CommandError("Give the box's number from `text list`.", usage)
-        val n = raw.toIntOrNull()?.takeIf { it in 1..boxes.size } ?: throw CommandError("Page ${index + 1} has text boxes 1 to ${boxes.size}.", code = "NOT_FOUND")
+        val n = raw.toIntOrNull()?.takeIf { it in 1..boxes.size } ?: throw CommandError("$name has text boxes 1 to ${boxes.size}.", code = "NOT_FOUND")
         return page to boxes[n - 1]
     }
 
@@ -1578,6 +1709,9 @@ internal class NoteCommands(private val workspace: NoteWorkspace) {
         const val MAX_TEXT = 4000
         const val MAX_INK_POINTS = 20_000
         const val TEXT_MARGIN = 80f
+        /** How wide a text box off the pages wraps when not told, and the most it may be, in page units. */
+        const val BOARD_TEXT_WIDTH = 600f
+        const val MAX_BOARD_TEXT_WIDTH = 4000f
         const val TEXT_GAP = 24f
         /** Ink may start a little off the page, the way a hand does; not far. */
         const val INK_MARGIN = 40f
