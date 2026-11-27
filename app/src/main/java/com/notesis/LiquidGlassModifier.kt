@@ -74,10 +74,6 @@ internal val LocalLiquidGlassEffectsAllowed = compositionLocalOf<Boolean?> { nul
 @Composable
 fun rememberLiquidGlassBackdrop(): LayerBackdrop = rememberLayerBackdrop()
 
-/** A pause can reuse a recording only if it exists at the current size. */
-internal fun shouldRecordGlassBackdrop(recorded: IntSize, requested: IntSize, paused: Boolean): Boolean =
-    requested.width > 0 && requested.height > 0 && (!paused || recorded != requested)
-
 /** 컨트롤이 굴절시킬 배경을 기록합니다. 컨트롤 자체에는 붙이지 않습니다. */
 fun Modifier.captureLiquidGlassBackdrop(
     backdrop: LayerBackdrop,

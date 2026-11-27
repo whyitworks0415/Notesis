@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.unit.IntSize
 
 internal const val GLASS_INK_LIVE = 0
 internal const val GLASS_INK_AFTER_STROKE = 1
@@ -23,6 +24,10 @@ internal fun glassFollowsPage(state: Interaction, followsScroll: Boolean, ink: I
         Interaction.SETTLING -> ink != GLASS_INK_AFTER_PAUSE
         Interaction.IDLE -> false
     }
+
+/** A pause can reuse a recording only if it exists at the current size. */
+internal fun shouldRecordGlassBackdrop(recorded: IntSize, requested: IntSize, paused: Boolean): Boolean =
+    requested.width > 0 && requested.height > 0 && (!paused || recorded != requested)
 
 /** A visible quality tradeoff, saved only inside this separate installation. */
 internal object LabPerformance {
