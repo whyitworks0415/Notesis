@@ -1922,3 +1922,36 @@ Glass resolution	유리 해상도
 Half	절반
 Quarter	4분의 1
 How finely the glass is worked out. Half does a quarter of the work for each pane and quarter a sixteenth; the frost looks the same, the page under the clear layer and the light on the rim a little softer. Full is the glass as it was.	유리를 얼마나 세밀하게 계산할지 정합니다. 절반은 유리 면마다 계산이 4분의 1, 4분의 1은 16분의 1로 줄어듭니다. 서리는 그대로 보이고, 맑은 층 아래 페이지와 테두리 빛이 조금 부드러워집니다. 전체는 원래의 유리입니다.
+{0} ms	{0}ms
+{0} is the pen as it reports pressure; 0 ignores it; higher needs a firmer press for full width.	{0}은 펜이 보내는 필압 그대로입니다. 0은 필압을 무시하고, 높을수록 세게 눌러야 최대 굵기가 됩니다.
+1 is the app's own. Lower builds finer outlines (smoother curves, more work); higher, coarser ones.	1이 앱 기본값입니다. 낮추면 외곽선을 더 촘촘히 만들고(곡선이 더 매끄럽고 일이 많아짐), 높이면 더 거칠게 만듭니다.
+A page coming on screen or a new zoom is painted on workers. Off, every tile is drawn on the GPU in the frame.	새로 보이는 페이지나 새 배율을 작업 스레드에서 칠합니다. 끄면 모든 타일을 그 프레임에 GPU로 그립니다.
+After the pen lifts	펜을 뗀 뒤
+An even average of the last points instead of the filter that follows the pen's speed.	펜 속도를 따라가는 필터 대신, 최근 점들을 고르게 평균냅니다.
+Asks the system to run the pen's threads fast while a stroke is written.	획을 쓰는 동안 펜 관련 스레드를 빠르게 돌려 달라고 시스템에 요청합니다.
+Developer mode	개발자 모드
+Draws one pixel every frame while the pen is down, so the screen does not slow down and show the ink in steps.	펜이 닿아 있는 동안 매 프레임 1픽셀을 그려, 화면 주사율이 내려가 필기가 끊겨 보이지 않게 합니다.
+Each takes effect from the next stroke. If writing gets worse, Back to the defaults puts every one back.	다음 획부터 적용됩니다. 필기가 나빠지면 "기본값으로 되돌리기"를 누르면 모두 돌아갑니다.
+Fold new ink in the background	새 필기를 배경에서 합치기
+Handwriting parameters	필기 파라미터
+How far ahead of the pen the stroke is guessed while writing. More hides more delay and can overshoot at corners.	쓰는 동안 펜보다 얼마나 앞까지 획을 미리 예측할지입니다. 클수록 지연이 덜 보이지만 모서리에서 튀어나갈 수 있습니다.
+How much of a frame new tiles may take. Higher fills a page in sooner and can stutter; lower is smoother and slower to fill.	새 타일이 한 프레임에서 쓸 수 있는 시간입니다. 높이면 페이지가 빨리 채워지지만 버벅일 수 있고, 낮추면 부드럽지만 늦게 채워집니다.
+How much the line is evened out as it is written. 0 is the pen as it moves.	쓰는 동안 선을 얼마나 고르게 다듬을지입니다. 0은 펜 움직임 그대로입니다.
+Ink load follows dropped frames	프레임이 밀리면 필기 작업 줄이기
+Ink on the page	페이지의 필기
+Keep the screen at full rate	화면 주사율 유지
+Mesh detail	메시 정밀도
+Motion blur's streak ahead of the pen, which is drawn only on 60 Hz screens. It redraws the window every pen frame.	모션 블러의 펜 끝 잔상입니다. 원래 60Hz 화면에서만 그립니다. 켜면 펜이 움직일 때마다 화면 전체를 다시 그립니다.
+On, strokes just written are painted again on the CPU a moment later and swapped in, which can change how they look slightly. Off, they stay as they were drawn.	켜면 방금 쓴 획을 잠시 뒤 CPU로 다시 칠해 바꿔 끼웁니다. 이때 모양이 살짝 달라질 수 있습니다. 끄면 그려진 그대로 둡니다.
+Paint tiles in the background	타일을 배경에서 칠하기
+Prediction	예측
+Pressure response	필압 반응
+Shows the handwriting's inner numbers and switches below, to try how writing feels. Off, they keep what was set.	필기의 내부 값과 스위치를 아래에 보여 줘서, 필기감을 직접 조절해 볼 수 있습니다. 꺼도 정해 둔 값은 그대로입니다.
+Smoothing by a sliding window	구간 평균으로 손떨림 보정
+Speed up the CPU while writing	쓰는 동안 CPU 빠르게
+Takes away the tiny hook a pen makes as it touches down or lifts, and a pause held still. Off, the stroke stays exactly as written, hooks and all.	펜을 대거나 뗄 때 생기는 작은 갈고리와, 멈춰 있던 부분을 정리합니다. 끄면 갈고리까지 쓴 그대로 남깁니다.
+The pen in hand	지금 쓰는 펜
+Tidy the ends at pen-up	펜을 뗄 때 끝 정리
+Tile budget per frame	프레임당 타일 예산
+When frames fall behind, fewer strokes are drawn into tiles each frame. Off, always the full amount.	프레임이 밀리면 프레임마다 타일에 그리는 획 수를 줄입니다. 끄면 항상 전부 그립니다.
+Writing streak at every refresh rate	모든 주사율에서 필기 잔상

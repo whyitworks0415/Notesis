@@ -344,6 +344,8 @@ internal fun DiagnosticsSettings(
     /** The Lab's benchmark is running; and how to start it, or null where there is none to run. */
     benchmarkRunning: Boolean = false,
     onBenchmark: (() -> Unit)? = null,
+    /** The pen's own settings, offered again among developer mode's handwriting parameters. */
+    penControls: @Composable () -> Unit = {},
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -362,6 +364,7 @@ internal fun DiagnosticsSettings(
             ?.let { "${it.versionName} (${it.longVersionCode})" } ?: "Unknown"
     }
 
+    InkTuningSettings(penControls)
     SettingsCard {
         SettingsSectionHeader("Measuring")
         SettingsToggle(

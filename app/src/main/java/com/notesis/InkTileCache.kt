@@ -184,7 +184,7 @@ internal class InkTileCache(
         recordedThisFrame = 0
         strokesThisFrame = 0
         // Scaled down while the render thread has been running over its frames.
-        strokeCap = (strokeCapFor(InteractionGovernor.state) * RenderLoad.share).toInt()
+        strokeCap = (strokeCapFor(InteractionGovernor.state) * (if (InkTuning.renderLoadFeedback) RenderLoad.share else 1f)).toInt()
         backlog = false
     }
 
@@ -569,7 +569,10 @@ internal class InkTileCache(
         // A tile with no picture yet - a page coming on screen, a new zoom - or a whole-page change is painted
         // on a worker when its ink allows; the GPU path is kept for edits, which have to show at once.
         // Folding strokes written since into the picture goes the same way, the picture and its delta shown meanwhile.
-        val foldOffThread = !tile.dirty && tile.appended.isNotEmpty() && (consolidate || tile.appended.size >= 32)
+        // Painted again on the CPU, a stroke just written came back a moment later looking slightly
+        // different from how the GPU first drew it; folded on the GPU instead, unless asked otherwise.
+        val foldOffThread = InkTuning.foldInBackground && !tile.dirty && tile.appended.isNotEmpty() &&
+            (consolidate || tile.appended.size >= 32)
         if (tile.job == null && (tile.dirty && !tile.edited && (!tile.hasInk || tile.mayWait) || foldOffThread)) when (startRaster(tile)) {
             Raster.STARTED -> Unit
             // Workers full: its old picture meanwhile, or none yet; asked again next frame.
@@ -686,6 +689,7 @@ internal class InkTileCache(
     private enum class Raster { STARTED, WAIT, GPU }
 
     private fun startRaster(tile: Tile): Raster {
+        if (!InkTuning.backgroundRaster) return Raster.GPU
         val ready = onRasterReady ?: return Raster.GPU
         if (rastering >= MAX_RASTERING) {
             backlog = true

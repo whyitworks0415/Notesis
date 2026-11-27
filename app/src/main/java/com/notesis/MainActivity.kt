@@ -261,6 +261,7 @@ class MainActivity : ComponentActivity() {
         LabGuard.load(this)
         if (!LabGuard.nativeOff) SpatialNative.prepare()
         LabPerformance.load(this)
+        InkTuning.load(this)
         // Android 15+ draws behind the system bars whether or not you ask, so
         // opt in properly and let the insets be dispatched instead of guessed.
         enableEdgeToEdge()
@@ -6418,6 +6419,11 @@ private fun NoteScreen(
                 diagnostics = {
                     DiagnosticsSettings(
                         view = canvas,
+                        penControls = {
+                            PenTuningControls(pen, gestures,
+                                onPen = { next -> settings = settings + (mode to next) },
+                                onGestures = { setGestures(it) })
+                        },
                         overlay = showLatency,
                         onOverlay = { showLatency = it },
                         zoomPercent = (zoom * 100).roundToInt(),

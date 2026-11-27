@@ -101,7 +101,7 @@ internal const val BOARD_MARGIN_MIN = 0.02f
 internal const val BOARD_MARGIN_MAX = 3f
 
 fun epsilonFor(scale: Float): Float =
-    TESSELLATION_TARGET_PX / scale.coerceIn(1f, MAX_CANVAS_SCALE)
+    tunedEpsilon(TESSELLATION_TARGET_PX, InkTuning.meshDetail) / scale.coerceIn(1f, MAX_CANVAS_SCALE)
 
 /**
  * Powers of two, so a pinch settles onto one of a handful of fidelities instead
@@ -136,7 +136,8 @@ fun lodBucket(scale: Float): Float {
 }
 
 /** The epsilon for a [lodBucket], which may be below 1. */
-fun lodEpsilonFor(bucket: Float): Float = TESSELLATION_TARGET_PX / bucket.coerceIn(MIN_LOD_SCALE, MAX_CANVAS_SCALE)
+fun lodEpsilonFor(bucket: Float): Float =
+    tunedEpsilon(TESSELLATION_TARGET_PX, InkTuning.meshDetail) / bucket.coerceIn(MIN_LOD_SCALE, MAX_CANVAS_SCALE)
 
 const val MIN_LOD_SCALE = 0.25f
 
@@ -3223,6 +3224,7 @@ class InkCanvasView @JvmOverloads constructor(
         if (boost.active) return
         val presenter = compatWet.presenterThreadId()
         val threads = if (presenter > 0) intArrayOf(Process.myTid(), presenter) else intArrayOf(Process.myTid())
+        if (!InkTuning.writingBoost) return
         boost.begin(context, threads, hintTargetNanos(displayHz))
     }
 
@@ -5070,8 +5072,8 @@ class InkCanvasView @JvmOverloads constructor(
                     }
                     // The front buffer shows the ink only as often as the screen refreshes,
                     // and a window that draws nothing while the pen moves lets it slow down.
-                    if (activeStrokeId != null && penHeartbeatWanted(compatWetInk,
-                            autoInkStreak(MotionPrefs.blurs(BlurPart.INK), displayHz) || subframe.mode != SUBFRAME_OFF)) {
+                    if (activeStrokeId != null && InkTuning.heartbeat &&
+                        penHeartbeatWanted(compatWetInk, inkStreakNow() || subframe.mode != SUBFRAME_OFF)) {
                         penHeartbeat.start()
                     }
                     // This returns before asynchronous front-buffer rendering finishes.
@@ -5678,10 +5680,16 @@ class InkCanvasView @JvmOverloads constructor(
      * Feeds every sample of the event, history included, to the sub-frame
      * track and shows how far the pen will have gone by the next frame.
      */
+    /** Whether motion blur's writing streak is drawn now: on 60 Hz screens, or everywhere where developer mode asks. */
+    private fun inkStreakNow(): Boolean {
+        val blur = MotionPrefs.blurs(BlurPart.INK)
+        return autoInkStreak(blur, displayHz) || (blur && InkTuning.streakAtAllRates)
+    }
+
     private fun updateSubframe(real: MotionEvent, pointerId: Int) {
         // Motion blur's Writing part draws the same streak when the pen has
         // none of its own: read here, a field each, nothing allocated.
-        subframe.autoBlur = autoInkStreak(MotionPrefs.blurs(BlurPart.INK), displayHz)
+        subframe.autoBlur = inkStreakNow()
         subframe.blurStrength = MotionPrefs.blurStrength
         if (subframe.active == SUBFRAME_OFF) return
         // Decoration only, and a redraw of its own every pen frame: battery
@@ -9992,6 +10000,8 @@ class InkCanvasView @JvmOverloads constructor(
                 else translate(restyled, start.originX, start.originY)
             val finishedTool = Tool.ofBrushFamily(finishedStroke.brush.family)
             val stroke = when {
+                // Developer mode can leave every stroke exactly as it was written.
+                !InkTuning.tidyAtLift -> finishedStroke
                 // One pass, one rebuild at most: the spur and the dwell tidying
                 // used to build a stroke each, so a pen-up tessellated twice.
                 finishedTool == Tool.PEN -> tidiedPenStroke(finishedStroke)
@@ -10953,7 +10963,8 @@ class InkCanvasView @JvmOverloads constructor(
             // Tiles are only drawn on a hardware canvas; a software capture of
             // this view must not end a frame the screen's recording still uses.
             val tileFrame = canvas.isHardwareAccelerated
-            if (tileFrame) inkTiles.beginFrame(tileRecordBudgetNanos(InteractionGovernor.frameMs, InteractionGovernor.state))
+            if (tileFrame) inkTiles.beginFrame((tileRecordBudgetNanos(InteractionGovernor.frameMs, InteractionGovernor.state) *
+                InkTuning.tileBudget).toLong())
             nodeRecordedThisFrame = false
             // Null unless some layer is translucent: then each such layer's
             // ink is composited once at its opacity (see drawLayered), and
